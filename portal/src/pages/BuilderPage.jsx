@@ -58,7 +58,7 @@ export default function BuilderPage() {
       setMessages([{
         id: 'welcome',
         role: 'assistant',
-        content: "Hello! I'm Stitch AI. Tell me what you'd like to build for BIAL operations.",
+        content: "Hello! I'm SkyLink Builder AI. Tell me what you'd like to build for BIAL operations.",
         timestamp: new Date(),
       }])
     }
@@ -83,7 +83,7 @@ export default function BuilderPage() {
 
     setMessages((prev) =>
       prev.map((m) => m.id === placeholder.id
-        ? { ...m, content: result || '⚠️ Could not reach Stitch AI. Check that the relay server is running (`npm run server`) and your ANTHROPIC_API_KEY is set in `.env`.', streaming: false }
+        ? { ...m, content: result || '⚠️ Could not reach SkyLink Builder AI. Check that the relay server is running (`npm run server`) and your ANTHROPIC_API_KEY is set in `.env`.', streaming: false }
         : m
       )
     )
@@ -138,7 +138,7 @@ export default function BuilderPage() {
                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-white" />
               </div>
               <div>
-                <p className="text-sm font-bold text-tertiary">Stitch AI</p>
+                <p className="text-sm font-bold text-tertiary">SkyLink Builder</p>
                 <p className="text-xs text-neutral">Refinement Specialist</p>
               </div>
             </div>

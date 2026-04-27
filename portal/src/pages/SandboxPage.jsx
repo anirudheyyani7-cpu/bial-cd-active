@@ -106,10 +106,10 @@ export default function SandboxPage() {
         </div>
 
         <h1 className="text-4xl font-extrabold text-tertiary text-center mb-3">
-          Sandbox — Start Building
+          Build What You Need. No Code Required
         </h1>
         <p className="text-neutral text-center max-w-lg mb-10 leading-relaxed">
-          Empower your workflow at Bangalore International Airport. Describe your vision in plain English and watch the BLR Citizen Developer suite bring it to life.
+          Turn everyday operational ideas into working applications. Just describe what you need in plain English — the BLR Citizen Developer Suite handles the rest.
         </p>
 
         {/* Prompt card */}
@@ -169,7 +169,7 @@ export default function SandboxPage() {
 
       <footer className="border-t border-bial-border bg-white py-4 px-6">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <p className="text-xs text-neutral">© 2024 Airport Operations Citizen Developer Suite</p>
+          <p className="text-xs text-neutral">© 2026 Bangalore International Airport · Citizen Developer Suite</p>
           <div className="flex gap-5">
             {['Privacy', 'Security', 'Staff Support'].map((l) => (
               <a key={l} href="#" className="text-xs text-neutral hover:text-primary transition">{l}</a>

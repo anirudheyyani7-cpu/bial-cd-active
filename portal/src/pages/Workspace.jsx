@@ -66,7 +66,7 @@ export default function Workspace() {
           </div>
           <span className="flex items-center gap-2 bg-accent text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">
             <Rocket size={12} />
-            3 Apps Active in Terminal 3
+            3 Apps Active in My Workspace
           </span>
         </div>
 

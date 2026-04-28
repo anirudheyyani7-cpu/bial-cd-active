@@ -5,10 +5,12 @@ import Navbar from '../components/layout/Navbar'
 
 const DATA_SOURCES = [
   { id: 'aodb', name: 'AODB', subtitle: 'Airport Operations Database' },
+  { id: 'dar', name: 'DAR', subtitle: 'Daily Airport Report' },
   { id: 'vision', name: 'Vision Analytics System', subtitle: 'Camera and sensor analytics' },
+  { id: 'namaskara', name: 'Namaskara Terminal', subtitle: 'Terminal Updates' },
+  { id: 'xovis', name: 'Xovis', subtitle: 'Video Analytics Powered Crowd Management' },
   { id: 'fids', name: 'Flight Information Display (FIDS)', subtitle: 'Real-time flight status data' },
   { id: 'bhs', name: 'BHS Telemetry', subtitle: 'Baggage handling system sensors' },
-  { id: 'staff', name: 'Staff Roster DB', subtitle: 'Shift schedules and assignments' },
   { id: 'passenger', name: 'Passenger Flow Analytics', subtitle: 'Terminal movement heatmaps' },
   { id: 'none', name: 'None / Custom', subtitle: 'I will define my own data' },
 ]

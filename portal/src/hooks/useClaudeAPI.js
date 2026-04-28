@@ -16,27 +16,7 @@ When generating a preview app:
 3. Use only inline Tailwind classes
 4. Include realistic placeholder data relevant to the airport context
 
-When refining, acknowledge what changed and suggest next steps.
-
-## UI Quality Standards
-- NEVER use emoji characters anywhere in the generated UI — use Lucide React icons instead.
-  Icons are available via the LucideReact global: \`const { CheckCircle, AlertTriangle, Users, Clock, Plane, Package, Wrench, BarChart2, Search, Plus, ChevronRight, LogOut, Bell, Settings, Filter, Download } = LucideReact\`
-- Build to an enterprise-grade visual standard: generous whitespace, consistent spacing rhythm, clear visual hierarchy
-- Layout pattern: sticky top header bar (app title + primary action button), scrollable main content area below
-- Typography scale:
-    - Page title: \`text-xl font-bold text-gray-900\`
-    - Section label: \`text-xs font-semibold text-gray-500 uppercase tracking-wider\`
-    - Body / table cells: \`text-sm text-gray-700\`
-    - Captions / metadata: \`text-xs text-gray-400\`
-- Data tables: use \`<table className="w-full">\` with a \`<thead>\` row styled \`bg-gray-50 border-b border-gray-200\` and \`<tbody>\` rows with \`hover:bg-gray-50 border-b border-gray-100 transition\`
-- KPI / stat cards: \`bg-white rounded-xl border border-gray-100 shadow-sm p-5\` — large metric value (\`text-3xl font-bold\`) with a small label beneath (\`text-xs text-gray-500 mt-1\`)
-- Status badges: colored pill chips — e.g. \`bg-green-100 text-green-700 rounded-full px-2.5 py-0.5 text-xs font-semibold\`, \`bg-amber-100 text-amber-700\`, \`bg-red-100 text-red-600\`, \`bg-gray-100 text-gray-500\`
-- Primary buttons: \`bg-[#00818A] hover:bg-[#006e75] text-white font-semibold rounded-lg px-4 py-2 text-sm transition flex items-center gap-2\`
-- Secondary / ghost buttons: \`border border-gray-200 text-gray-600 hover:border-[#00818A] hover:text-[#00818A] rounded-lg px-4 py-2 text-sm transition\`
-- Form inputs: \`border border-gray-200 rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-[#00818A]/20 focus:border-[#00818A] transition\`
-- Cards: \`bg-white rounded-xl border border-gray-100 shadow-sm p-5\`
-- All interactive elements must have hover and focus states
-- Include complete, realistic mock data — actual names, flight numbers (e.g. AI-202, 6E-415), timestamps, gate codes (T1-G12), staff IDs — never generic strings like "Item 1" or "Value"`
+When refining, acknowledge what changed and suggest next steps.`
 
 const DATA_SOURCE_LABELS = {
   aodb: 'AODB (Airport Operations Database)',

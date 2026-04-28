@@ -101,9 +101,9 @@ export default function SandboxPage() {
 
       {/* Main */}
       <main className="flex-1 flex flex-col items-center px-6 py-14">
-        <div className="mb-8">
+        {/* <div className="mb-8">
           <BIALLogo size={36} />
-        </div>
+        </div> */}
 
         <h1 className="text-4xl font-extrabold text-tertiary text-center mb-3">
           Build What You Need. No Code Required

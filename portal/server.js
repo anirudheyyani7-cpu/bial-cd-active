@@ -36,7 +36,7 @@ app.post('/api/claude', async (req, res) => {
 
     const stream = await client.messages.stream({
       model: model || 'claude-opus-4-7',
-      max_tokens: max_tokens || 4096,
+      max_tokens: max_tokens || 16000,
       system,
       messages,
     })

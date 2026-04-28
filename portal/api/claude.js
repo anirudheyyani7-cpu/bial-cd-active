@@ -25,7 +25,7 @@ export default async function handler(req, res) {
 
     const stream = await client.messages.stream({
       model: model || 'claude-sonnet-4-20250514',
-      max_tokens: max_tokens || 4096,
+      max_tokens: max_tokens || 16000,
       system,
       messages,
     })

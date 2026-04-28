@@ -54,6 +54,22 @@ function buildSystemPrompt(context) {
   return `${SYSTEM_PROMPT}\n\n## Session Context\nThe user configured these options before starting. Honour them throughout the entire conversation:\n${lines.join('\n')}`
 }
 
+const INPUT_TOKEN_BUDGET = 50_000
+const CHARS_PER_TOKEN = 4
+
+function estimateTokens(messages) {
+  return messages.reduce((sum, m) => sum + Math.ceil((m.content || '').length / CHARS_PER_TOKEN), 0)
+}
+
+function truncateMessages(messages) {
+  if (estimateTokens(messages) <= INPUT_TOKEN_BUDGET) return messages
+  const [first, ...rest] = messages
+  while (rest.length > 1 && estimateTokens([first, ...rest]) > INPUT_TOKEN_BUDGET) {
+    rest.shift()
+  }
+  return [first, ...rest]
+}
+
 export function useClaudeAPI() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -68,9 +84,9 @@ export function useClaudeAPI() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-opus-4-7',
-          max_tokens: 4096,
+          max_tokens: 16000,
           system: buildSystemPrompt(context),
-          messages: messages.map((m) => ({ role: m.role, content: m.content })),
+          messages: truncateMessages(messages).map((m) => ({ role: m.role, content: m.content })),
         }),
       })
 

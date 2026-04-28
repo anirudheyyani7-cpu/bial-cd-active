@@ -48,7 +48,7 @@ export default function Dashboard() {
           Welcome Back
         </p>
         <h1 className="text-4xl font-extrabold text-tertiary mb-3">
-          Hello, Terminal Operations Team
+          Hello, Alex from Terminal Operations Team
         </h1>
         <p className="text-neutral text-base leading-relaxed max-w-2xl mb-10">
           Ready to build the future of aviation? Select a workspace to continue developing your custom tools and department workflows.

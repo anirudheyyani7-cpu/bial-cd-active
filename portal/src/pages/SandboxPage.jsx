@@ -27,15 +27,9 @@ const THEMES = [
 
 const DEMO_PROMPT = `Build a Staff Cab and Carpool Sharing App for Bangalore Airport ground staff. The app should be called "RideLink BLR".
 
-Users: Pre-load 8 dummy staff profiles across Ground Ops, Security, and Logistics departments, each with a name, staff ID (BIAL-XXXXX format), home zone (North Bangalore, South Bangalore, East Bangalore, Whitefield Corridor), and shift timing (Morning 6AM-2PM, Afternoon 2PM-10PM, Night 10PM-6AM).
-
 Core Flow 1 – Request a Ride: A staff member selects their shift end time and home zone, then posts a ride request. The app matches them with other staff ending their shift within a 30-minute window heading to the same zone. Show matched riders in a card list with name, department, and pickup point (Terminal 2 Gate 4 or Terminal 1 Main Exit).
 
-Core Flow 2 – Offer a Carpool: A staff member with their own vehicle can post an available carpool slot specifying their departure time, home zone, and number of seats (1-3). Other staff in the same zone and time window see the offer and can tap to join. Show a real-time seat counter that updates as people join.
-
-Design: Use the Bangalore Airport theme with the BIAL teal and amber color palette. The layout should be mobile-first since staff will use this on their phones during shift changes. Include a simple dashboard showing today's active rides, upcoming matches, and a "My Rides" history tab.
-
-Tech: React frontend with local state management. No backend needed – use mocked data for all dummy users and ride matching logic.`
+Core Flow 2 – Offer a Carpool: A staff member with their own vehicle can post an available carpool slot specifying their departure time, home zone, and number of seats (1-3). Other staff in the same zone and time window see the offer and can tap to join. Show a real-time seat counter that updates as people join.`
 
 const EXAMPLES = [
   {

@@ -22,6 +22,7 @@ function buildIframeDoc(jsxCode) {
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide-react/dist/umd/lucide-react.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{primary:'#00818A',secondary:'#D9A036',tertiary:'#1A2B34'},fontFamily:{manrope:['Manrope','sans-serif']}}}}</script>
@@ -35,7 +36,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </body></html>`
 }
 
-export default function LivePreview({ previewCode, generating, generationStage }) {
+export default function LivePreview({ previewCode, generating, generationStage, prompt }) {
   const navigate = useNavigate()
   const [viewport, setViewport] = useState('Desktop')
   const [showCode, setShowCode] = useState(false)
@@ -89,7 +90,7 @@ export default function LivePreview({ previewCode, generating, generationStage }
             <RefreshCw size={11} />Logic View
           </button>
           <button
-            onClick={() => navigate('/workspace/deploy')}
+            onClick={() => navigate('/workspace/deploy', { state: { appDesc: prompt || '' } })}
             className="flex items-center gap-1.5 text-xs font-worksans font-bold text-white bg-primary hover:bg-primary-600 rounded-lg px-3 py-1.5 transition"
           >
             <Rocket size={11} />Deploy App

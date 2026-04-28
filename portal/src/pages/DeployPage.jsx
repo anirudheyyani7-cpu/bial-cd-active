@@ -78,8 +78,8 @@ export default function DeployPage() {
   const location = useLocation()
   const fromBuilder = location.state || {}
 
-  const [appName, setAppName] = useState(fromBuilder.appName || 'Terminal 3 Baggage Tracking')
-  const [appDesc, setAppDesc] = useState(fromBuilder.appDesc || 'Real-time telemetry monitoring for baggage carousel systems across Terminal 3 — belts 12A through 24C.')
+  const [appName, setAppName] = useState(fromBuilder.appName || '')
+  const [appDesc, setAppDesc] = useState(fromBuilder.appDesc || '')
   const [selectedColor, setSelectedColor] = useState('teal')
   const [category, setCategory] = useState('Operations')
   const [categoryOpen, setCategoryOpen] = useState(false)

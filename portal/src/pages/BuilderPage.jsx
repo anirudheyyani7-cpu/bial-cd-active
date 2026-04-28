@@ -324,6 +324,7 @@ export default function BuilderPage() {
             previewCode={previewCode}
             generating={generating}
             generationStage={generationStage}
+            prompt={initialPrompt}
           />
         </div>
       </div>

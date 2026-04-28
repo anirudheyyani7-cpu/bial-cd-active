@@ -170,8 +170,8 @@ export default function SandboxPage() {
                     : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
                 }`}
               >
-                <div className={`w-8 h-4 rounded-full relative transition-colors duration-200 flex-shrink-0 ${hasSchema ? 'bg-primary' : 'bg-gray-200'}`}>
-                  <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200 ${hasSchema ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                <div className={`w-7 h-3.5 rounded-full relative transition-colors duration-200 flex-shrink-0 overflow-hidden ${hasSchema ? 'bg-primary' : 'bg-gray-200'}`}>
+                  <span className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform duration-200 ${hasSchema ? 'translate-x-3' : 'translate-x-0'}`} />
                 </div>
                 Backend Schema
               </button>

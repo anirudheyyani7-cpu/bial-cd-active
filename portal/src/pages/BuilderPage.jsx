@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Send, ArrowLeft, Bot, User, Bell } from 'lucide-react'
-import SkyLinkLogo from '../components/SkyLinkLogo'
+import { Send, ArrowLeft, Bot, User } from 'lucide-react'
+import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
 import { useClaudeAPI } from '../hooks/useClaudeAPI'
 
@@ -58,7 +58,7 @@ export default function BuilderPage() {
       setMessages([{
         id: 'welcome',
         role: 'assistant',
-        content: "Hello! I'm SkyLink Builder AI. Tell me what you'd like to build for BIAL operations.",
+        content: "Hello! I'm Stitch AI. Tell me what you'd like to build for BIAL operations.",
         timestamp: new Date(),
       }])
     }
@@ -102,34 +102,22 @@ export default function BuilderPage() {
 
   return (
     <div className="h-screen flex flex-col font-manrope bg-bial-bg overflow-hidden">
-      {/* Navbar */}
-      <nav className="bg-white border-b border-bial-border z-40 flex-shrink-0">
-        <div className="px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate('/sandbox')} className="p-1.5 rounded-lg text-neutral hover:text-primary hover:bg-bial-bg transition">
-              <ArrowLeft size={17} />
-            </button>
-            <SkyLinkLogo />
-            <div className="hidden md:flex items-center gap-6">
-              {['My Apps', 'Help'].map((item) => (
-                <a key={item} href="#" className="text-sm text-neutral hover:text-primary transition font-medium">{item}</a>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button className="p-2 text-neutral hover:text-primary transition rounded-lg hover:bg-bial-bg"><Bell size={17} /></button>
-            <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
-              <User size={13} className="text-primary" />
-            </div>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Chat panel */}
         <div className="w-72 xl:w-80 flex flex-col bg-white border-r border-bial-border flex-shrink-0">
           {/* Agent header */}
           <div className="p-4 border-b border-bial-border">
+            <div className="flex items-center gap-2 mb-3">
+              <button
+                onClick={() => navigate('/workspace/sandbox')}
+                className="p-1 rounded-lg text-neutral hover:text-primary hover:bg-bial-bg transition"
+              >
+                <ArrowLeft size={15} />
+              </button>
+              <span className="text-xs text-neutral">Back to Sandbox</span>
+            </div>
             <div className="flex items-center gap-3">
               <div className="relative">
                 <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
@@ -138,7 +126,7 @@ export default function BuilderPage() {
                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-white" />
               </div>
               <div>
-                <p className="text-sm font-bold text-tertiary">SkyLink Builder</p>
+                <p className="text-sm font-bold text-tertiary">Stitch AI</p>
                 <p className="text-xs text-neutral">Refinement Specialist</p>
               </div>
             </div>
@@ -216,7 +204,28 @@ export default function BuilderPage() {
 
         {/* Live preview */}
         <div className="flex-1 flex flex-col relative overflow-hidden">
-          <LivePreview messages={messages} generating={generating} />
+          {generating && messages.filter((m) => m.content.includes('```jsx:preview')).length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-bial-bg gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <Bot size={28} className="text-primary animate-pulse" />
+              </div>
+              <div className="text-center">
+                <p className="text-base font-bold text-tertiary mb-1">Generating your app...</p>
+                <p className="text-xs text-neutral">Stitch AI is building your operational tool</p>
+              </div>
+              <div className="flex gap-1.5 mt-2">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="w-2 h-2 bg-primary rounded-full animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <LivePreview messages={messages} generating={generating} />
+          )}
         </div>
       </div>
     </div>

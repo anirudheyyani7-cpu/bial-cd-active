@@ -22,16 +22,16 @@ export default function LoginPage() {
     setLoading(true)
     await new Promise((r) => setTimeout(r, 1000))
     setLoading(false)
-    localStorage.setItem('bial_user', JSON.stringify({ username, name: 'Airport Staff' }))
-    navigate('/sandbox')
+    localStorage.setItem('bial_user', JSON.stringify({ username, name: 'Alex Chen', role: 'Terminal Lead' }))
+    navigate('/dashboard')
   }
 
   const handleSSO = async () => {
     setLoading(true)
     await new Promise((r) => setTimeout(r, 700))
     setLoading(false)
-    localStorage.setItem('bial_user', JSON.stringify({ username: 'sso-user', name: 'BIAL Staff' }))
-    navigate('/sandbox')
+    localStorage.setItem('bial_user', JSON.stringify({ username: 'sso-user', name: 'Alex Chen', role: 'Terminal Lead' }))
+    navigate('/dashboard')
   }
 
   return (

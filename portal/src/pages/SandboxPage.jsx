@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, ChevronDown, Plus, Users, BarChart3, Database, Palette, Sparkles, LogOut, LayoutGrid, User } from 'lucide-react'
-import SkyLinkLogo from '../components/SkyLinkLogo'
-import BIALLogo from '../components/BIALLogo'
+import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid } from 'lucide-react'
+import Navbar from '../components/layout/Navbar'
 
 const EXAMPLES = [
   {
@@ -31,73 +30,15 @@ const EXAMPLES = [
 export default function SandboxPage() {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const user = JSON.parse(localStorage.getItem('bial_user') || '{}')
 
   const handleGenerate = () => {
     if (!prompt.trim()) return
-    navigate('/builder', { state: { prompt } })
-  }
-
-  const handleLogout = () => {
-    localStorage.removeItem('bial_user')
-    navigate('/')
+    navigate('/workspace/builder', { state: { prompt } })
   }
 
   return (
     <div className="min-h-screen bg-bial-bg font-manrope flex flex-col">
-      {/* Navbar */}
-      <nav className="bg-white border-b border-bial-border sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <SkyLinkLogo />
-            <div className="hidden md:flex items-center gap-6">
-              {['My Apps', 'Help'].map((item) => (
-                <a key={item} href="#" className="text-sm text-neutral hover:text-primary transition font-medium">{item}</a>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button className="relative p-2 text-neutral hover:text-primary transition rounded-lg hover:bg-bial-bg">
-              <Bell size={17} />
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-secondary rounded-full" />
-            </button>
-            <div className="relative">
-              <button
-                onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-bial-bg transition"
-              >
-                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
-                  <User size={13} className="text-primary" />
-                </div>
-                <ChevronDown size={13} className="text-neutral" />
-              </button>
-              {userMenuOpen && (
-                <div className="absolute right-0 top-10 w-48 bg-white rounded-xl border border-bial-border shadow-xl py-2 z-50">
-                  <div className="px-4 py-2 border-b border-bial-border">
-                    <p className="text-xs font-semibold text-tertiary">{user.name || 'Staff Member'}</p>
-                    <p className="text-xs text-neutral">{user.username || 'BIAL Staff'}</p>
-                  </div>
-                  <button
-                    onClick={handleLogout}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition"
-                  >
-                    <LogOut size={13} />
-                    Sign out
-                  </button>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setPrompt('')}
-              className="flex items-center gap-1.5 bg-primary hover:bg-primary-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition shadow-sm"
-            >
-              <Plus size={14} />
-              Create New
-            </button>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Main */}
       <main className="flex-1 flex flex-col items-center px-6 py-14">

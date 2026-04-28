@@ -5,16 +5,17 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#00818A',
+          DEFAULT: '#0D7377',
+          dark: '#0A5C5F',
           50: '#E0F5F6',
           100: '#B3E6E9',
           200: '#80D5DA',
           300: '#4DC4CC',
           400: '#26B7C0',
-          500: '#00818A',
-          600: '#006E76',
-          700: '#005A61',
-          800: '#00474D',
+          500: '#0D7377',
+          600: '#0A5C5F',
+          700: '#084B4E',
+          800: '#063A3C',
           900: '#1A2B34',
         },
         secondary: {
@@ -30,13 +31,24 @@ export default {
           800: '#8C5D1E',
           900: '#6B430F',
         },
-        tertiary: '#1A2B34',
-        neutral: '#64748B',
+        accent: {
+          DEFAULT: '#F5A623',
+          light: '#FFF4E0',
+        },
+        tertiary: '#1A1A2E',
+        neutral: '#6B7280',
+        surface: {
+          DEFAULT: '#FFFFFF',
+          muted: '#F8F9FA',
+        },
         bial: {
           bg: '#F0F4F8',
           surface: '#FFFFFF',
           border: '#E2E8F0',
         },
+        success: '#22C55E',
+        warning: '#EAB308',
+        danger: '#EF4444',
       },
       fontFamily: {
         manrope: ['Manrope', 'sans-serif'],

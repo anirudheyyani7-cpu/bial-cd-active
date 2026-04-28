@@ -1,0 +1,129 @@
+export const enterpriseApps = [
+  {
+    id: 'cargo-tracker',
+    name: 'CargoTracker Pro',
+    description: 'Real-time monitoring and logistics management for air cargo, integrated with customs clearing systems.',
+    iconColor: 'bg-primary/10 text-primary',
+    rating: 4.8,
+    likes: '2.4k',
+    forks: 12,
+    comments: 24,
+    department: 'Logistics',
+  },
+  {
+    id: 'staff-guard',
+    name: 'StaffGuard ID',
+    description: 'Digital credentialing and access control for restricted airport zones with biometric verification.',
+    iconColor: 'bg-blue-100 text-blue-600',
+    rating: 4.5,
+    likes: '1.1k',
+    forks: 8,
+    comments: 5,
+    department: 'Security',
+  },
+  {
+    id: 'concierge-connect',
+    name: 'Concierge Connect',
+    description: 'Enhanced VIP passenger assistance tool for managing lounge bookings and fast-track services.',
+    iconColor: 'bg-accent-light text-accent',
+    rating: 4.2,
+    likes: '850',
+    forks: 34,
+    comments: 12,
+    department: 'Customer Service',
+  },
+  {
+    id: 'eco-terminal',
+    name: 'EcoTerminal Monitor',
+    description: 'Environmental monitoring system for tracking energy consumption and waste management across Terminal 3.',
+    iconColor: 'bg-green-100 text-green-600',
+    rating: 4.9,
+    likes: '3.1k',
+    forks: 2,
+    comments: 41,
+    department: 'Ground Ops',
+  },
+  {
+    id: 'ops-script',
+    name: 'OpsScript IDE',
+    description: 'Custom automation builder for operational staff to create simplified workflows and automated alerts.',
+    iconColor: 'bg-amber-100 text-amber-600',
+    rating: 3.8,
+    likes: '540',
+    forks: 102,
+    comments: 38,
+    department: 'Ground Ops',
+  },
+  {
+    id: 'quickrespond-med',
+    name: 'QuickRespond Med',
+    description: 'Emergency medical response dispatch and coordination system for on-site airport medical teams.',
+    iconColor: 'bg-red-100 text-red-500',
+    rating: 4.7,
+    likes: '1.8k',
+    forks: 5,
+    comments: 9,
+    department: 'Security',
+  },
+]
+
+export const departments = ['All Departments', 'Ground Ops', 'Security', 'Logistics', 'Customer Service']
+
+export const teamApps = {
+  featured: {
+    id: 'cab-booking',
+    name: 'Cab Booking for Staff',
+    description: 'Automated booking system for late-night shift staff transit and terminal transfers.',
+    tags: ['Auto-Approval', 'GPS Tracked'],
+    lastUpdatedBy: 'Arjun K.',
+    sharedWith: 12,
+  },
+  secondary: {
+    id: 'visiting-card',
+    name: 'Duplicate Visiting Card Request',
+    description: 'Request replacements for lost or damaged staff credentials and business cards.',
+    processingTime: '24-48 Hours',
+    formCompletion: 75,
+    lastUpdatedBy: 'Priya S.',
+  },
+}
+
+export const teamStats = [
+  { label: 'ACTIVE APPS', value: '02', icon: 'Grid' },
+  { label: 'COLLABORATORS', value: '12', icon: 'Users' },
+  { label: 'TEAM ACTIVITY', value: 'High', icon: 'RefreshCw' },
+]
+
+export const teamDiscussions = [
+  {
+    id: 1,
+    user: 'Arjun K.',
+    initials: 'AK',
+    app: 'Cab Booking',
+    timestamp: '2 hours ago',
+    preview: 'Updated the auto-approval logic for night shifts. Please review the new criteria...',
+  },
+]
+
+export const workspaceDrafts = [
+  {
+    id: 'gate-delay',
+    name: 'Gate 42 Delay Log',
+    description: 'Real-time logging app for passenger boarding delays specifically for the Airbus A380 docking zone.',
+    status: 'DRAFT',
+    statusColor: 'border border-gray-300 text-gray-500',
+    iconColor: 'bg-primary/10 text-primary',
+    modifiedAgo: '2h ago',
+    avatarCount: 2,
+  },
+  {
+    id: 'sanitation-tracker',
+    name: 'Sanitation Tracker',
+    description: 'Visual floor map for cleaning crews to mark completed zones in the North Pier corridor.',
+    status: 'TESTING',
+    statusColor: 'bg-warning text-white',
+    iconColor: 'bg-primary/10 text-primary',
+    modifiedAgo: '5h ago',
+    avatarCount: 1,
+  },
+]

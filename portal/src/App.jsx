@@ -8,6 +8,7 @@ import SandboxPage from './pages/SandboxPage'
 import BuilderPage from './pages/BuilderPage'
 import DeployPage from './pages/DeployPage'
 import HelpPage from './pages/HelpPage'
+import AdminPage from './pages/AdminPage'
 
 function RequireAuth({ children }) {
   const user = localStorage.getItem('bial_user')
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/workspace/builder" element={<RequireAuth><BuilderPage /></RequireAuth>} />
         <Route path="/workspace/deploy" element={<RequireAuth><DeployPage /></RequireAuth>} />
         <Route path="/help" element={<RequireAuth><HelpPage /></RequireAuth>} />
+        <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
         <Route path="/sandbox" element={<Navigate to="/workspace/sandbox" replace />} />
         <Route path="/builder" element={<Navigate to="/workspace/builder" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />

@@ -22,7 +22,7 @@ export default function LoginPage() {
     setLoading(true)
     await new Promise((r) => setTimeout(r, 1000))
     setLoading(false)
-    localStorage.setItem('bial_user', JSON.stringify({ username, name: 'Alex Chen', role: 'Terminal Lead' }))
+    localStorage.setItem('bial_user', JSON.stringify({ username, name: 'Alex Chen', role: 'Terminal Lead', isAdmin: true }))
     navigate('/dashboard')
   }
 
@@ -30,7 +30,7 @@ export default function LoginPage() {
     setLoading(true)
     await new Promise((r) => setTimeout(r, 700))
     setLoading(false)
-    localStorage.setItem('bial_user', JSON.stringify({ username: 'sso-user', name: 'Alex Chen', role: 'Terminal Lead' }))
+    localStorage.setItem('bial_user', JSON.stringify({ username: 'sso-user', name: 'Alex Chen', role: 'Terminal Lead', isAdmin: true }))
     navigate('/dashboard')
   }
 

@@ -14,6 +14,8 @@ const NAV_LINKS = [
   { label: 'Help', to: '/help' },
 ]
 
+const ADMIN_LINK = { label: 'Admin', to: '/admin' }
+
 const NOTIFICATIONS = [
   { id: 1, icon: CheckCircle, iconColor: 'text-green-500', title: "Your app 'Gate 42 Delay Log' was deployed successfully", time: '2h ago' },
   { id: 2, icon: MessageSquare, iconColor: 'text-primary', title: 'Arjun K. commented on Cab Booking app', time: '4h ago' },
@@ -111,7 +113,7 @@ export default function Navbar() {
               BIAL Citizen Developer
             </NavLink>
             <div className="hidden md:flex items-center gap-6">
-              {NAV_LINKS.map(({ label, to }) => (
+              {[...NAV_LINKS, ...(user.isAdmin ? [ADMIN_LINK] : [])].map(({ label, to }) => (
                 <NavLink
                   key={to}
                   to={to}

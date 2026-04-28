@@ -6,6 +6,8 @@ import TeamSpace from './pages/TeamSpace'
 import Workspace from './pages/Workspace'
 import SandboxPage from './pages/SandboxPage'
 import BuilderPage from './pages/BuilderPage'
+import DeployPage from './pages/DeployPage'
+import HelpPage from './pages/HelpPage'
 
 function RequireAuth({ children }) {
   const user = localStorage.getItem('bial_user')
@@ -24,7 +26,8 @@ export default function App() {
         <Route path="/workspace" element={<RequireAuth><Workspace /></RequireAuth>} />
         <Route path="/workspace/sandbox" element={<RequireAuth><SandboxPage /></RequireAuth>} />
         <Route path="/workspace/builder" element={<RequireAuth><BuilderPage /></RequireAuth>} />
-        <Route path="/help" element={<RequireAuth><div className="p-10 text-center text-neutral font-manrope">Help page coming soon.</div></RequireAuth>} />
+        <Route path="/workspace/deploy" element={<RequireAuth><DeployPage /></RequireAuth>} />
+        <Route path="/help" element={<RequireAuth><HelpPage /></RequireAuth>} />
         <Route path="/sandbox" element={<Navigate to="/workspace/sandbox" replace />} />
         <Route path="/builder" element={<Navigate to="/workspace/builder" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />

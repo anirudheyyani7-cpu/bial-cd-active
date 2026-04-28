@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 
-const SYSTEM_PROMPT = `You are Stitch AI, an expert app refinement specialist for the Bengaluru International Airport (BIAL) Citizen Developer Portal — SkyLink Builder.
+const SYSTEM_PROMPT = `You are Citizen Developer AI, an expert app generation and refinement specialist for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic.
 
 Your role:
 - Help airport staff build operational tools by generating and refining app components

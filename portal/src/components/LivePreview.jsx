@@ -1,61 +1,19 @@
 import { useState, useEffect } from 'react'
-import { Monitor, Tablet, Smartphone, Rocket, RefreshCw } from 'lucide-react'
+import { Monitor, Smartphone, Rocket, RefreshCw, Code2, LayoutTemplate, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
-function extractPreviewCode(text) {
-  const match = text.match(/```jsx:preview\s*([\s\S]*?)```/)
-  return match ? match[1].trim() : null
-}
+const VIEWPORTS = { Desktop: 'w-full', Mobile: 'max-w-[390px]' }
+const VP_ICONS = { Desktop: Monitor, Mobile: Smartphone }
 
-const DEFAULT_HTML = `
-<div style="padding:24px;font-family:'Manrope',sans-serif;background:#F0F4F8;min-height:100%">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px">
-    <div>
-      <h1 style="font-size:20px;font-weight:800;color:#1A2B34;margin:0 0 4px">Terminal 3 Baggage Tracking</h1>
-      <p style="font-size:12px;color:#64748B;margin:0">Real-time telemetry — belts 12A through 24C</p>
-    </div>
-    <div style="text-align:right">
-      <p style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:0.05em;margin:0">Active Carousels</p>
-      <p style="font-size:28px;font-weight:800;color:#1A2B34;margin:0">18 <span style="font-size:14px;font-weight:400;color:#64748B">/ 20</span></p>
-    </div>
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 200px;gap:16px;margin-bottom:16px">
-    <div style="background:white;border-radius:16px;padding:16px;border:1px solid #E2E8F0">
-      <p style="font-size:12px;font-weight:700;color:#1A2B34;margin:0 0 12px">System Throughput (Bags/Hour)</p>
-      <div style="display:flex;align-items:flex-end;gap:6px;height:80px">
-        ${[65,72,58,80,92,78,85,95,88,76].map((h,i) =>
-          `<div style="flex:1;border-radius:4px 4px 0 0;height:${h}%;background:${i===7?'#D9A036':'#00818A20'}"></div>`
-        ).join('')}
-      </div>
-    </div>
-    <div style="background:#1A2B34;border-radius:16px;padding:16px;color:white;display:flex;flex-direction:column;justify-content:space-between">
-      <p style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;opacity:0.6;margin:0 0 12px">Quick Summary</p>
-      <div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px"><span style="opacity:0.7">Critical Alerts</span><span style="font-weight:700;color:#4ade80">0</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px"><span style="opacity:0.7">Processing Lag</span><span style="font-weight:700">1.2s</span></div>
-        <div style="display:flex;justify-content:space-between;font-size:12px"><span style="opacity:0.7">Avg Sort Time</span><span style="font-weight:700">4.5m</span></div>
-      </div>
-      <button style="margin-top:12px;width:100%;background:rgba(255,255,255,0.1);border:none;color:white;font-size:11px;font-weight:600;padding:8px;border-radius:8px;cursor:pointer">Download Logs</button>
-    </div>
-  </div>
-  <div style="background:white;border-radius:16px;border:1px solid #E2E8F0;overflow:hidden">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #E2E8F0">
-      <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#1A2B34;margin:0">Active Belt Units</p>
-      <span style="font-size:9px;background:#00818A1A;color:#00818A;font-weight:700;padding:2px 8px;border-radius:20px">AUTO-REFRESH 1s</span>
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr style="background:#F8FAFC;color:#64748B;font-size:10px;text-transform:uppercase;letter-spacing:0.05em">
-        <th style="text-align:left;padding:8px 16px">Unit ID</th>
-        <th style="text-align:left;padding:8px 16px">Load %</th>
-        <th style="text-align:left;padding:8px 16px">Motor Temp</th>
-        <th style="text-align:left;padding:8px 16px">Status</th>
-      </tr></thead>
-      <tbody>
-        <tr style="border-top:1px solid #E2E8F0"><td style="padding:12px 16px;font-weight:600">BELT-12A</td><td style="padding:12px 16px"><div style="width:80px;height:4px;background:#f1f5f9;border-radius:2px"><div style="width:45%;height:4px;background:#00818A;border-radius:2px"></div></div></td><td style="padding:12px 16px">42°C</td><td style="padding:12px 16px;color:#22c55e;font-weight:600">● Optimal</td></tr>
-        <tr style="border-top:1px solid #E2E8F0"><td style="padding:12px 16px;font-weight:600">BELT-14B</td><td style="padding:12px 16px"><div style="width:80px;height:4px;background:#f1f5f9;border-radius:2px"><div style="width:72%;height:4px;background:#D9A036;border-radius:2px"></div></div></td><td style="padding:12px 16px">58°C</td><td style="padding:12px 16px;color:#D9A036;font-weight:600">● High Load</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>`
+const STAGE_PROGRESS = [0, 15, 35, 65, 85, 100]
+const STAGE_TEXT = [
+  '',
+  'Analyzing requirements...',
+  'Creating wireframe...',
+  'Generating code...',
+  'Rendering preview...',
+  'Ready',
+]
 
 function buildIframeDoc(jsxCode) {
   return `<!DOCTYPE html>
@@ -77,23 +35,24 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </body></html>`
 }
 
-const VIEWPORTS = { Desktop: 'w-full', Tablet: 'max-w-[768px]', Mobile: 'max-w-[390px]' }
-const VP_ICONS = { Desktop: Monitor, Tablet: Tablet, Mobile: Smartphone }
-
-export default function LivePreview({ messages, generating }) {
+export default function LivePreview({ previewCode, generating, generationStage }) {
+  const navigate = useNavigate()
   const [viewport, setViewport] = useState('Desktop')
-  const [iframeSrc, setIframeSrc] = useState(`data:text/html,${encodeURIComponent(`<!DOCTYPE html><html><head><link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet"/><style>body{margin:0;font-family:'Manrope',sans-serif;}</style></head><body>${DEFAULT_HTML}</body></html>`)}`)
+  const [showCode, setShowCode] = useState(false)
+  const [iframeSrc, setIframeSrc] = useState(null)
 
   useEffect(() => {
-    const assistantMsgs = [...messages].reverse().filter((m) => m.role === 'assistant')
-    for (const msg of assistantMsgs) {
-      const code = extractPreviewCode(msg.content)
-      if (code) {
-        setIframeSrc(`data:text/html,${encodeURIComponent(buildIframeDoc(code))}`)
-        return
-      }
+    if (previewCode) {
+      setIframeSrc(`data:text/html,${encodeURIComponent(buildIframeDoc(previewCode))}`)
     }
-  }, [messages])
+  }, [previewCode])
+
+  const progress = STAGE_PROGRESS[generationStage] ?? 0
+  const stageText = STAGE_TEXT[generationStage] ?? ''
+
+  const showEmpty = !generating && !previewCode
+  const showLoading = generating && !previewCode
+  const showPreview = !generating && !!previewCode
 
   return (
     <div className="flex flex-col h-full">
@@ -105,40 +64,131 @@ export default function LivePreview({ messages, generating }) {
               key={label}
               onClick={() => setViewport(label)}
               className={`flex items-center gap-1.5 text-xs font-worksans font-medium px-3 py-1.5 rounded-md transition ${
-                viewport === label ? 'bg-white text-primary shadow-sm border border-bial-border' : 'text-neutral hover:text-primary'
+                viewport === label
+                  ? 'bg-white text-primary shadow-sm border border-bial-border'
+                  : 'text-neutral hover:text-primary'
               }`}
             >
               <Icon size={12} />{label}
             </button>
           ))}
         </div>
+
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCode((s) => !s)}
+            className={`flex items-center gap-1.5 text-xs font-worksans font-semibold border rounded-lg px-3 py-1.5 transition ${
+              showCode
+                ? 'bg-primary/5 border-primary text-primary'
+                : 'text-neutral border-bial-border hover:border-primary hover:text-primary'
+            }`}
+          >
+            <Code2 size={11} />View Code
+          </button>
           <button className="flex items-center gap-1.5 text-xs font-worksans font-semibold text-neutral border border-bial-border rounded-lg px-3 py-1.5 hover:border-primary hover:text-primary transition">
             <RefreshCw size={11} />Logic View
           </button>
-          <button className="flex items-center gap-1.5 text-xs font-worksans font-bold text-white bg-primary hover:bg-primary-600 rounded-lg px-3 py-1.5 transition">
+          <button
+            onClick={() => navigate('/workspace/deploy')}
+            className="flex items-center gap-1.5 text-xs font-worksans font-bold text-white bg-primary hover:bg-primary-600 rounded-lg px-3 py-1.5 transition"
+          >
             <Rocket size={11} />Deploy App
           </button>
         </div>
       </div>
 
-      {/* Preview */}
-      <div className="flex-1 bg-[#e8edf2] flex justify-center p-4 overflow-auto relative">
-        {generating && (
-          <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              <p className="text-sm text-neutral font-medium">Stitch AI is generating…</p>
+      {/* Main area */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Preview canvas */}
+        <div className="flex-1 bg-[#e8edf2] flex justify-center p-4 overflow-auto">
+          {showEmpty && (
+            <div className="flex-1 flex flex-col items-center justify-center text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
+                <LayoutTemplate size={28} className="text-gray-300" />
+              </div>
+              <p className="text-sm font-semibold text-neutral mb-1">Your app preview will appear here</p>
+              <p className="text-xs text-neutral/60 max-w-xs leading-relaxed">
+                Submit a prompt or refine your instructions to generate a live preview
+              </p>
+            </div>
+          )}
+
+          {showLoading && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4">
+              <div className="flex gap-2">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="w-3 h-3 bg-primary rounded-full animate-bounce"
+                    style={{ animationDelay: `${i * 0.2}s` }}
+                  />
+                ))}
+              </div>
+              <p className="text-sm text-neutral font-medium">{stageText}</p>
+              <div className="w-64 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {(showPreview || (generating && previewCode)) && (
+            <div className={`${VIEWPORTS[viewport]} h-full transition-all duration-300 rounded-xl overflow-hidden shadow-lg bg-white relative`}>
+              {generating && (
+                <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    <p className="text-sm text-neutral font-medium">{stageText}</p>
+                  </div>
+                </div>
+              )}
+              {iframeSrc && (
+                <iframe
+                  src={iframeSrc}
+                  className="w-full h-full border-0"
+                  title="App Preview"
+                  sandbox="allow-scripts"
+                />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Code slide-out panel */}
+        {showCode && (
+          <div className="w-96 bg-gray-900 flex flex-col border-l border-gray-700 flex-shrink-0">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Code2 size={13} className="text-gray-400" />
+                <span className="text-xs font-semibold text-gray-200">Generated Code</span>
+              </div>
+              <button onClick={() => setShowCode(false)} className="text-gray-400 hover:text-gray-200 transition">
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <pre className="text-xs text-green-400 font-mono leading-relaxed whitespace-pre-wrap break-all">
+                {previewCode || '// No code generated yet.\n// Submit a prompt to see the generated React code here.'}
+              </pre>
             </div>
           </div>
         )}
-        <div className={`${VIEWPORTS[viewport]} h-full transition-all duration-300 rounded-xl overflow-hidden shadow-lg bg-white`}>
-          <iframe src={iframeSrc} className="w-full h-full border-0" title="App Preview" sandbox="allow-scripts" />
-        </div>
       </div>
+
+      {/* Progress bar at bottom during generation */}
+      {generating && (
+        <div className="h-0.5 bg-gray-100 flex-shrink-0">
+          <div
+            className="h-full bg-primary transition-all duration-700 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
     </div>
   )
 }

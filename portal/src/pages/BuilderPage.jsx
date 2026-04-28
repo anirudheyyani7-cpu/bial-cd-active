@@ -91,6 +91,11 @@ export default function BuilderPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const initialPrompt = location.state?.prompt || ''
+  const contextRef = useRef({
+    dataSource: location.state?.dataSource || null,
+    theme: location.state?.theme || 'bial',
+    hasSchema: location.state?.hasSchema || false,
+  })
   const { sendMessage } = useClaudeAPI()
 
   const [messages, setMessages] = useState([])
@@ -176,7 +181,8 @@ export default function BuilderPage() {
       (_, full) => {
         const code = extractPreviewCode(full)
         if (code) setPreviewCode(code)
-      }
+      },
+      contextRef.current
     )
 
     clearTimers()

@@ -18,11 +18,47 @@ When generating a preview app:
 
 When refining, acknowledge what changed and suggest next steps.`
 
+const DATA_SOURCE_LABELS = {
+  aodb: 'AODB (Airport Operations Database)',
+  dar: 'DAR (Daily Airport Report)',
+  vision: 'Vision Analytics System',
+  namaskara: 'Namaskara Terminal',
+  xovis: 'Xovis (Crowd Management)',
+  fids: 'Flight Information Display (FIDS)',
+  bhs: 'BHS Telemetry (Baggage Handling System)',
+  passenger: 'Passenger Flow Analytics',
+  none: 'None / Custom (user-defined data)',
+}
+
+const THEME_LABELS = {
+  bial: 'Bangalore Airport Theme — use official BIAL teal (#00818A) and amber (#D9A036) brand colors',
+  mobile: 'App Style (iOS/Android) — clean mobile-first layout, card-based, bottom navigation',
+  dashboard: 'Dashboard / Analytics — data-dense layout with charts, tables, and KPI metrics',
+  kiosk: 'Kiosk / Public Display — large text, high contrast, minimal interaction, touch-friendly',
+}
+
+function buildSystemPrompt(context) {
+  if (!context) return SYSTEM_PROMPT
+  const { dataSource, theme, hasSchema } = context
+  const lines = []
+  if (dataSource && dataSource !== 'none') {
+    lines.push(`- **Data source selected:** ${DATA_SOURCE_LABELS[dataSource] || dataSource} — use field names, entities, and mock data consistent with this system`)
+  }
+  if (theme) {
+    lines.push(`- **UI style selected:** ${THEME_LABELS[theme] || theme}`)
+  }
+  if (hasSchema) {
+    lines.push(`- **Backend schema requested:** Yes — after generating the UI, include a \`## Data Model\` section describing the key entities, fields, and types`)
+  }
+  if (lines.length === 0) return SYSTEM_PROMPT
+  return `${SYSTEM_PROMPT}\n\n## Session Context\nThe user configured these options before starting. Honour them throughout the entire conversation:\n${lines.join('\n')}`
+}
+
 export function useClaudeAPI() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const sendMessage = useCallback(async (messages, onChunk) => {
+  const sendMessage = useCallback(async (messages, onChunk, context) => {
     setLoading(true)
     setError(null)
 
@@ -33,7 +69,7 @@ export function useClaudeAPI() {
         body: JSON.stringify({
           model: 'claude-opus-4-7',
           max_tokens: 4096,
-          system: SYSTEM_PROMPT,
+          system: buildSystemPrompt(context),
           messages: messages.map((m) => ({ role: m.role, content: m.content })),
         }),
       })

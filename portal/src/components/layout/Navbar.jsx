@@ -22,7 +22,8 @@ export default function Navbar() {
   return (
     <nav className="bg-white border-b border-bial-border sticky top-0 z-40 flex-shrink-0">
       <div className="px-6 h-14 flex items-center justify-between gap-4">
-        {/* Brand */}
+        {/* Brand + Nav links grouped left */}
+        <div className="flex items-center gap-8">
         <NavLink
           to="/dashboard"
           className="text-primary font-bold text-lg tracking-tight whitespace-nowrap"
@@ -48,6 +49,7 @@ export default function Navbar() {
             </NavLink>
           ))}
         </div>
+        </div>{/* end brand + nav group */}
 
         {/* Right cluster */}
         <div className="flex items-center gap-2">
@@ -83,7 +85,7 @@ export default function Navbar() {
                 {(user.name || 'U').charAt(0).toUpperCase()}
               </div>
               <div className="hidden lg:block text-left">
-                <p className="text-xs font-semibold text-tertiary leading-tight">{user.name || 'Alex Chen'}</p>
+                <p className="text-xs font-semibold text-tertiary leading-tight">{user.name || 'Sushant'}</p>
                 <p className="text-[10px] text-neutral leading-tight">{user.role || 'Terminal Lead'}</p>
               </div>
               <ChevronDown size={13} className="text-neutral hidden lg:block" />
@@ -92,7 +94,7 @@ export default function Navbar() {
             {userMenuOpen && (
               <div className="absolute right-0 top-11 w-48 bg-white rounded-xl border border-bial-border shadow-xl py-2 z-50">
                 <div className="px-4 py-2 border-b border-bial-border">
-                  <p className="text-xs font-semibold text-tertiary">{user.name || 'Alex Chen'}</p>
+                  <p className="text-xs font-semibold text-tertiary">{user.name || 'Sushant'}</p>
                   <p className="text-xs text-neutral">{user.username || 'Terminal Lead'}</p>
                 </div>
                 <button

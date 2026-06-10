@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, AlertTriangle, Star, X } from 'lucide-react'
+import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, AlertTriangle, Star, X, FileUp } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import Navbar from '../components/layout/Navbar'
 import { validatePrompt } from '../utils/promptGuardrails'
 import { findDuplicateApps } from '../utils/duplicateDetection'
@@ -108,7 +109,9 @@ export default function SandboxPage() {
   const [dataSource, setDataSource] = useState(null)
   const [theme, setTheme] = useState('bial')
   const [hasSchema, setHasSchema] = useState(false)
+  const [uploadedFiles, setUploadedFiles] = useState([])
   const textareaRef = useRef(null)
+  const fileInputRef = useRef(null)
 
   const [guardRailModal, setGuardRailModal] = useState(null)
   const [duplicateModal, setDuplicateModal] = useState(null)
@@ -121,7 +124,55 @@ export default function SandboxPage() {
 
   const proceedToBuilder = () => {
     setDuplicateModal(null)
-    navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema } })
+    navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema, uploadedFiles } })
+  }
+
+  const handleFileSelect = (e) => {
+    const incoming = Array.from(e.target.files || [])
+    e.target.value = ''
+
+    const ALLOWED_EXTS = ['xlsx', 'xls', 'csv', 'tsv']
+    const MAX_SIZE = 10 * 1024 * 1024
+    const MAX_FILES = 5
+    const MAX_CONTENT_CHARS = 8000
+
+    for (const file of incoming) {
+      const ext = file.name.split('.').pop().toLowerCase()
+      if (!ALLOWED_EXTS.includes(ext)) {
+        showSandboxToast(`"${file.name}" is not supported. Upload .xlsx, .xls, .csv, or .tsv files.`)
+        return
+      }
+      if (file.size > MAX_SIZE) {
+        showSandboxToast(`"${file.name}" exceeds the 10 MB limit.`)
+        return
+      }
+    }
+
+    setUploadedFiles((prev) => {
+      if (prev.length + incoming.length > MAX_FILES) {
+        showSandboxToast(`You can upload at most ${MAX_FILES} files.`)
+        return prev
+      }
+      incoming.forEach((file) => {
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          const data = new Uint8Array(ev.target.result)
+          const workbook = XLSX.read(data, { type: 'array' })
+          const sheet = workbook.Sheets[workbook.SheetNames[0]]
+          let content = XLSX.utils.sheet_to_csv(sheet)
+          if (content.length > MAX_CONTENT_CHARS) {
+            content = content.slice(0, MAX_CONTENT_CHARS) + '\n[... truncated]'
+          }
+          setUploadedFiles((cur) => [...cur, { name: file.name, content }])
+        }
+        reader.readAsArrayBuffer(file)
+      })
+      return prev
+    })
+  }
+
+  const handleRemoveFile = (index) => {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index))
   }
 
   const handleGenerate = () => {
@@ -136,7 +187,7 @@ export default function SandboxPage() {
       setDuplicateModal({ matches })
       return
     }
-    navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema } })
+    navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema, uploadedFiles } })
   }
 
   const fillPrompt = (text) => {
@@ -205,6 +256,27 @@ export default function SandboxPage() {
                 placeholder="Select Theme"
               />
 
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                multiple
+                accept=".xlsx,.xls,.csv,.tsv"
+                onChange={handleFileSelect}
+              />
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex items-center gap-1.5 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition whitespace-nowrap flex-shrink-0 ${
+                  uploadedFiles.length > 0
+                    ? 'bg-primary/5 border-primary text-primary'
+                    : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
+                }`}
+              >
+                <FileUp size={12} />
+                {uploadedFiles.length > 0 ? `${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}` : 'Upload File'}
+              </button>
+
               <button
                 onClick={handleGenerate}
                 disabled={!prompt.trim()}
@@ -213,6 +285,20 @@ export default function SandboxPage() {
                 Generate App <Sparkles size={13} />
               </button>
             </div>
+
+            {uploadedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {uploadedFiles.map((f, i) => (
+                  <span key={i} className="flex items-center gap-1 text-[10px] font-medium bg-primary/5 text-primary border border-primary/30 rounded-md px-2 py-1">
+                    <FileUp size={9} />
+                    <span className="max-w-[160px] truncate">{f.name}</span>
+                    <button onClick={() => handleRemoveFile(i)} className="ml-0.5 hover:text-danger transition">
+                      <X size={9} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             {hasSchema && (
               <p className="text-[10px] text-primary/80 pl-1">

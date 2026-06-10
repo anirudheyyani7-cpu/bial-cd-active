@@ -95,6 +95,7 @@ export default function BuilderPage() {
     dataSource: location.state?.dataSource || null,
     theme: location.state?.theme || 'bial',
     hasSchema: location.state?.hasSchema || false,
+    uploadedFiles: location.state?.uploadedFiles || [],
   })
   const { sendMessage } = useClaudeAPI()
 

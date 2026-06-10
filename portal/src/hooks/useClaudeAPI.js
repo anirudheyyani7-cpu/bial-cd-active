@@ -39,7 +39,7 @@ const THEME_LABELS = {
 
 function buildSystemPrompt(context) {
   if (!context) return SYSTEM_PROMPT
-  const { dataSource, theme, hasSchema } = context
+  const { dataSource, theme, hasSchema, uploadedFiles = [] } = context
   const lines = []
   if (dataSource && dataSource !== 'none') {
     lines.push(`- **Data source selected:** ${DATA_SOURCE_LABELS[dataSource] || dataSource} — use field names, entities, and mock data consistent with this system`)
@@ -49,6 +49,12 @@ function buildSystemPrompt(context) {
   }
   if (hasSchema) {
     lines.push(`- **Backend schema requested:** Yes — after generating the UI, include a \`## Data Model\` section describing the key entities, fields, and types`)
+  }
+  if (uploadedFiles.length > 0) {
+    lines.push(`- **Uploaded reference data (${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}):** Use the data below as the actual dataset when generating the app. Populate tables, charts, and UI with real values from this data instead of generic placeholders.`)
+    uploadedFiles.forEach((f) => {
+      lines.push(`\n### File: ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
+    })
   }
   if (lines.length === 0) return SYSTEM_PROMPT
   return `${SYSTEM_PROMPT}\n\n## Session Context\nThe user configured these options before starting. Honour them throughout the entire conversation:\n${lines.join('\n')}`

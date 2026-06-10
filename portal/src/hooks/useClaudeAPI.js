@@ -39,6 +39,7 @@ const THEME_LABELS = {
 
 function buildSystemPrompt(context) {
   if (!context) return SYSTEM_PROMPT
+  if (context.systemPrompt) return context.systemPrompt
   const { dataSource, theme, hasSchema, uploadedFiles = [] } = context
   const lines = []
   if (dataSource && dataSource !== 'none') {

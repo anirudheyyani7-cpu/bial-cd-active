@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, AlertTriangle, Star, X, FileUp } from 'lucide-react'
+import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, AlertTriangle, Star, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import Navbar from '../components/layout/Navbar'
 import { validatePrompt } from '../utils/promptGuardrails'
@@ -113,6 +113,7 @@ export default function SandboxPage() {
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
 
+  const [mode, setMode] = useState('build')
   const [guardRailModal, setGuardRailModal] = useState(null)
   const [duplicateModal, setDuplicateModal] = useState(null)
   const [sandboxToast, setSandboxToast] = useState(null)
@@ -190,6 +191,11 @@ export default function SandboxPage() {
     navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema, uploadedFiles } })
   }
 
+  const handleChat = () => {
+    if (!prompt.trim()) return
+    navigate('/workspace/chat/new', { state: { initialMessage: prompt } })
+  }
+
   const fillPrompt = (text) => {
     setPrompt(text)
     setTimeout(() => {
@@ -210,83 +216,137 @@ export default function SandboxPage() {
           Turn everyday operational ideas into working applications. Just describe what you need in plain English — the BLR Citizen Developer Suite handles the rest.
         </p>
 
+        {/* Mode toggle */}
+        <div className="w-full max-w-2xl mb-4 flex items-center gap-1 bg-white border border-bial-border rounded-xl p-1 shadow-sm">
+          <button
+            onClick={() => setMode('build')}
+            className={`flex-1 flex items-center justify-center gap-2 text-sm font-bold rounded-lg px-4 py-2 transition ${
+              mode === 'build'
+                ? 'bg-secondary text-white shadow-sm'
+                : 'text-neutral hover:text-tertiary'
+            }`}
+          >
+            <Hammer size={14} />
+            Build
+          </button>
+          <button
+            onClick={() => setMode('chat')}
+            className={`flex-1 flex items-center justify-center gap-2 text-sm font-bold rounded-lg px-4 py-2 transition ${
+              mode === 'chat'
+                ? 'bg-primary text-white shadow-sm'
+                : 'text-neutral hover:text-tertiary'
+            }`}
+          >
+            <MessageSquare size={14} />
+            Chat &amp; Plan
+          </button>
+        </div>
+
+        {mode === 'chat' && (
+          <p className="text-xs text-neutral text-center max-w-md mb-6 -mt-2">
+            Not sure what to build yet? Chat with the AI to plan your app first, then move to the builder when you're ready.
+          </p>
+        )}
+
         {/* Prompt card */}
         <div className="w-full max-w-2xl bg-white rounded-2xl border border-bial-border shadow-sm">
           <textarea
             ref={textareaRef}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) handleGenerate() }}
-            placeholder="Describe the app you want to build... (e.g. 'Create a dashboard to track terminal 2 ground staff assignments with real-time delay alerts')"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && e.metaKey) {
+                mode === 'chat' ? handleChat() : handleGenerate()
+              }
+            }}
+            placeholder={
+              mode === 'chat'
+                ? "Describe what you're thinking… I'll help you plan it out."
+                : "Describe the app you want to build... (e.g. 'Create a dashboard to track terminal 2 ground staff assignments with real-time delay alerts')"
+            }
             rows={6}
             className="w-full p-5 text-sm text-tertiary placeholder:text-gray-300 resize-none focus:outline-none rounded-t-2xl font-manrope leading-relaxed"
           />
 
           {/* Controls row */}
           <div className="px-4 py-3 border-t border-bial-border space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <SelectDropdown
-                icon={Database}
-                options={DATA_SOURCES}
-                value={dataSource}
-                onChange={setDataSource}
-                placeholder="Select Data Source"
-              />
+            {mode === 'build' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <SelectDropdown
+                  icon={Database}
+                  options={DATA_SOURCES}
+                  value={dataSource}
+                  onChange={setDataSource}
+                  placeholder="Select Data Source"
+                />
 
-              {/* Schema toggle */}
-              <button
-                onClick={() => setHasSchema((s) => !s)}
-                className={`flex items-center gap-2 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition flex-shrink-0 ${
-                  hasSchema
-                    ? 'bg-primary/5 border-primary text-primary'
-                    : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
-                }`}
-              >
-                <div className={`w-7 h-3.5 rounded-full relative transition-colors duration-200 flex-shrink-0 overflow-hidden ${hasSchema ? 'bg-primary' : 'bg-gray-200'}`}>
-                  <span className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform duration-200 ${hasSchema ? 'translate-x-3' : 'translate-x-0'}`} />
-                </div>
-                Backend Schema
-              </button>
+                {/* Schema toggle */}
+                <button
+                  onClick={() => setHasSchema((s) => !s)}
+                  className={`flex items-center gap-2 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition flex-shrink-0 ${
+                    hasSchema
+                      ? 'bg-primary/5 border-primary text-primary'
+                      : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
+                  }`}
+                >
+                  <div className={`w-7 h-3.5 rounded-full relative transition-colors duration-200 flex-shrink-0 overflow-hidden ${hasSchema ? 'bg-primary' : 'bg-gray-200'}`}>
+                    <span className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform duration-200 ${hasSchema ? 'translate-x-3' : 'translate-x-0'}`} />
+                  </div>
+                  Backend Schema
+                </button>
 
-              <SelectDropdown
-                icon={Palette}
-                options={THEMES}
-                value={theme}
-                onChange={setTheme}
-                placeholder="Select Theme"
-              />
+                <SelectDropdown
+                  icon={Palette}
+                  options={THEMES}
+                  value={theme}
+                  onChange={setTheme}
+                  placeholder="Select Theme"
+                />
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                multiple
-                accept=".xlsx,.xls,.csv,.tsv"
-                onChange={handleFileSelect}
-              />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  multiple
+                  accept=".xlsx,.xls,.csv,.tsv"
+                  onChange={handleFileSelect}
+                />
 
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className={`flex items-center gap-1.5 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition whitespace-nowrap flex-shrink-0 ${
-                  uploadedFiles.length > 0
-                    ? 'bg-primary/5 border-primary text-primary'
-                    : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
-                }`}
-              >
-                <FileUp size={12} />
-                {uploadedFiles.length > 0 ? `${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}` : 'Upload File'}
-              </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`flex items-center gap-1.5 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition whitespace-nowrap flex-shrink-0 ${
+                    uploadedFiles.length > 0
+                      ? 'bg-primary/5 border-primary text-primary'
+                      : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
+                  }`}
+                >
+                  <FileUp size={12} />
+                  {uploadedFiles.length > 0 ? `${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}` : 'Upload File'}
+                </button>
 
-              <button
-                onClick={handleGenerate}
-                disabled={!prompt.trim()}
-                className="ml-auto flex items-center gap-2 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition shadow-sm shadow-secondary/30 flex-shrink-0"
-              >
-                Generate App <Sparkles size={13} />
-              </button>
-            </div>
+                <button
+                  onClick={handleGenerate}
+                  disabled={!prompt.trim()}
+                  className="ml-auto flex items-center gap-2 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition shadow-sm shadow-secondary/30 flex-shrink-0"
+                >
+                  Generate App <Sparkles size={13} />
+                </button>
+              </div>
+            )}
 
-            {uploadedFiles.length > 0 && (
+            {mode === 'chat' && (
+              <div className="flex justify-end">
+                <button
+                  onClick={handleChat}
+                  disabled={!prompt.trim()}
+                  className="flex items-center gap-2 bg-primary hover:bg-primary-dark disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition shadow-sm shadow-primary/20 flex-shrink-0"
+                >
+                  Start Planning <MessageSquare size={13} />
+                </button>
+              </div>
+            )}
+
+            {mode === 'build' && uploadedFiles.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-0.5">
                 {uploadedFiles.map((f, i) => (
                   <span key={i} className="flex items-center gap-1 text-[10px] font-medium bg-primary/5 text-primary border border-primary/30 rounded-md px-2 py-1">
@@ -300,7 +360,7 @@ export default function SandboxPage() {
               </div>
             )}
 
-            {hasSchema && (
+            {mode === 'build' && hasSchema && (
               <p className="text-[10px] text-primary/80 pl-1">
                 A data model will be generated based on your prompt and selected data source.
               </p>

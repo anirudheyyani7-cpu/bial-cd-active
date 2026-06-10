@@ -9,6 +9,7 @@ import BuilderPage from './pages/BuilderPage'
 import DeployPage from './pages/DeployPage'
 import HelpPage from './pages/HelpPage'
 import AdminPage from './pages/AdminPage'
+import ChatPage from './pages/ChatPage'
 
 function RequireAuth({ children }) {
   const user = localStorage.getItem('bial_user')
@@ -28,6 +29,8 @@ export default function App() {
         <Route path="/workspace/sandbox" element={<RequireAuth><SandboxPage /></RequireAuth>} />
         <Route path="/workspace/builder" element={<RequireAuth><BuilderPage /></RequireAuth>} />
         <Route path="/workspace/deploy" element={<RequireAuth><DeployPage /></RequireAuth>} />
+        <Route path="/workspace/chat" element={<RequireAuth><ChatPage /></RequireAuth>} />
+        <Route path="/workspace/chat/:chatId" element={<RequireAuth><ChatPage /></RequireAuth>} />
         <Route path="/help" element={<RequireAuth><HelpPage /></RequireAuth>} />
         <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
         <Route path="/sandbox" element={<Navigate to="/workspace/sandbox" replace />} />

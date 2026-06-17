@@ -41,6 +41,7 @@ export default function App() {
         <Route path="/workspace" element={<RequireAuth><Workspace /></RequireAuth>} />
         <Route path="/workspace/sandbox" element={<RequireAuth><SandboxPage /></RequireAuth>} />
         <Route path="/workspace/builder" element={<RequireAuth><BuilderPage /></RequireAuth>} />
+        <Route path="/workspace/builder/:buildId" element={<RequireAuth><BuilderPage /></RequireAuth>} />
         <Route path="/workspace/deploy" element={<RequireAuth><DeployPage /></RequireAuth>} />
         <Route path="/workspace/chat" element={<RequireAuth><ChatPage /></RequireAuth>} />
         <Route path="/workspace/chat/:chatId" element={<RequireAuth><ChatPage /></RequireAuth>} />

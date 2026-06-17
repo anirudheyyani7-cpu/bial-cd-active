@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from './pages/LoginPage'
 import Dashboard from './pages/Dashboard'
@@ -10,13 +11,25 @@ import DeployPage from './pages/DeployPage'
 import HelpPage from './pages/HelpPage'
 import AdminPage from './pages/AdminPage'
 import ChatPage from './pages/ChatPage'
+import { isAuthenticated, getStoredUser, clearSession, startCrossTabSync } from './utils/auth'
 
 function RequireAuth({ children }) {
-  const user = localStorage.getItem('bial_user')
-  return user ? children : <Navigate to="/login" replace />
+  if (!isAuthenticated()) {
+    // Boot-time purge: a stale tokenless profile (e.g. an old mock/admin
+    // session from before this deploy) is cleared so it can't linger.
+    if (getStoredUser()) clearSession()
+    return <Navigate to="/login" replace />
+  }
+  return children
 }
 
 export default function App() {
+  // Adopt access tokens rotated by peer tabs (cross-tab session sync).
+  useEffect(() => {
+    const channel = startCrossTabSync()
+    return () => channel?.close?.()
+  }, [])
+
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>

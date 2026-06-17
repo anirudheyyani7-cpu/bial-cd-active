@@ -6,6 +6,7 @@ import {
   LayoutGrid, Users, FileText, Plus, Inbox,
   UserCircle, BookOpen, Info, Monitor,
 } from 'lucide-react'
+import { getStoredUser, getAccessToken, clearSession, SIGNOUT_REASONS } from '../../utils/auth'
 
 const NAV_LINKS = [
   { label: 'My Workspace', to: '/workspace' },
@@ -63,7 +64,7 @@ export default function Navbar() {
   const [activeDropdown, setActiveDropdown] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
-  const user = JSON.parse(localStorage.getItem('bial_user') || '{}')
+  const user = getStoredUser() || {}
 
   const navRef = useRef(null)
   const toastTimer = useRef(null)
@@ -85,7 +86,17 @@ export default function Navbar() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('bial_user')
+    // Best-effort server-side revoke; keepalive lets it finish after we leave.
+    // Never block the client on the network.
+    const token = getAccessToken()
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {})
+    }
+    clearSession(SIGNOUT_REASONS.LOGGED_OUT)
     navigate('/login')
   }
 

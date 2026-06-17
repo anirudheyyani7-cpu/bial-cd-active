@@ -1,4 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { getAccessToken, refreshAccessToken, clearSession, SIGNOUT_REASONS } from '../utils/auth.js'
 
 const SYSTEM_PROMPT = `You are Citizen Developer AI, an expert app generation and refinement specialist for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic.
 
@@ -77,64 +79,139 @@ function truncateMessages(messages) {
   return [first, ...rest]
 }
 
-export function useClaudeAPI() {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+const AUTH_FAILED = 'AUTH_REFRESH_FAILED'
 
-  const sendMessage = useCallback(async (messages, onChunk, context) => {
-    setLoading(true)
-    setError(null)
+/**
+ * POST /api/claude with a Bearer access token and consume the SSE stream.
+ *
+ * If the *initial* response is 401 (BEFORE the stream starts), refresh the
+ * access token once and retry. A 401 is never retried once `getReader()` has
+ * begun — auth is checked once at admission. Dependencies are injected so this
+ * is testable without a React render. Returns the accumulated text.
+ */
+export async function fetchClaudeStream({
+  body,
+  onChunk,
+  signal,
+  fetchImpl = fetch,
+  getToken = getAccessToken,
+  refresh = refreshAccessToken,
+}) {
+  const post = (token) =>
+    fetchImpl('/api/claude', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal,
+    })
 
-    try {
-      const response = await fetch('/api/claude', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-opus-4-7',
-          max_tokens: 16000,
-          system: buildSystemPrompt(context),
-          messages: truncateMessages(messages).map((m) => ({ role: m.role, content: m.content })),
-        }),
-      })
+  let response = await post(getToken())
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}))
-        throw new Error(err.error?.message || `API error ${response.status}`)
-      }
+  // Pre-stream 401 only: refresh once and retry with the rotated token.
+  if (response.status === 401) {
+    const newToken = await refresh()
+    if (!newToken) {
+      const err = new Error('Your session has expired. Please sign in again.')
+      err.code = AUTH_FAILED
+      throw err
+    }
+    response = await post(newToken)
+  }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let fullText = ''
+  if (!response.ok) {
+    if (response.status === 401) {
+      const err = new Error('Your session has expired. Please sign in again.')
+      err.code = AUTH_FAILED
+      throw err
+    }
+    const errBody = await response.json().catch(() => ({}))
+    throw new Error(errBody.error?.message || `API error ${response.status}`)
+  }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value)
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-          try {
-            const parsed = JSON.parse(data)
-            const delta = parsed.delta?.text || ''
-            if (delta) {
-              fullText += delta
-              onChunk?.(delta, fullText)
-            }
-          } catch {
-            // skip malformed SSE lines
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let fullText = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = decoder.decode(value)
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6)
+        if (data === '[DONE]') continue
+        try {
+          const parsed = JSON.parse(data)
+          const delta = parsed.delta?.text || ''
+          if (delta) {
+            fullText += delta
+            onChunk?.(delta, fullText)
           }
+        } catch {
+          // skip malformed SSE lines
         }
       }
-
-      setLoading(false)
-      return fullText
-    } catch (err) {
-      setError(err.message)
-      setLoading(false)
-      return null
     }
-  }, [])
+  } catch (err) {
+    // Aborting (logout/unmount) mid-stream is expected — return what we have.
+    if (err?.name === 'AbortError' || signal?.aborted) return fullText
+    throw err
+  }
+
+  return fullText
+}
+
+export function useClaudeAPI() {
+  const navigate = useNavigate()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const abortRef = useRef(null)
+
+  // Abort an in-flight stream on unmount (covers logout, which navigates away).
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const sendMessage = useCallback(
+    async (messages, onChunk, context) => {
+      setLoading(true)
+      setError(null)
+      const controller = new AbortController()
+      abortRef.current = controller
+
+      try {
+        const fullText = await fetchClaudeStream({
+          body: {
+            model: 'claude-opus-4-7',
+            max_tokens: 16000,
+            system: buildSystemPrompt(context),
+            messages: truncateMessages(messages).map((m) => ({ role: m.role, content: m.content })),
+          },
+          onChunk,
+          signal: controller.signal,
+        })
+        setLoading(false)
+        return fullText
+      } catch (err) {
+        setLoading(false)
+        if (err?.name === 'AbortError' || controller.signal.aborted) return null
+        if (err?.code === AUTH_FAILED) {
+          // The refresh-failed path already cleared the session, but the
+          // refresh-succeeded-then-retry-401 path did not — clear here too so
+          // stale tokens can't keep isAuthenticated() passing and trap the user
+          // on protected routes until the access token expires on its own.
+          clearSession(SIGNOUT_REASONS.EXPIRED)
+          navigate('/login')
+          return null
+        }
+        setError(err.message)
+        return null
+      }
+    },
+    [navigate],
+  )
 
   return { sendMessage, loading, error }
 }

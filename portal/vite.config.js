@@ -5,7 +5,8 @@ export default defineConfig({
   base: '/',
   server: {
     proxy: {
-      '/api/claude': {
+      // Proxy the whole API surface (auth + claude) to the Express server.
+      '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
       },

@@ -17,8 +17,11 @@ if (!username || !password) {
   process.exit(1)
 }
 
-// No claudeClient needed — the auth routes don't touch the Claude relay.
-const app = createApp({ repo: createUsersRepo(await getUsersCollection()) })
+// No claudeClient needed — the auth routes don't touch the Claude relay. The
+// usage repo is required by createApp but never exercised here (smoke-login hits
+// only /api/auth/*), so a trivial no-op fake satisfies the guard.
+const noopUsageRepo = { getUsage: async () => null, addUsage: async () => {} }
+const app = createApp({ repo: createUsersRepo(await getUsersCollection()), usageRepo: noopUsageRepo })
 
 const login = await request(app).post('/api/auth/login').send({ username, password })
 console.log('login:                       ', login.status, login.status === 200 ? '✓' : JSON.stringify(login.body))

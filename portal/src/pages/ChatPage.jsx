@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import Navbar from '../components/layout/Navbar'
 import AttachmentChips from '../components/AttachmentChips'
 import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import {
   loadHistory,
   newConversation,
@@ -15,13 +16,7 @@ import {
   relativeTime,
 } from '../utils/chatHistory'
 import { buildContentBlocks, contentToText, getAttachment, putAttachment } from '../utils/attachmentStore'
-import {
-  ACCEPT_ATTR,
-  validateAttachmentFiles,
-  fileToBase64,
-  newAttachmentId,
-  toAttachmentRef,
-} from '../utils/attachmentInput'
+import { ACCEPT_ATTR, toAttachmentRef } from '../utils/attachmentInput'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal.
 
@@ -65,55 +60,16 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [generating, setGenerating] = useState(false)
   const [showBuildModal, setShowBuildModal] = useState(false)
-  const [pendingAttachments, setPendingAttachments] = useState([])
-  const [toastMsg, setToastMsg] = useState(null)
   const buildSuggestionFiredRef = useRef(false)
 
   const { sendMessage } = useClaudeAPI()
+  const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
+    usePendingAttachments()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const fileInputRef = useRef(null)
-  const toastTimer = useRef(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
-
-  const showToast = useCallback((msg) => {
-    setToastMsg(msg)
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = setTimeout(() => setToastMsg(null), 3500)
-  }, [])
-
-  const handleFileSelect = useCallback(
-    async (e) => {
-      const incoming = Array.from(e.target.files || [])
-      e.target.value = '' // allow re-selecting the same file later
-      if (incoming.length === 0) return
-      const result = validateAttachmentFiles(incoming, pendingAttachments.length)
-      if (result.error) {
-        showToast(result.error)
-        return
-      }
-      try {
-        const read = await Promise.all(
-          incoming.map(async (file) => ({
-            id: newAttachmentId(),
-            name: file.name,
-            mediaType: file.type,
-            size: file.size,
-            base64: await fileToBase64(file),
-          })),
-        )
-        setPendingAttachments((prev) => [...prev, ...read])
-      } catch {
-        showToast('Could not read the selected file.')
-      }
-    },
-    [pendingAttachments.length, showToast],
-  )
-
-  const handleRemovePending = useCallback((id) => {
-    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
-  }, [])
 
   const refreshHistory = useCallback(() => {
     setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -176,9 +132,6 @@ export default function ChatPage() {
     })
   }, [])
 
-  // Clear the validation/cap toast timer on unmount.
-  useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), [])
-
   const fireMessage = useCallback(async (rawText, attachments = []) => {
     if (generating) return
     const text = rawText.trim() || (attachments.length ? 'Please review the attached file(s).' : '')
@@ -195,7 +148,7 @@ export default function ChatPage() {
         }
         refs = attachments.map(toAttachmentRef)
       } catch (err) {
-        showToast(err?.message || 'Could not store the attachment.')
+        showAttachToast(err?.message || 'Could not store the attachment.')
         return
       }
     }
@@ -270,14 +223,14 @@ export default function ChatPage() {
       buildSuggestionFiredRef.current = true
       setTimeout(() => setShowBuildModal(true), 600)
     }
-  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory, showToast])
+  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory, showAttachToast])
 
   const handleSend = () => {
     const text = input.trim()
     const attachments = pendingAttachments
     if (!text && attachments.length === 0) return
     setInput('')
-    setPendingAttachments([])
+    clearPending()
 
     if (!activeChatId) {
       const id = newConversation(text || 'Attachment')
@@ -479,7 +432,7 @@ export default function ChatPage() {
                       )}
                       <span className="truncate max-w-[10rem]">{a.name}</span>
                       <button
-                        onClick={() => handleRemovePending(a.id)}
+                        onClick={() => removePending(a.id)}
                         className="text-neutral hover:text-danger transition"
                         title="Remove"
                       >
@@ -538,9 +491,9 @@ export default function ChatPage() {
       </div>
 
       {/* Attachment validation / cap toast */}
-      {toastMsg && (
+      {attachToast && (
         <div className="fixed bottom-6 right-6 z-50 bg-white border border-bial-border rounded-xl shadow-xl px-4 py-3 text-sm text-tertiary font-medium max-w-xs">
-          {toastMsg}
+          {attachToast}
         </div>
       )}
 

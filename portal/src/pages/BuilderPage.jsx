@@ -8,8 +8,9 @@ import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
 import AttachmentChips from '../components/AttachmentChips'
 import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { buildContentBlocks, contentToText, getAttachment, putAttachment } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, validateAttachmentFiles, fileToBase64, newAttachmentId, toAttachmentRef } from '../utils/attachmentInput'
+import { ACCEPT_ATTR, toAttachmentRef } from '../utils/attachmentInput'
 import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
 
@@ -131,17 +132,17 @@ export default function BuilderPage() {
   const [previewCode, setPreviewCode] = useState(null)
   const [generationStage, setGenerationStage] = useState(0)
   const [toast, setToast] = useState({ stage: 0, done: false, visible: false })
-  const [pendingAttachments, setPendingAttachments] = useState([])
-  const [attachToast, setAttachToast] = useState(null)
   const [builds, setBuilds] = useState([])
   const [showBuilds, setShowBuilds] = useState(false)
+
+  const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
+    usePendingAttachments()
 
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const fileInputRef = useRef(null)
   const timerRefs = useRef([])
   const toastTimer = useRef(null)
-  const attachToastTimer = useRef(null)
   const buildIdRef = useRef(null) // the active build being persisted
 
   const refreshBuilds = useCallback(() => {
@@ -152,46 +153,7 @@ export default function BuilderPage() {
     return () => {
       timerRefs.current.forEach(clearTimeout)
       if (toastTimer.current) clearTimeout(toastTimer.current)
-      if (attachToastTimer.current) clearTimeout(attachToastTimer.current)
     }
-  }, [])
-
-  const showAttachToast = useCallback((msg) => {
-    setAttachToast(msg)
-    if (attachToastTimer.current) clearTimeout(attachToastTimer.current)
-    attachToastTimer.current = setTimeout(() => setAttachToast(null), 3500)
-  }, [])
-
-  const handleFileSelect = useCallback(
-    async (e) => {
-      const incoming = Array.from(e.target.files || [])
-      e.target.value = ''
-      if (incoming.length === 0) return
-      const result = validateAttachmentFiles(incoming, pendingAttachments.length)
-      if (result.error) {
-        showAttachToast(result.error)
-        return
-      }
-      try {
-        const read = await Promise.all(
-          incoming.map(async (file) => ({
-            id: newAttachmentId(),
-            name: file.name,
-            mediaType: file.type,
-            size: file.size,
-            base64: await fileToBase64(file),
-          })),
-        )
-        setPendingAttachments((prev) => [...prev, ...read])
-      } catch {
-        showAttachToast('Could not read the selected file.')
-      }
-    },
-    [pendingAttachments.length, showAttachToast],
-  )
-
-  const handleRemovePending = useCallback((id) => {
-    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
   useEffect(() => {
@@ -335,7 +297,7 @@ export default function BuilderPage() {
     const attachments = pendingAttachments
     if ((!text && attachments.length === 0) || generating) return
     setInput('')
-    setPendingAttachments([])
+    clearPending()
 
     // Persist attachment BYTES to the shared IndexedDB store; the message keeps
     // only refs. A cap/storage error aborts the send.
@@ -549,7 +511,7 @@ export default function BuilderPage() {
                       <img src={`data:${a.mediaType};base64,${a.base64}`} alt={a.name} className="h-6 w-6 object-cover rounded" />
                     )}
                     <span className="truncate max-w-[7rem]">{a.name}</span>
-                    <button onClick={() => handleRemovePending(a.id)} className="text-neutral hover:text-danger transition" title="Remove">
+                    <button onClick={() => removePending(a.id)} className="text-neutral hover:text-danger transition" title="Remove">
                       <X size={11} />
                     </button>
                   </div>

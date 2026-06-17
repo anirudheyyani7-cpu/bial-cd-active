@@ -88,4 +88,13 @@ describe('mongo env guard', () => {
     const { getMongoClient } = await import('../cosmos.js')
     await expect(getMongoClient()).rejects.toThrow(/Missing required Mongo env var/)
   })
+
+  it('getUsageCollection rejects with a clear error when MONGODB_USAGE_COLLECTION is missing', async () => {
+    process.env.MONGODB_URI = 'mongodb://localhost:27017/?directConnection=true'
+    process.env.MONGODB_DATABASE = 'citizen_portal'
+    delete process.env.MONGODB_USAGE_COLLECTION
+    vi.resetModules()
+    const { getUsageCollection } = await import('../cosmos.js')
+    await expect(getUsageCollection()).rejects.toThrow(/Missing required Mongo env var/)
+  })
 })

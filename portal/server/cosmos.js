@@ -16,6 +16,7 @@ import { MongoClient } from 'mongodb'
 
 let client = null
 let usersCollection = null
+let usageCollection = null
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -54,8 +55,25 @@ export async function getUsersCollection() {
   return usersCollection
 }
 
+/**
+ * Resolve the pre-created `daily_token_usage` collection (cached after first
+ * call). Like the users collection, it is provisioned out-of-band in Data
+ * Explorer — this only connects and returns the handle, never creates anything.
+ * Documents are keyed by `_id` = `${username}:${IST-date}` for single-document
+ * point reads on the per-request usage gate.
+ */
+export async function getUsageCollection() {
+  if (usageCollection) return usageCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_USAGE_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  usageCollection = db.collection(collectionId)
+  return usageCollection
+}
+
 /** Test hook: drop cached handles so a fresh client/collection is built. */
 export function _resetMongo() {
   client = null
   usersCollection = null
+  usageCollection = null
 }

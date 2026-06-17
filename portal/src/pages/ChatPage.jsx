@@ -15,7 +15,7 @@ import {
   buildPromptFromHistory,
   relativeTime,
 } from '../utils/chatHistory'
-import { buildContentBlocks, contentToText, getAttachment, putAttachment } from '../utils/attachmentStore'
+import { assembleApiMessages, contentToText, putAttachment } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, toAttachmentRef } from '../utils/attachmentInput'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal.
@@ -132,11 +132,13 @@ export default function ChatPage() {
     })
   }, [])
 
-  const fireMessage = useCallback(async (rawText, attachments = []) => {
+  const fireMessage = useCallback(async (rawText, attachments = [], explicitChatId) => {
     if (generating) return
     const text = rawText.trim() || (attachments.length ? 'Please review the attached file(s).' : '')
     if (!text && attachments.length === 0) return
-    const currentChatId = activeChatId
+    // A brand-new chat passes its id explicitly: setActiveChatId hasn't committed
+    // yet when handleSend schedules this, so the activeChatId closure is stale.
+    const currentChatId = explicitChatId ?? activeChatId
 
     // Persist attachment BYTES to IndexedDB (never localStorage); the message
     // keeps only lightweight refs. A cap/storage error aborts the send.
@@ -168,14 +170,7 @@ export default function ChatPage() {
     // Assemble the API messages: a turn with attachment refs becomes a
     // ContentBlock[] (files before text, bytes re-read from the store); a plain
     // turn stays a string. The server forwards the blocks untouched.
-    const apiMessages = await Promise.all(
-      [...messagesRef.current, userMsg].map(async (m) => ({
-        role: m.role,
-        content: m.attachments?.length
-          ? await buildContentBlocks(contentToText(m.content), m.attachments, getAttachment)
-          : m.content,
-      })),
-    )
+    const apiMessages = await assembleApiMessages([...messagesRef.current, userMsg])
 
     const assistantId = `msg_${Date.now()}_a`
     let assistantText = ''
@@ -236,9 +231,9 @@ export default function ChatPage() {
       const id = newConversation(text || 'Attachment')
       setActiveChatId(id)
       navigate(`/workspace/chat/${id}`, { replace: true })
-      // fireMessage will be called by the activeChatId effect? No — we need to fire it directly here
-      // since the effect only fires for initial messages from location.state
-      setTimeout(() => fireMessage(text, attachments), 0)
+      // Pass the new id explicitly — the activeChatId state hasn't committed yet,
+      // so fireMessage's closure would otherwise persist against a null chat id.
+      setTimeout(() => fireMessage(text, attachments, id), 0)
     } else {
       fireMessage(text, attachments)
     }

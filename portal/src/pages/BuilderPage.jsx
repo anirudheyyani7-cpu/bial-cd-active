@@ -9,7 +9,7 @@ import LivePreview from '../components/LivePreview'
 import AttachmentChips from '../components/AttachmentChips'
 import { useClaudeAPI } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
-import { buildContentBlocks, contentToText, getAttachment, putAttachment } from '../utils/attachmentStore'
+import { assembleApiMessages, contentToText, putAttachment } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, toAttachmentRef } from '../utils/attachmentInput'
 import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
@@ -144,6 +144,7 @@ export default function BuilderPage() {
   const timerRefs = useRef([])
   const toastTimer = useRef(null)
   const buildIdRef = useRef(null) // the active build being persisted
+  const initFiredRef = useRef(false) // fire-once guard for the initial-create effect
 
   const refreshBuilds = useCallback(() => {
     setBuilds(loadBuilds().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -186,6 +187,8 @@ export default function BuilderPage() {
   // the user turn, generate, and switch the URL to the resumable :buildId form.
   useEffect(() => {
     if (buildId) return // the resume effect owns this case
+    if (initFiredRef.current) return // fire-once: StrictMode/remount must not create a 2nd build or 2nd generation
+    initFiredRef.current = true
     if (initialPrompt) {
       const id = newBuild(initialPrompt, contextRef.current)
       buildIdRef.current = id
@@ -249,18 +252,12 @@ export default function BuilderPage() {
     // attachment turn into a ContentBlock[] (files before text). No separate
     // re-append of the latest turn — that would duplicate it (and its images).
     const realMessages = currentMessages.filter((m) => !m.isStage && m.id !== 'welcome')
-    const apiMessages = await Promise.all(
-      realMessages.map(async (m) => ({
-        role: m.role,
-        content: m.attachments?.length
-          ? await buildContentBlocks(contentToText(m.content), m.attachments, getAttachment)
-          : m.content,
-      })),
-    )
+    const apiMessages = await assembleApiMessages(realMessages)
 
     const result = await sendMessage(
       apiMessages,
       (_, full) => {
+        if (buildIdRef.current !== activeBuildId) return // user switched builds mid-stream
         const code = extractPreviewCode(full)
         if (code) setPreviewCode(code)
       },
@@ -269,11 +266,9 @@ export default function BuilderPage() {
 
     clearTimers()
 
-    const finalCode = extractPreviewCode(result || '')
-    if (finalCode) setPreviewCode(finalCode)
-
     // Persist the REAL assistant result (with code) so a resume can re-extract
-    // the preview. Stage/welcome bubbles are never persisted.
+    // the preview. Stage/welcome bubbles are never persisted. Attributed to the
+    // build this run started on, regardless of any later switch.
     if (activeBuildId && result) {
       appendBuilderMessage(activeBuildId, {
         id: `msg_${Date.now()}_a`,
@@ -283,6 +278,13 @@ export default function BuilderPage() {
       })
       refreshBuilds()
     }
+
+    // If the user switched to a different build while this one was generating,
+    // don't clobber the now-displayed build with this run's preview/stages/toast.
+    if (buildIdRef.current !== activeBuildId) return
+
+    const finalCode = extractPreviewCode(result || '')
+    if (finalCode) setPreviewCode(finalCode)
 
     setGenerationStage(5)
     addStage(4)

@@ -34,6 +34,12 @@ const DEFAULT_DIST = path.join(__dirname, 'dist')
 // override + system_config table are deferred to the FastAPI backend.
 const DEFAULT_DAILY_TOKEN_LIMIT = 1_000_000
 
+// Server-side ceiling on a single response's output. The client never asks for
+// more than 16k, but max_tokens arrives in the request body, so clamp it here so
+// one request can't request an arbitrary output size and amplify spend past the
+// daily gate (which only reconciles AFTER a turn completes).
+const MAX_OUTPUT_TOKENS = 16_000
+
 /**
  * Allowlisted attachment media types → the magic-number prefix the decoded
  * bytes must start with. The relay validates BOTH (declared type ∈ allowlist AND
@@ -221,7 +227,7 @@ export function createApp({
 
       stream = await claudeClient.messages.stream({
         model: model || 'claude-opus-4-7',
-        max_tokens: max_tokens || 16000,
+        max_tokens: Math.min(Math.max(1, Number(max_tokens) || MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS),
         system,
         messages,
       })

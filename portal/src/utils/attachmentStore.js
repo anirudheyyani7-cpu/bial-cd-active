@@ -88,12 +88,17 @@ function del(db, key) {
 export async function putAttachment({ id, base64, mediaType, size }) {
   const user = currentUser()
   const db = await openDB()
+  // Adjust the running total by the DELTA vs any existing record for this id, so
+  // re-putting the same id (overwrite, no new storage) doesn't double-count and
+  // inflate the total toward false-positive cap rejections.
+  const existing = await get(db, id)
+  const delta = size - (existing?.size || 0)
   const meta = (await get(db, metaId(user))) || { id: metaId(user), user, total: 0 }
-  if (meta.total + size > TOTAL_CAP) {
+  if (meta.total + delta > TOTAL_CAP) {
     throw new AttachmentCapError('Attachment storage is full. Remove some attachments and try again.')
   }
   await put(db, { id, user, base64, mediaType, size })
-  meta.total += size
+  meta.total += delta
   await put(db, meta)
 }
 
@@ -185,4 +190,21 @@ export function contentToText(content) {
     .filter((b) => b?.type === 'text')
     .map((b) => b.text)
     .join('\n')
+}
+
+/**
+ * Map a conversation's messages to the API `{ role, content }` shape, turning a
+ * turn that carries attachment refs into a ContentBlock[] (bytes re-read from
+ * the store, files before text) and leaving plain turns as strings. Shared by
+ * both chat surfaces so the assembly can't drift between them.
+ */
+export async function assembleApiMessages(messages, getBytes = getAttachment) {
+  return Promise.all(
+    messages.map(async (m) => ({
+      role: m.role,
+      content: m.attachments?.length
+        ? await buildContentBlocks(contentToText(m.content), m.attachments, getBytes)
+        : m.content,
+    })),
+  )
 }

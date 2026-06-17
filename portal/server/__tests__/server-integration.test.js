@@ -306,6 +306,13 @@ describe('daily token limit enforcement', () => {
     const res = await request(makeServer()).get('/api/usage/today')
     expect(res.status).toBe(401)
   })
+
+  it('clamps a client-supplied max_tokens to the server ceiling (16000)', async () => {
+    const app2 = makeServer()
+    await auth(request(app2).post('/api/claude')).send({ max_tokens: 999999, messages: [{ role: 'user', content: 'hi' }] })
+    expect(claudeStream).toHaveBeenCalledOnce()
+    expect(claudeStream.mock.calls[0][0].max_tokens).toBe(16000) // not the requested 999999
+  })
 })
 
 describe('attachment validation + body size', () => {
@@ -365,6 +372,34 @@ describe('attachment validation + body size', () => {
     })
     expect(res.status).toBe(200)
     expect(claudeStream).toHaveBeenCalledOnce()
+  })
+
+  it('accepts valid JPEG, GIF and WebP magic bytes', async () => {
+    const cases = [
+      ['image/jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]).toString('base64')],
+      ['image/gif', Buffer.from('GIF89a').toString('base64')],
+      ['image/webp', Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP')]).toString('base64')],
+    ]
+    for (const [mediaType, data] of cases) {
+      const res = await auth(request(makeServer()).post('/api/claude')).send({ messages: [imageMsg(mediaType, data)] })
+      expect(res.status, mediaType).toBe(200)
+    }
+  })
+
+  it('passes a non-WebP RIFF container declared as image/webp (documented interim tradeoff)', async () => {
+    // WebP validation only checks the leading "RIFF"; a WAV is also RIFF. The
+    // upstream API re-validates. This asserts the accepted behaviour explicitly.
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVE')]).toString('base64')
+    const res = await auth(request(makeServer()).post('/api/claude')).send({ messages: [imageMsg('image/webp', wav)] })
+    expect(res.status).toBe(200)
+  })
+
+  it('rejects a malformed attachment source (no base64 data) with 400', async () => {
+    const res = await auth(request(makeServer()).post('/api/claude')).send({
+      messages: [{ role: 'user', content: [{ type: 'image', source: null }] }],
+    })
+    expect(res.status).toBe(400)
+    expect(claudeStream).not.toHaveBeenCalled()
   })
 
   it('accepts a >100 KB body on /api/claude (route limit is 35 MB, not the 100 KB global)', async () => {

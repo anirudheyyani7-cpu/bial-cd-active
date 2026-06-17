@@ -8,6 +8,7 @@ import {
   clearForUser,
   buildContentBlocks,
   contentToText,
+  assembleApiMessages,
   AttachmentCapError,
 } from '../attachmentStore.js'
 
@@ -50,6 +51,18 @@ describe('attachmentStore — bytes', () => {
 
     expect(await getAttachment('c2')).toBeNull() // not stored
     expect(await getTotalSize('cap@x')).toBe(CAP) // unchanged
+  })
+
+  it('does not double-count the running total when the same id is re-put', async () => {
+    setUser('reput@x')
+    await putAttachment({ id: 'r1', base64: 'AA==', mediaType: 'image/png', size: 100 })
+    expect(await getTotalSize('reput@x')).toBe(100)
+    // Re-put the same id (overwrite, no new storage) — total must stay at the delta.
+    await putAttachment({ id: 'r1', base64: 'BB==', mediaType: 'image/png', size: 100 })
+    expect(await getTotalSize('reput@x')).toBe(100)
+    // Re-put with a larger size adjusts by the difference only.
+    await putAttachment({ id: 'r1', base64: 'CC==', mediaType: 'image/png', size: 150 })
+    expect(await getTotalSize('reput@x')).toBe(150)
   })
 
   it('maintains an O(1) running total across put/delete and isolates it per user', async () => {
@@ -103,6 +116,39 @@ describe('attachmentStore — content-block helpers', () => {
     expect(
       contentToText([{ type: 'image', source: {} }, { type: 'text', text: 'line1' }, { type: 'text', text: 'line2' }]),
     ).toBe('line1\nline2')
+  })
+
+  it('buildContentBlocks skips a ref whose bytes are missing (no null-data block)', async () => {
+    const getBytes = async (id) => (id === 'present' ? 'DATA' : null)
+    const blocks = await buildContentBlocks(
+      'caption',
+      [
+        { id: 'gone', mediaType: 'image/png' },
+        { id: 'present', mediaType: 'image/png' },
+      ],
+      getBytes,
+    )
+    // Only the present image block + the text block; the missing one is dropped.
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toMatchObject({ type: 'image', source: { data: 'DATA' } })
+    expect(blocks[1]).toEqual({ type: 'text', text: 'caption' })
+  })
+
+  it('assembleApiMessages maps string turns through and attachment turns to blocks', async () => {
+    const getBytes = async () => 'IMGDATA'
+    const out = await assembleApiMessages(
+      [
+        { role: 'user', content: 'plain question' },
+        { role: 'assistant', content: 'plain answer' },
+        { role: 'user', content: 'look at this', attachments: [{ id: 'a', mediaType: 'image/png' }] },
+      ],
+      getBytes,
+    )
+    expect(out[0]).toEqual({ role: 'user', content: 'plain question' })
+    expect(out[1]).toEqual({ role: 'assistant', content: 'plain answer' })
+    expect(Array.isArray(out[2].content)).toBe(true)
+    expect(out[2].content[0]).toMatchObject({ type: 'image', source: { data: 'IMGDATA' } }) // file first
+    expect(out[2].content[1]).toEqual({ type: 'text', text: 'look at this' }) // text last
   })
 })
 

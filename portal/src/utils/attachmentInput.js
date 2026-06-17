@@ -11,6 +11,10 @@ export const ACCEPT_ATTR = ALLOWED_MEDIA_TYPES.join(',')
 
 export const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4 MB on the original File.size
 export const MAX_FILES_PER_MESSAGE = 5
+// Cumulative cap across a whole conversation (all turns). Distinct from the
+// per-message cap above and the per-user 50 MB IndexedDB store cap; checked at
+// send time where the full conversation is visible.
+export const MAX_ATTACHMENTS_PER_CONVERSATION = 20
 
 export const WORD_REJECT_MSG = "Word docs aren't supported — please save as PDF and re-upload."
 
@@ -38,6 +42,21 @@ export function validateAttachmentFiles(incoming, currentCount = 0) {
     }
     if (file.size > MAX_FILE_SIZE) {
       return { error: `"${file.name}" exceeds the 4 MB limit.` }
+    }
+  }
+  return { ok: true }
+}
+
+/**
+ * Validate that adding `incomingCount` attachments won't push the conversation
+ * over the cumulative per-conversation cap. `existingCount` is the number of
+ * attachment refs already persisted across the conversation's messages. Returns
+ * `{ error }` (distinct wording from the storage-full message) or `{ ok: true }`.
+ */
+export function validateConversationAttachmentCap(existingCount = 0, incomingCount = 0) {
+  if (existingCount + incomingCount > MAX_ATTACHMENTS_PER_CONVERSATION) {
+    return {
+      error: `This conversation has reached its limit of ${MAX_ATTACHMENTS_PER_CONVERSATION} attachments. Start a new chat to add more.`,
     }
   }
   return { ok: true }

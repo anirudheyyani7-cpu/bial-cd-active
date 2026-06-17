@@ -229,7 +229,9 @@ describe('AE6: second login invalidates the first', () => {
     // device B is the active session; refresh it first to prove it holds.
     const bRefresh = await request(app).post('/api/auth/refresh').send({ refreshToken: deviceB.body.refreshToken })
     expect(bRefresh.status).toBe(200)
-    // device A's stale token no longer matches → 401 (and reuse-detection revokes).
+    // device A's stale token no longer matches the hash device B rotated → 401.
+    // (Interim does NOT revoke on mismatch; A fails only because B's login
+    // overwrote the stored hash — single active session.)
     const aRefresh = await request(app).post('/api/auth/refresh').send({ refreshToken: deviceA.body.refreshToken })
     expect(aRefresh.status).toBe(401)
   })

@@ -355,6 +355,18 @@ describe('attachment validation + body size', () => {
     expect(claudeStream).not.toHaveBeenCalled()
   })
 
+  it('rejects a cross-type block (document declared with an image media_type) with 400', async () => {
+    // A document block must be application/pdf. image/png in a document block
+    // passes the allowlist + magic check but 400s upstream — reject it cleanly.
+    const res = await auth(request(makeServer()).post('/api/claude')).send({
+      messages: [
+        { role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'image/png', data: PNG_B64 } }] },
+      ],
+    })
+    expect(res.status).toBe(400)
+    expect(claudeStream).not.toHaveBeenCalled()
+  })
+
   it('accepts a valid PNG image block and streams', async () => {
     const res = await auth(request(makeServer()).post('/api/claude')).send({ messages: [imageMsg('image/png', PNG_B64)] })
     expect(res.status).toBe(200)
@@ -386,12 +398,13 @@ describe('attachment validation + body size', () => {
     }
   })
 
-  it('passes a non-WebP RIFF container declared as image/webp (documented interim tradeoff)', async () => {
-    // WebP validation only checks the leading "RIFF"; a WAV is also RIFF. The
-    // upstream API re-validates. This asserts the accepted behaviour explicitly.
+  it('rejects a non-WebP RIFF container declared as image/webp (WAV/AVI share the RIFF prefix)', async () => {
+    // RIFF alone also matches WAV/AVI; the validator additionally requires the
+    // "WEBP" form-type at offset 8, so a WAV declared as image/webp is rejected.
     const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVE')]).toString('base64')
     const res = await auth(request(makeServer()).post('/api/claude')).send({ messages: [imageMsg('image/webp', wav)] })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(400)
+    expect(claudeStream).not.toHaveBeenCalled()
   })
 
   it('rejects a malformed attachment source (no base64 data) with 400', async () => {

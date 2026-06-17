@@ -7,10 +7,12 @@ import {
 import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
 import AttachmentChips from '../components/AttachmentChips'
-import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import AttachmentLightbox from '../components/AttachmentLightbox'
+import { useClaudeAPI, buildSystemPrompt, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
-import { assembleApiMessages, contentToText, putAttachment } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef } from '../utils/attachmentInput'
+import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap } from '../utils/attachmentInput'
+import { openPdf } from '../utils/attachmentViewer'
 import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
 
@@ -124,7 +126,7 @@ export default function BuilderPage() {
     hasSchema: location.state?.hasSchema || false,
     uploadedFiles: location.state?.uploadedFiles || [],
   })
-  const { sendMessage } = useClaudeAPI()
+  const { sendMessage, error } = useClaudeAPI()
 
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -134,6 +136,7 @@ export default function BuilderPage() {
   const [toast, setToast] = useState({ stage: 0, done: false, visible: false })
   const [builds, setBuilds] = useState([])
   const [showBuilds, setShowBuilds] = useState(false)
+  const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
 
   const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
     usePendingAttachments()
@@ -145,6 +148,12 @@ export default function BuilderPage() {
   const toastTimer = useRef(null)
   const buildIdRef = useRef(null) // the active build being persisted
   const initFiredRef = useRef(false) // fire-once guard for the initial-create effect
+
+  // Running context-length estimate → 'ok' | 'warn' | 'full'. The builder's
+  // system prompt includes any uploaded reference files, so size it from the
+  // real prompt. Drives the guardrail banner + send-disable below.
+  const ctxTokens = estimateConversationTokens(messages, buildSystemPrompt(contextRef.current))
+  const ctxLevel = ctxTokens >= CONTEXT_HARD_LIMIT ? 'full' : ctxTokens >= CONTEXT_SOFT_LIMIT ? 'warn' : 'ok'
 
   const refreshBuilds = useCallback(() => {
     setBuilds(loadBuilds().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -266,10 +275,22 @@ export default function BuilderPage() {
 
     clearTimers()
 
+    // A null result means the send failed (429/network) or was aborted. Don't
+    // persist anything and don't fake the success toast/stage; any error message
+    // surfaces via the `error` banner above the input. Only reset the UI if this
+    // run still owns the view (no mid-run build switch).
+    if (result == null) {
+      if (buildIdRef.current === activeBuildId) {
+        setGenerating(false)
+        setToast({ stage: 0, done: false, visible: false })
+      }
+      return
+    }
+
     // Persist the REAL assistant result (with code) so a resume can re-extract
     // the preview. Stage/welcome bubbles are never persisted. Attributed to the
     // build this run started on, regardless of any later switch.
-    if (activeBuildId && result) {
+    if (activeBuildId) {
       appendBuilderMessage(activeBuildId, {
         id: `msg_${Date.now()}_a`,
         role: 'assistant',
@@ -283,7 +304,7 @@ export default function BuilderPage() {
     // don't clobber the now-displayed build with this run's preview/stages/toast.
     if (buildIdRef.current !== activeBuildId) return
 
-    const finalCode = extractPreviewCode(result || '')
+    const finalCode = extractPreviewCode(result)
     if (finalCode) setPreviewCode(finalCode)
 
     setGenerationStage(5)
@@ -298,6 +319,19 @@ export default function BuilderPage() {
     const text = input.trim()
     const attachments = pendingAttachments
     if ((!text && attachments.length === 0) || generating) return
+
+    // Guardrails run BEFORE clearing the composer so an aborted send keeps the
+    // user's draft + pending files. Context full → hard stop (send is also
+    // disabled in the UI). Per-conversation attachment cap → distinct toast.
+    if (ctxLevel === 'full') return
+    if (attachments.length > 0) {
+      const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
+      if (cap.error) {
+        showAttachToast(cap.error)
+        return
+      }
+    }
+
     setInput('')
     clearPending()
 
@@ -342,11 +376,13 @@ export default function BuilderPage() {
   const handleSelectBuild = (id) => {
     setShowBuilds(false)
     if (id === buildIdRef.current) return
+    setViewer(null)
     navigate(`/workspace/builder/${id}`)
   }
 
   const handleNewBuild = () => {
     setShowBuilds(false)
+    setViewer(null)
     buildIdRef.current = null
     navigate('/workspace/builder', { replace: true, state: {} })
     clearTimers()
@@ -499,6 +535,27 @@ export default function BuilderPage() {
 
           {/* Input */}
           <div className="p-3 border-t border-bial-border space-y-2">
+            {error && (
+              <div className="text-[11px] text-danger bg-danger/5 border border-danger/20 rounded-lg px-2.5 py-1.5">
+                {error}
+              </div>
+            )}
+            {/* Context-length guardrail: warn as it grows, hard-stop at the window */}
+            {ctxLevel === 'full' ? (
+              <div className="text-[11px] text-danger bg-danger/5 border border-danger/20 rounded-lg px-2.5 py-1.5">
+                <p className="mb-1">This build conversation has reached its maximum length.</p>
+                <button onClick={handleNewBuild} className="font-bold underline">
+                  Start new build
+                </button>
+              </div>
+            ) : ctxLevel === 'warn' ? (
+              <div className="text-[11px] text-tertiary bg-warning/10 border border-warning/30 rounded-lg px-2.5 py-1.5">
+                <p className="mb-1">This build conversation is getting long.</p>
+                <button onClick={handleNewBuild} className="font-bold text-primary underline">
+                  Start new build
+                </button>
+              </div>
+            ) : null}
             {/* Pending attachment preview row */}
             {pendingAttachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -508,9 +565,22 @@ export default function BuilderPage() {
                     className="flex items-center gap-1 bg-bial-bg border border-bial-border rounded-lg px-1.5 py-1 text-[11px] text-tertiary"
                   >
                     {a.mediaType === 'application/pdf' ? (
-                      <FileText size={11} className="text-primary flex-shrink-0" />
+                      <button
+                        type="button"
+                        onClick={() => openPdf(a.base64, a.name)}
+                        title={`Open ${a.name}`}
+                        className="flex-shrink-0 text-primary hover:opacity-80 transition"
+                      >
+                        <FileText size={11} />
+                      </button>
                     ) : (
-                      <img src={`data:${a.mediaType};base64,${a.base64}`} alt={a.name} className="h-6 w-6 object-cover rounded" />
+                      <img
+                        src={`data:${a.mediaType};base64,${a.base64}`}
+                        alt={a.name}
+                        title={`View ${a.name}`}
+                        onClick={() => setViewer({ name: a.name, src: `data:${a.mediaType};base64,${a.base64}` })}
+                        className="h-6 w-6 object-cover rounded cursor-zoom-in hover:opacity-90 transition"
+                      />
                     )}
                     <span className="truncate max-w-[7rem]">{a.name}</span>
                     <button onClick={() => removePending(a.id)} className="text-neutral hover:text-danger transition" title="Remove">
@@ -549,7 +619,7 @@ export default function BuilderPage() {
               />
               <button
                 onClick={handleSend}
-                disabled={(!input.trim() && pendingAttachments.length === 0) || generating}
+                disabled={(!input.trim() && pendingAttachments.length === 0) || generating || ctxLevel === 'full'}
                 className="flex-shrink-0 w-9 h-9 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition"
               >
                 <Send size={13} />
@@ -582,6 +652,11 @@ export default function BuilderPage() {
         <div className="fixed bottom-6 left-6 z-50 bg-white border border-bial-border rounded-xl shadow-xl px-4 py-3 text-sm text-tertiary font-medium max-w-xs">
           {attachToast}
         </div>
+      )}
+
+      {/* Pending-attachment image lightbox */}
+      {viewer && (
+        <AttachmentLightbox name={viewer.name} src={viewer.src} onClose={() => setViewer(null)} />
       )}
     </div>
   )

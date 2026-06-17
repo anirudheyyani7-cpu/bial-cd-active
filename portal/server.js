@@ -41,6 +41,87 @@ const DEFAULT_DAILY_TOKEN_LIMIT = 1_000_000
 const MAX_OUTPUT_TOKENS = 16_000
 
 /**
+ * Validate the optional DAILY_TOKEN_LIMIT env at boot. parseInt is lenient
+ * ('1e6'→1, '20mb'→20) and the `|| default` fallback masks NaN/0/negatives, so a
+ * typo could silently set a 1-token cap or 429 everyone. Fail loud instead; unset
+ * is fine (createApp falls back to DEFAULT_DAILY_TOKEN_LIMIT).
+ */
+function validateDailyTokenLimit() {
+  const raw = process.env.DAILY_TOKEN_LIMIT
+  if (raw === undefined || raw.trim() === '') return
+  if (!/^\d+$/.test(raw.trim()) || Number(raw.trim()) <= 0) {
+    throw new Error(`Invalid DAILY_TOKEN_LIMIT="${raw}": must be a positive integer number of tokens (e.g. 1000000).`)
+  }
+}
+
+// Relaxed CSP for the ISOLATED builder-preview iframe only (served at /preview).
+// The generated app needs CDN React/Babel/Tailwind + inline eval (Babel compiles
+// JSX at runtime). Scoping this to its own route keeps the main app's CSP strict —
+// the preview runs in a sandboxed, same-origin frame, never touching the SPA policy.
+const PREVIEW_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: https:",
+  "connect-src 'self' https://unpkg.com https://cdn.tailwindcss.com",
+  "frame-ancestors 'self'", // so the same-origin SPA can frame this renderer
+].join('; ')
+
+// Static renderer shell for the builder preview. Receives the generated JSX via
+// postMessage (never stored server-side, never in the URL) and renders it,
+// re-rendering on each refinement. Babel transforms JSX at runtime; the compiled
+// code runs in an IIFE-scoped inline <script> (the classic live-preview pattern,
+// same as the prior `type="text/babel"` approach) so repeated renders don't
+// collide on the PreviewApp binding. Errors render back through React (no innerHTML).
+const PREVIEW_SHELL = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{primary:'#00818A',secondary:'#D9A036',tertiary:'#1A2B34'},fontFamily:{manrope:['Manrope','sans-serif']}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>body{margin:0;font-family:'Manrope',sans-serif;background:#fff;}</style>
+</head><body>
+<div id="root"></div>
+<script>
+  var root = ReactDOM.createRoot(document.getElementById('root'));
+  function renderPreview(code){
+    try {
+      // The model may emit ES module syntax; strip imports/exports (React is a
+      // global here) and compile JSX with the CLASSIC runtime so Babel doesn't
+      // inject an \`import ... "react/jsx-runtime"\` that a classic <script> can't run.
+      var cleaned = String(code)
+        .replace(/import\\s+[^;]*?from\\s*['"][^'"]+['"];?/g, '')
+        .replace(/import\\s*['"][^'"]+['"];?/g, '')
+        .replace(/export\\s+default\\s+/g, '')
+        .replace(/export\\s+/g, '');
+      var compiled = Babel.transform(cleaned, { presets: [['react', { runtime: 'classic' }]] }).code;
+      var s = document.createElement('script');
+      s.textContent = '(function(){' +
+        'var {useState,useEffect,useRef,useMemo,useCallback,useReducer,useContext,Fragment}=React;' +
+        compiled + '\\n;window.__PreviewApp=(typeof PreviewApp!=="undefined")?PreviewApp:null;})();';
+      document.body.appendChild(s);
+      document.body.removeChild(s);
+      if (!window.__PreviewApp) throw new Error('Generated code did not define a PreviewApp component.');
+      root.render(React.createElement(window.__PreviewApp));
+    } catch (err) {
+      root.render(React.createElement('pre',
+        { style: { color: '#b91c1c', padding: '16px', whiteSpace: 'pre-wrap', font: '13px monospace' } },
+        'Preview error:\\n' + String((err && err.message) || err)));
+    }
+  }
+  window.addEventListener('message', function (e) {
+    if (e.data && typeof e.data.previewCode === 'string') renderPreview(e.data.previewCode);
+  });
+  if (window.parent) window.parent.postMessage({ previewReady: true }, '*');
+</script>
+</body></html>`
+
+/**
  * Allowlisted attachment media types → the magic-number prefix the decoded
  * bytes must start with. The relay validates BOTH (declared type ∈ allowlist AND
  * bytes match) before forwarding, so a client can't smuggle arbitrary bytes
@@ -72,10 +153,27 @@ function validateAttachments(messages) {
     const content = msg?.content
     if (!Array.isArray(content)) continue // string content = no attachments (unchanged path)
     for (const block of content) {
+      if (block?.type === 'text') {
+        // A text block must carry a string; a malformed one would 400 upstream
+        // after the relay commits, so reject it cleanly here.
+        if (typeof block.text !== 'string') return 'Invalid attachment: malformed text block.'
+        continue
+      }
       if (block?.type !== 'image' && block?.type !== 'document') continue
       const src = block.source
       if (!src || src.type !== 'base64' || typeof src.data !== 'string') {
         return 'Invalid attachment: malformed source.'
+      }
+      // Enforce block.type ↔ media_type: a document block must be a PDF and an
+      // image block an image/* type. A mismatched pair (e.g. a document block
+      // carrying image/png) would pass the allowlist + magic check below but
+      // Anthropic rejects it after the relay commits — surface a clean 400 here.
+      const isPdf = src.media_type === 'application/pdf'
+      if (block.type === 'document' && !isPdf) {
+        return `A document attachment must be a PDF, not ${src.media_type}.`
+      }
+      if (block.type === 'image' && isPdf) {
+        return 'An image attachment must be an image type, not application/pdf.'
       }
       const magic = ALLOWED_MEDIA[src.media_type]
       if (!magic) {
@@ -84,6 +182,12 @@ function validateAttachments(messages) {
       const prefix = Buffer.from(src.data.slice(0, 24), 'base64') // 24 b64 chars → 18 bytes, plenty
       if (!magicMatches(prefix, magic)) {
         return `Attachment bytes do not match the declared type ${src.media_type}.`
+      }
+      // WebP is a RIFF container; the leading "RIFF" also matches WAV/AVI, so
+      // additionally require the "WEBP" form-type at offset 8. (This is a prefix
+      // sniff — bytes past the prefix are forwarded unvalidated.)
+      if (src.media_type === 'image/webp' && prefix.toString('latin1', 8, 12) !== 'WEBP') {
+        return 'Attachment bytes do not match the declared type image/webp.'
       }
     }
   }
@@ -143,6 +247,9 @@ export function createApp({
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
           frameAncestors: ["'none'"],
+          // The builder preview is framed from the same-origin /preview route
+          // (covered by default-src 'self'); that route ships its own relaxed CSP
+          // so the generated app can run without loosening this strict policy.
         },
       },
       // Allow the SPA's own assets to load cross-context where needed.
@@ -287,6 +394,15 @@ export function createApp({
     }
   })
 
+  // Isolated builder-preview renderer. The generated app runs inside a sandboxed
+  // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the
+  // main app's policy stays strict. Code is delivered via postMessage, never here.
+  app.get('/preview', (_req, res) => {
+    res.setHeader('Content-Security-Policy', PREVIEW_CSP)
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN')
+    res.type('html').send(PREVIEW_SHELL)
+  })
+
   // --- Static SPA + history fallback (AFTER all /api routes) -------------
   app.use(express.static(distDir))
   app.get('*', (req, res, next) => {
@@ -300,6 +416,7 @@ export function createApp({
 /** Production entry: init Cosmos, build the app with real deps, and listen. */
 async function start() {
   validateTokenConfig() // fail loud on a bad JWT secret / token TTL before boot
+  validateDailyTokenLimit() // fail loud on a malformed DAILY_TOKEN_LIMIT before boot
   const collection = await getUsersCollection() // connect to the pre-created users collection; fails loud
   const repo = createUsersRepo(collection)
   const usageRepo = createUsageRepo(await getUsageCollection()) // pre-created usage collection; fails loud

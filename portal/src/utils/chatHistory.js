@@ -1,5 +1,5 @@
 import { getStoredUser } from './auth.js'
-import { contentToText } from './attachmentStore.js'
+import { contentToText, deleteAttachment } from './attachmentStore.js'
 
 // Conversations are namespaced per user so switching accounts shows the right
 // chats. The pre-namespacing global key is exactly the prefix (no `:user`
@@ -15,8 +15,12 @@ function storageKey() {
 export function loadHistory() {
   try {
     // Abandon the legacy shared-terminal global bucket: migrating it would
-    // attribute multiple prior users' chats to whoever logs in first.
-    localStorage.removeItem(LEGACY_GLOBAL_KEY)
+    // attribute multiple prior users' chats to whoever logs in first. Guard with
+    // an existence check so the removeItem write fires only when the key is
+    // actually present (this runs inside every append round-trip), not on every call.
+    if (localStorage.getItem(LEGACY_GLOBAL_KEY) !== null) {
+      localStorage.removeItem(LEGACY_GLOBAL_KEY)
+    }
     const raw = localStorage.getItem(storageKey())
     return raw ? JSON.parse(raw) : []
   } catch {
@@ -25,7 +29,11 @@ export function loadHistory() {
 }
 
 export function saveHistory(conversations) {
-  localStorage.setItem(storageKey(), JSON.stringify(conversations))
+  try {
+    localStorage.setItem(storageKey(), JSON.stringify(conversations))
+  } catch {
+    // storage full / unavailable — best-effort, mirrors builderHistory.saveBuilds.
+  }
 }
 
 export function newConversation(firstMessage) {
@@ -62,6 +70,12 @@ export function getConversation(chatId) {
 }
 
 export function deleteConversation(chatId) {
+  const conv = getConversation(chatId)
+  // Free this conversation's attachment bytes so the per-user IndexedDB store
+  // (and its running-total cap) isn't a one-way ratchet — deleting a chat
+  // reclaims its space. Best-effort, fire-and-forget: deleteAttachment
+  // self-handles its own errors and the bytes are non-critical.
+  conv?.messages.forEach((m) => m.attachments?.forEach((a) => deleteAttachment(a.id)))
   saveHistory(loadHistory().filter((c) => c.id !== chatId))
 }
 

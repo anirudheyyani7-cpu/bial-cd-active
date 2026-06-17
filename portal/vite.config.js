@@ -10,6 +10,12 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      // The builder preview renderer is served by Express (with its own relaxed
+      // CSP); proxy it so the live preview works in dev too.
+      '/preview': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
     },
   },
 })

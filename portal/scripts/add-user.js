@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url'
 import { hashPassword } from '../server/auth/password.js'
 import { createUsersRepo } from '../server/users-repo.js'
 import { getUsersCollection } from '../server/cosmos.js'
-import { generatePassword } from './seed-users.js'
+import { generatePassword, assertValidUsername } from './seed-users.js'
 
 function parseArgs(argv) {
   const args = { _: [] }
@@ -30,6 +30,7 @@ function parseArgs(argv) {
 
 /** Upsert one user, returning the (printable-once) password and status. */
 export async function addUser(repo, { username, email, name, role = 'user', password } = {}) {
+  assertValidUsername(username)
   const existing = await repo.findByUsername(username)
   const pw = password || generatePassword()
   const now = new Date().toISOString()

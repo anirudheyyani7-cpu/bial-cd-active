@@ -14,7 +14,7 @@
  */
 import { MongoClient } from 'mongodb'
 
-let client = null
+let clientPromise = null
 let usersCollection = null
 let usageCollection = null
 
@@ -32,13 +32,23 @@ function requireEnv(name) {
  * instead of on the first login. Fails loud when MONGODB_URI is missing.
  */
 export async function getMongoClient() {
-  if (!client) {
+  if (!clientPromise) {
     const uri = requireEnv('MONGODB_URI')
-    const c = new MongoClient(uri)
-    await c.connect()
-    client = c
+    const c = new MongoClient(uri, {
+      connectTimeoutMS: 10_000,
+      serverSelectionTimeoutMS: 10_000,
+      socketTimeoutMS: 20_000,
+    })
+    // Cache the in-flight connect PROMISE (not just the resolved client) so two
+    // concurrent first-callers share one client instead of racing to build two
+    // (the loser would leak a pool). Reset on failure so a transient connect
+    // error can be retried rather than caching a rejected promise.
+    clientPromise = c.connect().catch((err) => {
+      clientPromise = null
+      throw err
+    })
   }
-  return client
+  return clientPromise
 }
 
 /**
@@ -73,7 +83,7 @@ export async function getUsageCollection() {
 
 /** Test hook: drop cached handles so a fresh client/collection is built. */
 export function _resetMongo() {
-  client = null
+  clientPromise = null
   usersCollection = null
   usageCollection = null
 }

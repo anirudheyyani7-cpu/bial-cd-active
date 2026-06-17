@@ -9,6 +9,7 @@ import {
   buildContentBlocks,
   contentToText,
   assembleApiMessages,
+  countAttachments,
   AttachmentCapError,
 } from '../attachmentStore.js'
 
@@ -149,6 +150,24 @@ describe('attachmentStore — content-block helpers', () => {
     expect(Array.isArray(out[2].content)).toBe(true)
     expect(out[2].content[0]).toMatchObject({ type: 'image', source: { data: 'IMGDATA' } }) // file first
     expect(out[2].content[1]).toEqual({ type: 'text', text: 'look at this' }) // text last
+  })
+})
+
+describe('countAttachments', () => {
+  it('sums attachment refs across all turns', () => {
+    const messages = [
+      { role: 'user', content: 'hi', attachments: [{ id: '1' }, { id: '2' }] },
+      { role: 'assistant', content: 'ok' }, // no attachments key
+      { role: 'user', content: 'more', attachments: [{ id: '3' }] },
+    ]
+    expect(countAttachments(messages)).toBe(3)
+  })
+
+  it('is 0 for empty / attachment-free / non-array inputs', () => {
+    expect(countAttachments([])).toBe(0)
+    expect(countAttachments([{ role: 'user', content: 'x' }])).toBe(0)
+    expect(countAttachments(null)).toBe(0)
+    expect(countAttachments(undefined)).toBe(0)
   })
 })
 

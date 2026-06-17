@@ -4,7 +4,8 @@ import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X
 import ReactMarkdown from 'react-markdown'
 import Navbar from '../components/layout/Navbar'
 import AttachmentChips from '../components/AttachmentChips'
-import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import AttachmentLightbox from '../components/AttachmentLightbox'
+import { useClaudeAPI, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import {
   loadHistory,
@@ -15,8 +16,9 @@ import {
   buildPromptFromHistory,
   relativeTime,
 } from '../utils/chatHistory'
-import { assembleApiMessages, contentToText, putAttachment } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef } from '../utils/attachmentInput'
+import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap } from '../utils/attachmentInput'
+import { openPdf } from '../utils/attachmentViewer'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal.
 
@@ -27,6 +29,7 @@ Guidelines:
 - Help them articulate what their app should do, who will use it, and what data it needs
 - Suggest features based on airport operations context (flight tracking, staff rostering, baggage, gate management, etc.)
 - Keep responses concise and practical — staff are busy
+- If the user attaches images (screenshots, mockups, photos) or PDFs (specs, sample data), examine them and use what they actually show to inform the plan — you can see attachments, so refer to their real content
 - When you feel the requirements are well-defined, summarise the plan and suggest moving to the builder
 
 Do not output code or JSX. Stay focused on requirements gathering and planning.`
@@ -60,9 +63,10 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [generating, setGenerating] = useState(false)
   const [showBuildModal, setShowBuildModal] = useState(false)
+  const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
   const buildSuggestionFiredRef = useRef(false)
 
-  const { sendMessage } = useClaudeAPI()
+  const { sendMessage, error } = useClaudeAPI()
   const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
     usePendingAttachments()
   const bottomRef = useRef(null)
@@ -70,6 +74,11 @@ export default function ChatPage() {
   const fileInputRef = useRef(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+
+  // Running context-length estimate → 'ok' | 'warn' | 'full'. Drives the
+  // guardrail banner + send-disable below. Recomputed each render (cheap).
+  const ctxTokens = estimateConversationTokens(messages, PLANNING_SYSTEM_PROMPT)
+  const ctxLevel = ctxTokens >= CONTEXT_HARD_LIMIT ? 'full' : ctxTokens >= CONTEXT_SOFT_LIMIT ? 'warn' : 'ok'
 
   const refreshHistory = useCallback(() => {
     setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -182,7 +191,7 @@ export default function ChatPage() {
       timestamp: new Date(),
     }])
 
-    await sendMessage(
+    const result = await sendMessage(
       apiMessages,
       (delta) => {
         assistantText += delta
@@ -194,6 +203,16 @@ export default function ChatPage() {
     )
 
     setGenerating(false)
+
+    // A null result means the send failed (429/network) or was aborted. Drop the
+    // optimistic empty assistant bubble so it isn't persisted as content:'' (which
+    // the API rejects on the next turn) and isn't left blank on screen. Any error
+    // message surfaces via the `error` banner above the input.
+    if (result == null) {
+      setMessages((prev) => prev.filter((m) => m.id !== assistantId))
+      return
+    }
+
     refreshHistory()
 
     const finalMsg = {
@@ -224,6 +243,19 @@ export default function ChatPage() {
     const text = input.trim()
     const attachments = pendingAttachments
     if (!text && attachments.length === 0) return
+
+    // Guardrails run BEFORE clearing the composer so an aborted send keeps the
+    // user's draft + pending files. Context full → hard stop (send is also
+    // disabled in the UI). Per-conversation attachment cap → distinct toast.
+    if (ctxLevel === 'full') return
+    if (attachments.length > 0) {
+      const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
+      if (cap.error) {
+        showAttachToast(cap.error)
+        return
+      }
+    }
+
     setInput('')
     clearPending()
 
@@ -240,11 +272,13 @@ export default function ChatPage() {
   }
 
   const handleSelectChat = (id) => {
+    setViewer(null)
     navigate(`/workspace/chat/${id}`)
     buildSuggestionFiredRef.current = false
   }
 
   const handleNewChat = () => {
+    setViewer(null)
     setMessages([])
     setActiveChatId(null)
     buildSuggestionFiredRef.current = false
@@ -408,6 +442,27 @@ export default function ChatPage() {
           {/* Input bar */}
           <div className="bg-white border-t border-bial-border p-4 flex-shrink-0">
             <div className="max-w-3xl mx-auto">
+              {error && (
+                <div className="mb-2 text-xs text-danger bg-danger/5 border border-danger/20 rounded-lg px-3 py-2">
+                  {error}
+                </div>
+              )}
+              {/* Context-length guardrail: warn as it grows, hard-stop at the window */}
+              {ctxLevel === 'full' ? (
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs text-danger bg-danger/5 border border-danger/20 rounded-lg px-3 py-2">
+                  <span>This conversation has reached its maximum length. Start a new chat to keep going.</span>
+                  <button onClick={handleNewChat} className="font-bold underline whitespace-nowrap">
+                    Start new chat
+                  </button>
+                </div>
+              ) : ctxLevel === 'warn' ? (
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs text-tertiary bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+                  <span>This conversation is getting long. For the best results, start a new chat.</span>
+                  <button onClick={handleNewChat} className="font-bold text-primary underline whitespace-nowrap">
+                    New chat
+                  </button>
+                </div>
+              ) : null}
               {/* Pending attachment preview row */}
               {pendingAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
@@ -417,12 +472,21 @@ export default function ChatPage() {
                       className="group relative flex items-center gap-1.5 bg-bial-bg border border-bial-border rounded-lg px-2 py-1.5 text-xs text-tertiary"
                     >
                       {a.mediaType === 'application/pdf' ? (
-                        <FileText size={13} className="text-primary flex-shrink-0" />
+                        <button
+                          type="button"
+                          onClick={() => openPdf(a.base64, a.name)}
+                          title={`Open ${a.name}`}
+                          className="flex-shrink-0 text-primary hover:opacity-80 transition"
+                        >
+                          <FileText size={13} />
+                        </button>
                       ) : (
                         <img
                           src={`data:${a.mediaType};base64,${a.base64}`}
                           alt={a.name}
-                          className="h-8 w-8 object-cover rounded"
+                          title={`View ${a.name}`}
+                          onClick={() => setViewer({ name: a.name, src: `data:${a.mediaType};base64,${a.base64}` })}
+                          className="h-8 w-8 object-cover rounded cursor-zoom-in hover:opacity-90 transition"
                         />
                       )}
                       <span className="truncate max-w-[10rem]">{a.name}</span>
@@ -471,7 +535,7 @@ export default function ChatPage() {
                 />
                 <button
                   onClick={handleSend}
-                  disabled={(!input.trim() && pendingAttachments.length === 0) || generating}
+                  disabled={(!input.trim() && pendingAttachments.length === 0) || generating || ctxLevel === 'full'}
                   className="flex-shrink-0 w-11 h-11 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition shadow-sm"
                 >
                   <Send size={15} />
@@ -484,6 +548,11 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Pending-attachment image lightbox */}
+      {viewer && (
+        <AttachmentLightbox name={viewer.name} src={viewer.src} onClose={() => setViewer(null)} />
+      )}
 
       {/* Attachment validation / cap toast */}
       {attachToast && (

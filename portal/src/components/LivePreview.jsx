@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Monitor, Smartphone, Rocket, RefreshCw, Code2, LayoutTemplate, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -15,36 +15,31 @@ const STAGE_TEXT = [
   'Ready',
 ]
 
-function buildIframeDoc(jsxCode) {
-  return `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8" />
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/lucide-react/dist/umd/lucide-react.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={theme:{extend:{colors:{primary:'#00818A',secondary:'#D9A036',tertiary:'#1A2B34'},fontFamily:{manrope:['Manrope','sans-serif']}}}}</script>
-<style>body{margin:0;font-family:'Manrope',sans-serif;}</style>
-</head><body>
-<div id="root"></div>
-<script type="text/babel">
-${jsxCode}
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(PreviewApp));
-</script>
-</body></html>`
-}
-
 export default function LivePreview({ previewCode, generating, generationStage, prompt }) {
   const navigate = useNavigate()
   const [viewport, setViewport] = useState('Desktop')
   const [showCode, setShowCode] = useState(false)
-  const [iframeSrc, setIframeSrc] = useState(null)
+  const iframeRef = useRef(null)
+  const previewCodeRef = useRef(previewCode)
+  previewCodeRef.current = previewCode
+
+  // The preview renders inside an isolated, same-origin /preview iframe that has
+  // its OWN relaxed CSP (the main app's CSP stays strict). The generated code is
+  // sent in via postMessage — once when the shell signals it's ready (covers the
+  // first load and any remount) and again on every refinement.
+  useEffect(() => {
+    const onMsg = (e) => {
+      if (e.data?.previewReady && previewCodeRef.current && iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage({ previewCode: previewCodeRef.current }, '*')
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [])
 
   useEffect(() => {
-    if (previewCode) {
-      setIframeSrc(`data:text/html,${encodeURIComponent(buildIframeDoc(previewCode))}`)
+    if (previewCode && iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage({ previewCode }, '*')
     }
   }, [previewCode])
 
@@ -148,9 +143,10 @@ export default function LivePreview({ previewCode, generating, generationStage, 
                   </div>
                 </div>
               )}
-              {iframeSrc && (
+              {previewCode && (
                 <iframe
-                  src={iframeSrc}
+                  ref={iframeRef}
+                  src="/preview"
                   className="w-full h-full border-0"
                   title="App Preview"
                   sandbox="allow-scripts"

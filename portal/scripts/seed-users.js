@@ -25,6 +25,20 @@ export function generatePassword(bytes = 18) {
 }
 
 /**
+ * Reject usernames that would break the `${username}:${IST-date}` usage doc _id
+ * keying (plan Decision 3). Usernames are emails today, but guard the creation
+ * path so a `:`/whitespace username can never collide usage rows.
+ */
+export function assertValidUsername(username) {
+  if (typeof username !== 'string' || username.trim() === '') {
+    throw new Error('Username is required.')
+  }
+  if (/[:\s]/.test(username)) {
+    throw new Error(`Invalid username "${username}": it must not contain ':' or whitespace.`)
+  }
+}
+
+/**
  * Upsert the seed users into `repo`.
  * @param {{passwords?: Record<string,string>, rotate?: boolean, users?: object[]}} opts
  * @returns {Promise<Array<{username,role,password,status}>>}
@@ -33,6 +47,7 @@ export function generatePassword(bytes = 18) {
 export async function seedUsers(repo, { users = SEED_USERS, passwords = {}, rotate = false } = {}) {
   const results = []
   for (const u of users) {
+    assertValidUsername(u.username)
     const existing = await repo.findByUsername(u.username)
     const explicit = passwords[u.username]
 

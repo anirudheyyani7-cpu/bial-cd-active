@@ -4,10 +4,12 @@ import {
   Bell, Settings, Search, ChevronDown, LogOut, User,
   CheckCircle, MessageSquare, Shield, Wrench,
   LayoutGrid, Users, FileText, Plus, Inbox,
-  UserCircle, BookOpen, Info, Monitor,
+  UserCircle, BookOpen, Info, Monitor, History,
 } from 'lucide-react'
 import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
 import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
+import { loadHistory, relativeTime } from '../../utils/chatHistory'
+import { loadBuilds } from '../../utils/builderHistory'
 
 const NAV_LINKS = [
   { label: 'My Workspace', to: '/workspace' },
@@ -66,6 +68,7 @@ export default function Navbar() {
   const [searchQuery, setSearchQuery] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
   const [usage, setUsage] = useState(null)
+  const [recents, setRecents] = useState({ chats: [], builds: [] })
   const user = getStoredUser() || {}
 
   const navRef = useRef(null)
@@ -101,6 +104,20 @@ export default function Navbar() {
   }, [])
 
   const toggle = (name) => setActiveDropdown((prev) => (prev === name ? null : name))
+
+  // Load the logged-in user's recent chats + builds (browser-local) when the
+  // history menu opens, so past conversations/builds are one click away from
+  // any page rather than reachable only by URL.
+  const openHistory = () => {
+    if (activeDropdown !== 'history') {
+      const byRecent = (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
+      setRecents({
+        chats: loadHistory().sort(byRecent).slice(0, 6),
+        builds: loadBuilds().sort(byRecent).slice(0, 6),
+      })
+    }
+    toggle('history')
+  }
 
   const showToast = (msg) => {
     setToastMsg(msg)
@@ -264,6 +281,70 @@ export default function Navbar() {
                 </div>
               </div>
             )}
+
+            {/* Recents (chats + builds) */}
+            <div className="relative">
+              <button
+                onClick={openHistory}
+                title="Recent chats & builds"
+                className="p-2 text-neutral hover:text-primary transition rounded-lg hover:bg-surface-muted"
+              >
+                <History size={17} />
+              </button>
+              {activeDropdown === 'history' && (
+                <div className="absolute right-0 top-11 w-72 bg-white rounded-xl border border-bial-border shadow-xl z-50 py-2 max-h-[26rem] overflow-y-auto scrollbar-thin">
+                  <div className="px-4 py-2 flex items-center justify-between border-b border-bial-border">
+                    <p className="text-sm font-bold text-tertiary">Recent</p>
+                    <button
+                      onClick={() => handleNav('/workspace/chat/new')}
+                      className="text-[11px] font-semibold text-primary hover:underline"
+                    >
+                      + New chat
+                    </button>
+                  </div>
+
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-neutral">Chats</p>
+                  {recents.chats.length === 0 ? (
+                    <p className="px-4 py-2 text-xs text-neutral">No conversations yet</p>
+                  ) : (
+                    recents.chats.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => handleNav(`/workspace/chat/${c.id}`)}
+                        className="w-full flex items-center gap-2 px-4 py-2 hover:bg-bial-bg transition text-left"
+                      >
+                        <MessageSquare size={13} className="text-primary flex-shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-xs text-tertiary truncate">{c.title}</span>
+                          <span className="block text-[10px] text-neutral">{relativeTime(c.updatedAt)}</span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-neutral border-t border-bial-border mt-1">
+                    Builds
+                  </p>
+                  {recents.builds.length === 0 ? (
+                    <p className="px-4 py-2 text-xs text-neutral">No builds yet</p>
+                  ) : (
+                    recents.builds.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => handleNav(`/workspace/builder/${b.id}`)}
+                        className="w-full flex items-center gap-2 px-4 py-2 hover:bg-bial-bg transition text-left"
+                      >
+                        <Wrench size={13} className="text-secondary flex-shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-xs text-tertiary truncate">{b.title}</span>
+                          <span className="block text-[10px] text-neutral">{relativeTime(b.updatedAt)}</span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Bell */}
             <div className="relative">

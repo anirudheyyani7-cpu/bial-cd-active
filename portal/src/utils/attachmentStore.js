@@ -55,6 +55,12 @@ function openDB() {
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
+  }).catch((err) => {
+    // Don't cache a rejected open: a transient failure (private mode, quota,
+    // storage disabled) would otherwise make every later call fail for the tab's
+    // lifetime. Reset so the next call retries a fresh open.
+    dbPromise = null
+    throw err
   })
   return dbPromise
 }
@@ -183,6 +189,12 @@ export async function buildContentBlocks(text, attachments, getBytes = getAttach
   return blocks
 }
 
+/** Total attachment refs across a conversation's messages (count, not bytes). */
+export function countAttachments(messages) {
+  if (!Array.isArray(messages)) return 0
+  return messages.reduce((n, m) => n + (m?.attachments?.length || 0), 0)
+}
+
 /** Extract human-readable text from string OR ContentBlock[] content. */
 export function contentToText(content) {
   if (typeof content === 'string') return content
@@ -199,12 +211,19 @@ export function contentToText(content) {
  * both chat surfaces so the assembly can't drift between them.
  */
 export async function assembleApiMessages(messages, getBytes = getAttachment) {
+  // Only the NEWEST turn's attachment bytes are inflated into the request body.
+  // Re-base64-ing every historical attachment on every send grows the body
+  // unbounded across turns and eventually blows past the 35MB route / 32MB API
+  // ceiling (the per-message caps don't bound the per-conversation total). Older
+  // attachment turns send their text only — the model already saw those files in
+  // the turn they were sent.
+  const lastIdx = messages.length - 1
   return Promise.all(
-    messages.map(async (m) => ({
+    messages.map(async (m, i) => ({
       role: m.role,
-      content: m.attachments?.length
+      content: i === lastIdx && m.attachments?.length
         ? await buildContentBlocks(contentToText(m.content), m.attachments, getBytes)
-        : m.content,
+        : contentToText(m.content),
     })),
   )
 }

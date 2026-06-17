@@ -6,8 +6,11 @@
  *   Argon2 verify runs when the user is absent to flatten the timing oracle.
  * - The refresh token self-describes its user (lookup hint only); the SHA-256
  *   hash comparison is the real authorization check, done in constant time.
- * - Refresh rotates on use; any non-matching token revokes the session (real
- *   reuse detection). Single active session per user.
+ * - Refresh rotates on use. A non-matching token returns a generic 401 but does
+ *   NOT revoke the stored session (interim: a forged/stale token from an
+ *   unauthenticated caller must not be able to evict a user's live session — see
+ *   the /refresh handler). Single active session per user: a new login overwrites
+ *   the prior refresh hash, which is what invalidates the older device.
  * - Logout is gated by requireAuth so the user comes from the verified `sub`.
  *
  * `repo` is injected so routes are testable against a fake users-repo.

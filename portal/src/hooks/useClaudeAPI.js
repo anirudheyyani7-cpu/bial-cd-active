@@ -12,12 +12,14 @@ Your role:
 - Always maintain the BIAL design system: Primary #00818A, Secondary #D9A036, Tertiary #1A2B34
 - Use Tailwind CSS classes only (no custom CSS)
 - Generated apps should be practical for airport operations: flight tracking, staff rostering, baggage, gate management, equipment maintenance, etc.
+- If the user attaches images (screenshots, mockups) or PDFs (specs, sample data), examine them and build the app to match what they show — you can see attachments, so use their real content
 
 When generating a preview app:
 1. Wrap JSX in \`\`\`jsx:preview ... \`\`\`
 2. Always return a self-contained functional React component named \`PreviewApp\`
 3. Use only inline Tailwind classes
 4. Include realistic placeholder data relevant to the airport context
+5. Do NOT use import or export statements — React and its hooks (useState, useEffect, useRef, etc.) are available globally. Do not use external libraries (no icon packs); use inline SVG or text/emoji if needed.
 
 When refining, acknowledge what changed and suggest next steps.`
 
@@ -40,7 +42,7 @@ const THEME_LABELS = {
   kiosk: 'Kiosk / Public Display — large text, high contrast, minimal interaction, touch-friendly',
 }
 
-function buildSystemPrompt(context) {
+export function buildSystemPrompt(context) {
   if (!context) return SYSTEM_PROMPT
   if (context.systemPrompt) return context.systemPrompt
   const { dataSource, theme, hasSchema, uploadedFiles = [] } = context
@@ -64,7 +66,13 @@ function buildSystemPrompt(context) {
   return `${SYSTEM_PROMPT}\n\n## Session Context\nThe user configured these options before starting. Honour them throughout the entire conversation:\n${lines.join('\n')}`
 }
 
-const INPUT_TOKEN_BUDGET = 50_000
+// Backstop for the silent truncation in truncateMessages. Raised from the old
+// 50k cost-control cap to sit under the 200k model window minus the 16k
+// max_tokens output budget, so an allowed near-limit send still fits the window
+// (no API "prompt too long"). The user-facing guardrail (CONTEXT_* below) warns
+// at 150k and blocks at 200k; this backstop only trims for a user who pushed
+// past the visible 150k warning.
+const INPUT_TOKEN_BUDGET = 180_000
 const CHARS_PER_TOKEN = 4
 // Flat nominal budget cost for one attachment block. The real token cost is
 // counted server-side; this only keeps the client-side history estimate from
@@ -96,6 +104,29 @@ export function truncateMessages(messages) {
     rest.shift()
   }
   return [first, ...rest]
+}
+
+// Conversation context-length guardrail, anchored to the 200k Opus 4.7 window.
+// The chat surfaces warn at SOFT (non-blocking banner + "new chat" CTA) and
+// hard-block at HARD (banner + disabled send). Both sit clear of the silent
+// truncation backstop so an un-warned user is never surprised by a dropped turn.
+export const CONTEXT_SOFT_LIMIT = 150_000
+export const CONTEXT_HARD_LIMIT = 200_000
+
+/**
+ * Estimate a conversation's input size the way assembleApiMessages actually
+ * sends it: text for every turn + the system prompt + the newest turn's
+ * attachment bytes (older turns send text only, so their attachments aren't
+ * re-counted). Heuristic (4 chars/token, flat per-file nominal) used only to
+ * drive the warn/block UI — never to gate the API call directly.
+ */
+export function estimateConversationTokens(messages, systemText = '') {
+  if (!Array.isArray(messages)) return 0
+  const textTokens = estimateTokens(messages)
+  const systemTokens = Math.ceil((systemText?.length || 0) / CHARS_PER_TOKEN)
+  const last = messages[messages.length - 1]
+  const lastAttachments = last?.attachments?.length || 0
+  return textTokens + systemTokens + lastAttachments * NOMINAL_FILE_TOKENS
 }
 
 const AUTH_FAILED = 'AUTH_REFRESH_FAILED'

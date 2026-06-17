@@ -11,6 +11,7 @@
  *     welcome bubbles are excluded by the caller before persisting.
  */
 import { getStoredUser } from './auth.js'
+import { deleteAttachment } from './attachmentStore.js'
 
 const STORAGE_KEY_PREFIX = 'bial_builder_history'
 
@@ -60,5 +61,9 @@ export function getBuild(buildId) {
 }
 
 export function deleteBuild(buildId) {
+  const build = getBuild(buildId)
+  // Free this build's attachment bytes (see chatHistory.deleteConversation) so
+  // the shared per-user IndexedDB cap isn't a one-way ratchet. Best-effort.
+  build?.messages.forEach((m) => m.attachments?.forEach((a) => deleteAttachment(a.id)))
   saveBuilds(loadBuilds().filter((b) => b.id !== buildId))
 }

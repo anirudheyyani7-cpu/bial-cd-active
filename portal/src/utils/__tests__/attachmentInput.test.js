@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
   validateAttachmentFiles,
+  validateConversationAttachmentCap,
   fileToBase64,
   toAttachmentRef,
   WORD_REJECT_MSG,
   MAX_FILE_SIZE,
   MAX_FILES_PER_MESSAGE,
+  MAX_ATTACHMENTS_PER_CONVERSATION,
 } from '../attachmentInput.js'
 
 // validateAttachmentFiles only reads name/type/size, so plain objects suffice
@@ -37,6 +39,26 @@ describe('validateAttachmentFiles', () => {
     expect(validateAttachmentFiles([file('a.png', 'image/png')], 0)).toEqual({ ok: true })
     expect(validateAttachmentFiles([file('b.jpg', 'image/jpeg')], 0)).toEqual({ ok: true })
     expect(validateAttachmentFiles([file('c.pdf', 'application/pdf')], 0)).toEqual({ ok: true })
+  })
+})
+
+describe('validateConversationAttachmentCap', () => {
+  it('accepts when the cumulative total stays within the cap', () => {
+    expect(validateConversationAttachmentCap(0, 5)).toEqual({ ok: true })
+    expect(validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION - 1, 1)).toEqual({ ok: true })
+  })
+
+  it('rejects when an incoming batch would cross the cap', () => {
+    const res = validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION, 1)
+    expect(res.error).toMatch(new RegExp(`limit of ${MAX_ATTACHMENTS_PER_CONVERSATION} attachments`))
+    // a batch that crosses the boundary is rejected wholesale
+    expect(validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION - 1, 3).error).toBeTruthy()
+  })
+
+  it('uses wording distinct from the per-message and storage-full caps', () => {
+    const res = validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION, 1)
+    expect(res.error).toMatch(/this conversation/i)
+    expect(res.error).not.toMatch(/per message/i)
   })
 })
 

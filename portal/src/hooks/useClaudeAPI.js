@@ -66,12 +66,30 @@ function buildSystemPrompt(context) {
 
 const INPUT_TOKEN_BUDGET = 50_000
 const CHARS_PER_TOKEN = 4
+// Flat nominal budget cost for one attachment block. The real token cost is
+// counted server-side; this only keeps the client-side history estimate from
+// either crashing on an array or under-counting a multi-MB file as ~2 tokens.
+const NOMINAL_FILE_TOKENS = 1_600
 
-function estimateTokens(messages) {
-  return messages.reduce((sum, m) => sum + Math.ceil((m.content || '').length / CHARS_PER_TOKEN), 0)
+// content is `string | ContentBlock[]`. Never call `.length` on a non-string:
+// for an array, sum the text blocks and add a flat per-file nominal (NOT the
+// element count) for each image/document block.
+function estimateContentTokens(content) {
+  if (typeof content === 'string') return Math.ceil(content.length / CHARS_PER_TOKEN)
+  if (!Array.isArray(content)) return 0
+  let tokens = 0
+  for (const block of content) {
+    if (block?.type === 'text') tokens += Math.ceil((block.text || '').length / CHARS_PER_TOKEN)
+    else tokens += NOMINAL_FILE_TOKENS
+  }
+  return tokens
 }
 
-function truncateMessages(messages) {
+export function estimateTokens(messages) {
+  return messages.reduce((sum, m) => sum + estimateContentTokens(m.content), 0)
+}
+
+export function truncateMessages(messages) {
   if (estimateTokens(messages) <= INPUT_TOKEN_BUDGET) return messages
   const [first, ...rest] = messages
   while (rest.length > 1 && estimateTokens([first, ...rest]) > INPUT_TOKEN_BUDGET) {

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getAccessToken, refreshAccessToken, clearSession, SIGNOUT_REASONS } from '../utils/auth.js'
+import { notifyUsageChanged } from '../utils/usage.js'
 
 const SYSTEM_PROMPT = `You are Citizen Developer AI, an expert app generation and refinement specialist for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic.
 
@@ -128,6 +129,17 @@ export async function fetchClaudeStream({
       throw err
     }
     const errBody = await response.json().catch(() => ({}))
+    // Daily token limit: surface a user-ready message (the existing setError
+    // path renders it). A 429 WITHOUT the known code falls through to the
+    // generic error so other rate limits keep their server message.
+    if (response.status === 429 && errBody.error?.code === 'daily_token_limit_exceeded') {
+      const limit = errBody.error?.limit
+      throw new Error(
+        limit
+          ? `You've hit your daily limit of ${limit.toLocaleString('en-US')} tokens. It resets at midnight IST.`
+          : "You've hit your daily token limit. It resets at midnight IST.",
+      )
+    }
     throw new Error(errBody.error?.message || `API error ${response.status}`)
   }
 
@@ -193,6 +205,8 @@ export function useClaudeAPI() {
           signal: controller.signal,
         })
         setLoading(false)
+        // A turn completed → server-side usage advanced; nudge the navbar badge.
+        notifyUsageChanged()
         return fullText
       } catch (err) {
         setLoading(false)

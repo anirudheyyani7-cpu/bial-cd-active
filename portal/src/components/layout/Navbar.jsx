@@ -6,7 +6,8 @@ import {
   LayoutGrid, Users, FileText, Plus, Inbox,
   UserCircle, BookOpen, Info, Monitor,
 } from 'lucide-react'
-import { getStoredUser, getAccessToken, clearSession, SIGNOUT_REASONS } from '../../utils/auth'
+import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
+import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 
 const NAV_LINKS = [
   { label: 'My Workspace', to: '/workspace' },
@@ -64,12 +65,34 @@ export default function Navbar() {
   const [activeDropdown, setActiveDropdown] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
+  const [usage, setUsage] = useState(null)
   const user = getStoredUser() || {}
 
   const navRef = useRef(null)
   const toastTimer = useRef(null)
 
   useClickOutside(navRef, () => setActiveDropdown(null))
+
+  // Daily token usage badge: fetch on mount and after each completed turn
+  // (notifyUsageChanged). Gated on isAuthenticated so it never fires during
+  // logout; null (no token / 401) hides the badge.
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      if (!isAuthenticated()) {
+        if (active) setUsage(null)
+        return
+      }
+      const data = await fetchUsageToday()
+      if (active) setUsage(data)
+    }
+    load()
+    const off = onUsageChanged(load)
+    return () => {
+      active = false
+      off()
+    }
+  }, [])
 
   useEffect(() => {
     const onEsc = (e) => { if (e.key === 'Escape') { setActiveDropdown(null); setSearchQuery('') } }
@@ -221,6 +244,26 @@ export default function Navbar() {
                 </div>
               )}
             </div>
+
+            {/* Daily token usage */}
+            {usage && (
+              <div
+                className="hidden md:flex flex-col justify-center px-2.5 mr-0.5 select-none"
+                title={`Daily AI tokens used today · resets at midnight IST`}
+              >
+                <span className="text-[10px] font-semibold text-neutral leading-none whitespace-nowrap">
+                  {usage.used.toLocaleString('en-US')} / {usage.limit.toLocaleString('en-US')} tokens
+                </span>
+                <div className="mt-1 h-1 w-24 rounded-full bg-surface-muted overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      usage.remaining <= 0 ? 'bg-danger' : 'bg-primary'
+                    }`}
+                    style={{ width: `${Math.min(100, usage.limit ? (usage.used / usage.limit) * 100 : 0)}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Bell */}
             <div className="relative">

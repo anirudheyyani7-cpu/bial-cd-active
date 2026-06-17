@@ -76,6 +76,30 @@ describe('fetchClaudeStream', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
   })
 
+  it('a 429 daily-limit response throws a user-ready message naming the limit, never reading the stream', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({
+        error: { code: 'daily_token_limit_exceeded', limit: 1000000, used: 1000000, remaining: 0 },
+      }),
+    })
+    await expect(
+      fetchClaudeStream({ body: { messages: [] }, fetchImpl, getToken: () => 't', refresh: vi.fn() }),
+    ).rejects.toThrow(/1,000,000 tokens/)
+  })
+
+  it('a 429 WITHOUT the known code falls through to the generic error (back-compat)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { message: 'slow down' } }),
+    })
+    await expect(
+      fetchClaudeStream({ body: { messages: [] }, fetchImpl, getToken: () => 't', refresh: vi.fn() }),
+    ).rejects.toThrow('slow down')
+  })
+
   it('a non-401 error surfaces the server message and never refreshes', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,

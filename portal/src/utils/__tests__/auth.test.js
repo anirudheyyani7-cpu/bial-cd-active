@@ -31,9 +31,10 @@ afterEach(() => {
 })
 
 describe('session storage', () => {
-  it('setSession then getters round-trip; clearSession wipes everything and sets a reason', () => {
+  it('setSession then getters round-trip; clearSession wipes tokens/user but PRESERVES chat history', () => {
     setSession({ accessToken: 'a-tok', refreshToken: 'r-tok', user: { username: 'alice', isAdmin: true } })
-    localStorage.setItem('bial_chat_history', '[{"id":1}]')
+    // Per-user namespaced history must survive token expiry / logout (U8).
+    localStorage.setItem('bial_chat_history:alice', '[{"id":1}]')
 
     expect(getAccessToken()).toBe('a-tok')
     expect(getRefreshToken()).toBe('r-tok')
@@ -43,7 +44,7 @@ describe('session storage', () => {
     expect(getAccessToken()).toBeNull()
     expect(getRefreshToken()).toBeNull()
     expect(getStoredUser()).toBeNull()
-    expect(localStorage.getItem('bial_chat_history')).toBeNull()
+    expect(localStorage.getItem('bial_chat_history:alice')).toBe('[{"id":1}]') // history survives
   })
 
   it('consumeSignoutReason returns the reason then clears it (one-time)', () => {

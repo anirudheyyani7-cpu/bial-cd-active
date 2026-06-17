@@ -1,8 +1,23 @@
-const STORAGE_KEY = 'bial_chat_history'
+import { getStoredUser } from './auth.js'
+import { contentToText } from './attachmentStore.js'
+
+// Conversations are namespaced per user so switching accounts shows the right
+// chats. The pre-namespacing global key is exactly the prefix (no `:user`
+// suffix); it is deleted — not migrated — on first load (plan Decision 8).
+const STORAGE_KEY_PREFIX = 'bial_chat_history'
+const LEGACY_GLOBAL_KEY = STORAGE_KEY_PREFIX
+
+function storageKey() {
+  const username = getStoredUser()?.username || '__anon__'
+  return `${STORAGE_KEY_PREFIX}:${username}`
+}
 
 export function loadHistory() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    // Abandon the legacy shared-terminal global bucket: migrating it would
+    // attribute multiple prior users' chats to whoever logs in first.
+    localStorage.removeItem(LEGACY_GLOBAL_KEY)
+    const raw = localStorage.getItem(storageKey())
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
@@ -10,7 +25,7 @@ export function loadHistory() {
 }
 
 export function saveHistory(conversations) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations))
+  localStorage.setItem(storageKey(), JSON.stringify(conversations))
 }
 
 export function newConversation(firstMessage) {
@@ -52,11 +67,13 @@ export function deleteConversation(chatId) {
 
 export function buildPromptFromHistory(messages) {
   const userMessages = messages.filter((m) => m.role === 'user')
-  const goal = userMessages[0]?.content || ''
+  // contentToText so an attachment turn (ContentBlock[]) yields its text, not
+  // "[object Object]", in the Builder handoff transcript.
+  const goal = contentToText(userMessages[0]?.content ?? '')
 
   const contextMessages = messages.slice(-10)
   const transcript = contextMessages
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${contentToText(m.content)}`)
     .join('\n\n')
 
   return `Based on the following planning conversation, build the described application:

@@ -12,7 +12,6 @@ const ACCESS_KEY = 'bial_access_token'
 const REFRESH_KEY = 'bial_refresh_token'
 const USER_KEY = 'bial_user'
 const SIGNOUT_REASON_KEY = 'bial_signout_reason'
-const CHAT_HISTORY_KEY = 'bial_chat_history'
 
 const LOCK_NAME = 'bial_token_refresh'
 const CHANNEL_NAME = 'bial_auth'
@@ -48,15 +47,16 @@ export function setSession({ accessToken, refreshToken, user } = {}) {
 }
 
 /**
- * Wipe all session state. Also clears chat history (shared terminals) and,
- * when `reason` is given, records a one-time signout reason for the login
- * banner (session_expired | logged_out).
+ * Wipe session state (tokens + user). Conversation history is NO LONGER cleared
+ * here: it is namespaced per user (chatHistory.js), so it must survive a
+ * 15-minute access-token expiry mid-session instead of being silently erased.
+ * When `reason` is given, records a one-time signout reason for the login banner
+ * (session_expired | logged_out).
  */
 export function clearSession(reason) {
   localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(REFRESH_KEY)
   localStorage.removeItem(USER_KEY)
-  localStorage.removeItem(CHAT_HISTORY_KEY)
   if (reason) localStorage.setItem(SIGNOUT_REASON_KEY, reason)
 }
 

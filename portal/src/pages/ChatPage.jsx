@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer } from 'lucide-react'
+import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X, FileText } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import Navbar from '../components/layout/Navbar'
+import AttachmentChips from '../components/AttachmentChips'
 import { useClaudeAPI } from '../hooks/useClaudeAPI'
 import {
   loadHistory,
@@ -13,6 +14,14 @@ import {
   buildPromptFromHistory,
   relativeTime,
 } from '../utils/chatHistory'
+import { buildContentBlocks, contentToText, getAttachment, putAttachment } from '../utils/attachmentStore'
+import {
+  ACCEPT_ATTR,
+  validateAttachmentFiles,
+  fileToBase64,
+  newAttachmentId,
+  toAttachmentRef,
+} from '../utils/attachmentInput'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal.
 
@@ -27,14 +36,21 @@ Guidelines:
 
 Do not output code or JSX. Stay focused on requirements gathering and planning.`
 
-function MessageContent({ content, isUser }) {
-  if (isUser) {
-    return <div className="whitespace-pre-wrap break-words">{content}</div>
-  }
+function MessageContent({ content, attachments, isUser }) {
+  // content may be a string or a ContentBlock[]; always derive plain text so
+  // react-markdown / the user div never receives an array → no [object Object].
+  const text = contentToText(content)
   return (
-    <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:text-tertiary prose-ul:pl-4 prose-ol:pl-4">
-      <ReactMarkdown>{content}</ReactMarkdown>
-    </div>
+    <>
+      {attachments?.length > 0 && <AttachmentChips attachments={attachments} />}
+      {isUser ? (
+        <div className="whitespace-pre-wrap break-words">{text}</div>
+      ) : (
+        <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:text-tertiary prose-ul:pl-4 prose-ol:pl-4">
+          <ReactMarkdown>{text}</ReactMarkdown>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -49,13 +65,55 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [generating, setGenerating] = useState(false)
   const [showBuildModal, setShowBuildModal] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState([])
+  const [toastMsg, setToastMsg] = useState(null)
   const buildSuggestionFiredRef = useRef(false)
 
   const { sendMessage } = useClaudeAPI()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const toastTimer = useRef(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+
+  const showToast = useCallback((msg) => {
+    setToastMsg(msg)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToastMsg(null), 3500)
+  }, [])
+
+  const handleFileSelect = useCallback(
+    async (e) => {
+      const incoming = Array.from(e.target.files || [])
+      e.target.value = '' // allow re-selecting the same file later
+      if (incoming.length === 0) return
+      const result = validateAttachmentFiles(incoming, pendingAttachments.length)
+      if (result.error) {
+        showToast(result.error)
+        return
+      }
+      try {
+        const read = await Promise.all(
+          incoming.map(async (file) => ({
+            id: newAttachmentId(),
+            name: file.name,
+            mediaType: file.type,
+            size: file.size,
+            base64: await fileToBase64(file),
+          })),
+        )
+        setPendingAttachments((prev) => [...prev, ...read])
+      } catch {
+        showToast('Could not read the selected file.')
+      }
+    },
+    [pendingAttachments.length, showToast],
+  )
+
+  const handleRemovePending = useCallback((id) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
 
   const refreshHistory = useCallback(() => {
     setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -112,19 +170,41 @@ export default function ChatPage() {
     appendMessage(chatId, {
       id: msg.id,
       role: msg.role,
-      content: msg.content,
+      content: msg.content, // plain text only — attachment bytes never enter localStorage
+      ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
       timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
     })
   }, [])
 
-  const fireMessage = useCallback(async (text) => {
-    if (!text.trim() || generating) return
+  // Clear the validation/cap toast timer on unmount.
+  useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), [])
+
+  const fireMessage = useCallback(async (rawText, attachments = []) => {
+    if (generating) return
+    const text = rawText.trim() || (attachments.length ? 'Please review the attached file(s).' : '')
+    if (!text && attachments.length === 0) return
     const currentChatId = activeChatId
+
+    // Persist attachment BYTES to IndexedDB (never localStorage); the message
+    // keeps only lightweight refs. A cap/storage error aborts the send.
+    let refs = []
+    if (attachments.length > 0) {
+      try {
+        for (const a of attachments) {
+          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
+        }
+        refs = attachments.map(toAttachmentRef)
+      } catch (err) {
+        showToast(err?.message || 'Could not store the attachment.')
+        return
+      }
+    }
 
     const userMsg = {
       id: `msg_${Date.now()}`,
       role: 'user',
-      content: text.trim(),
+      content: text,
+      ...(refs.length ? { attachments: refs } : {}),
       timestamp: new Date(),
     }
 
@@ -132,10 +212,17 @@ export default function ChatPage() {
     persistMessage(currentChatId, userMsg)
     setGenerating(true)
 
-    const apiMessages = [...messagesRef.current, userMsg].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }))
+    // Assemble the API messages: a turn with attachment refs becomes a
+    // ContentBlock[] (files before text, bytes re-read from the store); a plain
+    // turn stays a string. The server forwards the blocks untouched.
+    const apiMessages = await Promise.all(
+      [...messagesRef.current, userMsg].map(async (m) => ({
+        role: m.role,
+        content: m.attachments?.length
+          ? await buildContentBlocks(contentToText(m.content), m.attachments, getAttachment)
+          : m.content,
+      })),
+    )
 
     const assistantId = `msg_${Date.now()}_a`
     let assistantText = ''
@@ -183,22 +270,24 @@ export default function ChatPage() {
       buildSuggestionFiredRef.current = true
       setTimeout(() => setShowBuildModal(true), 600)
     }
-  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory])
+  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory, showToast])
 
   const handleSend = () => {
-    if (!input.trim()) return
     const text = input.trim()
+    const attachments = pendingAttachments
+    if (!text && attachments.length === 0) return
     setInput('')
+    setPendingAttachments([])
 
     if (!activeChatId) {
-      const id = newConversation(text)
+      const id = newConversation(text || 'Attachment')
       setActiveChatId(id)
       navigate(`/workspace/chat/${id}`, { replace: true })
       // fireMessage will be called by the activeChatId effect? No — we need to fire it directly here
       // since the effect only fires for initial messages from location.state
-      setTimeout(() => fireMessage(text), 0)
+      setTimeout(() => fireMessage(text, attachments), 0)
     } else {
-      fireMessage(text)
+      fireMessage(text, attachments)
     }
   }
 
@@ -338,7 +427,7 @@ export default function ChatPage() {
                     ? 'bg-tertiary text-white rounded-tr-sm'
                     : 'bg-white border border-bial-border text-tertiary rounded-tl-sm'
                 }`}>
-                  <MessageContent content={msg.content} isUser={msg.role === 'user'} />
+                  <MessageContent content={msg.content} attachments={msg.attachments} isUser={msg.role === 'user'} />
                   <p className="text-[10px] mt-1.5 opacity-40">
                     {msg.timestamp instanceof Date
                       ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -370,35 +459,90 @@ export default function ChatPage() {
 
           {/* Input bar */}
           <div className="bg-white border-t border-bial-border p-4 flex-shrink-0">
-            <div className="flex gap-3 items-end max-w-3xl mx-auto">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSend()
-                  }
-                }}
-                rows={2}
-                placeholder="Describe what you're thinking… (Shift+Enter for new line)"
-                className="flex-1 resize-none text-sm text-tertiary bg-bial-bg border border-bial-border rounded-xl px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition placeholder:text-gray-300"
-              />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || generating}
-                className="flex-shrink-0 w-11 h-11 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition shadow-sm"
-              >
-                <Send size={15} />
-              </button>
+            <div className="max-w-3xl mx-auto">
+              {/* Pending attachment preview row */}
+              {pendingAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {pendingAttachments.map((a) => (
+                    <div
+                      key={a.id}
+                      className="group relative flex items-center gap-1.5 bg-bial-bg border border-bial-border rounded-lg px-2 py-1.5 text-xs text-tertiary"
+                    >
+                      {a.mediaType === 'application/pdf' ? (
+                        <FileText size={13} className="text-primary flex-shrink-0" />
+                      ) : (
+                        <img
+                          src={`data:${a.mediaType};base64,${a.base64}`}
+                          alt={a.name}
+                          className="h-8 w-8 object-cover rounded"
+                        />
+                      )}
+                      <span className="truncate max-w-[10rem]">{a.name}</span>
+                      <button
+                        onClick={() => handleRemovePending(a.id)}
+                        className="text-neutral hover:text-danger transition"
+                        title="Remove"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-3 items-end">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPT_ATTR}
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={generating}
+                  title="Attach images or PDFs"
+                  className="flex-shrink-0 w-11 h-11 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
+                >
+                  <Paperclip size={15} />
+                </button>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                  rows={2}
+                  placeholder="Describe what you're thinking… (Shift+Enter for new line)"
+                  className="flex-1 resize-none text-sm text-tertiary bg-bial-bg border border-bial-border rounded-xl px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition placeholder:text-gray-300"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={(!input.trim() && pendingAttachments.length === 0) || generating}
+                  className="flex-shrink-0 w-11 h-11 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition shadow-sm"
+                >
+                  <Send size={15} />
+                </button>
+              </div>
             </div>
             <p className="text-[10px] text-center text-neutral/40 uppercase tracking-wider mt-2">
-              Press Enter to send · Shift+Enter for new line
+              Press Enter to send · Shift+Enter for new line · Images & PDFs supported
             </p>
           </div>
         </div>
       </div>
+
+      {/* Attachment validation / cap toast */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-white border border-bial-border rounded-xl shadow-xl px-4 py-3 text-sm text-tertiary font-medium max-w-xs">
+          {toastMsg}
+        </div>
+      )}
 
       {/* Build suggestion modal */}
       {showBuildModal && (

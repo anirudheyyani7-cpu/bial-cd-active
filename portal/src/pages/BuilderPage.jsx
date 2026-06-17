@@ -1,9 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Send, ArrowLeft, Sparkles, User, Brain, LayoutTemplate, Code2, Monitor, CheckCircle, X } from 'lucide-react'
+import {
+  Send, ArrowLeft, Sparkles, User, Brain, LayoutTemplate, Code2, Monitor, CheckCircle, X, Paperclip, FileText,
+} from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
+import AttachmentChips from '../components/AttachmentChips'
 import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import { buildContentBlocks, contentToText, getAttachment, putAttachment } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, validateAttachmentFiles, fileToBase64, newAttachmentId, toAttachmentRef } from '../utils/attachmentInput'
 
 const STAGE_MESSAGES = [
   'Got it! Analyzing your requirements and identifying the right data sources...',
@@ -26,13 +31,16 @@ const REFINEMENT_CHIPS = [
   'Switch to mobile layout',
 ]
 
-function extractPreviewCode(text) {
+export function extractPreviewCode(text) {
   if (!text) return null
   const match = text.match(/```jsx:preview\s*([\s\S]*?)```/)
   return match ? match[1].trim() : null
 }
 
-function filterCodeFromContent(content) {
+// Expects a STRING. Callers must run content through contentToText first so an
+// attachment turn (ContentBlock[]) never reaches `.replace` (which throws on an
+// array). Exported for unit coverage of that contract.
+export function filterCodeFromContent(content) {
   if (!content) return ''
   return content
     .replace(/```jsx:preview[\s\S]*?```/g, '')
@@ -72,12 +80,15 @@ function Toast({ stage, done, visible, onDismiss }) {
   )
 }
 
-function MessageContent({ content }) {
-  const filtered = filterCodeFromContent(content)
-  if (!filtered) return null
+function MessageContent({ content, attachments }) {
+  // content may be a ContentBlock[] (attachment turn). Derive text FIRST —
+  // filterCodeFromContent does content.replace(...) and throws on an array.
+  const filtered = filterCodeFromContent(contentToText(content))
+  if (!filtered && !attachments?.length) return null
   const parts = filtered.split(/(\*\*[^*]+\*\*|\n)/g)
   return (
     <span>
+      {attachments?.length > 0 && <AttachmentChips attachments={attachments} />}
       {parts.map((part, i) => {
         if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>
         if (part === '\n') return <br key={i} />
@@ -105,17 +116,60 @@ export default function BuilderPage() {
   const [previewCode, setPreviewCode] = useState(null)
   const [generationStage, setGenerationStage] = useState(0)
   const [toast, setToast] = useState({ stage: 0, done: false, visible: false })
+  const [pendingAttachments, setPendingAttachments] = useState([])
+  const [attachToast, setAttachToast] = useState(null)
 
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const fileInputRef = useRef(null)
   const timerRefs = useRef([])
   const toastTimer = useRef(null)
+  const attachToastTimer = useRef(null)
 
   useEffect(() => {
     return () => {
       timerRefs.current.forEach(clearTimeout)
       if (toastTimer.current) clearTimeout(toastTimer.current)
+      if (attachToastTimer.current) clearTimeout(attachToastTimer.current)
     }
+  }, [])
+
+  const showAttachToast = useCallback((msg) => {
+    setAttachToast(msg)
+    if (attachToastTimer.current) clearTimeout(attachToastTimer.current)
+    attachToastTimer.current = setTimeout(() => setAttachToast(null), 3500)
+  }, [])
+
+  const handleFileSelect = useCallback(
+    async (e) => {
+      const incoming = Array.from(e.target.files || [])
+      e.target.value = ''
+      if (incoming.length === 0) return
+      const result = validateAttachmentFiles(incoming, pendingAttachments.length)
+      if (result.error) {
+        showAttachToast(result.error)
+        return
+      }
+      try {
+        const read = await Promise.all(
+          incoming.map(async (file) => ({
+            id: newAttachmentId(),
+            name: file.name,
+            mediaType: file.type,
+            size: file.size,
+            base64: await fileToBase64(file),
+          })),
+        )
+        setPendingAttachments((prev) => [...prev, ...read])
+      } catch {
+        showAttachToast('Could not read the selected file.')
+      }
+    },
+    [pendingAttachments.length, showAttachToast],
+  )
+
+  const handleRemovePending = useCallback((id) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
   useEffect(() => {
@@ -127,7 +181,7 @@ export default function BuilderPage() {
         timestamp: new Date(),
       }
       setMessages([userMsg])
-      generate(initialPrompt, [userMsg])
+      generate([userMsg])
     } else {
       setMessages([{
         id: 'welcome',
@@ -147,7 +201,7 @@ export default function BuilderPage() {
     timerRefs.current = []
   }
 
-  const generate = async (userText, currentMessages) => {
+  const generate = async (currentMessages) => {
     setGenerating(true)
     setGenerationStage(1)
     clearTimers()
@@ -173,17 +227,27 @@ export default function BuilderPage() {
     timerRefs.current.push(setTimeout(() => { setGenerationStage(3); addStage(2); setToast({ stage: 3, done: false, visible: true }) }, 6000))
     timerRefs.current.push(setTimeout(() => { setGenerationStage(4); addStage(3); setToast({ stage: 4, done: false, visible: true }) }, 10000))
 
-    const history = currentMessages
-      .filter((m) => !m.isStage && m.id !== 'welcome')
-      .map((m) => ({ role: m.role, content: m.content }))
+    // currentMessages already includes the new user turn; map the real
+    // (non-stage, non-welcome) messages to the API shape, turning any
+    // attachment turn into a ContentBlock[] (files before text). No separate
+    // re-append of the latest turn — that would duplicate it (and its images).
+    const realMessages = currentMessages.filter((m) => !m.isStage && m.id !== 'welcome')
+    const apiMessages = await Promise.all(
+      realMessages.map(async (m) => ({
+        role: m.role,
+        content: m.attachments?.length
+          ? await buildContentBlocks(contentToText(m.content), m.attachments, getAttachment)
+          : m.content,
+      })),
+    )
 
     const result = await sendMessage(
-      [...history, { role: 'user', content: userText }],
+      apiMessages,
       (_, full) => {
         const code = extractPreviewCode(full)
         if (code) setPreviewCode(code)
       },
-      contextRef.current
+      contextRef.current,
     )
 
     clearTimers()
@@ -201,12 +265,36 @@ export default function BuilderPage() {
 
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || generating) return
+    const attachments = pendingAttachments
+    if ((!text && attachments.length === 0) || generating) return
     setInput('')
-    const userMsg = { id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() }
+    setPendingAttachments([])
+
+    // Persist attachment BYTES to the shared IndexedDB store; the message keeps
+    // only refs. A cap/storage error aborts the send.
+    let refs = []
+    if (attachments.length > 0) {
+      try {
+        for (const a of attachments) {
+          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
+        }
+        refs = attachments.map(toAttachmentRef)
+      } catch (err) {
+        showAttachToast(err?.message || 'Could not store the attachment.')
+        return
+      }
+    }
+
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text || 'Please review the attached file(s).',
+      ...(refs.length ? { attachments: refs } : {}),
+      timestamp: new Date(),
+    }
     const updated = [...messages, userMsg]
     setMessages(updated)
-    await generate(text, updated)
+    await generate(updated)
   }
 
   return (
@@ -257,7 +345,7 @@ export default function BuilderPage() {
                       ? 'bg-tertiary text-white rounded-tr-sm'
                       : 'bg-bial-bg text-tertiary rounded-tl-sm'
                   }`}>
-                    <MessageContent content={msg.content} />
+                    <MessageContent content={msg.content} attachments={msg.attachments} />
                     <p className="text-[10px] mt-1 opacity-40">
                       {msg.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
@@ -297,7 +385,45 @@ export default function BuilderPage() {
 
           {/* Input */}
           <div className="p-3 border-t border-bial-border space-y-2">
+            {/* Pending attachment preview row */}
+            {pendingAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {pendingAttachments.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-1 bg-bial-bg border border-bial-border rounded-lg px-1.5 py-1 text-[11px] text-tertiary"
+                  >
+                    {a.mediaType === 'application/pdf' ? (
+                      <FileText size={11} className="text-primary flex-shrink-0" />
+                    ) : (
+                      <img src={`data:${a.mediaType};base64,${a.base64}`} alt={a.name} className="h-6 w-6 object-cover rounded" />
+                    )}
+                    <span className="truncate max-w-[7rem]">{a.name}</span>
+                    <button onClick={() => handleRemovePending(a.id)} className="text-neutral hover:text-danger transition" title="Remove">
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="flex gap-2 items-end">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT_ATTR}
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={generating}
+                title="Attach images or PDFs"
+                className="flex-shrink-0 w-9 h-9 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
+              >
+                <Paperclip size={13} />
+              </button>
               <textarea
                 ref={inputRef}
                 value={input}
@@ -309,13 +435,13 @@ export default function BuilderPage() {
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || generating}
+                disabled={(!input.trim() && pendingAttachments.length === 0) || generating}
                 className="flex-shrink-0 w-9 h-9 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition"
               >
                 <Send size={13} />
               </button>
             </div>
-            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send</p>
+            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send · Images & PDFs supported</p>
           </div>
         </div>
 
@@ -336,6 +462,13 @@ export default function BuilderPage() {
         visible={toast.visible}
         onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
       />
+
+      {/* Attachment validation / cap toast */}
+      {attachToast && (
+        <div className="fixed bottom-6 left-6 z-50 bg-white border border-bial-border rounded-xl shadow-xl px-4 py-3 text-sm text-tertiary font-medium max-w-xs">
+          {attachToast}
+        </div>
+      )}
     </div>
   )
 }

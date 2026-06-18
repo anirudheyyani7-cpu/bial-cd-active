@@ -8,6 +8,9 @@ key.json
 .vscode/
 .idea/
 
+# Dependencies (portal/ has its own ignore too; this guards the repo root)
+node_modules/
+
 # Test & tooling artifacts
 .playwright-mcp/
 

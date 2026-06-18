@@ -24,7 +24,9 @@ import { createAdminRouter } from './server/admin/routes.js'
 import { validateTokenConfig } from './server/auth/tokens.js'
 import { createUsersRepo } from './server/users-repo.js'
 import { createUsageRepo, istDateKey, nextIstMidnightIso } from './server/usage-repo.js'
-import { getUsersCollection, getUsageCollection } from './server/cosmos.js'
+import { createFeedbackRepo } from './server/feedback-repo.js'
+import { makeFeedbackLimiter, createFeedbackHandler } from './server/feedback.js'
+import { getUsersCollection, getUsageCollection, getFeedbackCollection } from './server/cosmos.js'
 import {
   DEFAULT_DAILY_TOKEN_LIMIT,
   DEFAULT_CONTEXT_SOFT_LIMIT,
@@ -240,6 +242,7 @@ function resolveTrustProxy() { // NOSONAR(javascript:S3800) — union return is 
 export function createApp({
   repo,
   usageRepo,
+  feedbackRepo,
   claudeClient,
   distDir = DEFAULT_DIST,
   dailyTokenLimit = Number.parseInt(process.env.DAILY_TOKEN_LIMIT, 10) || DEFAULT_DAILY_TOKEN_LIMIT,
@@ -294,6 +297,9 @@ export function createApp({
   // enforcement control path must never silently no-op (Decision 1). Tests that
   // don't exercise metering inject a trivial in-memory fake.
   if (!usageRepo) throw new Error('createApp: usageRepo is required')
+  // feedbackRepo backs both the submit endpoint and the admin read; same
+  // fail-loud stance — a missing dep must surface at boot, not as a silent 404.
+  if (!feedbackRepo) throw new Error('createApp: feedbackRepo is required')
 
   // The standard plan: the injected daily ceiling (env-driven) + the fixed
   // context thresholds. Per-user overrides resolve on top of this.
@@ -316,8 +322,8 @@ export function createApp({
   }
 
   app.use('/api/auth', createAuthRouter({ repo, defaults }))
-  // Admin-only per-user limit management. Gated at the mount point.
-  app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, defaults }))
+  // Admin-only per-user limit management + feedback read. Gated at the mount point.
+  app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults }))
 
   app.post('/api/claude', requireAuth, async (req, res) => {
     const { model, max_tokens, system, messages } = req.body
@@ -440,6 +446,11 @@ export function createApp({
     }
   })
 
+  // Authenticated feedback submit. requireAuth guarantees req.user before the
+  // limiter keys on it; the limiter is per-user+IP (BIAL shares one egress IP).
+  // The handler takes the author from the verified token, never the body.
+  app.post('/api/feedback', requireAuth, makeFeedbackLimiter(), createFeedbackHandler(feedbackRepo))
+
   // Isolated builder-preview renderer. The generated app runs inside a sandboxed
   // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the
   // main app's policy stays strict. Code is delivered via postMessage, never here.
@@ -466,13 +477,14 @@ async function start() {
   const collection = await getUsersCollection() // connect to the pre-created users collection; fails loud
   const repo = createUsersRepo(collection)
   const usageRepo = createUsageRepo(await getUsageCollection()) // pre-created usage collection; fails loud
+  const feedbackRepo = createFeedbackRepo(await getFeedbackCollection()) // pre-created feedback collection; fails loud
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,
     baseURL: `https://${process.env.AZURE_FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/anthropic`,
     apiVersion: '2023-06-01',
   })
 
-  const app = createApp({ repo, usageRepo, claudeClient })
+  const app = createApp({ repo, usageRepo, feedbackRepo, claudeClient })
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => console.log(`✈  BIAL portal (API + SPA) → http://localhost:${PORT}`))
 }

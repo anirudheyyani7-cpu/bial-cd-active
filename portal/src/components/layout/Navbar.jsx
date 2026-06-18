@@ -2,30 +2,18 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Bell, Settings, Search, ChevronDown, LogOut, User,
-  CheckCircle, MessageSquare, Shield, Wrench,
-  LayoutGrid, Users, FileText, Plus, Inbox,
-  UserCircle, BookOpen, Info, Monitor, History,
+  FileText, Plus, Inbox,
+  UserCircle, BookOpen, Info, Monitor,
 } from 'lucide-react'
 import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
 import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
-import { loadHistory, relativeTime } from '../../utils/chatHistory'
-import { loadBuilds } from '../../utils/builderHistory'
 
 const NAV_LINKS = [
-  { label: 'My Workspace', to: '/workspace' },
-  { label: 'Team Space', to: '/teamspace' },
-  { label: 'Enterprise Space', to: '/enterprise' },
+  { label: 'App Builder', to: '/workspace' },
   { label: 'Help', to: '/help' },
 ]
 
 const ADMIN_LINK = { label: 'Admin', to: '/admin' }
-
-const NOTIFICATIONS = [
-  { id: 1, icon: CheckCircle, iconColor: 'text-green-500', title: "Your app 'Gate 42 Delay Log' was deployed successfully", time: '2h ago' },
-  { id: 2, icon: MessageSquare, iconColor: 'text-primary', title: 'Arjun K. commented on Cab Booking app', time: '4h ago' },
-  { id: 3, icon: Shield, iconColor: 'text-blue-500', title: 'Enterprise review approved for EcoTerminal Monitor', time: '1 day ago' },
-  { id: 4, icon: Wrench, iconColor: 'text-secondary', title: 'System maintenance scheduled for Terminal 3 servers', time: '2 days ago' },
-]
 
 const SETTINGS_ITEMS = [
   { icon: UserCircle, label: 'Profile Settings' },
@@ -35,18 +23,8 @@ const SETTINGS_ITEMS = [
 ]
 
 const SEARCH_PAGES = [
-  { label: 'My Workspace', to: '/workspace', icon: FileText },
-  { label: 'Team Space', to: '/teamspace', icon: Users },
-  { label: 'Enterprise Space', to: '/enterprise', icon: LayoutGrid },
+  { label: 'App Builder', to: '/workspace', icon: FileText },
   { label: 'Help Center', to: '/help', icon: BookOpen },
-]
-
-const SEARCH_APPS = [
-  { label: 'CargoTracker Pro', to: '/enterprise' },
-  { label: 'StaffGuard ID', to: '/enterprise' },
-  { label: 'Concierge Connect', to: '/enterprise' },
-  { label: 'EcoTerminal Monitor', to: '/enterprise' },
-  { label: 'OpsScript Lite', to: '/enterprise' },
 ]
 
 const SEARCH_ACTIONS = [
@@ -68,7 +46,6 @@ export default function Navbar() {
   const [searchQuery, setSearchQuery] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
   const [usage, setUsage] = useState(null)
-  const [recents, setRecents] = useState({ chats: [], builds: [] })
   const user = getStoredUser() || {}
 
   const navRef = useRef(null)
@@ -105,20 +82,6 @@ export default function Navbar() {
 
   const toggle = (name) => setActiveDropdown((prev) => (prev === name ? null : name))
 
-  // Load the logged-in user's recent chats + builds (browser-local) when the
-  // history menu opens, so past conversations/builds are one click away from
-  // any page rather than reachable only by URL.
-  const openHistory = () => {
-    if (activeDropdown !== 'history') {
-      const byRecent = (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
-      setRecents({
-        chats: loadHistory().sort(byRecent).slice(0, 6),
-        builds: loadBuilds().sort(byRecent).slice(0, 6),
-      })
-    }
-    toggle('history')
-  }
-
   const showToast = (msg) => {
     setToastMsg(msg)
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -149,7 +112,6 @@ export default function Navbar() {
   const filteredSearch = searchQuery.trim()
     ? {
         pages: SEARCH_PAGES.filter((p) => p.label.toLowerCase().includes(searchQuery.toLowerCase())),
-        apps: SEARCH_APPS.filter((a) => a.label.toLowerCase().includes(searchQuery.toLowerCase())),
         actions: SEARCH_ACTIONS.filter((a) => a.label.toLowerCase().includes(searchQuery.toLowerCase())),
       }
     : null
@@ -214,17 +176,6 @@ export default function Navbar() {
                           ))}
                         </div>
                       )}
-                      {filteredSearch.apps.length > 0 && (
-                        <div>
-                          <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral border-t border-bial-border mt-1">Apps</p>
-                          {filteredSearch.apps.map((a) => (
-                            <button key={a.label} onClick={() => handleNav(a.to)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bial-bg transition text-left">
-                              <div className="w-5 h-5 rounded bg-primary/10 flex-shrink-0" />
-                              <span className="text-sm text-tertiary">{a.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
                       {filteredSearch.actions.length > 0 && (
                         <div>
                           <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral border-t border-bial-border mt-1">Actions</p>
@@ -236,7 +187,7 @@ export default function Navbar() {
                           ))}
                         </div>
                       )}
-                      {!filteredSearch.pages.length && !filteredSearch.apps.length && !filteredSearch.actions.length && (
+                      {!filteredSearch.pages.length && !filteredSearch.actions.length && (
                         <p className="px-4 py-3 text-sm text-neutral text-center">No results for "{searchQuery}"</p>
                       )}
                     </>
@@ -282,70 +233,6 @@ export default function Navbar() {
               </div>
             )}
 
-            {/* Recents (chats + builds) */}
-            <div className="relative">
-              <button
-                onClick={openHistory}
-                title="Recent chats & builds"
-                className="p-2 text-neutral hover:text-primary transition rounded-lg hover:bg-surface-muted"
-              >
-                <History size={17} />
-              </button>
-              {activeDropdown === 'history' && (
-                <div className="absolute right-0 top-11 w-72 bg-white rounded-xl border border-bial-border shadow-xl z-50 py-2 max-h-[26rem] overflow-y-auto scrollbar-thin">
-                  <div className="px-4 py-2 flex items-center justify-between border-b border-bial-border">
-                    <p className="text-sm font-bold text-tertiary">Recent</p>
-                    <button
-                      onClick={() => handleNav('/workspace/chat/new')}
-                      className="text-[11px] font-semibold text-primary hover:underline"
-                    >
-                      + New chat
-                    </button>
-                  </div>
-
-                  <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-neutral">Chats</p>
-                  {recents.chats.length === 0 ? (
-                    <p className="px-4 py-2 text-xs text-neutral">No conversations yet</p>
-                  ) : (
-                    recents.chats.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => handleNav(`/workspace/chat/${c.id}`)}
-                        className="w-full flex items-center gap-2 px-4 py-2 hover:bg-bial-bg transition text-left"
-                      >
-                        <MessageSquare size={13} className="text-primary flex-shrink-0" />
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-xs text-tertiary truncate">{c.title}</span>
-                          <span className="block text-[10px] text-neutral">{relativeTime(c.updatedAt)}</span>
-                        </span>
-                      </button>
-                    ))
-                  )}
-
-                  <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-neutral border-t border-bial-border mt-1">
-                    Builds
-                  </p>
-                  {recents.builds.length === 0 ? (
-                    <p className="px-4 py-2 text-xs text-neutral">No builds yet</p>
-                  ) : (
-                    recents.builds.map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => handleNav(`/workspace/builder/${b.id}`)}
-                        className="w-full flex items-center gap-2 px-4 py-2 hover:bg-bial-bg transition text-left"
-                      >
-                        <Wrench size={13} className="text-secondary flex-shrink-0" />
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-xs text-tertiary truncate">{b.title}</span>
-                          <span className="block text-[10px] text-neutral">{relativeTime(b.updatedAt)}</span>
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
             {/* Bell */}
             <div className="relative">
               <button
@@ -353,27 +240,16 @@ export default function Navbar() {
                 className="p-2 text-neutral hover:text-primary transition rounded-lg hover:bg-surface-muted relative"
               >
                 <Bell size={17} />
-                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-accent rounded-full" />
               </button>
               {activeDropdown === 'bell' && (
                 <div className="absolute right-0 top-11 w-80 bg-white rounded-xl border border-bial-border shadow-xl z-50 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-bial-border flex items-center justify-between">
+                  <div className="px-4 py-3 border-b border-bial-border">
                     <p className="text-sm font-bold text-tertiary">Notifications</p>
-                    <span className="text-[10px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full">4 new</span>
                   </div>
-                  <div className="divide-y divide-bial-border">
-                    {NOTIFICATIONS.map(({ id, icon: Icon, iconColor, title, time }) => (
-                      <div key={id} className="flex items-start gap-3 px-4 py-3 hover:bg-bial-bg transition cursor-pointer">
-                        <Icon size={15} className={`${iconColor} flex-shrink-0 mt-0.5`} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-tertiary leading-relaxed">{title}</p>
-                          <p className="text-[10px] text-neutral mt-0.5">{time}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="px-4 py-2.5 border-t border-bial-border">
-                    <button className="text-xs text-primary font-semibold hover:underline">View All Notifications</button>
+                  <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+                    <Bell size={22} className="text-neutral/40 mb-2" />
+                    <p className="text-sm font-medium text-tertiary">You're all caught up</p>
+                    <p className="text-[11px] text-neutral mt-0.5">No new notifications right now.</p>
                   </div>
                 </div>
               )}
@@ -413,8 +289,8 @@ export default function Navbar() {
                   {(user.name || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="hidden lg:block text-left">
-                  <p className="text-xs font-semibold text-tertiary leading-tight">{user.name || 'Sushant'}</p>
-                  <p className="text-[10px] text-neutral leading-tight">{user.role || 'Terminal Lead'}</p>
+                  <p className="text-xs font-semibold text-tertiary leading-tight">{user.name || user.username || 'User'}</p>
+                  <p className="text-[10px] text-neutral leading-tight">{user.role || 'User'}</p>
                 </div>
                 <ChevronDown size={13} className="text-neutral hidden lg:block" />
               </button>
@@ -422,8 +298,8 @@ export default function Navbar() {
               {activeDropdown === 'user' && (
                 <div className="absolute right-0 top-11 w-52 bg-white rounded-xl border border-bial-border shadow-xl py-2 z-50">
                   <div className="px-4 py-2.5 border-b border-bial-border">
-                    <p className="text-xs font-bold text-tertiary">{user.name || 'Sushant'}</p>
-                    <p className="text-[10px] text-neutral">{user.role || 'Terminal Lead'}</p>
+                    <p className="text-xs font-bold text-tertiary">{user.name || user.username || 'User'}</p>
+                    <p className="text-[10px] text-neutral">{user.role || 'User'}</p>
                   </div>
                   <button
                     onClick={() => { setActiveDropdown(null); showToast('Coming soon') }}

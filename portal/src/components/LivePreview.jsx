@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Monitor, Smartphone, Rocket, RefreshCw, Code2, LayoutTemplate, X } from 'lucide-react'
+import { Monitor, Smartphone, Rocket, Code2, LayoutTemplate, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 const VIEWPORTS = { Desktop: 'w-full', Mobile: 'max-w-[390px]' }
@@ -80,9 +80,6 @@ export default function LivePreview({ previewCode, generating, generationStage, 
             }`}
           >
             <Code2 size={11} />View Code
-          </button>
-          <button className="flex items-center gap-1.5 text-xs font-worksans font-semibold text-neutral border border-bial-border rounded-lg px-3 py-1.5 hover:border-primary hover:text-primary transition">
-            <RefreshCw size={11} />Logic View
           </button>
           <button
             onClick={() => navigate('/workspace/deploy', { state: { appDesc: prompt || '' } })}

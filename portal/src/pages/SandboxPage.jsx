@@ -1,11 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, AlertTriangle, Star, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
+import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import Navbar from '../components/layout/Navbar'
 import { validatePrompt } from '../utils/promptGuardrails'
-import { findDuplicateApps } from '../utils/duplicateDetection'
-import { mockExistingApps } from '../data/mockData'
 
 const DATA_SOURCES = [
   { id: 'aodb', name: 'AODB', subtitle: 'Airport Operations Database' },
@@ -115,17 +113,11 @@ export default function SandboxPage() {
 
   const [mode, setMode] = useState('build')
   const [guardRailModal, setGuardRailModal] = useState(null)
-  const [duplicateModal, setDuplicateModal] = useState(null)
   const [sandboxToast, setSandboxToast] = useState(null)
 
   const showSandboxToast = (msg) => {
     setSandboxToast(msg)
     setTimeout(() => setSandboxToast(null), 3000)
-  }
-
-  const proceedToBuilder = () => {
-    setDuplicateModal(null)
-    navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema, uploadedFiles } })
   }
 
   const handleFileSelect = (e) => {
@@ -181,11 +173,6 @@ export default function SandboxPage() {
     const guardResult = validatePrompt(prompt)
     if (guardResult) {
       setGuardRailModal(guardResult)
-      return
-    }
-    const matches = findDuplicateApps(prompt, mockExistingApps)
-    if (matches.length > 0) {
-      setDuplicateModal({ matches })
       return
     }
     navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema, uploadedFiles } })
@@ -408,9 +395,7 @@ export default function SandboxPage() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <p className="text-xs text-neutral">© 2026 Bangalore International Airport · Citizen Developer Suite</p>
           <div className="flex gap-5">
-            {['Privacy', 'Security', 'Staff Support'].map((l) => (
-              <a key={l} href="#" className="text-xs text-neutral hover:text-primary transition">{l}</a>
-            ))}
+            <a href="/help" className="text-xs text-neutral hover:text-primary transition">Staff Support</a>
           </div>
         </div>
       </footer>
@@ -451,79 +436,6 @@ export default function SandboxPage() {
                 className="text-sm font-bold bg-primary text-white px-5 py-2 rounded-xl hover:bg-primary/90 transition"
               >
                 Edit My Prompt
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Duplicate Detection Modal */}
-      {duplicateModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                  <AlertTriangle size={20} className="text-secondary" />
-                </div>
-                <h2 className="text-base font-extrabold text-tertiary">Similar Apps Already Exist</h2>
-              </div>
-              <button onClick={() => setDuplicateModal(null)} className="text-neutral hover:text-tertiary">
-                <X size={16} />
-              </button>
-            </div>
-            <p className="text-sm text-neutral leading-relaxed mb-5">
-              We found existing apps that may overlap with what you're building. You might be able to use or build on one of these instead.
-            </p>
-            <div className="space-y-3 mb-6">
-              {duplicateModal.matches.map((app) => {
-                const isEnterprise = app.space === 'Enterprise'
-                const isTeam = app.space === 'Team'
-                const dotColor = isEnterprise ? 'bg-primary' : isTeam ? 'bg-secondary' : 'bg-gray-400'
-                const badgeClass = isEnterprise ? 'bg-primary/10 text-primary' : isTeam ? 'bg-secondary/10 text-secondary' : 'bg-gray-100 text-gray-500'
-                const badgeLabel = app.space === 'Workspace' ? 'My Workspace' : app.space
-                const navTarget = isEnterprise ? '/enterprise' : isTeam ? '/teamspace' : '/workspace'
-                return (
-                  <div key={app.id} className="flex items-center gap-3 border border-gray-100 rounded-xl p-3 hover:bg-gray-50 transition">
-                    <div className={`w-9 h-9 rounded-lg ${dotColor} flex-shrink-0`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-bold text-tertiary truncate">{app.name}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeClass}`}>{badgeLabel}</span>
-                      </div>
-                      <p className="text-xs text-neutral truncate mb-1">{app.description}</p>
-                      <div className="flex items-center gap-3 text-[10px] text-neutral">
-                        <span>{app.owner}</span>
-                        {app.rating !== null && (
-                          <span className="flex items-center gap-0.5 text-secondary font-semibold">
-                            <Star size={10} fill="currentColor" /> {app.rating}
-                          </span>
-                        )}
-                        <span>{app.users.toLocaleString()} users</span>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => { setDuplicateModal(null); navigate(navTarget) }}
-                      className="text-xs font-bold border border-primary text-primary px-3 py-1.5 rounded-lg hover:bg-primary/5 transition flex-shrink-0"
-                    >
-                      Explore
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-            <div className="flex gap-3 justify-end border-t border-gray-100 pt-4">
-              <button
-                onClick={() => setDuplicateModal(null)}
-                className="text-sm font-semibold text-neutral border border-gray-200 px-4 py-2 rounded-xl hover:border-gray-300 transition"
-              >
-                Go Back to Prompt
-              </button>
-              <button
-                onClick={proceedToBuilder}
-                className="text-sm font-bold bg-primary text-white px-5 py-2 rounded-xl hover:bg-primary/90 transition"
-              >
-                Continue Anyway
               </button>
             </div>
           </div>

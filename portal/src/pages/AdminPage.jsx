@@ -2,41 +2,11 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/layout/Navbar'
 import {
-  Box, Clock, ShieldAlert, AlertTriangle, Users, RefreshCw,
-  Shield, Check, Trash2, UserPlus, Info, ChevronDown, X,
-  Archive, Mail, Eye, Code2, Calendar, AlertCircle,
+  Box, Clock, ShieldAlert, AlertTriangle, RefreshCw,
+  Trash2, Info, ChevronDown, X,
+  Archive, Mail, Eye, AlertCircle,
   CheckCircle, XCircle, Lock
 } from 'lucide-react'
-
-const MOCK_ADMIN_APPS_INITIAL = [
-  { id: 1, name: 'CargoTracker Pro', owner: 'Rahul M.', dept: 'Logistics', space: 'Enterprise', status: 'active', created: '2025-11-15', lastActive: '1 hour ago', users: 342 },
-  { id: 2, name: 'StaffGuard ID', owner: 'Priya S.', dept: 'Security', space: 'Enterprise', status: 'active', created: '2025-09-22', lastActive: '30 min ago', users: 891 },
-  { id: 3, name: 'Cab Booking for Staff', owner: 'Arjun K.', dept: 'Ground Ops', space: 'Team', status: 'active', created: '2026-01-10', lastActive: '3 hours ago', users: 67 },
-  { id: 4, name: 'Terminal Wayfinding AI', owner: 'Alex Chen', dept: 'Terminal Ops', space: 'Enterprise', status: 'active', created: '2026-02-14', lastActive: '2 hours ago', users: 28 },
-  { id: 5, name: 'Gate Delay Logger', owner: 'Meena R.', dept: 'Terminal Ops', space: 'Team', status: 'under_review', created: '2026-04-20', lastActive: '1 day ago', users: 23 },
-  { id: 6, name: 'VIP Lounge Tracker', owner: 'Suresh B.', dept: 'Customer Service', space: 'Workspace', status: 'under_review', created: '2026-04-22', lastActive: '2 days ago', users: 3 },
-  { id: 7, name: 'Runway Inspection Logger', owner: 'Dev P.', dept: 'Maintenance', space: 'Team', status: 'flagged', created: '2026-03-05', lastActive: '15 days ago', users: 8, flagReason: 'Accesses restricted airside zone data without proper clearance level' },
-  { id: 8, name: 'Old Parking Counter', owner: 'Kiran L.', dept: 'Facilities', space: 'Workspace', status: 'inactive', created: '2025-06-01', lastActive: '45 days ago', users: 0 },
-]
-
-const ACTIVITY_LOG = [
-  { icon: Shield, color: 'text-red-500', bg: 'bg-red-50', text: 'Security review completed for "Runway Inspection Logger" — flagged for airside data access', time: '3 hours ago' },
-  { icon: Check, color: 'text-green-600', bg: 'bg-green-50', text: '"Terminal Wayfinding AI" approved for Enterprise deployment', time: '1 day ago' },
-  { icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50', text: '"Old Parking Counter" marked inactive (no activity for 45 days)', time: '2 days ago' },
-  { icon: UserPlus, color: 'text-primary', bg: 'bg-teal-50', text: 'New developer "Meena R." onboarded to Citizen Developer portal', time: '3 days ago' },
-  { icon: Trash2, color: 'text-neutral', bg: 'bg-gray-50', text: '"Test App 001" deleted by admin', time: '5 days ago' },
-]
-
-const MOCK_CODE = `// CargoTracker Pro — main.js
-import { fetchCargoManifest } from './api/cargo'
-import { renderDashboard } from './ui/dashboard'
-
-async function init() {
-  const manifest = await fetchCargoManifest({ terminal: 'T2' })
-  renderDashboard(manifest)
-}
-
-init()`
 
 function StatusBadge({ status }) {
   const map = {
@@ -133,17 +103,6 @@ function ReviewPanel({ app, onClose, onApprove, onReject }) {
             <StatusBadge status={app.status} />
           </div>
 
-          {/* Code preview */}
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Code2 size={13} className="text-neutral" />
-              <p className="text-xs font-bold uppercase tracking-wider text-neutral">Code Preview</p>
-            </div>
-            <div className="bg-gray-900 rounded-xl p-4 overflow-x-auto">
-              <pre className="text-xs text-green-400 font-mono leading-relaxed whitespace-pre">{MOCK_CODE}</pre>
-            </div>
-          </div>
-
           {/* Reject textarea */}
           {showReject && (
             <div>
@@ -227,7 +186,7 @@ function ConfirmModal({ title, message, confirmLabel, confirmCls, onConfirm, onC
   )
 }
 
-function AppTable({ apps, onReview, onSuspend, onDelete, onQuickApprove, onQuickReject, showQuickActions, showFlagReason, showSelect, selected, onSelect, onSelectAll }) {
+function AppTable({ apps, onReview, onSuspend, onDelete, onQuickApprove, onQuickReject, showQuickActions, showFlagReason, showSelect, selected, onSelect, onSelectAll, emptyLabel }) {
   const [openDropdown, setOpenDropdown] = useState(null)
   const dropRef = useRef(null)
 
@@ -241,8 +200,11 @@ function AppTable({ apps, onReview, onSuspend, onDelete, onQuickApprove, onQuick
 
   if (apps.length === 0) {
     return (
-      <div className="text-center py-16 text-neutral text-sm">
-        No apps in this category.
+      <div className="text-center py-16">
+        <div className="w-12 h-12 rounded-2xl bg-bial-bg flex items-center justify-center mx-auto mb-3">
+          <Box size={20} className="text-neutral" />
+        </div>
+        <p className="text-sm text-neutral">{emptyLabel || 'No apps in this category yet.'}</p>
       </div>
     )
   }
@@ -383,7 +345,7 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('bial_user') || '{}')
 
-  const [apps, setApps] = useState(MOCK_ADMIN_APPS_INITIAL)
+  const [apps, setApps] = useState([])
   const [activeTab, setActiveTab] = useState('all')
   const [reviewApp, setReviewApp] = useState(null)
   const [suspendApp, setSuspendApp] = useState(null)
@@ -412,7 +374,7 @@ export default function AdminPage() {
     showToast(`"${app.name}" approved for Enterprise deployment`)
   }
 
-  const handleReject = (app, comment) => {
+  const handleReject = (app) => {
     updateAppStatus(app.id, 'inactive')
     setReviewApp(null)
     showToast(`Rejection sent to ${app.owner} with feedback`)
@@ -507,7 +469,6 @@ export default function AdminPage() {
             <p className="text-sm text-neutral mt-1">IT Operations Dashboard — Monitor, review, and manage all citizen-developed applications across the terminal.</p>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0 ml-6">
-            <p className="text-xs text-neutral hidden sm:block">Last refreshed: 2 minutes ago</p>
             <button
               onClick={() => showToast('Data refreshed')}
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-bial-border bg-white text-tertiary text-sm font-medium hover:bg-bial-bg transition"
@@ -519,12 +480,11 @@ export default function AdminPage() {
         </div>
 
         {/* Metric Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-6">
-          <MetricCard icon={Box} label="Total Apps in Production" value={14} accent="none" />
-          <MetricCard icon={Clock} label="Pending Review" value={3} accent="amber" />
-          <MetricCard icon={ShieldAlert} label="Security Flagged" value={1} accent="red" />
-          <MetricCard icon={AlertTriangle} label="Inactive 30+ Days" value={4} accent="gray" />
-          <MetricCard icon={Users} label="Active Developers" value={23} accent="teal" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <MetricCard icon={Box} label="Total Apps in Production" value={allApps.length} accent="none" />
+          <MetricCard icon={Clock} label="Pending Review" value={pendingApps.length} accent="amber" />
+          <MetricCard icon={ShieldAlert} label="Security Flagged" value={flaggedApps.length} accent="red" />
+          <MetricCard icon={AlertTriangle} label="Inactive Apps" value={inactiveApps.length} accent="gray" />
         </div>
 
         {/* Tabs */}
@@ -587,6 +547,7 @@ export default function AdminPage() {
                 selected={[]}
                 onSelect={() => {}}
                 onSelectAll={() => {}}
+                emptyLabel="No apps deployed yet."
               />
             )}
             {activeTab === 'pending' && (
@@ -603,6 +564,7 @@ export default function AdminPage() {
                 selected={[]}
                 onSelect={() => {}}
                 onSelectAll={() => {}}
+                emptyLabel="No apps awaiting review."
               />
             )}
             {activeTab === 'flagged' && (
@@ -617,6 +579,7 @@ export default function AdminPage() {
                 selected={[]}
                 onSelect={() => {}}
                 onSelectAll={() => {}}
+                emptyLabel="No security flags. All clear."
               />
             )}
             {activeTab === 'inactive' && (
@@ -631,6 +594,7 @@ export default function AdminPage() {
                 selected={selectedInactive}
                 onSelect={handleSelectInactive}
                 onSelectAll={handleSelectAllInactive}
+                emptyLabel="No inactive apps."
               />
             )}
           </div>
@@ -647,21 +611,8 @@ export default function AdminPage() {
               View Full Log
             </button>
           </div>
-          <div className="space-y-3">
-            {ACTIVITY_LOG.map((entry, i) => {
-              const Icon = entry.icon
-              return (
-                <div key={i} className="flex items-start gap-3">
-                  <div className={`w-7 h-7 rounded-lg ${entry.bg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
-                    <Icon size={13} className={entry.color} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-tertiary leading-relaxed">{entry.text}</p>
-                    <p className="text-xs text-neutral mt-0.5">{entry.time}</p>
-                  </div>
-                </div>
-              )
-            })}
+          <div className="text-center py-10 text-neutral text-sm">
+            No activity yet. Admin actions will be logged here.
           </div>
         </div>
       </div>

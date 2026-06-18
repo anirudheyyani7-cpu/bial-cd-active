@@ -78,7 +78,8 @@ const FAQS = [
   },
   {
     q: 'Who do I contact for help?',
-    a: 'Reach out to the IT Support Desk via the portal footer link, or email citizen-developer-support@bfrport.com.',
+    // TODO: confirm support address
+    a: 'Reach out to the IT Support Desk via the portal footer link, or email citizen-developer-support@bialairport.com.',
   },
 ]
 
@@ -250,11 +251,11 @@ export default function HelpPage() {
           <div className="text-center pb-8">
             <p className="text-sm text-neutral">
               Still need help?{' '}
-              <a href="mailto:citizen-developer-support@bfrport.com" className="text-primary font-semibold hover:underline">
+              {/* TODO: confirm support address */}
+              <a href="mailto:citizen-developer-support@bialairport.com" className="text-primary font-semibold hover:underline">
                 Contact IT Support Desk
               </a>
             </p>
-            <p className="text-xs text-neutral/50 mt-1">Last updated: April 2026</p>
           </div>
         </div>
       </main>

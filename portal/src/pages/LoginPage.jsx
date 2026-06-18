@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { Eye, EyeOff, Lock, Mail, ArrowRight, Zap, Shield, Cloud } from 'lucide-react'
 import BIALLogo from '../components/BIALLogo'
 import { setSession, consumeSignoutReason, SIGNOUT_REASONS } from '../utils/auth'
@@ -154,7 +154,7 @@ export default function LoginPage() {
                 <input
                   type="email"
                   autoComplete="email"
-                  placeholder="name@bial.com"
+                  placeholder="name@bialairport.com"
                   value={username}
                   onChange={onField(setUsername)}
                   disabled={loading}
@@ -209,16 +209,8 @@ export default function LoginPage() {
 
           <p className="text-center text-xs text-neutral mt-6">
             Need assistance? Contact{' '}
-            <a href="#" className="text-primary font-medium hover:underline">IT Support Desk</a>
+            <Link to="/help" className="text-primary font-medium hover:underline">IT Support Desk</Link>
           </p>
-
-          <div className="flex justify-center gap-4 mt-3">
-            {['Privacy Policy', 'Security Standards', 'System Status'].map((link) => (
-              <a key={link} href="#" className="text-[10px] text-neutral uppercase tracking-wider hover:text-primary transition">
-                {link}
-              </a>
-            ))}
-          </div>
         </div>
       </div>
     </div>

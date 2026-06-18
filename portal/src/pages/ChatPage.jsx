@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X, FileText, FileSpreadsheet } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
 import Navbar from '../components/layout/Navbar'
-import AttachmentChips from '../components/AttachmentChips'
+import MessageContent from '../components/chat/MessageContent'
 import AttachmentLightbox from '../components/AttachmentLightbox'
 import { useClaudeAPI, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
@@ -16,7 +15,7 @@ import {
   buildPromptFromHistory,
   relativeTime,
 } from '../utils/chatHistory'
-import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
+import { assembleApiMessages, putAttachment, countAttachments } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
@@ -33,24 +32,6 @@ Guidelines:
 - When you feel the requirements are well-defined, summarise the plan and suggest moving to the builder
 
 Do not output code or JSX. Stay focused on requirements gathering and planning.`
-
-function MessageContent({ content, attachments, isUser }) {
-  // content may be a string or a ContentBlock[]; always derive plain text so
-  // react-markdown / the user div never receives an array → no [object Object].
-  const text = contentToText(content)
-  return (
-    <>
-      {attachments?.length > 0 && <AttachmentChips attachments={attachments} />}
-      {isUser ? (
-        <div className="whitespace-pre-wrap break-words">{text}</div>
-      ) : (
-        <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:text-tertiary prose-ul:pl-4 prose-ol:pl-4">
-          <ReactMarkdown>{text}</ReactMarkdown>
-        </div>
-      )}
-    </>
-  )
-}
 
 export default function ChatPage() {
   const navigate = useNavigate()

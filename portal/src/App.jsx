@@ -10,6 +10,8 @@ import HelpPage from './pages/HelpPage'
 import AdminPage from './pages/AdminPage'
 import ChatPage from './pages/ChatPage'
 import ConversationsPage from './pages/ConversationsPage'
+import BialChatPage from './pages/BialChatPage'
+import BialConversationsPage from './pages/BialConversationsPage'
 import { isAuthenticated, getStoredUser, clearSession, startCrossTabSync } from './utils/auth'
 
 function RequireAuth({ children }) {
@@ -46,6 +48,11 @@ export default function App() {
         <Route path="/workspace/chat" element={<RequireAuth><ChatPage /></RequireAuth>} />
         <Route path="/workspace/chat/:chatId" element={<RequireAuth><ChatPage /></RequireAuth>} />
         <Route path="/workspace/history" element={<RequireAuth><ConversationsPage /></RequireAuth>} />
+        {/* BIAL Chat (general assistant) — sibling of App Builder, top-level /chat.
+            Static /chat/history ranks above the dynamic /chat/:chatId in RR v6. */}
+        <Route path="/chat" element={<RequireAuth><BialChatPage /></RequireAuth>} />
+        <Route path="/chat/history" element={<RequireAuth><BialConversationsPage /></RequireAuth>} />
+        <Route path="/chat/:chatId" element={<RequireAuth><BialChatPage /></RequireAuth>} />
         <Route path="/help" element={<RequireAuth><HelpPage /></RequireAuth>} />
         <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
         <Route path="/sandbox" element={<Navigate to="/workspace/sandbox" replace />} />

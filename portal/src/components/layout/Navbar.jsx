@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Bell, Settings, Search, ChevronDown, LogOut, User,
-  FileText, Plus, Inbox,
+  FileText, Plus, Inbox, Bot,
   UserCircle, BookOpen, Info, Monitor,
 } from 'lucide-react'
 import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
@@ -11,6 +11,7 @@ import { clearForUser } from '../../utils/attachmentStore'
 
 const NAV_LINKS = [
   { label: 'App Builder', to: '/workspace' },
+  { label: 'BIAL Chat', to: '/chat' },
   { label: 'Help', to: '/help' },
 ]
 
@@ -25,6 +26,7 @@ const SETTINGS_ITEMS = [
 
 const SEARCH_PAGES = [
   { label: 'App Builder', to: '/workspace', icon: FileText },
+  { label: 'BIAL Chat', to: '/chat', icon: Bot },
   { label: 'Help Center', to: '/help', icon: BookOpen },
 ]
 

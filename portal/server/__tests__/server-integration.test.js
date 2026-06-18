@@ -315,6 +315,61 @@ describe('daily token limit enforcement', () => {
   })
 })
 
+describe('per-user daily limit', () => {
+  // 'rich' has a high override; 'alice' (absent from the store) resolves to the
+  // injected standard-plan default of 1000.
+  const RICH = {
+    _id: 'rich',
+    username: 'rich',
+    name: 'Rich',
+    role: 'user',
+    passwordHash: '$argon2id$v=19$x',
+    refreshTokenHash: null,
+    refreshTokenExpiresAt: null,
+    limits: { dailyTokenLimit: 5000 },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  const tok = (username) => signAccessToken({ sub: username, username, role: 'user' })
+
+  // One usageRepo reports the same `used` for every user, so the only thing that
+  // differs between alice and rich is their resolved per-user limit.
+  function appWithUsed(used) {
+    const repo = createUsersRepo(makeFakeContainer([RICH]))
+    const usageRepo = {
+      getUsage: vi.fn(async () => ({ inputTokens: used, outputTokens: 0 })),
+      addUsage: vi.fn(async () => {}),
+    }
+    return createApp({ repo, usageRepo, claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
+  }
+
+  it('blocks a default user where an override user passes (used=1500)', async () => {
+    const app2 = appWithUsed(1500)
+
+    const blocked = await request(app2)
+      .post('/api/claude')
+      .set('Authorization', `Bearer ${tok('alice')}`)
+      .send({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(blocked.status).toBe(429)
+    expect(blocked.body.error.limit).toBe(1000) // standard plan
+    expect(blocked.body.error.message).toMatch(/contact your administrator/i)
+
+    const ok = await request(app2)
+      .post('/api/claude')
+      .set('Authorization', `Bearer ${tok('rich')}`)
+      .send({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(ok.status).toBe(200) // 1500 used < 5000 override
+  })
+
+  it('GET /api/usage/today reflects the per-user limit', async () => {
+    const app2 = appWithUsed(100)
+    const res = await request(app2).get('/api/usage/today').set('Authorization', `Bearer ${tok('rich')}`)
+    expect(res.status).toBe(200)
+    expect(res.body.limit).toBe(5000)
+    expect(res.body.remaining).toBe(4900)
+  })
+})
+
 describe('attachment validation + body size', () => {
   const auth = (req) => req.set('Authorization', `Bearer ${validToken()}`)
   // 1x1 transparent PNG (valid magic bytes \x89PNG).

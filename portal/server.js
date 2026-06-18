@@ -18,21 +18,29 @@ import cors from 'cors'
 import helmet from 'helmet'
 import { AnthropicFoundry } from '@anthropic-ai/foundry-sdk'
 import dotenv from 'dotenv'
-import { requireAuth } from './server/auth/middleware.js'
+import { requireAuth, requireAdmin } from './server/auth/middleware.js'
 import { createAuthRouter } from './server/auth/routes.js'
+import { createAdminRouter } from './server/admin/routes.js'
 import { validateTokenConfig } from './server/auth/tokens.js'
 import { createUsersRepo } from './server/users-repo.js'
 import { createUsageRepo, istDateKey, nextIstMidnightIso } from './server/usage-repo.js'
 import { getUsersCollection, getUsageCollection } from './server/cosmos.js'
+import {
+  DEFAULT_DAILY_TOKEN_LIMIT,
+  DEFAULT_CONTEXT_SOFT_LIMIT,
+  DEFAULT_CONTEXT_HARD_LIMIT,
+  resolveUserLimits,
+} from './server/limits.js'
 
 dotenv.config()
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_DIST = path.join(__dirname, 'dist')
 
-// Flat per-user/day token ceiling (Decision 5). One env var; the per-user
-// override + system_config table are deferred to the FastAPI backend.
-const DEFAULT_DAILY_TOKEN_LIMIT = 1_000_000
+// The DAILY_TOKEN_LIMIT env sets the standard-plan daily ceiling (the default
+// for users with no per-user override). Per-user overrides + resolution live in
+// server/limits.js; DEFAULT_DAILY_TOKEN_LIMIT is the fallback when the env is
+// unset/invalid.
 
 // Server-side ceiling on a single response's output. The client never asks for
 // more than 16k, but max_tokens arrives in the request body, so clamp it here so
@@ -286,7 +294,30 @@ export function createApp({
   // enforcement control path must never silently no-op (Decision 1). Tests that
   // don't exercise metering inject a trivial in-memory fake.
   if (!usageRepo) throw new Error('createApp: usageRepo is required')
-  app.use('/api/auth', createAuthRouter({ repo }))
+
+  // The standard plan: the injected daily ceiling (env-driven) + the fixed
+  // context thresholds. Per-user overrides resolve on top of this.
+  const defaults = {
+    dailyTokenLimit,
+    contextSoftLimit: DEFAULT_CONTEXT_SOFT_LIMIT,
+    contextHardLimit: DEFAULT_CONTEXT_HARD_LIMIT,
+  }
+
+  // Resolve a user's effective limits by username. A user point-read failure
+  // (token valid but DB blip / user deleted) falls back to the standard plan
+  // rather than locking the user out of an enforcement path on an infra hiccup.
+  const limitsFor = async (username) => {
+    try {
+      return resolveUserLimits(await repo.findByUsername(username), defaults)
+    } catch (err) {
+      console.error('User limit read failed; using defaults:', err.message)
+      return resolveUserLimits(null, defaults)
+    }
+  }
+
+  app.use('/api/auth', createAuthRouter({ repo, defaults }))
+  // Admin-only per-user limit management. Gated at the mount point.
+  app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, defaults }))
 
   app.post('/api/claude', requireAuth, async (req, res) => {
     const { model, max_tokens, system, messages } = req.body
@@ -313,6 +344,9 @@ export function createApp({
     const username = req.user.sub
     const dateKey = istDateKey()
 
+    // Per-user daily limit (standard plan unless the user has an override).
+    const { dailyTokenLimit: userDailyLimit } = await limitsFor(username)
+
     // Daily-limit gate. `used` is a SCALAR computed ONCE here and reused by
     // GET /api/usage/today below — one definition, no drift. The check runs
     // BEFORE any SSE header is written so an over-limit user gets clean JSON,
@@ -325,12 +359,12 @@ export function createApp({
       console.error('Usage read failed:', err.message)
       return res.status(500).json({ error: { message: 'Usage check failed. Please retry.' } })
     }
-    if (used >= dailyTokenLimit) {
+    if (used >= userDailyLimit) {
       return res.status(429).json({
         error: {
-          message: `You've reached your daily limit of ${dailyTokenLimit.toLocaleString('en-US')} tokens. It resets at midnight IST.`,
+          message: `You've reached your daily limit of ${userDailyLimit.toLocaleString('en-US')} tokens. It resets at midnight IST. If you need a higher limit, please contact your administrator to enable a higher plan.`,
           code: 'daily_token_limit_exceeded',
-          limit: dailyTokenLimit,
+          limit: userDailyLimit,
           used,
           remaining: 0,
         },
@@ -391,12 +425,13 @@ export function createApp({
   // `used` definition as the gate; `remaining` floors at 0.
   app.get('/api/usage/today', requireAuth, async (req, res) => {
     try {
+      const { dailyTokenLimit: userDailyLimit } = await limitsFor(req.user.sub)
       const doc = await usageRepo.getUsage(req.user.sub, istDateKey())
       const used = (doc?.inputTokens ?? 0) + (doc?.outputTokens ?? 0)
       return res.json({
         used,
-        limit: dailyTokenLimit,
-        remaining: Math.max(0, dailyTokenLimit - used),
+        limit: userDailyLimit,
+        remaining: Math.max(0, userDailyLimit - used),
         resetsAt: nextIstMidnightIso(),
       })
     } catch (err) {

@@ -71,6 +71,44 @@ describe('users-repo', () => {
     await expect(repo.clearRefreshHash('ghost')).rejects.toThrow()
     await expect(repo.setRefreshHash('ghost', 'H', '2026-02-01T00:00:00.000Z')).rejects.toThrow()
   })
+
+  it('listUsers returns every user with secret/session fields projected out', async () => {
+    const repo = createUsersRepo(
+      makeFakeContainer([
+        makeUser({ _id: 'alice', username: 'alice', refreshTokenHash: 'SECRET' }),
+        makeUser({ _id: 'bob', username: 'bob', role: 'admin' }),
+      ]),
+    )
+    const list = await repo.listUsers()
+    expect(list.map((u) => u.username).sort()).toEqual(['alice', 'bob'])
+    for (const u of list) {
+      expect(u.passwordHash).toBeUndefined()
+      expect(u.refreshTokenHash).toBeUndefined()
+      expect(u.refreshTokenExpiresAt).toBeUndefined()
+    }
+  })
+
+  it('updateLimits sets a nested limits.<field> override', async () => {
+    const container = makeFakeContainer([makeUser()])
+    const repo = createUsersRepo(container)
+    await repo.updateLimits('alice', { dailyTokenLimit: 5000 })
+    expect(container._get('alice').limits).toEqual({ dailyTokenLimit: 5000 })
+    expect(container._get('alice').updatedAt).not.toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('updateLimits $unsets a field passed as null (revert to default)', async () => {
+    const container = makeFakeContainer([
+      makeUser({ limits: { dailyTokenLimit: 5000, contextSoftLimit: 120000 } }),
+    ])
+    const repo = createUsersRepo(container)
+    await repo.updateLimits('alice', { dailyTokenLimit: null })
+    expect(container._get('alice').limits).toEqual({ contextSoftLimit: 120000 }) // daily cleared, soft kept
+  })
+
+  it('updateLimits on a missing user rejects (matched 0)', async () => {
+    const repo = createUsersRepo(makeFakeContainer([]))
+    await expect(repo.updateLimits('ghost', { dailyTokenLimit: 1 })).rejects.toThrow()
+  })
 })
 
 describe('mongo env guard', () => {

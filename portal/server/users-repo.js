@@ -47,5 +47,37 @@ export function createUsersRepo(collection) {
     return doc
   }
 
-  return { findByUsername, setRefreshHash, clearRefreshHash, upsertUser }
+  /**
+   * List all users for the admin console. Projects OUT every secret/session
+   * field (passwordHash + the refresh-token pair) so they can never leak to a
+   * client — the admin UI only needs identity + limits. The user set is tiny
+   * (interim auth), so an unfiltered scan is fine.
+   */
+  async function listUsers() {
+    return await withThrottleRetry(() =>
+      collection
+        .find({}, { projection: { passwordHash: 0, refreshTokenHash: 0, refreshTokenExpiresAt: 0 } })
+        .toArray(),
+    )
+  }
+
+  /**
+   * Apply an admin limit-override patch. A field set to a number is written to
+   * `limits.<field>`; a field set to `null` is `$unset` (revert to the default).
+   * Partial by design — only the provided fields change. Throws if no user
+   * matched so a typo'd username surfaces as an error, not a silent no-op.
+   */
+  async function updateLimits(username, patch = {}) {
+    const $set = { updatedAt: new Date().toISOString() }
+    const $unset = {}
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === null) $unset[`limits.${field}`] = ''
+      else $set[`limits.${field}`] = value
+    }
+    const update = Object.keys($unset).length ? { $set, $unset } : { $set }
+    const { matchedCount } = await withThrottleRetry(() => collection.updateOne({ _id: username }, update))
+    if (matchedCount === 0) throw new Error(`updateLimits matched no user: ${username}`)
+  }
+
+  return { findByUsername, setRefreshHash, clearRefreshHash, upsertUser, listUsers, updateLimits }
 }

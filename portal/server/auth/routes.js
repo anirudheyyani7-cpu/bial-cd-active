@@ -27,6 +27,7 @@ import {
   hashRefreshToken,
   refreshExpiry,
 } from './tokens.js'
+import { resolveUserLimits, defaultLimits } from '../limits.js'
 
 const MAX_USERNAME = 256
 const MAX_PASSWORD = 1024
@@ -103,8 +104,16 @@ function dummyVerify(password) {
   return dummyHashPromise.then((phc) => (phc ? verifyPassword(password, phc) : false))
 }
 
-function profileOf(user) {
-  return { username: user.username, name: user.name, role: user.role, isAdmin: user.role === 'admin' }
+function profileOf(user, defaults) {
+  return {
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    isAdmin: user.role === 'admin',
+    // Effective limits so the SPA can drive the per-conversation guardrail
+    // (and show the daily ceiling) without a separate fetch.
+    limits: resolveUserLimits(user, defaults),
+  }
 }
 
 function safeHashEqual(a, b) {
@@ -114,6 +123,7 @@ function safeHashEqual(a, b) {
 
 export function createAuthRouter({
   repo,
+  defaults = defaultLimits(),
   loginLimiter = makeLoginLimiter(),
   refreshLimiter = makeRefreshLimiter(),
   ipCeilingLimiter = makeIpCeilingLimiter(),
@@ -145,7 +155,7 @@ export function createAuthRouter({
       const refreshToken = generateRefreshToken(user.username)
       // Overwrite any prior session — single active session per user.
       await repo.setRefreshHash(user.username, hashRefreshToken(refreshToken), refreshExpiry())
-      return res.json({ accessToken, refreshToken, user: profileOf(user) })
+      return res.json({ accessToken, refreshToken, user: profileOf(user, defaults) })
     } catch (err) {
       console.error('login error:', err.message)
       return res.status(500).json({ error: { message: 'Internal error.' } })
@@ -183,7 +193,7 @@ export function createAuthRouter({
       const refreshToken = generateRefreshToken(user.username)
       await repo.setRefreshHash(user.username, hashRefreshToken(refreshToken), refreshExpiry())
       const accessToken = signAccessToken({ sub: user.username, username: user.username, role: user.role })
-      return res.json({ accessToken, refreshToken, user: profileOf(user) })
+      return res.json({ accessToken, refreshToken, user: profileOf(user, defaults) })
     } catch (err) {
       console.error('refresh error:', err.message)
       return res.status(500).json({ error: { message: 'Internal error.' } })

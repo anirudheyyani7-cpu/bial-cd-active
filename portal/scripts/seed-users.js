@@ -70,6 +70,8 @@ export async function seedUsers(repo, { users = SEED_USERS, passwords = {}, rota
       // preserve any live session on rotation; default to no session
       refreshTokenHash: existing?.refreshTokenHash ?? null,
       refreshTokenExpiresAt: existing?.refreshTokenExpiresAt ?? null,
+      // preserve any admin-set per-user limit override (full replace would wipe it)
+      ...(existing?.limits !== undefined && { limits: existing.limits }),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     })

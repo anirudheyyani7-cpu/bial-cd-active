@@ -43,6 +43,9 @@ export async function addUser(repo, { username, email, name, role = 'user', pass
     passwordHash: await hashPassword(pw),
     refreshTokenHash: existing?.refreshTokenHash ?? null,
     refreshTokenExpiresAt: existing?.refreshTokenExpiresAt ?? null,
+    // Preserve any admin-set per-user limit override across a re-run (this is a
+    // full replace, so an omitted field would otherwise be wiped).
+    ...(existing?.limits !== undefined && { limits: existing.limits }),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   })

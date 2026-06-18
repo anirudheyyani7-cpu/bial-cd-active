@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import jwt from 'jsonwebtoken'
-import { requireAuth } from '../auth/middleware.js'
+import { requireAuth, requireAdmin } from '../auth/middleware.js'
 import { signAccessToken } from '../auth/tokens.js'
 
 beforeAll(() => {
@@ -77,5 +77,33 @@ describe('requireAuth', () => {
   it('uses the { error: { message } } response shape', () => {
     const { res } = run(undefined)
     expect(res.body?.error?.message).toBeTypeOf('string')
+  })
+})
+
+describe('requireAdmin', () => {
+  const runAdmin = (user) => {
+    const req = { user }
+    const res = makeRes()
+    const next = vi.fn()
+    requireAdmin(req, res, next)
+    return { res, next }
+  }
+
+  it('admin role → next() called, no status set', () => {
+    const { res, next } = runAdmin({ sub: 'a', role: 'admin' })
+    expect(next).toHaveBeenCalledOnce()
+    expect(res.statusCode).toBeNull()
+  })
+
+  it('non-admin role → 403, next() not called', () => {
+    const { res, next } = runAdmin({ sub: 'b', role: 'user' })
+    expect(res.statusCode).toBe(403)
+    expect(next).not.toHaveBeenCalled()
+    expect(res.body?.error?.message).toBeTypeOf('string')
+  })
+
+  it('missing user/role → 403 (fails closed)', () => {
+    expect(runAdmin(undefined).res.statusCode).toBe(403)
+    expect(runAdmin({ sub: 'c' }).res.statusCode).toBe(403)
   })
 })

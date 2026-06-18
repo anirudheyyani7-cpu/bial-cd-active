@@ -25,3 +25,16 @@ export function requireAuth(req, res, next) {
     return unauthorized(res, 'Invalid or expired token')
   }
 }
+
+/**
+ * requireAdmin — gate admin-only routes by the verified token's role. Runs
+ * AFTER requireAuth (which populates req.user from the signed JWT), so the role
+ * is trusted, not client-supplied. 403 (authenticated but not allowed), the
+ * counterpart to requireAuth's 401 (not authenticated).
+ */
+export function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: { message: 'Admin access required.' } })
+  }
+  return next()
+}

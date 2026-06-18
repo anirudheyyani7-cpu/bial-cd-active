@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/layout/Navbar'
 import UsersLimitsPanel from '../components/admin/UsersLimitsPanel'
+import FeedbackPanel from '../components/admin/FeedbackPanel'
 import {
   Box, Clock, ShieldAlert, AlertTriangle, RefreshCw,
   Trash2, Info, ChevronDown, X,
@@ -457,6 +458,7 @@ export default function AdminPage() {
     { id: 'flagged', label: 'Security Flags', count: flaggedApps.length },
     { id: 'inactive', label: 'Inactive Apps', count: inactiveApps.length },
     { id: 'users', label: 'Users & Limits', count: null },
+    { id: 'feedback', label: 'Feedback', count: null },
   ]
 
   return (
@@ -602,6 +604,7 @@ export default function AdminPage() {
               />
             )}
             {activeTab === 'users' && <UsersLimitsPanel onToast={showToast} />}
+            {activeTab === 'feedback' && <FeedbackPanel />}
           </div>
         </div>
 

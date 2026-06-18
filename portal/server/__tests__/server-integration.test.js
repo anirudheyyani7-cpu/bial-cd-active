@@ -6,10 +6,15 @@ import request from 'supertest'
 import { createApp } from '../../server.js'
 import { createUsersRepo } from '../users-repo.js'
 import { createUsageRepo } from '../usage-repo.js'
+import { createFeedbackRepo } from '../feedback-repo.js'
 import { signAccessToken } from '../auth/tokens.js'
 import { hashPassword } from '../auth/password.js'
 import { makeFakeContainer } from './fakeCosmos.js'
 import { makeFakeUsageContainer } from './fakeUsageCosmos.js'
+import { makeFakeFeedbackContainer } from './fakeFeedbackCosmos.js'
+
+/** A fresh in-memory feedback repo for the createApp DI seam. */
+const fakeFeedbackRepo = () => createFeedbackRepo(makeFakeFeedbackContainer([]))
 
 const SPA_HTML = '<!doctype html><title>BIAL</title><div id="root"></div>'
 let distDir
@@ -64,7 +69,7 @@ function makeServer({ usageRepo, streamOpts, dailyTokenLimit } = {}) {
   const container = makeFakeContainer([])
   const repo = createUsersRepo(container)
   const resolvedUsageRepo = usageRepo ?? createUsageRepo(makeFakeUsageContainer([]))
-  return createApp({ repo, usageRepo: resolvedUsageRepo, claudeClient: makeClaudeClient(streamOpts), distDir, dailyTokenLimit })
+  return createApp({ repo, usageRepo: resolvedUsageRepo, feedbackRepo: fakeFeedbackRepo(), claudeClient: makeClaudeClient(streamOpts), distDir, dailyTokenLimit })
 }
 
 const validToken = () => signAccessToken({ sub: 'alice', username: 'alice', role: 'user' })
@@ -151,6 +156,7 @@ describe('server integration', () => {
     const e2eApp = createApp({
       repo: createUsersRepo(container),
       usageRepo: createUsageRepo(makeFakeUsageContainer([])),
+      feedbackRepo: fakeFeedbackRepo(),
       claudeClient: makeClaudeClient(),
       distDir,
     })
@@ -196,6 +202,39 @@ describe('createApp dependency guards', () => {
   it('throws when usageRepo is omitted (enforcement must never silently no-op)', () => {
     const repo = createUsersRepo(makeFakeContainer([]))
     expect(() => createApp({ repo, claudeClient: makeClaudeClient(), distDir })).toThrow(/usageRepo is required/)
+  })
+
+  it('throws when feedbackRepo is omitted (submit + admin read must never silently no-op)', () => {
+    const repo = createUsersRepo(makeFakeContainer([]))
+    const usageRepo = createUsageRepo(makeFakeUsageContainer([]))
+    expect(() => createApp({ repo, usageRepo, claudeClient: makeClaudeClient(), distDir })).toThrow(
+      /feedbackRepo is required/,
+    )
+  })
+})
+
+describe('POST /api/feedback wired through createApp', () => {
+  it('persists an authed submission (author from the token) and 401s without a token', async () => {
+    const feedbackContainer = makeFakeFeedbackContainer([])
+    const app2 = createApp({
+      repo: createUsersRepo(makeFakeContainer([])),
+      usageRepo: createUsageRepo(makeFakeUsageContainer([])),
+      feedbackRepo: createFeedbackRepo(feedbackContainer),
+      claudeClient: makeClaudeClient(),
+      distDir,
+    })
+
+    const ok = await request(app2)
+      .post('/api/feedback')
+      .set('Authorization', `Bearer ${validToken()}`)
+      .send({ message: 'wired e2e', page: '/chat' })
+    expect(ok.status).toBe(201)
+    const stored = [...feedbackContainer._store.values()]
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ username: 'alice', message: 'wired e2e', page: '/chat' })
+
+    const noTok = await request(app2).post('/api/feedback').send({ message: 'x' })
+    expect(noTok.status).toBe(401)
   })
 })
 
@@ -340,7 +379,7 @@ describe('per-user daily limit', () => {
       getUsage: vi.fn(async () => ({ inputTokens: used, outputTokens: 0 })),
       addUsage: vi.fn(async () => {}),
     }
-    return createApp({ repo, usageRepo, claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
+    return createApp({ repo, usageRepo, feedbackRepo: fakeFeedbackRepo(), claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
   }
 
   it('blocks a default user where an override user passes (used=1500)', async () => {

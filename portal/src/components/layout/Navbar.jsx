@@ -3,11 +3,12 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Bell, Settings, Search, ChevronDown, LogOut, User,
   FileText, Plus, Inbox, Bot,
-  UserCircle, BookOpen, Info, Monitor,
+  UserCircle, BookOpen, Info, Monitor, MessageSquare,
 } from 'lucide-react'
 import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
 import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import { clearForUser } from '../../utils/attachmentStore'
+import FeedbackModal from '../FeedbackModal'
 
 const NAV_LINKS = [
   { label: 'App Builder', to: '/workspace' },
@@ -49,10 +50,12 @@ export default function Navbar() {
   const [searchQuery, setSearchQuery] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
   const [usage, setUsage] = useState(null)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const user = getStoredUser() || {}
 
   const navRef = useRef(null)
   const toastTimer = useRef(null)
+  const feedbackBtnRef = useRef(null)
 
   useClickOutside(navRef, () => setActiveDropdown(null))
 
@@ -78,7 +81,7 @@ export default function Navbar() {
   }, [])
 
   useEffect(() => {
-    const onEsc = (e) => { if (e.key === 'Escape') { setActiveDropdown(null); setSearchQuery('') } }
+    const onEsc = (e) => { if (e.key === 'Escape') { setActiveDropdown(null); setSearchQuery(''); setFeedbackOpen(false) } }
     document.addEventListener('keydown', onEsc)
     return () => document.removeEventListener('keydown', onEsc)
   }, [])
@@ -244,6 +247,17 @@ export default function Navbar() {
               </div>
             )}
 
+            {/* Feedback — always visible (every authed user); icon-only on mobile */}
+            <button
+              ref={feedbackBtnRef}
+              onClick={() => setFeedbackOpen(true)}
+              title="Send feedback"
+              className="flex items-center gap-1.5 px-2.5 py-2 text-neutral hover:text-primary transition rounded-lg hover:bg-surface-muted text-sm font-medium"
+            >
+              <MessageSquare size={17} />
+              <span className="hidden md:inline">Feedback</span>
+            </button>
+
             {/* Bell */}
             <div className="relative">
               <button
@@ -341,6 +355,14 @@ export default function Navbar() {
           </div>
         </div>
       </nav>
+
+      {/* Feedback modal — reachable from every authed page's header */}
+      <FeedbackModal
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        onSubmitted={() => { setFeedbackOpen(false); showToast('Thanks — your feedback was sent.') }}
+        triggerRef={feedbackBtnRef}
+      />
 
       {/* Toast */}
       {toastMsg && (

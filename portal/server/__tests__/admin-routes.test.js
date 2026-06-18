@@ -4,7 +4,9 @@ import request from 'supertest'
 import { requireAuth, requireAdmin } from '../auth/middleware.js'
 import { createAdminRouter } from '../admin/routes.js'
 import { createUsersRepo } from '../users-repo.js'
+import { createFeedbackRepo } from '../feedback-repo.js'
 import { makeFakeContainer } from './fakeCosmos.js'
+import { makeFakeFeedbackContainer } from './fakeFeedbackCosmos.js'
 import { signAccessToken } from '../auth/tokens.js'
 
 beforeAll(() => {
@@ -29,13 +31,24 @@ function doc(username, role = 'user', limits) {
   }
 }
 
-function appWith(docs) {
+function appWith(docs, feedbackDocs = []) {
   const repo = createUsersRepo(makeFakeContainer(docs))
+  const feedbackContainer = makeFakeFeedbackContainer(feedbackDocs)
+  const feedbackRepo = createFeedbackRepo(feedbackContainer)
   const app = express()
   app.use(express.json())
-  app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, defaults: DEFAULTS }))
-  return { app, repo }
+  app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults: DEFAULTS }))
+  return { app, repo, feedbackContainer }
 }
+
+const fdoc = (id, createdAt, extra = {}) => ({
+  _id: id,
+  username: 'staff@bial.test',
+  message: `message ${id}`,
+  page: '/chat',
+  createdAt,
+  ...extra,
+})
 
 const adminToken = () => signAccessToken({ sub: 'admin', username: 'admin', role: 'admin' })
 const userToken = () => signAccessToken({ sub: 'bob', username: 'bob', role: 'user' })
@@ -143,5 +156,93 @@ describe('PATCH /api/admin/users/:username/limits', () => {
       .set('Authorization', `Bearer ${userToken()}`)
       .send({ dailyTokenLimit: 7000 })
     expect(res.status).toBe(403)
+  })
+})
+
+describe('GET /api/admin/feedback', () => {
+  it('no token → 401', async () => {
+    const { app } = appWith([])
+    expect((await request(app).get('/api/admin/feedback')).status).toBe(401)
+  })
+
+  it('non-admin token → 403 with an admin-required message', async () => {
+    const { app } = appWith([doc('bob')])
+    const res = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${userToken()}`)
+    expect(res.status).toBe(403)
+    expect(res.body.error.message).toMatch(/admin/i)
+  })
+
+  it('admin token → 200 with feedback newest-first and a total', async () => {
+    const { app } = appWith(
+      [doc('admin', 'admin')],
+      [
+        fdoc('a', '2026-06-18T09:00:00.000Z'),
+        fdoc('b', '2026-06-18T10:00:00.000Z'),
+        fdoc('c', '2026-06-18T11:00:00.000Z'),
+      ],
+    )
+    const res = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${adminToken()}`)
+    expect(res.status).toBe(200)
+    expect(res.body.total).toBe(3)
+    expect(res.body.feedback.map((f) => f.message)).toEqual(['message c', 'message b', 'message a'])
+  })
+
+  it('each row carries only username, message, page, createdAt — no _id or extras', async () => {
+    const { app } = appWith(
+      [doc('admin', 'admin')],
+      [fdoc('a', '2026-06-18T09:00:00.000Z', { secret: 'should-not-leak', _internal: 1 })],
+    )
+    const res = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${adminToken()}`)
+    expect(res.status).toBe(200)
+    expect(Object.keys(res.body.feedback[0]).sort()).toEqual(['createdAt', 'message', 'page', 'username'])
+    const raw = JSON.stringify(res.body)
+    expect(raw).not.toContain('should-not-leak')
+    expect(raw).not.toContain('_id')
+  })
+
+  it('caps the list at 200 while total reflects the true count', async () => {
+    const many = Array.from({ length: 205 }, (_, i) =>
+      fdoc(`id-${String(i).padStart(3, '0')}`, `2026-06-18T00:00:00.${String(i).padStart(3, '0')}Z`),
+    )
+    const { app } = appWith([doc('admin', 'admin')], many)
+    const res = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${adminToken()}`)
+    expect(res.status).toBe(200)
+    expect(res.body.feedback).toHaveLength(200)
+    expect(res.body.total).toBe(205)
+  })
+
+  it('empty collection → 200 { feedback: [], total: 0 }', async () => {
+    const { app } = appWith([doc('admin', 'admin')], [])
+    const res = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${adminToken()}`)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ feedback: [], total: 0 })
+  })
+
+  it('500 with a generic message when the repo throws (no raw error leak)', async () => {
+    const repo = createUsersRepo(makeFakeContainer([doc('admin', 'admin')]))
+    const feedbackRepo = {
+      listFeedback: async () => {
+        throw new Error('cosmos blew up with secret detail')
+      },
+      countFeedback: async () => 0,
+    }
+    const app = express()
+    app.use(express.json())
+    app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults: DEFAULTS }))
+    const res = await request(app).get('/api/admin/feedback').set('Authorization', `Bearer ${adminToken()}`)
+    expect(res.status).toBe(500)
+    expect(res.body.error.message).toBe('Failed to load feedback.')
+    expect(JSON.stringify(res.body)).not.toContain('secret detail')
+  })
+})
+
+describe('createAdminRouter dependency guards', () => {
+  it('throws when repo is omitted', () => {
+    expect(() => createAdminRouter({})).toThrow(/repo is required/)
+  })
+
+  it('throws when feedbackRepo is omitted', () => {
+    const repo = createUsersRepo(makeFakeContainer([]))
+    expect(() => createAdminRouter({ repo, defaults: DEFAULTS })).toThrow(/feedbackRepo is required/)
   })
 })

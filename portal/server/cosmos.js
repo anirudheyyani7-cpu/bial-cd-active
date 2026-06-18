@@ -17,6 +17,7 @@ import { MongoClient } from 'mongodb'
 let clientPromise = null
 let usersCollection = null
 let usageCollection = null
+let feedbackCollection = null
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -81,9 +82,25 @@ export async function getUsageCollection() {
   return usageCollection
 }
 
+/**
+ * Resolve the pre-created `feedback` collection (cached after first call). Like
+ * the users/usage collections, it is provisioned out-of-band in Data Explorer —
+ * this only connects and returns the handle, never creates anything. Feedback
+ * rows are append-only, keyed by a generated random `_id` (no natural key).
+ */
+export async function getFeedbackCollection() {
+  if (feedbackCollection) return feedbackCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_FEEDBACK_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  feedbackCollection = db.collection(collectionId)
+  return feedbackCollection
+}
+
 /** Test hook: drop cached handles so a fresh client/collection is built. */
 export function _resetMongo() {
   clientPromise = null
   usersCollection = null
   usageCollection = null
+  feedbackCollection = null
 }

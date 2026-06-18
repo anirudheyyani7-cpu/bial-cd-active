@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "seed": "node scripts/seed-users.js",
+    "seed:bial": "node scripts/seed-bial-users.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

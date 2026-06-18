@@ -12,16 +12,15 @@ import {
   appendMessage,
   getConversation,
   deleteConversation,
-  buildPromptFromHistory,
   relativeTime,
 } from '../utils/chatHistory'
 import { assembleApiMessages, putAttachment, countAttachments } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
-const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal.
+const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic Claude.
 
-Your role in this mode is to help airport staff plan and define their app requirements through conversation — NOT to generate code yet.
+Your PRIMARY role is to help airport staff plan and define their app requirements through conversation — NOT to generate code yet.
 
 Guidelines:
 - Ask clarifying questions to understand the user's operational need
@@ -30,8 +29,11 @@ Guidelines:
 - Keep responses concise and practical — staff are busy
 - If the user attaches images (screenshots, mockups, photos) or PDFs (specs, sample data), examine them and use what they actually show to inform the plan — you can see attachments, so refer to their real content
 - When you feel the requirements are well-defined, summarise the plan and suggest moving to the builder
+- For general questions unrelated to app planning, answer them helpfully and concisely, then gently guide the conversation back to planning if appropriate
 
-Do not output code or JSX. Stay focused on requirements gathering and planning.`
+Do not output code or JSX during the planning phase.`
+
+const SUMMARIZE_SYSTEM_PROMPT = `You are a requirements extraction specialist. Given a planning conversation between a user and an AI assistant, extract ONLY the application requirements discussed and output a clean, structured builder prompt. Discard any off-topic discussion, general knowledge questions, or chitchat unrelated to the application being planned. Output a direct, actionable prompt starting with "Build an application for Bengaluru International Airport (BIAL) that..." — include the app's purpose, key features, target users, data needs, and any UI or workflow preferences mentioned. Be specific and concise.`
 
 export default function ChatPage() {
   const navigate = useNavigate()
@@ -44,6 +46,9 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [generating, setGenerating] = useState(false)
   const [showBuildModal, setShowBuildModal] = useState(false)
+  const [showPromptModal, setShowPromptModal] = useState(false)
+  const [builderPrompt, setBuilderPrompt] = useState('')
+  const [summarizing, setSummarizing] = useState(false)
   const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
   const buildSuggestionFiredRef = useRef(false)
 
@@ -278,12 +283,35 @@ export default function ChatPage() {
     }
   }
 
-  const handleBuildApp = () => {
-    const prompt = buildPromptFromHistory(messages)
+  const handleBuildApp = useCallback(async () => {
+    setShowBuildModal(false)
+    setShowPromptModal(true)
+    setSummarizing(true)
+    setBuilderPrompt('')
+
+    const transcript = messages
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n\n')
+
+    let accumulated = ''
+    await sendMessage(
+      [{ role: 'user', content: `Here is a planning conversation. Extract the app requirements and write a builder prompt:\n\n${transcript}` }],
+      (delta) => {
+        accumulated += delta
+        setBuilderPrompt(accumulated)
+      },
+      { systemPrompt: SUMMARIZE_SYSTEM_PROMPT }
+    )
+
+    setSummarizing(false)
+  }, [messages, sendMessage])
+
+  const handleLaunchBuilder = useCallback(() => {
+    setShowPromptModal(false)
     navigate('/workspace/builder', {
-      state: { prompt, dataSource: 'none', theme: 'bial', hasSchema: false, uploadedFiles: [] },
+      state: { prompt: builderPrompt, dataSource: 'none', theme: 'bial', hasSchema: false, uploadedFiles: [] },
     })
-  }
+  }, [builderPrompt, navigate])
 
   return (
     <div className="h-screen overflow-hidden bg-bial-bg font-manrope flex flex-col">
@@ -556,7 +584,7 @@ export default function ChatPage() {
             </div>
             <h2 className="text-xl font-extrabold text-tertiary mb-2">Ready to build this app?</h2>
             <p className="text-sm text-neutral leading-relaxed mb-8">
-              You've mapped out a solid plan. The builder will use your conversation as context to generate the app.
+              You've mapped out a solid plan. The AI will summarise your requirements into a builder prompt you can review before generating the app.
             </p>
             <div className="flex gap-3">
               <button
@@ -570,6 +598,64 @@ export default function ChatPage() {
                 className="flex-1 px-5 py-3 bg-secondary hover:bg-secondary-600 text-white text-sm font-bold rounded-xl transition shadow-sm shadow-secondary/30 flex items-center justify-center gap-2"
               >
                 Build This App <Sparkles size={13} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Builder prompt preview modal */}
+      {showPromptModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8 flex flex-col gap-5 animate-in">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-secondary/10 flex items-center justify-center flex-shrink-0">
+                <Sparkles size={20} className="text-secondary" />
+              </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-tertiary">Builder Prompt</h2>
+                <p className="text-xs text-neutral">Review and edit before launching the builder</p>
+              </div>
+            </div>
+
+            {summarizing ? (
+              <div className="flex flex-col items-center justify-center py-10 gap-3">
+                <div className="flex gap-1">
+                  {[0, 1, 2].map((i) => (
+                    <div
+                      key={i}
+                      className="w-2 h-2 bg-primary rounded-full animate-bounce"
+                      style={{ animationDelay: `${i * 0.15}s` }}
+                    />
+                  ))}
+                </div>
+                <p className="text-sm text-neutral">Summarising your requirements…</p>
+                {builderPrompt && (
+                  <p className="text-xs text-neutral/60 max-w-md text-center leading-relaxed mt-1">{builderPrompt.slice(0, 120)}…</p>
+                )}
+              </div>
+            ) : (
+              <textarea
+                value={builderPrompt}
+                onChange={(e) => setBuilderPrompt(e.target.value)}
+                rows={10}
+                className="w-full resize-none text-sm text-tertiary bg-bial-bg border border-bial-border rounded-xl px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition"
+              />
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowPromptModal(false)}
+                className="flex-1 px-5 py-3 border border-bial-border text-sm font-bold text-neutral rounded-xl hover:bg-surface-muted transition"
+              >
+                Back to Chat
+              </button>
+              <button
+                onClick={handleLaunchBuilder}
+                disabled={summarizing || !builderPrompt.trim()}
+                className="flex-1 px-5 py-3 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition shadow-sm shadow-secondary/30 flex items-center justify-center gap-2"
+              >
+                Launch Builder <Hammer size={13} />
               </button>
             </div>
           </div>

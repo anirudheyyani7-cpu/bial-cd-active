@@ -20,6 +20,10 @@ export default defineConfig({
         },
       },
       {
+        // Automatic JSX runtime so component tests can render JSX (e.g. the
+        // shared AttachmentChips chip) without importing React in scope —
+        // esbuild injects react/jsx-runtime, matching the app's vite.config.js.
+        esbuild: { jsx: 'automatic' },
         test: {
           name: 'frontend',
           environment: 'jsdom',

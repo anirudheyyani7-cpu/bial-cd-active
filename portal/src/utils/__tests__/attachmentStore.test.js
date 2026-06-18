@@ -119,6 +119,48 @@ describe('attachmentStore — content-block helpers', () => {
     ).toBe('line1\nline2')
   })
 
+  // base64 of UTF-8 bytes, the way putAttachment stores a decoded text file.
+  const b64Utf8 = (s) => Buffer.from(s, 'utf8').toString('base64')
+
+  it('buildContentBlocks: a text attachment → fenced <attachment> text block before the user text', async () => {
+    const getBytes = async () => b64Utf8('name,role\nAsha,ops')
+    const blocks = await buildContentBlocks(
+      'summarise this',
+      [{ id: 't', name: 'roster.csv', mediaType: 'text/csv' }],
+      getBytes,
+    )
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toEqual({
+      type: 'text',
+      text: '<attachment name="roster.csv" type="text">\nname,role\nAsha,ops\n</attachment>',
+    })
+    expect(blocks[1]).toEqual({ type: 'text', text: 'summarise this' })
+  })
+
+  it('buildContentBlocks: decodes multibyte + BOM-prefixed text correctly (not bare atob)', async () => {
+    const getBytes = async () => b64Utf8('﻿café,€,日本') // leading BOM, accents, euro, CJK
+    const blocks = await buildContentBlocks('go', [{ id: 't', name: 'm.txt', mediaType: 'text/plain' }], getBytes)
+    // BOM stripped, bytes round-trip exactly — bare atob would mojibake these.
+    expect(blocks[0].text).toBe('<attachment name="m.txt" type="text">\ncafé,€,日本\n</attachment>')
+  })
+
+  it('buildContentBlocks: text block is emitted even when binary:false (sticky); binary is skipped', async () => {
+    const getBytes = async (id) => (id === 'txt' ? b64Utf8('hi,there') : 'IMGDATA')
+    const blocks = await buildContentBlocks(
+      'q',
+      [
+        { id: 'txt', name: 'a.csv', mediaType: 'text/csv' },
+        { id: 'img', name: 'b.png', mediaType: 'image/png' },
+      ],
+      getBytes,
+      { binary: false },
+    )
+    // Only the sticky text block + the user text; the image is dropped on a non-newest turn.
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].text).toContain('<attachment name="a.csv"')
+    expect(blocks[1]).toEqual({ type: 'text', text: 'q' })
+  })
+
   it('buildContentBlocks skips a ref whose bytes are missing (no null-data block)', async () => {
     const getBytes = async (id) => (id === 'present' ? 'DATA' : null)
     const blocks = await buildContentBlocks(
@@ -150,6 +192,29 @@ describe('attachmentStore — content-block helpers', () => {
     expect(Array.isArray(out[2].content)).toBe(true)
     expect(out[2].content[0]).toMatchObject({ type: 'image', source: { data: 'IMGDATA' } }) // file first
     expect(out[2].content[1]).toEqual({ type: 'text', text: 'look at this' }) // text last
+  })
+
+  it('keeps a text attachment sticky across turns but does NOT re-send an old image', async () => {
+    const getBytes = async (id) => (id === 'csv' ? Buffer.from('a,b\n1,2', 'utf8').toString('base64') : 'IMGDATA')
+    const out = await assembleApiMessages(
+      [
+        { role: 'user', content: 'turn 1', attachments: [
+          { id: 'csv', name: 'd.csv', mediaType: 'text/csv' },
+          { id: 'img', name: 'p.png', mediaType: 'image/png' },
+        ] },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'turn 2 question' }, // newest, no attachments
+      ],
+      getBytes,
+    )
+    // Turn 1 is no longer newest: the CSV is still inlined (sticky) but the image is gone.
+    expect(Array.isArray(out[0].content)).toBe(true)
+    const turn1Text = out[0].content.map((b) => b.text || '').join('|')
+    expect(turn1Text).toContain('<attachment name="d.csv"')
+    expect(out[0].content.some((b) => b.type === 'image')).toBe(false)
+    // Plain turns unchanged.
+    expect(out[1]).toEqual({ role: 'assistant', content: 'ok' })
+    expect(out[2]).toEqual({ role: 'user', content: 'turn 2 question' })
   })
 })
 

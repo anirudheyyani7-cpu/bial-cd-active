@@ -136,6 +136,12 @@ const ALLOWED_MEDIA = {
   'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
 }
 
+// Upper bound on a single inlined text-attachment block (≈512 KB, ~2× the client
+// 256 KB per-file cap to absorb the `<attachment>` wrapper). The client cap is
+// advisory/bypassable; this is the real trust boundary for inline text — text
+// was previously the only attachment class with no server-side size check.
+const TEXT_BLOCK_MAX_CHARS = 512 * 1024
+
 function magicMatches(bytes, magic) {
   if (bytes.length < magic.length) return false
   return magic.every((b, i) => bytes[i] === b)
@@ -157,6 +163,11 @@ function validateAttachments(messages) {
         // A text block must carry a string; a malformed one would 400 upstream
         // after the relay commits, so reject it cleanly here.
         if (typeof block.text !== 'string') return 'Invalid attachment: malformed text block.'
+        // Bound inlined text-attachment blocks. The client caps text files at
+        // 256 KB but that's bypassable; this is the server-side bound.
+        if (Buffer.byteLength(block.text, 'utf8') > TEXT_BLOCK_MAX_CHARS) {
+          return 'A text attachment is too large. Please trim the file and try again.'
+        }
         continue
       }
       if (block?.type !== 'image' && block?.type !== 'document') continue

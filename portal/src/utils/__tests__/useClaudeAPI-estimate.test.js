@@ -81,4 +81,27 @@ describe('estimateConversationTokens', () => {
     expect(estimateConversationTokens(null, '')).toBe(0)
     expect(CONTEXT_SOFT_LIMIT).toBeLessThan(CONTEXT_HARD_LIMIT)
   })
+
+  it('counts a text attachment by its byte size on EVERY turn it appears (not a flat 1600)', () => {
+    const textRef = { id: 't', mediaType: 'text/csv', size: 200 * 1024 } // ~51,200 tokens
+    const messages = [
+      { role: 'user', content: '', attachments: [textRef] }, // old turn — still counted (sticky)
+      { role: 'assistant', content: '' },
+      { role: 'user', content: '' }, // newest, no attachments
+    ]
+    const est = estimateConversationTokens(messages, '')
+    expect(est).toBe(Math.ceil((200 * 1024) / 4)) // 51,200 — text counted though it's not the newest turn
+  })
+
+  it('still counts an image/PDF attachment as a flat nominal on the newest turn only', () => {
+    const img = { id: 'i', mediaType: 'image/png', size: 4_000_000 }
+    // Image on the newest turn → one flat nominal (1600), NOT size-based.
+    expect(estimateConversationTokens([{ role: 'user', content: '', attachments: [img] }], '')).toBe(1600)
+    // Same image on a non-newest turn → not re-sent, so not counted.
+    const older = [
+      { role: 'user', content: '', attachments: [img] },
+      { role: 'assistant', content: '' },
+    ]
+    expect(estimateConversationTokens(older, '')).toBe(0)
+  })
 })

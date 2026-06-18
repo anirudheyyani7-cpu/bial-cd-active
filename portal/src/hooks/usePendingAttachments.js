@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { validateAttachmentFiles, fileToBase64, newAttachmentId } from '../utils/attachmentInput'
+import { validateAttachmentFiles, fileToBase64, newAttachmentId, resolveMediaType } from '../utils/attachmentInput'
 
 /**
  * Shared composer state for image/PDF attachments (used by ChatPage and
@@ -36,7 +36,9 @@ export function usePendingAttachments() {
           incoming.map(async (file) => ({
             id: newAttachmentId(),
             name: file.name,
-            mediaType: file.type,
+            // Resolve so an OS-mislabeled CSV stores its canonical text/csv type
+            // — the same type the validator allowed it under (Decision 3).
+            mediaType: resolveMediaType(file),
             size: file.size,
             base64: await fileToBase64(file),
           })),

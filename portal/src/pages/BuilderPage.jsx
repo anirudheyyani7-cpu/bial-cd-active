@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import {
   Send, ArrowLeft, Sparkles, User, Brain, LayoutTemplate, Code2, Monitor, CheckCircle, X, Paperclip, FileText,
-  History, Trash2,
+  FileSpreadsheet, History, Trash2,
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
@@ -11,7 +11,7 @@ import AttachmentLightbox from '../components/AttachmentLightbox'
 import { useClaudeAPI, buildSystemPrompt, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap } from '../utils/attachmentInput'
+import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
@@ -564,7 +564,11 @@ export default function BuilderPage() {
                     key={a.id}
                     className="flex items-center gap-1 bg-bial-bg border border-bial-border rounded-lg px-1.5 py-1 text-[11px] text-tertiary"
                   >
-                    {a.mediaType === 'application/pdf' ? (
+                    {TEXT_MEDIA_TYPES.has(a.mediaType) ? (
+                      <span className="flex-shrink-0 text-primary" title={a.name}>
+                        {a.mediaType === 'text/csv' ? <FileSpreadsheet size={11} /> : <FileText size={11} />}
+                      </span>
+                    ) : a.mediaType === 'application/pdf' ? (
                       <button
                         type="button"
                         onClick={() => openPdf(a.base64, a.name)}
@@ -603,7 +607,7 @@ export default function BuilderPage() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={generating}
-                title="Attach images or PDFs"
+                title="Attach images, PDFs, or text files (CSV, TXT)"
                 className="flex-shrink-0 w-9 h-9 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
               >
                 <Paperclip size={13} />
@@ -625,7 +629,7 @@ export default function BuilderPage() {
                 <Send size={13} />
               </button>
             </div>
-            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send · Images & PDFs supported</p>
+            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send · Images, PDFs & text files supported</p>
           </div>
         </div>
 

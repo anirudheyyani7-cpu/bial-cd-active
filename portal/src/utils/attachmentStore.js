@@ -16,6 +16,7 @@
  * only module that knows how bytes map onto Anthropic content blocks.
  */
 import { getStoredUser } from './auth.js'
+import { TEXT_MEDIA_TYPES } from './attachmentInput.js'
 
 const DB_NAME = 'bial_attachments'
 const STORE = 'attachments'
@@ -168,18 +169,41 @@ export async function clearForUser(user = currentUser()) {
 }
 
 /**
+ * Decode stored base64 bytes back to text. Goes via Uint8Array → TextDecoder
+ * (UTF-8) so multibyte content (accents, €, CJK) round-trips correctly — bare
+ * `atob` yields latin1 and mojibakes it. A leading U+FEFF BOM is stripped.
+ */
+function decodeBase64Text(b64) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const text = new TextDecoder().decode(bytes)
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/**
  * Assemble a message's `content` for the API. With no attachments returns the
  * plain string (the unchanged path). With attachments returns a ContentBlock[]
  * with the file blocks BEFORE the text block (Anthropic ordering). A ref whose
  * bytes are missing is skipped rather than sent as a null-data block.
+ *
+ * Text attachments (CSV/plain-text) are emitted as a fenced `<attachment>` TEXT
+ * block (decoded inline) regardless of `binary`, because they're sticky — re-sent
+ * on every turn they appear. Binary attachments (image/PDF) are emitted ONLY when
+ * `binary` is true (the newest turn); on older turns they'd bloat the body, so
+ * they're dropped (the model already saw them in the turn they were sent).
  */
-export async function buildContentBlocks(text, attachments, getBytes = getAttachment) {
+export async function buildContentBlocks(text, attachments, getBytes = getAttachment, { binary = true } = {}) {
   if (!attachments || attachments.length === 0) return text
   const blocks = []
   for (const a of attachments) {
+    const isText = TEXT_MEDIA_TYPES.has(a.mediaType)
+    if (!isText && !binary) continue // binary block, not the newest turn → skip
     const data = await getBytes(a.id)
     if (!data) continue
-    if (a.mediaType === 'application/pdf') {
+    if (isText) {
+      // Fenced in unambiguous delimiters: the model must read this as uploaded
+      // file DATA, not instructions (the system prompt reinforces this).
+      blocks.push({ type: 'text', text: `<attachment name="${a.name}" type="text">\n${decodeBase64Text(data)}\n</attachment>` })
+    } else if (a.mediaType === 'application/pdf') {
       blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } })
     } else {
       blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mediaType, data } })
@@ -211,19 +235,29 @@ export function contentToText(content) {
  * both chat surfaces so the assembly can't drift between them.
  */
 export async function assembleApiMessages(messages, getBytes = getAttachment) {
-  // Only the NEWEST turn's attachment bytes are inflated into the request body.
-  // Re-base64-ing every historical attachment on every send grows the body
-  // unbounded across turns and eventually blows past the 35MB route / 32MB API
-  // ceiling (the per-message caps don't bound the per-conversation total). Older
-  // attachment turns send their text only — the model already saw those files in
-  // the turn they were sent.
+  // Only the NEWEST turn's BINARY (image/PDF) attachment bytes are inflated into
+  // the request body. Re-base64-ing every historical binary on every send grows
+  // the body unbounded across turns and eventually blows past the 35MB route /
+  // 32MB API ceiling. Older binary turns send their text only — the model
+  // already saw those files in the turn they were sent.
+  //
+  // TEXT attachments are the exception: they're small (capped) and STICKY, so a
+  // turn carrying one is re-assembled into its fenced text block on EVERY send,
+  // even when it's no longer the newest turn — otherwise the assistant would
+  // "forget" an attached CSV after one reply (Decision 2).
   const lastIdx = messages.length - 1
   return Promise.all(
-    messages.map(async (m, i) => ({
-      role: m.role,
-      content: i === lastIdx && m.attachments?.length
-        ? await buildContentBlocks(contentToText(m.content), m.attachments, getBytes)
-        : contentToText(m.content),
-    })),
+    messages.map(async (m, i) => {
+      const atts = m.attachments
+      if (!atts?.length) return { role: m.role, content: contentToText(m.content) }
+      const isNewest = i === lastIdx
+      const hasText = atts.some((a) => TEXT_MEDIA_TYPES.has(a.mediaType))
+      // Older turn with only binary attachments → text-only (unchanged path).
+      if (!isNewest && !hasText) return { role: m.role, content: contentToText(m.content) }
+      return {
+        role: m.role,
+        content: await buildContentBlocks(contentToText(m.content), atts, getBytes, { binary: isNewest }),
+      }
+    }),
   )
 }

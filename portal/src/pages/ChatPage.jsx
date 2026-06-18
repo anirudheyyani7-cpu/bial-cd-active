@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X, FileText } from 'lucide-react'
+import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X, FileText, FileSpreadsheet } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import Navbar from '../components/layout/Navbar'
 import AttachmentChips from '../components/AttachmentChips'
@@ -17,7 +17,7 @@ import {
   relativeTime,
 } from '../utils/chatHistory'
 import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap } from '../utils/attachmentInput'
+import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal.
@@ -471,7 +471,11 @@ export default function ChatPage() {
                       key={a.id}
                       className="group relative flex items-center gap-1.5 bg-bial-bg border border-bial-border rounded-lg px-2 py-1.5 text-xs text-tertiary"
                     >
-                      {a.mediaType === 'application/pdf' ? (
+                      {TEXT_MEDIA_TYPES.has(a.mediaType) ? (
+                        <span className="flex-shrink-0 text-primary" title={a.name}>
+                          {a.mediaType === 'text/csv' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
+                        </span>
+                      ) : a.mediaType === 'application/pdf' ? (
                         <button
                           type="button"
                           onClick={() => openPdf(a.base64, a.name)}
@@ -514,7 +518,7 @@ export default function ChatPage() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={generating}
-                  title="Attach images or PDFs"
+                  title="Attach images, PDFs, or text files (CSV, TXT)"
                   className="flex-shrink-0 w-11 h-11 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
                 >
                   <Paperclip size={15} />
@@ -543,7 +547,7 @@ export default function ChatPage() {
               </div>
             </div>
             <p className="text-[10px] text-center text-neutral/40 uppercase tracking-wider mt-2">
-              Press Enter to send · Shift+Enter for new line · Images & PDFs supported
+              Press Enter to send · Shift+Enter for new line · Images, PDFs & text files supported
             </p>
           </div>
         </div>

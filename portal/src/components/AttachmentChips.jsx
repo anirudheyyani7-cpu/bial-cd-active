@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { FileText, ImageOff } from 'lucide-react'
+import { FileText, FileSpreadsheet, ImageOff } from 'lucide-react'
 import { getAttachment } from '../utils/attachmentStore'
+import { TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 import AttachmentLightbox from './AttachmentLightbox'
 
@@ -8,17 +9,20 @@ import AttachmentLightbox from './AttachmentLightbox'
  * Render a single persisted attachment ref by reading its bytes back from the
  * IndexedDB store. Images become inline thumbnails that open a full-size
  * lightbox on click; PDFs become a labelled chip that opens the file in a new
- * tab; a ref whose bytes are gone (cleared / different browser) shows an
- * "unavailable" placeholder instead of crashing.
+ * tab; text/CSV become a labelled file-icon chip (no byte read — the content
+ * already travelled inline in the prompt); a ref whose bytes are gone (cleared /
+ * different browser) shows an "unavailable" placeholder instead of crashing.
  */
 function AttachmentChip({ att }) {
   const isPdf = att.mediaType === 'application/pdf'
+  const isText = TEXT_MEDIA_TYPES.has(att.mediaType)
   const [src, setSrc] = useState(null)
   const [missing, setMissing] = useState(false)
   const [zoomed, setZoomed] = useState(false)
 
   useEffect(() => {
-    if (isPdf) return undefined
+    // PDFs and text files don't preview from bytes — skip the read entirely.
+    if (isPdf || isText) return undefined
     let active = true
     getAttachment(att.id).then((b64) => {
       if (!active) return
@@ -28,7 +32,20 @@ function AttachmentChip({ att }) {
     return () => {
       active = false
     }
-  }, [att.id, att.mediaType, isPdf])
+  }, [att.id, att.mediaType, isPdf, isText])
+
+  if (isText) {
+    const Icon = att.mediaType === 'text/csv' ? FileSpreadsheet : FileText
+    return (
+      <span
+        title={att.name}
+        className="inline-flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-[11px] max-w-[12rem]"
+      >
+        <Icon size={12} className="flex-shrink-0" />
+        <span className="truncate">{att.name}</span>
+      </span>
+    )
+  }
 
   if (isPdf) {
     return (

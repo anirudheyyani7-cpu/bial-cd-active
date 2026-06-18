@@ -415,6 +415,35 @@ describe('attachment validation + body size', () => {
     expect(claudeStream).not.toHaveBeenCalled()
   })
 
+  it('accepts a normal-sized inline text-attachment block and streams', async () => {
+    const res = await auth(request(makeServer()).post('/api/claude')).send({
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: '<attachment name="a.csv" type="text">\na,b\n1,2\n</attachment>' },
+          { type: 'text', text: 'summarise this' },
+        ],
+      }],
+    })
+    expect(res.status).toBe(200)
+    expect(claudeStream).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an oversized inline text-attachment block (>512 KB) with 400, no upstream call', async () => {
+    const huge = 'x'.repeat(512 * 1024 + 1) // one byte over TEXT_BLOCK_MAX_CHARS
+    const res = await auth(request(makeServer()).post('/api/claude')).send({
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: `<attachment name="big.csv" type="text">\n${huge}\n</attachment>` },
+          { type: 'text', text: 'go' },
+        ],
+      }],
+    })
+    expect(res.status).toBe(400)
+    expect(claudeStream).not.toHaveBeenCalled()
+  })
+
   it('accepts a >100 KB body on /api/claude (route limit is 35 MB, not the 100 KB global)', async () => {
     const big = 'x'.repeat(150 * 1024) // 150 KB of text — over the 100 KB global parser cap
     const res = await auth(request(makeServer()).post('/api/claude')).send({

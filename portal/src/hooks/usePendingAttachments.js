@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { validateAttachmentFiles, fileToBase64, newAttachmentId, resolveMediaType } from '../utils/attachmentInput'
+import { validateAttachmentFiles, fileToBase64, newAttachmentId, resolveMediaType, textAttachmentBytes } from '../utils/attachmentInput'
 
 /**
  * Shared composer state for image/PDF attachments (used by ChatPage and
@@ -26,7 +26,9 @@ export function usePendingAttachments() {
       const incoming = Array.from(e.target.files || [])
       e.target.value = '' // allow re-selecting the same file later
       if (incoming.length === 0) return
-      const result = validateAttachmentFiles(incoming, pendingAttachments.length)
+      // Pass the bytes of text files already pending so the text budget is
+      // enforced cumulatively across picks, not reset per selection.
+      const result = validateAttachmentFiles(incoming, pendingAttachments.length, textAttachmentBytes(pendingAttachments))
       if (result.error) {
         showAttachToast(result.error)
         return
@@ -48,7 +50,7 @@ export function usePendingAttachments() {
         showAttachToast('Could not read the selected file.')
       }
     },
-    [pendingAttachments.length, showAttachToast],
+    [pendingAttachments, showAttachToast],
   )
 
   const removePending = useCallback((id) => {

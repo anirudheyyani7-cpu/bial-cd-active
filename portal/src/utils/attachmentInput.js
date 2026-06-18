@@ -61,12 +61,17 @@ export function resolveMediaType(file) {
  * OS-mislabeled CSV isn't rejected before canonicalization), and both the
  * allowlist check and the size cap run against that resolved type. Caps are
  * measured on the original File.size.
+ *
+ * `existingTextBytes` is the byte total of text attachments ALREADY pending in
+ * the composer, so the text budget is enforced across multiple picks in one
+ * message — not just within a single selection (otherwise stacking picks would
+ * bypass it).
  */
-export function validateAttachmentFiles(incoming, currentCount = 0) {
+export function validateAttachmentFiles(incoming, currentCount = 0, existingTextBytes = 0) {
   if (currentCount + incoming.length > MAX_FILES_PER_MESSAGE) {
     return { error: `You can attach at most ${MAX_FILES_PER_MESSAGE} files per message.` }
   }
-  let textBytes = 0
+  let textBytes = existingTextBytes
   for (const file of incoming) {
     if (isWordFile(file)) return { error: WORD_REJECT_MSG }
     const mediaType = resolveMediaType(file)
@@ -83,12 +88,18 @@ export function validateAttachmentFiles(incoming, currentCount = 0) {
       return { error: `"${file.name}" exceeds the 4 MB limit.` }
     }
   }
-  // Inline text is sent on every turn (sticky), so bound the selection's total
-  // text bytes too — not just per file — to keep the running prompt in budget.
+  // Inline text is sent on every turn (sticky), so bound the running total of
+  // pending text bytes — not just per file — to keep the prompt in budget.
   if (textBytes > MAX_TEXT_BYTES_PER_CONVERSATION) {
     return { error: `Attached text files exceed the ${MAX_TEXT_BYTES_PER_CONVERSATION / 1024} KB total limit. Remove some and try again.` }
   }
   return { ok: true }
+}
+
+/** Sum the byte size of the text attachments in a pending/ref list. */
+export function textAttachmentBytes(attachments) {
+  if (!Array.isArray(attachments)) return 0
+  return attachments.reduce((n, a) => n + (TEXT_MEDIA_TYPES.has(a.mediaType) ? a.size || 0 : 0), 0)
 }
 
 /**

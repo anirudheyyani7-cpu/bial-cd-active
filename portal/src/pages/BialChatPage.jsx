@@ -166,10 +166,11 @@ export default function BialChatPage() {
 
     setGenerating(false)
 
-    // A null result means the send failed (429/network) or was aborted. Drop the
-    // optimistic empty assistant bubble so it isn't persisted as content:'' (the
-    // API rejects that on the next turn). Any error surfaces in the banner.
-    if (result == null) {
+    // A falsy result means the send failed (429/network), was aborted, OR
+    // streamed zero text. Drop the optimistic empty assistant bubble so it isn't
+    // persisted as content:'' (the API rejects that on the next turn). Any error
+    // surfaces in the banner.
+    if (!result) {
       setMessages((prev) => prev.filter((m) => m.id !== assistantId))
       return
     }

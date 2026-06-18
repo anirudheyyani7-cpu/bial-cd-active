@@ -3,6 +3,7 @@ import {
   validateAttachmentFiles,
   validateConversationAttachmentCap,
   resolveMediaType,
+  textAttachmentBytes,
   fileToBase64,
   toAttachmentRef,
   ACCEPT_ATTR,
@@ -69,6 +70,33 @@ describe('validateAttachmentFiles', () => {
     const five = Array.from({ length: 5 }, (_, i) => file(`f${i}.txt`, 'text/plain', MAX_TEXT_FILE_SIZE))
     const res = validateAttachmentFiles(five, 0)
     expect(res.error).toMatch(new RegExp(`${MAX_TEXT_BYTES_PER_CONVERSATION / 1024} KB total`))
+  })
+
+  it('enforces the text budget CUMULATIVELY across pending picks (existingTextBytes)', () => {
+    // 400 KB already pending + a new 200 KB pick = 600 KB > 512 KB → rejected,
+    // even though the new pick alone is well under the budget.
+    const res = validateAttachmentFiles([file('more.csv', 'text/csv', 200 * 1024)], 2, 400 * 1024)
+    expect(res.error).toMatch(new RegExp(`${MAX_TEXT_BYTES_PER_CONVERSATION / 1024} KB total`))
+    // A pick that keeps the running total under budget still passes.
+    expect(validateAttachmentFiles([file('ok.csv', 'text/csv', 100 * 1024)], 1, 200 * 1024)).toEqual({ ok: true })
+  })
+})
+
+describe('textAttachmentBytes', () => {
+  it('sums the size of text refs only (ignores image/PDF)', () => {
+    expect(
+      textAttachmentBytes([
+        { mediaType: 'text/csv', size: 1000 },
+        { mediaType: 'image/png', size: 5000 },
+        { mediaType: 'application/pdf', size: 9000 },
+        { mediaType: 'text/plain', size: 200 },
+      ]),
+    ).toBe(1200)
+  })
+
+  it('is 0 for empty / non-array inputs', () => {
+    expect(textAttachmentBytes([])).toBe(0)
+    expect(textAttachmentBytes(null)).toBe(0)
   })
 })
 

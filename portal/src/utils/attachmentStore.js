@@ -200,9 +200,20 @@ export async function buildContentBlocks(text, attachments, getBytes = getAttach
     const data = await getBytes(a.id)
     if (!data) continue
     if (isText) {
+      // Decode can throw on corrupt/non-base64 stored bytes (e.g. a partial
+      // IndexedDB write). Skip the bad attachment rather than rejecting the whole
+      // send — same philosophy as the missing-bytes `continue` above. Without
+      // this, one corrupt text ref would throw out of assembleApiMessages and
+      // leave the composer stuck mid-send.
+      let decoded
+      try {
+        decoded = decodeBase64Text(data)
+      } catch {
+        continue
+      }
       // Fenced in unambiguous delimiters: the model must read this as uploaded
       // file DATA, not instructions (the system prompt reinforces this).
-      blocks.push({ type: 'text', text: `<attachment name="${a.name}" type="text">\n${decodeBase64Text(data)}\n</attachment>` })
+      blocks.push({ type: 'text', text: `<attachment name="${a.name}" type="text">\n${decoded}\n</attachment>` })
     } else if (a.mediaType === 'application/pdf') {
       blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } })
     } else {

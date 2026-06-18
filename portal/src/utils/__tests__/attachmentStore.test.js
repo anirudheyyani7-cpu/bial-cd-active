@@ -161,6 +161,23 @@ describe('attachmentStore — content-block helpers', () => {
     expect(blocks[1]).toEqual({ type: 'text', text: 'q' })
   })
 
+  it('buildContentBlocks skips a text attachment with corrupt base64 instead of throwing the whole send', async () => {
+    // '@@@' isn't valid base64 → decode throws; the bad ref must be skipped (like
+    // the missing-bytes path), not reject assembly and lock the composer.
+    const getBytes = async (id) => (id === 'good' ? b64Utf8('ok,1') : '@@@not-base64@@@')
+    const blocks = await buildContentBlocks(
+      'q',
+      [
+        { id: 'bad', name: 'bad.csv', mediaType: 'text/csv' },
+        { id: 'good', name: 'good.csv', mediaType: 'text/csv' },
+      ],
+      getBytes,
+    )
+    expect(blocks).toHaveLength(2) // bad skipped; good text block + user text remain
+    expect(blocks[0].text).toContain('good.csv')
+    expect(blocks[1]).toEqual({ type: 'text', text: 'q' })
+  })
+
   it('buildContentBlocks skips a ref whose bytes are missing (no null-data block)', async () => {
     const getBytes = async (id) => (id === 'present' ? 'DATA' : null)
     const blocks = await buildContentBlocks(

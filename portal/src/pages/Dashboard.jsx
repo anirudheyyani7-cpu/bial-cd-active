@@ -27,7 +27,7 @@ export default function Dashboard() {
           </p>
         )}
         <p className="text-neutral text-base leading-relaxed max-w-2xl mb-10">
-          Ready to build the future of aviation? Plan and build operational tools in the App Builder, or ask the BIAL Assistant anything.
+          Ready to build the future of aviation? Plan and build operational tools in the App Builder, or ask BIAL Chat anything.
         </p>
 
         {/* Two entry points — distinct identity + job-to-be-done copy (Decision 7) */}

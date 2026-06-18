@@ -61,7 +61,7 @@ export default function BialConversationsPage() {
         <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
           <div>
             <h1 className="text-2xl font-extrabold text-tertiary">BIAL Chat History</h1>
-            <p className="text-sm text-neutral mt-1">All your conversations with the BIAL Assistant in one place.</p>
+            <p className="text-sm text-neutral mt-1">All your conversations with BIAL Chat in one place.</p>
           </div>
           <button
             onClick={() => navigate('/chat')}
@@ -93,7 +93,7 @@ export default function BialConversationsPage() {
             </p>
             <p className="text-xs text-neutral mt-1">
               {items.length === 0
-                ? 'Start a chat with the BIAL Assistant and it will show up here.'
+                ? 'Start a conversation in BIAL Chat and it will show up here.'
                 : 'Try a different search.'}
             </p>
           </div>

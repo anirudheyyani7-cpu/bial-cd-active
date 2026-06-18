@@ -9,15 +9,18 @@
  *                                    projects them out).
  *  - PATCH /users/:username/limits → set/clear a user's limit overrides; returns
  *                                    the user's new effective limits.
+ *  - GET   /feedback               → read-only list of submitted feedback,
+ *                                    newest first, capped, with the true total.
  *
- * `repo` and the standard-plan `defaults` are injected so the router is testable
- * against a fake users-repo without live Cosmos.
+ * `repo`, `feedbackRepo`, and the standard-plan `defaults` are injected so the
+ * router is testable against fakes without live Cosmos.
  */
 import express from 'express'
 import { resolveUserLimits, validateLimitsPatch, defaultLimits } from '../limits.js'
 
-export function createAdminRouter({ repo, defaults = defaultLimits() } = {}) {
+export function createAdminRouter({ repo, feedbackRepo, defaults = defaultLimits() } = {}) {
   if (!repo) throw new Error('createAdminRouter: repo is required')
+  if (!feedbackRepo) throw new Error('createAdminRouter: feedbackRepo is required')
   const router = express.Router()
 
   router.get('/users', async (_req, res) => {
@@ -63,6 +66,31 @@ export function createAdminRouter({ repo, defaults = defaultLimits() } = {}) {
     } catch (err) {
       console.error('admin updateLimits failed:', err.message)
       return res.status(500).json({ error: { message: 'Failed to update limits.' } })
+    }
+  })
+
+  router.get('/feedback', async (_req, res) => {
+    try {
+      // Fetch the capped list + the true total together; total drives the
+      // "newest 200 of N" truncation banner in the panel (Decision 7).
+      const [items, total] = await Promise.all([
+        feedbackRepo.listFeedback({ limit: 200 }),
+        feedbackRepo.countFeedback(),
+      ])
+      // Explicit field projection (never spread `_id` or the raw doc) keeps the
+      // payload to exactly what the UI needs and cannot leak unexpected fields.
+      return res.json({
+        feedback: items.map((f) => ({
+          username: f.username,
+          message: f.message,
+          page: f.page,
+          createdAt: f.createdAt,
+        })),
+        total,
+      })
+    } catch (err) {
+      console.error('admin listFeedback failed:', err.message)
+      return res.status(500).json({ error: { message: 'Failed to load feedback.' } })
     }
   })
 

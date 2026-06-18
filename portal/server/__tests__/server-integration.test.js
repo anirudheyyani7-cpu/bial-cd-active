@@ -213,6 +213,31 @@ describe('createApp dependency guards', () => {
   })
 })
 
+describe('POST /api/feedback wired through createApp', () => {
+  it('persists an authed submission (author from the token) and 401s without a token', async () => {
+    const feedbackContainer = makeFakeFeedbackContainer([])
+    const app2 = createApp({
+      repo: createUsersRepo(makeFakeContainer([])),
+      usageRepo: createUsageRepo(makeFakeUsageContainer([])),
+      feedbackRepo: createFeedbackRepo(feedbackContainer),
+      claudeClient: makeClaudeClient(),
+      distDir,
+    })
+
+    const ok = await request(app2)
+      .post('/api/feedback')
+      .set('Authorization', `Bearer ${validToken()}`)
+      .send({ message: 'wired e2e', page: '/chat' })
+    expect(ok.status).toBe(201)
+    const stored = [...feedbackContainer._store.values()]
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ username: 'alice', message: 'wired e2e', page: '/chat' })
+
+    const noTok = await request(app2).post('/api/feedback').send({ message: 'x' })
+    expect(noTok.status).toBe(401)
+  })
+})
+
 describe('daily token limit enforcement', () => {
   const auth = (req) => req.set('Authorization', `Bearer ${validToken()}`)
 

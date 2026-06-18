@@ -44,10 +44,15 @@ export function validateFeedback(body) {
   }
   // page is advisory UX metadata — NEVER reject the submission on it.
   let page = typeof body.page === 'string' ? body.page : ''
-  if (page.length > MAX_PAGE_CHARS) page = page.slice(0, MAX_PAGE_CHARS)
-  // Keep only path-like values (what useLocation().pathname produces); coerce
-  // javascript:/absolute-URL/garbage to '' so it can never be treated as a link.
-  if (!page.startsWith('/')) page = ''
+  // Truncate by code point (Array.from), not UTF-16 unit, so a multibyte char at
+  // the 256 boundary can't be split into a lone surrogate.
+  if (page.length > MAX_PAGE_CHARS) page = Array.from(page).slice(0, MAX_PAGE_CHARS).join('')
+  // Keep only same-origin path-like values — exactly what useLocation().pathname
+  // produces: a single leading slash NOT followed by another slash. This coerces
+  // javascript:, absolute URLs, and protocol-relative '//host' (a latent open-
+  // redirect footgun for the deferred "open page" affordance) to '' so page can
+  // never be trusted, keyed on, or rendered as a navigable link.
+  if (!/^\/(?!\/)/.test(page)) page = ''
   return { ok: true, value: { message: trimmed, page } }
 }
 

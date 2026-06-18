@@ -25,13 +25,21 @@ export default function FeedbackModal({ open, onClose, onSubmitted, triggerRef, 
   const [error, setError] = useState(null)
   const textareaRef = useRef(null)
   const cardRef = useRef(null)
+  // Tracks the latest `open` so an in-flight submit can detect a mid-request
+  // dismiss (overlay/X/Escape) and skip toasting/erroring against a closed dialog.
+  const openRef = useRef(open)
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
 
-  // On open: focus the textarea and clear any stale draft/error (the component
-  // stays mounted across opens — Navbar renders it unconditionally).
+  // On open: focus the textarea and clear any stale draft/error/busy (the
+  // component stays mounted across opens — Navbar renders it unconditionally —
+  // so resetting busy here also recovers from a dismiss-mid-submit).
   useEffect(() => {
     if (!open) return
     setMessage('')
     setError(null)
+    setBusy(false)
     textareaRef.current?.focus()
   }, [open])
 
@@ -54,11 +62,13 @@ export default function FeedbackModal({ open, onClose, onSubmitted, triggerRef, 
     setError(null)
     try {
       await submitFn(message.trim(), pathname)
+      if (!openRef.current) return // dismissed mid-submit — don't toast a closed dialog
       setMessage('')
       setBusy(false)
       restoreFocus()
       onSubmitted() // parent toasts + closes
     } catch (e) {
+      if (!openRef.current) return // dismissed mid-submit — error has nowhere to show
       setError(e.message)
       setBusy(false)
     }
@@ -87,7 +97,7 @@ export default function FeedbackModal({ open, onClose, onSubmitted, triggerRef, 
       aria-modal="true"
       aria-label="Send feedback"
     >
-      <div className="absolute inset-0 bg-black/40" onClick={close} />
+      <div className="absolute inset-0 bg-black/40" onClick={busy ? undefined : close} />
       <div ref={cardRef} onKeyDown={onKeyDownTrap} className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2.5">
@@ -101,8 +111,9 @@ export default function FeedbackModal({ open, onClose, onSubmitted, triggerRef, 
           </div>
           <button
             onClick={close}
+            disabled={busy}
             aria-label="Close"
-            className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"
+            className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg disabled:opacity-50 transition"
           >
             <X size={18} />
           </button>

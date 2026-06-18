@@ -94,6 +94,23 @@ describe('FeedbackPanel', () => {
     expect(container.querySelector('table')).toBeNull()
   })
 
+  it('formats a valid timestamp (the When cell is not the raw ISO string)', async () => {
+    const iso = '2026-06-18T11:00:00.000Z'
+    fetchFeedback.mockResolvedValue({ feedback: [row({ createdAt: iso })], total: 1 })
+    await renderPanel()
+    const cells = container.querySelectorAll('tbody tr td')
+    const whenCell = cells[cells.length - 1] // last column is "When"
+    expect(whenCell.textContent.length).toBeGreaterThan(0)
+    expect(whenCell.textContent).not.toBe(iso) // toLocaleString ran, not a raw passthrough
+  })
+
+  it('falls back to the raw value for an unparseable timestamp (no crash)', async () => {
+    fetchFeedback.mockResolvedValue({ feedback: [row({ createdAt: 'not-a-date' })], total: 1 })
+    await renderPanel()
+    const cells = container.querySelectorAll('tbody tr td')
+    expect(cells[cells.length - 1].textContent).toBe('not-a-date')
+  })
+
   it('renders HTML-like feedback as literal text — no element injection (Decision 10)', async () => {
     const evil = '<img src=x onerror="alert(1)">'
     fetchFeedback.mockResolvedValue({ feedback: [row({ message: evil })], total: 1 })

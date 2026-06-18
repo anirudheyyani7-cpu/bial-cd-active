@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import express from 'express'
 import request from 'supertest'
 import { requireAuth } from '../auth/middleware.js'
-import { createFeedbackHandler } from '../feedback.js'
+import { createFeedbackHandler, makeFeedbackLimiter } from '../feedback.js'
 import { createFeedbackRepo } from '../feedback-repo.js'
 import { makeFakeFeedbackContainer } from './fakeFeedbackCosmos.js'
 import { signAccessToken } from '../auth/tokens.js'
@@ -94,5 +94,45 @@ describe('POST /api/feedback', () => {
     expect(res.body.error.message).toBe('Failed to submit feedback.')
     expect(JSON.stringify(res.body)).not.toContain('cosmos connection exploded')
     expect(container._store.size).toBe(0)
+  })
+})
+
+// Mounts the REAL makeFeedbackLimiter (with a tiny injected limit) behind
+// requireAuth, mirroring auth-routes.test.js's limiter coverage. This is the
+// "exercised separately" the handler-only suite above refers to.
+describe('POST /api/feedback — rate limiting (makeFeedbackLimiter)', () => {
+  function limitedApp(limit) {
+    const container = makeFakeFeedbackContainer([])
+    const app = express()
+    app.use(express.json())
+    app.post(
+      '/api/feedback',
+      requireAuth,
+      makeFeedbackLimiter({ windowMs: 60_000, limit }),
+      createFeedbackHandler(createFeedbackRepo(container)),
+    )
+    return { app, container }
+  }
+
+  it('returns 429 { error: { message } } once a user exceeds the limit', async () => {
+    const { app } = limitedApp(2)
+    const post = () => request(app).post('/api/feedback').set('Authorization', `Bearer ${token()}`).send({ message: 'hi' })
+    expect((await post()).status).toBe(201)
+    expect((await post()).status).toBe(201)
+    const blocked = await post()
+    expect(blocked.status).toBe(429)
+    expect(blocked.body.error.message).toBeTypeOf('string')
+  })
+
+  it('keys per user+IP: one throttled user does not block a different user on the same IP', async () => {
+    const { app } = limitedApp(1)
+    const postAs = (sub) =>
+      request(app).post('/api/feedback').set('Authorization', `Bearer ${token(sub)}`).send({ message: 'hi' })
+    // alice exhausts her single allowance...
+    expect((await postAs('alice@bial.test')).status).toBe(201)
+    expect((await postAs('alice@bial.test')).status).toBe(429)
+    // ...but bob (same supertest IP) still has his own bucket — proves per-user keying,
+    // NOT a shared 'anon':IP bucket (the org-lockout failure mode Decision 6 warns about).
+    expect((await postAs('bob@bial.test')).status).toBe(201)
   })
 })

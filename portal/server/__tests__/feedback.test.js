@@ -62,6 +62,13 @@ describe('validateFeedback — page (advisory, never rejects)', () => {
     expect(validateFeedback({ message: 'hi', page: 'chat' }).value.page).toBe('')
   })
 
+  it('drops a protocol-relative page ("//host") to "" (latent open-redirect footgun)', () => {
+    expect(validateFeedback({ message: 'hi', page: '//evil.example/x' }).value.page).toBe('')
+    expect(validateFeedback({ message: 'hi', page: '///x' }).value.page).toBe('')
+    // a normal nested path still survives
+    expect(validateFeedback({ message: 'hi', page: '/a/b/c' }).value.page).toBe('/a/b/c')
+  })
+
   it('keeps a path-like page and truncates an over-long one, still ok', () => {
     expect(validateFeedback({ message: 'hi', page: '/admin/feedback' }).value.page).toBe('/admin/feedback')
     const longPath = `/${'x'.repeat(MAX_PAGE_CHARS + 50)}`
@@ -69,5 +76,17 @@ describe('validateFeedback — page (advisory, never rejects)', () => {
     expect(r.ok).toBe(true)
     expect(r.value.page).toHaveLength(MAX_PAGE_CHARS)
     expect(r.value.page.startsWith('/')).toBe(true)
+  })
+
+  it('truncates by code point so a multibyte char at the boundary is not split', () => {
+    // 257 UTF-16 units: a naive .slice(0, 256) would split the trailing emoji into
+    // a lone high surrogate; code-point truncation keeps the whole emoji.
+    const page = `/${'a'.repeat(MAX_PAGE_CHARS - 2)}😀`
+    const r = validateFeedback({ message: 'hi', page })
+    expect(r.ok).toBe(true)
+    expect(r.value.page.endsWith('😀')).toBe(true)
+    // No unpaired surrogate remains once valid surrogate pairs are removed.
+    const withoutPairs = r.value.page.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')
+    expect(/[\uD800-\uDFFF]/.test(withoutPairs)).toBe(false)
   })
 })

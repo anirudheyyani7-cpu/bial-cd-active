@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/layout/Navbar'
+import UsersLimitsPanel from '../components/admin/UsersLimitsPanel'
 import {
   Box, Clock, ShieldAlert, AlertTriangle, RefreshCw,
   Trash2, Info, ChevronDown, X,
@@ -455,6 +456,7 @@ export default function AdminPage() {
     { id: 'pending', label: 'Pending Review', count: pendingApps.length },
     { id: 'flagged', label: 'Security Flags', count: flaggedApps.length },
     { id: 'inactive', label: 'Inactive Apps', count: inactiveApps.length },
+    { id: 'users', label: 'Users & Limits', count: null },
   ]
 
   return (
@@ -502,11 +504,13 @@ export default function AdminPage() {
                 }`}
               >
                 {tab.label}
-                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                  activeTab === tab.id ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-neutral'
-                }`}>
-                  {tab.count}
-                </span>
+                {tab.count != null && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                    activeTab === tab.id ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-neutral'
+                  }`}>
+                    {tab.count}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -597,6 +601,7 @@ export default function AdminPage() {
                 emptyLabel="No inactive apps."
               />
             )}
+            {activeTab === 'users' && <UsersLimitsPanel onToast={showToast} />}
           </div>
         </div>
 

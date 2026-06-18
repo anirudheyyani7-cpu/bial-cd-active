@@ -8,7 +8,7 @@ import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
 import AttachmentChips from '../components/AttachmentChips'
 import AttachmentLightbox from '../components/AttachmentLightbox'
-import { useClaudeAPI, buildSystemPrompt, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
+import { useClaudeAPI, buildSystemPrompt, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
@@ -153,7 +153,8 @@ export default function BuilderPage() {
   // system prompt includes any uploaded reference files, so size it from the
   // real prompt. Drives the guardrail banner + send-disable below.
   const ctxTokens = estimateConversationTokens(messages, buildSystemPrompt(contextRef.current))
-  const ctxLevel = ctxTokens >= CONTEXT_HARD_LIMIT ? 'full' : ctxTokens >= CONTEXT_SOFT_LIMIT ? 'warn' : 'ok'
+  const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
+  const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
   const refreshBuilds = useCallback(() => {
     setBuilds(loadBuilds().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))

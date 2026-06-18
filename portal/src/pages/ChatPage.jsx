@@ -4,7 +4,7 @@ import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X
 import Navbar from '../components/layout/Navbar'
 import MessageContent from '../components/chat/MessageContent'
 import AttachmentLightbox from '../components/AttachmentLightbox'
-import { useClaudeAPI, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
+import { useClaudeAPI, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import {
   loadHistory,
@@ -59,7 +59,8 @@ export default function ChatPage() {
   // Running context-length estimate → 'ok' | 'warn' | 'full'. Drives the
   // guardrail banner + send-disable below. Recomputed each render (cheap).
   const ctxTokens = estimateConversationTokens(messages, PLANNING_SYSTEM_PROMPT)
-  const ctxLevel = ctxTokens >= CONTEXT_HARD_LIMIT ? 'full' : ctxTokens >= CONTEXT_SOFT_LIMIT ? 'warn' : 'ok'
+  const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
+  const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
   const refreshHistory = useCallback(() => {
     setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))

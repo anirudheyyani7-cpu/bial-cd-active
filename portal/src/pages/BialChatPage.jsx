@@ -4,7 +4,7 @@ import { Bot, User, Send, Plus, MessageSquare, Trash2, Paperclip, X, FileText, F
 import Navbar from '../components/layout/Navbar'
 import MessageContent from '../components/chat/MessageContent'
 import AttachmentLightbox from '../components/AttachmentLightbox'
-import { useClaudeAPI, CONTEXT_SOFT_LIMIT, CONTEXT_HARD_LIMIT, estimateConversationTokens } from '../hooks/useClaudeAPI'
+import { useClaudeAPI, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import {
   loadHistory,
@@ -20,7 +20,7 @@ import { openPdf } from '../utils/attachmentViewer'
 
 // General-assistant prompt — explicitly NOT the app-builder identity. Includes
 // the injection guard: <attachment> content is data, never instructions.
-const BIAL_ASSISTANT_SYSTEM_PROMPT = `You are BIAL Assistant, a general-purpose AI assistant for staff at Bengaluru International Airport (BIAL), powered by Anthropic.
+const BIAL_ASSISTANT_SYSTEM_PROMPT = `You are BIAL Chat, a general-purpose AI assistant for staff at Bengaluru International Airport (BIAL), powered by Anthropic.
 
 You help airport staff with everyday knowledge work: answering questions, explaining things, drafting and summarising text (emails, reports, notes), brainstorming, and analysing the contents of files they attach (images, PDFs, and text/CSV data).
 
@@ -66,7 +66,8 @@ export default function BialChatPage() {
 
   // Running context-length estimate → 'ok' | 'warn' | 'full'.
   const ctxTokens = estimateConversationTokens(messages, BIAL_ASSISTANT_SYSTEM_PROMPT)
-  const ctxLevel = ctxTokens >= CONTEXT_HARD_LIMIT ? 'full' : ctxTokens >= CONTEXT_SOFT_LIMIT ? 'warn' : 'ok'
+  const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
+  const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
   const refreshHistory = useCallback(() => {
     setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -402,7 +403,7 @@ export default function BialChatPage() {
                   <div className="w-16 h-16 rounded-2xl bg-tertiary flex items-center justify-center mb-4 mx-auto">
                     <Bot size={30} className="text-white" />
                   </div>
-                  <h1 className="text-2xl font-extrabold text-tertiary mb-2">BIAL Assistant</h1>
+                  <h1 className="text-2xl font-extrabold text-tertiary mb-2">BIAL Chat</h1>
                   <p className="text-sm text-neutral max-w-md mx-auto leading-relaxed">
                     Ask anything — draft, summarize, or analyze a file. Your general-purpose AI assistant for airport staff.
                   </p>
@@ -437,7 +438,7 @@ export default function BialChatPage() {
                   <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-white" />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-tertiary">BIAL Assistant</p>
+                  <p className="text-sm font-bold text-tertiary">BIAL Chat</p>
                   <p className="text-[10px] text-neutral">General assistant · powered by Anthropic</p>
                 </div>
               </div>

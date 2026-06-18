@@ -89,6 +89,27 @@ describe('fetchClaudeStream', () => {
     ).rejects.toThrow(/1,000,000 tokens/)
   })
 
+  it('the daily-limit message points the user at the administrator for a higher plan', async () => {
+    const withLimit = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { code: 'daily_token_limit_exceeded', limit: 100 } }),
+    })
+    await expect(
+      fetchClaudeStream({ body: { messages: [] }, fetchImpl: withLimit, getToken: () => 't', refresh: vi.fn() }),
+    ).rejects.toThrow(/contact your administrator to enable a higher plan/i)
+
+    // …and on the no-limit fallback branch too.
+    const noLimit = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { code: 'daily_token_limit_exceeded' } }),
+    })
+    await expect(
+      fetchClaudeStream({ body: { messages: [] }, fetchImpl: noLimit, getToken: () => 't', refresh: vi.fn() }),
+    ).rejects.toThrow(/contact your administrator to enable a higher plan/i)
+  })
+
   it('a 429 WITHOUT the known code falls through to the generic error (back-compat)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: false,

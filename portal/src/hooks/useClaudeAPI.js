@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getAccessToken, refreshAccessToken, clearSession, SIGNOUT_REASONS } from '../utils/auth.js'
+import { getAccessToken, refreshAccessToken, clearSession, getStoredUser, SIGNOUT_REASONS } from '../utils/auth.js'
 import { notifyUsageChanged } from '../utils/usage.js'
 import { TEXT_MEDIA_TYPES } from '../utils/attachmentInput.js'
 
@@ -115,6 +115,21 @@ export const CONTEXT_SOFT_LIMIT = 150_000
 export const CONTEXT_HARD_LIMIT = 200_000
 
 /**
+ * The signed-in user's effective per-conversation guardrail thresholds. The
+ * login/refresh profile carries server-resolved `limits` (the standard plan
+ * unless an admin raised them); fall back to the constants above when absent
+ * (e.g. a session minted before this feature). Mirrors the server's soft < hard
+ * clamp defensively so the warn banner can never sit at or above the hard stop.
+ */
+export function getContextLimits() {
+  const lim = getStoredUser()?.limits || {}
+  const hard = Number.isInteger(lim.contextHardLimit) && lim.contextHardLimit > 0 ? lim.contextHardLimit : CONTEXT_HARD_LIMIT
+  let soft = Number.isInteger(lim.contextSoftLimit) && lim.contextSoftLimit > 0 ? lim.contextSoftLimit : CONTEXT_SOFT_LIMIT
+  if (soft >= hard) soft = Math.max(1, hard - 1)
+  return { soft, hard }
+}
+
+/**
  * Estimate a conversation's input size the way assembleApiMessages actually
  * sends it: text for every turn + the system prompt + attachment costs. Mirrors
  * the sticky/newest-only split in assembleApiMessages —
@@ -198,10 +213,11 @@ export async function fetchClaudeStream({
     // generic error so other rate limits keep their server message.
     if (response.status === 429 && errBody.error?.code === 'daily_token_limit_exceeded') {
       const limit = errBody.error?.limit
+      const contact = ' If you need a higher limit, please contact your administrator to enable a higher plan.'
       throw new Error(
         limit
-          ? `You've hit your daily limit of ${limit.toLocaleString('en-US')} tokens. It resets at midnight IST.`
-          : "You've hit your daily token limit. It resets at midnight IST.",
+          ? `You've hit your daily limit of ${limit.toLocaleString('en-US')} tokens. It resets at midnight IST.${contact}`
+          : `You've hit your daily token limit. It resets at midnight IST.${contact}`,
       )
     }
     throw new Error(errBody.error?.message || `API error ${response.status}`)

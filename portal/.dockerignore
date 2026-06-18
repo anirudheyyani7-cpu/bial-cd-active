@@ -1,0 +1,20 @@
+# Keep the build context small and keep secrets / local junk out of the image.
+node_modules
+dist
+dist-ssr
+.env
+.env.local
+*.local
+.git
+.gitignore
+.DS_Store
+docker-compose.yml
+Dockerfile
+.dockerignore
+npm-debug.log*
+# Tests and local-only material — not needed to build or run the app.
+**/__tests__
+*.test.js
+.mythos
+docs
+vercel.json

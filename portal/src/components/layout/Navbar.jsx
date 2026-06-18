@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
 import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
+import { clearForUser } from '../../utils/attachmentStore'
 
 const NAV_LINKS = [
   { label: 'App Builder', to: '/workspace' },
@@ -99,6 +100,14 @@ export default function Navbar() {
         keepalive: true,
       }).catch(() => {})
     }
+    // Interim shared-terminal mitigation: free THIS user's attachment bytes
+    // before clearing the session. CSV/TXT uploads can hold sensitive operational
+    // data (rosters, incident logs), and the IndexedDB bytes otherwise physically
+    // survive logout. Fire-and-forget — the delete continues after we navigate
+    // away. (History stores are already per-user namespaced, so they need no wipe
+    // for cross-user isolation; full per-user teardown lands with the FastAPI
+    // backend.) Resolve the user via the default param BEFORE clearSession runs.
+    clearForUser()
     clearSession(SIGNOUT_REASONS.LOGGED_OUT)
     navigate('/login')
   }

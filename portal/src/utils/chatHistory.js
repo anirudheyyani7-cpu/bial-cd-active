@@ -1,83 +1,21 @@
-import { getStoredUser } from './auth.js'
-import { contentToText, deleteAttachment } from './attachmentStore.js'
+import { contentToText } from './attachmentStore.js'
+import { createConversationStore } from './conversationStore.js'
 
-// Conversations are namespaced per user so switching accounts shows the right
-// chats. The pre-namespacing global key is exactly the prefix (no `:user`
-// suffix); it is deleted — not migrated — on first load (plan Decision 8).
-const STORAGE_KEY_PREFIX = 'bial_chat_history'
-const LEGACY_GLOBAL_KEY = STORAGE_KEY_PREFIX
+// App Builder planning-chat history. Keyed `bial_chat_history:<user>`, id prefix
+// `chat`. The store logic lives in the shared factory (Decision 4) so BIAL Chat
+// can mount an isolated sibling instance (assistantHistory.js) without forking
+// it. Every existing import below stays valid — behaviour is byte-for-byte the
+// same as the pre-factory module.
+const store = createConversationStore('bial_chat_history', 'chat')
 
-function storageKey() {
-  const username = getStoredUser()?.username || '__anon__'
-  return `${STORAGE_KEY_PREFIX}:${username}`
-}
-
-export function loadHistory() {
-  try {
-    // Abandon the legacy shared-terminal global bucket: migrating it would
-    // attribute multiple prior users' chats to whoever logs in first. Guard with
-    // an existence check so the removeItem write fires only when the key is
-    // actually present (this runs inside every append round-trip), not on every call.
-    if (localStorage.getItem(LEGACY_GLOBAL_KEY) !== null) {
-      localStorage.removeItem(LEGACY_GLOBAL_KEY)
-    }
-    const raw = localStorage.getItem(storageKey())
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
-
-export function saveHistory(conversations) {
-  try {
-    localStorage.setItem(storageKey(), JSON.stringify(conversations))
-  } catch {
-    // storage full / unavailable — best-effort, mirrors builderHistory.saveBuilds.
-  }
-}
-
-export function newConversation(firstMessage) {
-  const id = `chat_${Date.now()}`
-  const title = firstMessage.trim().slice(0, 40) + (firstMessage.trim().length > 40 ? '…' : '')
-  const now = new Date().toISOString()
-  const conversation = {
-    id,
-    title,
-    createdAt: now,
-    updatedAt: now,
-    messages: [],
-  }
-  const history = loadHistory()
-  saveHistory([conversation, ...history])
-  return id
-}
-
-export function appendMessage(chatId, message) {
-  const history = loadHistory()
-  const updated = history.map((c) => {
-    if (c.id !== chatId) return c
-    return {
-      ...c,
-      updatedAt: new Date().toISOString(),
-      messages: [...c.messages, message],
-    }
-  })
-  saveHistory(updated)
-}
-
-export function getConversation(chatId) {
-  return loadHistory().find((c) => c.id === chatId) || null
-}
-
-export function deleteConversation(chatId) {
-  const conv = getConversation(chatId)
-  // Free this conversation's attachment bytes so the per-user IndexedDB store
-  // (and its running-total cap) isn't a one-way ratchet — deleting a chat
-  // reclaims its space. Best-effort, fire-and-forget: deleteAttachment
-  // self-handles its own errors and the bytes are non-critical.
-  conv?.messages.forEach((m) => m.attachments?.forEach((a) => deleteAttachment(a.id)))
-  saveHistory(loadHistory().filter((c) => c.id !== chatId))
-}
+export const {
+  loadHistory,
+  saveHistory,
+  newConversation,
+  appendMessage,
+  getConversation,
+  deleteConversation,
+} = store
 
 export function buildPromptFromHistory(messages) {
   const userMessages = messages.filter((m) => m.role === 'user')

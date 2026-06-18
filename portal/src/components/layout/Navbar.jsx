@@ -2,26 +2,20 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Bell, Settings, Search, ChevronDown, LogOut, User,
-  CheckCircle, MessageSquare, Shield, Wrench,
-  LayoutGrid, Users, FileText, Plus, Inbox,
+  FileText, Plus, Inbox, Bot,
   UserCircle, BookOpen, Info, Monitor,
 } from 'lucide-react'
+import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
+import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
+import { clearForUser } from '../../utils/attachmentStore'
 
 const NAV_LINKS = [
-  { label: 'My Workspace', to: '/workspace' },
-  { label: 'Team Space', to: '/teamspace' },
-  { label: 'Enterprise Space', to: '/enterprise' },
+  { label: 'App Builder', to: '/workspace' },
+  { label: 'BIAL Chat', to: '/chat' },
   { label: 'Help', to: '/help' },
 ]
 
 const ADMIN_LINK = { label: 'Admin', to: '/admin' }
-
-const NOTIFICATIONS = [
-  { id: 1, icon: CheckCircle, iconColor: 'text-green-500', title: "Your app 'Gate 42 Delay Log' was deployed successfully", time: '2h ago' },
-  { id: 2, icon: MessageSquare, iconColor: 'text-primary', title: 'Arjun K. commented on Cab Booking app', time: '4h ago' },
-  { id: 3, icon: Shield, iconColor: 'text-blue-500', title: 'Enterprise review approved for EcoTerminal Monitor', time: '1 day ago' },
-  { id: 4, icon: Wrench, iconColor: 'text-secondary', title: 'System maintenance scheduled for Terminal 3 servers', time: '2 days ago' },
-]
 
 const SETTINGS_ITEMS = [
   { icon: UserCircle, label: 'Profile Settings' },
@@ -31,18 +25,9 @@ const SETTINGS_ITEMS = [
 ]
 
 const SEARCH_PAGES = [
-  { label: 'My Workspace', to: '/workspace', icon: FileText },
-  { label: 'Team Space', to: '/teamspace', icon: Users },
-  { label: 'Enterprise Space', to: '/enterprise', icon: LayoutGrid },
+  { label: 'App Builder', to: '/workspace', icon: FileText },
+  { label: 'BIAL Chat', to: '/chat', icon: Bot },
   { label: 'Help Center', to: '/help', icon: BookOpen },
-]
-
-const SEARCH_APPS = [
-  { label: 'CargoTracker Pro', to: '/enterprise' },
-  { label: 'StaffGuard ID', to: '/enterprise' },
-  { label: 'Concierge Connect', to: '/enterprise' },
-  { label: 'EcoTerminal Monitor', to: '/enterprise' },
-  { label: 'OpsScript Lite', to: '/enterprise' },
 ]
 
 const SEARCH_ACTIONS = [
@@ -63,12 +48,34 @@ export default function Navbar() {
   const [activeDropdown, setActiveDropdown] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
-  const user = JSON.parse(localStorage.getItem('bial_user') || '{}')
+  const [usage, setUsage] = useState(null)
+  const user = getStoredUser() || {}
 
   const navRef = useRef(null)
   const toastTimer = useRef(null)
 
   useClickOutside(navRef, () => setActiveDropdown(null))
+
+  // Daily token usage badge: fetch on mount and after each completed turn
+  // (notifyUsageChanged). Gated on isAuthenticated so it never fires during
+  // logout; null (no token / 401) hides the badge.
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      if (!isAuthenticated()) {
+        if (active) setUsage(null)
+        return
+      }
+      const data = await fetchUsageToday()
+      if (active) setUsage(data)
+    }
+    load()
+    const off = onUsageChanged(load)
+    return () => {
+      active = false
+      off()
+    }
+  }, [])
 
   useEffect(() => {
     const onEsc = (e) => { if (e.key === 'Escape') { setActiveDropdown(null); setSearchQuery('') } }
@@ -85,7 +92,25 @@ export default function Navbar() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('bial_user')
+    // Best-effort server-side revoke; keepalive lets it finish after we leave.
+    // Never block the client on the network.
+    const token = getAccessToken()
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {})
+    }
+    // Interim shared-terminal mitigation: free THIS user's attachment bytes
+    // before clearing the session. CSV/TXT uploads can hold sensitive operational
+    // data (rosters, incident logs), and the IndexedDB bytes otherwise physically
+    // survive logout. Fire-and-forget — the delete continues after we navigate
+    // away. (History stores are already per-user namespaced, so they need no wipe
+    // for cross-user isolation; full per-user teardown lands with the FastAPI
+    // backend.) Resolve the user via the default param BEFORE clearSession runs.
+    clearForUser()
+    clearSession(SIGNOUT_REASONS.LOGGED_OUT)
     navigate('/login')
   }
 
@@ -98,7 +123,6 @@ export default function Navbar() {
   const filteredSearch = searchQuery.trim()
     ? {
         pages: SEARCH_PAGES.filter((p) => p.label.toLowerCase().includes(searchQuery.toLowerCase())),
-        apps: SEARCH_APPS.filter((a) => a.label.toLowerCase().includes(searchQuery.toLowerCase())),
         actions: SEARCH_ACTIONS.filter((a) => a.label.toLowerCase().includes(searchQuery.toLowerCase())),
       }
     : null
@@ -163,17 +187,6 @@ export default function Navbar() {
                           ))}
                         </div>
                       )}
-                      {filteredSearch.apps.length > 0 && (
-                        <div>
-                          <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral border-t border-bial-border mt-1">Apps</p>
-                          {filteredSearch.apps.map((a) => (
-                            <button key={a.label} onClick={() => handleNav(a.to)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bial-bg transition text-left">
-                              <div className="w-5 h-5 rounded bg-primary/10 flex-shrink-0" />
-                              <span className="text-sm text-tertiary">{a.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
                       {filteredSearch.actions.length > 0 && (
                         <div>
                           <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral border-t border-bial-border mt-1">Actions</p>
@@ -185,7 +198,7 @@ export default function Navbar() {
                           ))}
                         </div>
                       )}
-                      {!filteredSearch.pages.length && !filteredSearch.apps.length && !filteredSearch.actions.length && (
+                      {!filteredSearch.pages.length && !filteredSearch.actions.length && (
                         <p className="px-4 py-3 text-sm text-neutral text-center">No results for "{searchQuery}"</p>
                       )}
                     </>
@@ -211,6 +224,26 @@ export default function Navbar() {
               )}
             </div>
 
+            {/* Daily token usage */}
+            {usage && (
+              <div
+                className="hidden md:flex flex-col justify-center px-2.5 mr-0.5 select-none"
+                title={`Daily AI tokens used today · resets at midnight IST`}
+              >
+                <span className="text-[10px] font-semibold text-neutral leading-none whitespace-nowrap">
+                  {usage.used.toLocaleString('en-US')} / {usage.limit.toLocaleString('en-US')} tokens
+                </span>
+                <div className="mt-1 h-1 w-24 rounded-full bg-surface-muted overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      usage.remaining <= 0 ? 'bg-danger' : 'bg-primary'
+                    }`}
+                    style={{ width: `${Math.min(100, usage.limit ? (usage.used / usage.limit) * 100 : 0)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Bell */}
             <div className="relative">
               <button
@@ -218,27 +251,16 @@ export default function Navbar() {
                 className="p-2 text-neutral hover:text-primary transition rounded-lg hover:bg-surface-muted relative"
               >
                 <Bell size={17} />
-                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-accent rounded-full" />
               </button>
               {activeDropdown === 'bell' && (
                 <div className="absolute right-0 top-11 w-80 bg-white rounded-xl border border-bial-border shadow-xl z-50 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-bial-border flex items-center justify-between">
+                  <div className="px-4 py-3 border-b border-bial-border">
                     <p className="text-sm font-bold text-tertiary">Notifications</p>
-                    <span className="text-[10px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full">4 new</span>
                   </div>
-                  <div className="divide-y divide-bial-border">
-                    {NOTIFICATIONS.map(({ id, icon: Icon, iconColor, title, time }) => (
-                      <div key={id} className="flex items-start gap-3 px-4 py-3 hover:bg-bial-bg transition cursor-pointer">
-                        <Icon size={15} className={`${iconColor} flex-shrink-0 mt-0.5`} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-tertiary leading-relaxed">{title}</p>
-                          <p className="text-[10px] text-neutral mt-0.5">{time}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="px-4 py-2.5 border-t border-bial-border">
-                    <button className="text-xs text-primary font-semibold hover:underline">View All Notifications</button>
+                  <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+                    <Bell size={22} className="text-neutral/40 mb-2" />
+                    <p className="text-sm font-medium text-tertiary">You're all caught up</p>
+                    <p className="text-[11px] text-neutral mt-0.5">No new notifications right now.</p>
                   </div>
                 </div>
               )}
@@ -278,8 +300,8 @@ export default function Navbar() {
                   {(user.name || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="hidden lg:block text-left">
-                  <p className="text-xs font-semibold text-tertiary leading-tight">{user.name || 'Sushant'}</p>
-                  <p className="text-[10px] text-neutral leading-tight">{user.role || 'Terminal Lead'}</p>
+                  <p className="text-xs font-semibold text-tertiary leading-tight">{user.name || user.username || 'User'}</p>
+                  <p className="text-[10px] text-neutral leading-tight">{user.role || 'User'}</p>
                 </div>
                 <ChevronDown size={13} className="text-neutral hidden lg:block" />
               </button>
@@ -287,8 +309,8 @@ export default function Navbar() {
               {activeDropdown === 'user' && (
                 <div className="absolute right-0 top-11 w-52 bg-white rounded-xl border border-bial-border shadow-xl py-2 z-50">
                   <div className="px-4 py-2.5 border-b border-bial-border">
-                    <p className="text-xs font-bold text-tertiary">{user.name || 'Sushant'}</p>
-                    <p className="text-[10px] text-neutral">{user.role || 'Terminal Lead'}</p>
+                    <p className="text-xs font-bold text-tertiary">{user.name || user.username || 'User'}</p>
+                    <p className="text-[10px] text-neutral">{user.role || 'User'}</p>
                   </div>
                   <button
                     onClick={() => { setActiveDropdown(null); showToast('Coming soon') }}

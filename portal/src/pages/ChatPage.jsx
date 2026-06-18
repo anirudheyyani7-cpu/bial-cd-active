@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Sparkles, User, Send, Plus, MessageSquare, Trash2, Hammer, Paperclip, X, FileText, FileSpreadsheet } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
-import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import MessageContent from '../components/chat/MessageContent'
+import AttachmentLightbox from '../components/AttachmentLightbox'
+import { useClaudeAPI, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
+import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import {
   loadHistory,
   newConversation,
@@ -12,6 +14,9 @@ import {
   deleteConversation,
   relativeTime,
 } from '../utils/chatHistory'
+import { assembleApiMessages, putAttachment, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { openPdf } from '../utils/attachmentViewer'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic Claude.
 
@@ -22,23 +27,13 @@ Guidelines:
 - Help them articulate what their app should do, who will use it, and what data it needs
 - Suggest features based on airport operations context (flight tracking, staff rostering, baggage, gate management, etc.)
 - Keep responses concise and practical — staff are busy
+- If the user attaches images (screenshots, mockups, photos) or PDFs (specs, sample data), examine them and use what they actually show to inform the plan — you can see attachments, so refer to their real content
 - When you feel the requirements are well-defined, summarise the plan and suggest moving to the builder
 - For general questions unrelated to app planning, answer them helpfully and concisely, then gently guide the conversation back to planning if appropriate
 
 Do not output code or JSX during the planning phase.`
 
 const SUMMARIZE_SYSTEM_PROMPT = `You are a requirements extraction specialist. Given a planning conversation between a user and an AI assistant, extract ONLY the application requirements discussed and output a clean, structured builder prompt. Discard any off-topic discussion, general knowledge questions, or chitchat unrelated to the application being planned. Output a direct, actionable prompt starting with "Build an application for Bengaluru International Airport (BIAL) that..." — include the app's purpose, key features, target users, data needs, and any UI or workflow preferences mentioned. Be specific and concise.`
-
-function MessageContent({ content, isUser }) {
-  if (isUser) {
-    return <div className="whitespace-pre-wrap break-words">{content}</div>
-  }
-  return (
-    <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:text-tertiary prose-ul:pl-4 prose-ol:pl-4">
-      <ReactMarkdown>{content}</ReactMarkdown>
-    </div>
-  )
-}
 
 export default function ChatPage() {
   const navigate = useNavigate()
@@ -54,13 +49,23 @@ export default function ChatPage() {
   const [showPromptModal, setShowPromptModal] = useState(false)
   const [builderPrompt, setBuilderPrompt] = useState('')
   const [summarizing, setSummarizing] = useState(false)
+  const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
   const buildSuggestionFiredRef = useRef(false)
 
-  const { sendMessage } = useClaudeAPI()
+  const { sendMessage, error } = useClaudeAPI()
+  const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
+    usePendingAttachments()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const fileInputRef = useRef(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+
+  // Running context-length estimate → 'ok' | 'warn' | 'full'. Drives the
+  // guardrail banner + send-disable below. Recomputed each render (cheap).
+  const ctxTokens = estimateConversationTokens(messages, PLANNING_SYSTEM_PROMPT)
+  const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
+  const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
   const refreshHistory = useCallback(() => {
     setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
@@ -117,19 +122,40 @@ export default function ChatPage() {
     appendMessage(chatId, {
       id: msg.id,
       role: msg.role,
-      content: msg.content,
+      content: msg.content, // plain text only — attachment bytes never enter localStorage
+      ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
       timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
     })
   }, [])
 
-  const fireMessage = useCallback(async (text) => {
-    if (!text.trim() || generating) return
-    const currentChatId = activeChatId
+  const fireMessage = useCallback(async (rawText, attachments = [], explicitChatId) => {
+    if (generating) return
+    const text = rawText.trim() || (attachments.length ? 'Please review the attached file(s).' : '')
+    if (!text && attachments.length === 0) return
+    // A brand-new chat passes its id explicitly: setActiveChatId hasn't committed
+    // yet when handleSend schedules this, so the activeChatId closure is stale.
+    const currentChatId = explicitChatId ?? activeChatId
+
+    // Persist attachment BYTES to IndexedDB (never localStorage); the message
+    // keeps only lightweight refs. A cap/storage error aborts the send.
+    let refs = []
+    if (attachments.length > 0) {
+      try {
+        for (const a of attachments) {
+          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
+        }
+        refs = attachments.map(toAttachmentRef)
+      } catch (err) {
+        showAttachToast(err?.message || 'Could not store the attachment.')
+        return
+      }
+    }
 
     const userMsg = {
       id: `msg_${Date.now()}`,
       role: 'user',
-      content: text.trim(),
+      content: text,
+      ...(refs.length ? { attachments: refs } : {}),
       timestamp: new Date(),
     }
 
@@ -137,10 +163,10 @@ export default function ChatPage() {
     persistMessage(currentChatId, userMsg)
     setGenerating(true)
 
-    const apiMessages = [...messagesRef.current, userMsg].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }))
+    // Assemble the API messages: a turn with attachment refs becomes a
+    // ContentBlock[] (files before text, bytes re-read from the store); a plain
+    // turn stays a string. The server forwards the blocks untouched.
+    const apiMessages = await assembleApiMessages([...messagesRef.current, userMsg])
 
     const assistantId = `msg_${Date.now()}_a`
     let assistantText = ''
@@ -152,7 +178,7 @@ export default function ChatPage() {
       timestamp: new Date(),
     }])
 
-    await sendMessage(
+    const result = await sendMessage(
       apiMessages,
       (delta) => {
         assistantText += delta
@@ -164,6 +190,16 @@ export default function ChatPage() {
     )
 
     setGenerating(false)
+
+    // A falsy result means the send failed (429/network), was aborted, OR
+    // streamed zero text. Drop the optimistic empty assistant bubble so it isn't
+    // persisted as content:'' (which the API rejects on the next turn) and isn't
+    // left blank on screen. Any error message surfaces via the `error` banner.
+    if (!result) {
+      setMessages((prev) => prev.filter((m) => m.id !== assistantId))
+      return
+    }
+
     refreshHistory()
 
     const finalMsg = {
@@ -188,31 +224,48 @@ export default function ChatPage() {
       buildSuggestionFiredRef.current = true
       setTimeout(() => setShowBuildModal(true), 600)
     }
-  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory])
+  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory, showAttachToast])
 
   const handleSend = () => {
-    if (!input.trim()) return
     const text = input.trim()
+    const attachments = pendingAttachments
+    if (!text && attachments.length === 0) return
+
+    // Guardrails run BEFORE clearing the composer so an aborted send keeps the
+    // user's draft + pending files. Context full → hard stop (send is also
+    // disabled in the UI). Per-conversation attachment cap → distinct toast.
+    if (ctxLevel === 'full') return
+    if (attachments.length > 0) {
+      const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
+      if (cap.error) {
+        showAttachToast(cap.error)
+        return
+      }
+    }
+
     setInput('')
+    clearPending()
 
     if (!activeChatId) {
-      const id = newConversation(text)
+      const id = newConversation(text || 'Attachment')
       setActiveChatId(id)
       navigate(`/workspace/chat/${id}`, { replace: true })
-      // fireMessage will be called by the activeChatId effect? No — we need to fire it directly here
-      // since the effect only fires for initial messages from location.state
-      setTimeout(() => fireMessage(text), 0)
+      // Pass the new id explicitly — the activeChatId state hasn't committed yet,
+      // so fireMessage's closure would otherwise persist against a null chat id.
+      setTimeout(() => fireMessage(text, attachments, id), 0)
     } else {
-      fireMessage(text)
+      fireMessage(text, attachments)
     }
   }
 
   const handleSelectChat = (id) => {
+    setViewer(null)
     navigate(`/workspace/chat/${id}`)
     buildSuggestionFiredRef.current = false
   }
 
   const handleNewChat = () => {
+    setViewer(null)
     setMessages([])
     setActiveChatId(null)
     buildSuggestionFiredRef.current = false
@@ -366,7 +419,7 @@ export default function ChatPage() {
                     ? 'bg-tertiary text-white rounded-tr-sm'
                     : 'bg-white border border-bial-border text-tertiary rounded-tl-sm'
                 }`}>
-                  <MessageContent content={msg.content} isUser={msg.role === 'user'} />
+                  <MessageContent content={msg.content} attachments={msg.attachments} isUser={msg.role === 'user'} />
                   <p className="text-[10px] mt-1.5 opacity-40">
                     {msg.timestamp instanceof Date
                       ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -398,35 +451,129 @@ export default function ChatPage() {
 
           {/* Input bar */}
           <div className="bg-white border-t border-bial-border p-4 flex-shrink-0">
-            <div className="flex gap-3 items-end max-w-3xl mx-auto">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSend()
-                  }
-                }}
-                rows={2}
-                placeholder="Describe what you're thinking… (Shift+Enter for new line)"
-                className="flex-1 resize-none text-sm text-tertiary bg-bial-bg border border-bial-border rounded-xl px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition placeholder:text-gray-300"
-              />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || generating}
-                className="flex-shrink-0 w-11 h-11 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition shadow-sm"
-              >
-                <Send size={15} />
-              </button>
+            <div className="max-w-3xl mx-auto">
+              {error && (
+                <div className="mb-2 text-xs text-danger bg-danger/5 border border-danger/20 rounded-lg px-3 py-2">
+                  {error}
+                </div>
+              )}
+              {/* Context-length guardrail: warn as it grows, hard-stop at the window */}
+              {ctxLevel === 'full' ? (
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs text-danger bg-danger/5 border border-danger/20 rounded-lg px-3 py-2">
+                  <span>This conversation has reached its maximum length. Start a new chat to keep going.</span>
+                  <button onClick={handleNewChat} className="font-bold underline whitespace-nowrap">
+                    Start new chat
+                  </button>
+                </div>
+              ) : ctxLevel === 'warn' ? (
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs text-tertiary bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+                  <span>This conversation is getting long. For the best results, start a new chat.</span>
+                  <button onClick={handleNewChat} className="font-bold text-primary underline whitespace-nowrap">
+                    New chat
+                  </button>
+                </div>
+              ) : null}
+              {/* Pending attachment preview row */}
+              {pendingAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {pendingAttachments.map((a) => (
+                    <div
+                      key={a.id}
+                      className="group relative flex items-center gap-1.5 bg-bial-bg border border-bial-border rounded-lg px-2 py-1.5 text-xs text-tertiary"
+                    >
+                      {TEXT_MEDIA_TYPES.has(a.mediaType) ? (
+                        <span className="flex-shrink-0 text-primary" title={a.name}>
+                          {a.mediaType === 'text/csv' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
+                        </span>
+                      ) : a.mediaType === 'application/pdf' ? (
+                        <button
+                          type="button"
+                          onClick={() => openPdf(a.base64, a.name)}
+                          title={`Open ${a.name}`}
+                          className="flex-shrink-0 text-primary hover:opacity-80 transition"
+                        >
+                          <FileText size={13} />
+                        </button>
+                      ) : (
+                        <img
+                          src={`data:${a.mediaType};base64,${a.base64}`}
+                          alt={a.name}
+                          title={`View ${a.name}`}
+                          onClick={() => setViewer({ name: a.name, src: `data:${a.mediaType};base64,${a.base64}` })}
+                          className="h-8 w-8 object-cover rounded cursor-zoom-in hover:opacity-90 transition"
+                        />
+                      )}
+                      <span className="truncate max-w-[10rem]">{a.name}</span>
+                      <button
+                        onClick={() => removePending(a.id)}
+                        className="text-neutral hover:text-danger transition"
+                        title="Remove"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-3 items-end">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPT_ATTR}
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={generating}
+                  title="Attach images, PDFs, or text files (CSV, TXT)"
+                  className="flex-shrink-0 w-11 h-11 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
+                >
+                  <Paperclip size={15} />
+                </button>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                  rows={2}
+                  placeholder="Describe what you're thinking… (Shift+Enter for new line)"
+                  className="flex-1 resize-none text-sm text-tertiary bg-bial-bg border border-bial-border rounded-xl px-4 py-3 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition placeholder:text-gray-300"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={(!input.trim() && pendingAttachments.length === 0) || generating || ctxLevel === 'full'}
+                  className="flex-shrink-0 w-11 h-11 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition shadow-sm"
+                >
+                  <Send size={15} />
+                </button>
+              </div>
             </div>
             <p className="text-[10px] text-center text-neutral/40 uppercase tracking-wider mt-2">
-              Press Enter to send · Shift+Enter for new line
+              Press Enter to send · Shift+Enter for new line · Images, PDFs & text files supported
             </p>
           </div>
         </div>
       </div>
+
+      {/* Pending-attachment image lightbox */}
+      {viewer && (
+        <AttachmentLightbox name={viewer.name} src={viewer.src} onClose={() => setViewer(null)} />
+      )}
+
+      {/* Attachment validation / cap toast */}
+      {attachToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-white border border-bial-border rounded-xl shadow-xl px-4 py-3 text-sm text-tertiary font-medium max-w-xs">
+          {attachToast}
+        </div>
+      )}
 
       {/* Build suggestion modal */}
       {showBuildModal && (

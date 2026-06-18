@@ -1,9 +1,31 @@
-import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { Send, ArrowLeft, Sparkles, User, Brain, LayoutTemplate, Code2, Monitor, CheckCircle, X } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate, useLocation, useParams } from 'react-router-dom'
+import {
+  Send, ArrowLeft, Sparkles, User, Brain, LayoutTemplate, Code2, Monitor, CheckCircle, X, Paperclip, FileText,
+  FileSpreadsheet, History, Trash2,
+} from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
-import { useClaudeAPI } from '../hooks/useClaudeAPI'
+import AttachmentChips from '../components/AttachmentChips'
+import AttachmentLightbox from '../components/AttachmentLightbox'
+import { useClaudeAPI, buildSystemPrompt, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
+import { usePendingAttachments } from '../hooks/usePendingAttachments'
+import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { openPdf } from '../utils/attachmentViewer'
+import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild } from '../utils/builderHistory'
+import { relativeTime } from '../utils/chatHistory'
+
+// Serialise a live message to the persisted shape (refs only, ISO timestamp).
+function toStored(msg) {
+  return {
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
+    timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
+  }
+}
 
 const STAGE_MESSAGES = [
   'Got it! Analyzing your requirements and identifying the right data sources...',
@@ -26,13 +48,16 @@ const REFINEMENT_CHIPS = [
   'Switch to mobile layout',
 ]
 
-function extractPreviewCode(text) {
+export function extractPreviewCode(text) {
   if (!text) return null
   const match = text.match(/```jsx:preview\s*([\s\S]*?)```/)
   return match ? match[1].trim() : null
 }
 
-function filterCodeFromContent(content) {
+// Expects a STRING. Callers must run content through contentToText first so an
+// attachment turn (ContentBlock[]) never reaches `.replace` (which throws on an
+// array). Exported for unit coverage of that contract.
+export function filterCodeFromContent(content) {
   if (!content) return ''
   return content
     .replace(/```jsx:preview[\s\S]*?```/g, '')
@@ -72,12 +97,15 @@ function Toast({ stage, done, visible, onDismiss }) {
   )
 }
 
-function MessageContent({ content }) {
-  const filtered = filterCodeFromContent(content)
-  if (!filtered) return null
+function MessageContent({ content, attachments }) {
+  // content may be a ContentBlock[] (attachment turn). Derive text FIRST —
+  // filterCodeFromContent does content.replace(...) and throws on an array.
+  const filtered = filterCodeFromContent(contentToText(content))
+  if (!filtered && !attachments?.length) return null
   const parts = filtered.split(/(\*\*[^*]+\*\*|\n)/g)
   return (
     <span>
+      {attachments?.length > 0 && <AttachmentChips attachments={attachments} />}
       {parts.map((part, i) => {
         if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>
         if (part === '\n') return <br key={i} />
@@ -90,6 +118,7 @@ function MessageContent({ content }) {
 export default function BuilderPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { buildId } = useParams()
   const initialPrompt = location.state?.prompt || ''
   const contextRef = useRef({
     dataSource: location.state?.dataSource || null,
@@ -97,7 +126,7 @@ export default function BuilderPage() {
     hasSchema: location.state?.hasSchema || false,
     uploadedFiles: location.state?.uploadedFiles || [],
   })
-  const { sendMessage } = useClaudeAPI()
+  const { sendMessage, error } = useClaudeAPI()
 
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -105,11 +134,31 @@ export default function BuilderPage() {
   const [previewCode, setPreviewCode] = useState(null)
   const [generationStage, setGenerationStage] = useState(0)
   const [toast, setToast] = useState({ stage: 0, done: false, visible: false })
+  const [builds, setBuilds] = useState([])
+  const [showBuilds, setShowBuilds] = useState(false)
+  const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
+
+  const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
+    usePendingAttachments()
 
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const fileInputRef = useRef(null)
   const timerRefs = useRef([])
   const toastTimer = useRef(null)
+  const buildIdRef = useRef(null) // the active build being persisted
+  const initFiredRef = useRef(false) // fire-once guard for the initial-create effect
+
+  // Running context-length estimate → 'ok' | 'warn' | 'full'. The builder's
+  // system prompt includes any uploaded reference files, so size it from the
+  // real prompt. Drives the guardrail banner + send-disable below.
+  const ctxTokens = estimateConversationTokens(messages, buildSystemPrompt(contextRef.current))
+  const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
+  const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
+
+  const refreshBuilds = useCallback(() => {
+    setBuilds(loadBuilds().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -119,15 +168,46 @@ export default function BuilderPage() {
   }, [])
 
   useEffect(() => {
+    refreshBuilds()
+  }, [refreshBuilds])
+
+  // Resume a saved build when the :buildId route param points at one (refresh,
+  // or a click in Recent builds). Skipped when this build is already active
+  // (e.g. just created below) so an in-flight generation isn't clobbered.
+  useEffect(() => {
+    if (!buildId || buildIdRef.current === buildId) return
+    const saved = getBuild(buildId)
+    if (!saved) {
+      navigate('/workspace/builder', { replace: true })
+      return
+    }
+    clearTimers()
+    buildIdRef.current = saved.id
+    if (saved.context) contextRef.current = saved.context
+    setMessages(saved.messages.map((m) => ({ ...m, timestamp: m.timestamp ? new Date(m.timestamp) : new Date() })))
+    const lastAssistant = [...saved.messages].reverse().find((m) => m.role === 'assistant')
+    setPreviewCode(extractPreviewCode(lastAssistant?.content || ''))
+    setGenerating(false)
+    setGenerationStage(0)
+    setToast({ stage: 0, done: false, visible: false })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildId])
+
+  // First-prompt flow (from the Sandbox/ChatPage handoff): create a build, seed
+  // the user turn, generate, and switch the URL to the resumable :buildId form.
+  useEffect(() => {
+    if (buildId) return // the resume effect owns this case
+    if (initFiredRef.current) return // fire-once: StrictMode/remount must not create a 2nd build or 2nd generation
+    initFiredRef.current = true
     if (initialPrompt) {
-      const userMsg = {
-        id: 'initial-user',
-        role: 'user',
-        content: initialPrompt,
-        timestamp: new Date(),
-      }
+      const id = newBuild(initialPrompt, contextRef.current)
+      buildIdRef.current = id
+      const userMsg = { id: 'initial-user', role: 'user', content: initialPrompt, timestamp: new Date() }
+      appendBuilderMessage(id, toStored(userMsg))
+      refreshBuilds()
       setMessages([userMsg])
-      generate(initialPrompt, [userMsg])
+      generate([userMsg])
+      navigate(`/workspace/builder/${id}`, { replace: true })
     } else {
       setMessages([{
         id: 'welcome',
@@ -136,6 +216,7 @@ export default function BuilderPage() {
         timestamp: new Date(),
       }])
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -147,7 +228,10 @@ export default function BuilderPage() {
     timerRefs.current = []
   }
 
-  const generate = async (userText, currentMessages) => {
+  const generate = async (currentMessages) => {
+    // Capture the build this run belongs to, so a mid-generation switch to
+    // another build can't misattribute this result.
+    const activeBuildId = buildIdRef.current
     setGenerating(true)
     setGenerationStage(1)
     clearTimers()
@@ -173,22 +257,55 @@ export default function BuilderPage() {
     timerRefs.current.push(setTimeout(() => { setGenerationStage(3); addStage(2); setToast({ stage: 3, done: false, visible: true }) }, 6000))
     timerRefs.current.push(setTimeout(() => { setGenerationStage(4); addStage(3); setToast({ stage: 4, done: false, visible: true }) }, 10000))
 
-    const history = currentMessages
-      .filter((m) => !m.isStage && m.id !== 'welcome')
-      .map((m) => ({ role: m.role, content: m.content }))
+    // currentMessages already includes the new user turn; map the real
+    // (non-stage, non-welcome) messages to the API shape, turning any
+    // attachment turn into a ContentBlock[] (files before text). No separate
+    // re-append of the latest turn — that would duplicate it (and its images).
+    const realMessages = currentMessages.filter((m) => !m.isStage && m.id !== 'welcome')
+    const apiMessages = await assembleApiMessages(realMessages)
 
     const result = await sendMessage(
-      [...history, { role: 'user', content: userText }],
+      apiMessages,
       (_, full) => {
+        if (buildIdRef.current !== activeBuildId) return // user switched builds mid-stream
         const code = extractPreviewCode(full)
         if (code) setPreviewCode(code)
       },
-      contextRef.current
+      contextRef.current,
     )
 
     clearTimers()
 
-    const finalCode = extractPreviewCode(result || '')
+    // A null result means the send failed (429/network) or was aborted. Don't
+    // persist anything and don't fake the success toast/stage; any error message
+    // surfaces via the `error` banner above the input. Only reset the UI if this
+    // run still owns the view (no mid-run build switch).
+    if (result == null) {
+      if (buildIdRef.current === activeBuildId) {
+        setGenerating(false)
+        setToast({ stage: 0, done: false, visible: false })
+      }
+      return
+    }
+
+    // Persist the REAL assistant result (with code) so a resume can re-extract
+    // the preview. Stage/welcome bubbles are never persisted. Attributed to the
+    // build this run started on, regardless of any later switch.
+    if (activeBuildId) {
+      appendBuilderMessage(activeBuildId, {
+        id: `msg_${Date.now()}_a`,
+        role: 'assistant',
+        content: result,
+        timestamp: new Date().toISOString(),
+      })
+      refreshBuilds()
+    }
+
+    // If the user switched to a different build while this one was generating,
+    // don't clobber the now-displayed build with this run's preview/stages/toast.
+    if (buildIdRef.current !== activeBuildId) return
+
+    const finalCode = extractPreviewCode(result)
     if (finalCode) setPreviewCode(finalCode)
 
     setGenerationStage(5)
@@ -201,12 +318,91 @@ export default function BuilderPage() {
 
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || generating) return
+    const attachments = pendingAttachments
+    if ((!text && attachments.length === 0) || generating) return
+
+    // Guardrails run BEFORE clearing the composer so an aborted send keeps the
+    // user's draft + pending files. Context full → hard stop (send is also
+    // disabled in the UI). Per-conversation attachment cap → distinct toast.
+    if (ctxLevel === 'full') return
+    if (attachments.length > 0) {
+      const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
+      if (cap.error) {
+        showAttachToast(cap.error)
+        return
+      }
+    }
+
     setInput('')
-    const userMsg = { id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() }
+    clearPending()
+
+    // Persist attachment BYTES to the shared IndexedDB store; the message keeps
+    // only refs. A cap/storage error aborts the send.
+    let refs = []
+    if (attachments.length > 0) {
+      try {
+        for (const a of attachments) {
+          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
+        }
+        refs = attachments.map(toAttachmentRef)
+      } catch (err) {
+        showAttachToast(err?.message || 'Could not store the attachment.')
+        return
+      }
+    }
+
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text || 'Please review the attached file(s).',
+      ...(refs.length ? { attachments: refs } : {}),
+      timestamp: new Date(),
+    }
+
+    // Ensure a build exists (a from-scratch session has none yet), then persist
+    // the user turn before generating.
+    if (!buildIdRef.current) {
+      const id = newBuild(userMsg.content, contextRef.current)
+      buildIdRef.current = id
+      navigate(`/workspace/builder/${id}`, { replace: true })
+    }
+    appendBuilderMessage(buildIdRef.current, toStored(userMsg))
+    refreshBuilds()
+
     const updated = [...messages, userMsg]
     setMessages(updated)
-    await generate(text, updated)
+    await generate(updated)
+  }
+
+  const handleSelectBuild = (id) => {
+    setShowBuilds(false)
+    if (id === buildIdRef.current) return
+    setViewer(null)
+    navigate(`/workspace/builder/${id}`)
+  }
+
+  const handleNewBuild = () => {
+    setShowBuilds(false)
+    setViewer(null)
+    buildIdRef.current = null
+    navigate('/workspace/builder', { replace: true, state: {} })
+    clearTimers()
+    setMessages([{
+      id: 'welcome',
+      role: 'assistant',
+      content: "Hello! I'm Citizen Developer AI. Tell me what you'd like to build for BIAL operations.",
+      timestamp: new Date(),
+    }])
+    setPreviewCode(null)
+    setGenerating(false)
+    setGenerationStage(0)
+  }
+
+  const handleDeleteBuild = (e, id) => {
+    e.stopPropagation()
+    deleteBuild(id)
+    refreshBuilds()
+    if (id === buildIdRef.current) handleNewBuild()
   }
 
   return (
@@ -217,16 +413,59 @@ export default function BuilderPage() {
         {/* Chat panel */}
         <div className="w-72 xl:w-80 flex flex-col bg-white border-r border-bial-border flex-shrink-0">
           {/* Agent header */}
-          <div className="p-4 border-b border-bial-border">
-            <div className="flex items-center gap-2 mb-3">
+          <div className="p-4 border-b border-bial-border relative">
+            <div className="flex items-center justify-between gap-2 mb-3">
               <button
                 onClick={() => navigate('/workspace/sandbox')}
-                className="p-1 rounded-lg text-neutral hover:text-primary hover:bg-bial-bg transition"
+                className="flex items-center gap-2 p-1 rounded-lg text-neutral hover:text-primary hover:bg-bial-bg transition"
               >
                 <ArrowLeft size={15} />
+                <span className="text-xs">Back to Sandbox</span>
               </button>
-              <span className="text-xs text-neutral">Back to Sandbox</span>
+              <button
+                onClick={() => { refreshBuilds(); setShowBuilds((s) => !s) }}
+                title="Recent builds"
+                className="flex items-center gap-1 p-1.5 rounded-lg text-neutral hover:text-primary hover:bg-bial-bg transition"
+              >
+                <History size={15} />
+                <span className="text-[11px] font-semibold">Recent</span>
+              </button>
             </div>
+
+            {showBuilds && (
+              <div className="absolute right-3 top-12 z-30 w-64 max-h-80 overflow-y-auto scrollbar-thin bg-white rounded-xl border border-bial-border shadow-xl py-2">
+                <div className="px-3 py-1.5 flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-neutral">Recent builds</p>
+                  <button onClick={handleNewBuild} className="text-[11px] font-semibold text-primary hover:underline">
+                    + New
+                  </button>
+                </div>
+                {builds.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-neutral text-center">No saved builds yet</p>
+                ) : (
+                  builds.map((b) => (
+                    <div
+                      key={b.id}
+                      onClick={() => handleSelectBuild(b.id)}
+                      className={`group relative mx-1.5 my-0.5 rounded-lg px-2.5 py-2 cursor-pointer transition ${
+                        b.id === buildIdRef.current ? 'bg-bial-bg' : 'hover:bg-surface-muted'
+                      }`}
+                    >
+                      <p className="text-xs font-semibold text-tertiary truncate pr-6">{b.title}</p>
+                      <p className="text-[10px] text-neutral">{relativeTime(b.updatedAt)}</p>
+                      <button
+                        onClick={(e) => handleDeleteBuild(e, b.id)}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-neutral hover:text-danger transition p-1"
+                        title="Delete build"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
             <div className="flex items-center gap-3">
               <div className="relative">
                 <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
@@ -257,7 +496,7 @@ export default function BuilderPage() {
                       ? 'bg-tertiary text-white rounded-tr-sm'
                       : 'bg-bial-bg text-tertiary rounded-tl-sm'
                   }`}>
-                    <MessageContent content={msg.content} />
+                    <MessageContent content={msg.content} attachments={msg.attachments} />
                     <p className="text-[10px] mt-1 opacity-40">
                       {msg.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
@@ -297,7 +536,83 @@ export default function BuilderPage() {
 
           {/* Input */}
           <div className="p-3 border-t border-bial-border space-y-2">
+            {error && (
+              <div className="text-[11px] text-danger bg-danger/5 border border-danger/20 rounded-lg px-2.5 py-1.5">
+                {error}
+              </div>
+            )}
+            {/* Context-length guardrail: warn as it grows, hard-stop at the window */}
+            {ctxLevel === 'full' ? (
+              <div className="text-[11px] text-danger bg-danger/5 border border-danger/20 rounded-lg px-2.5 py-1.5">
+                <p className="mb-1">This build conversation has reached its maximum length.</p>
+                <button onClick={handleNewBuild} className="font-bold underline">
+                  Start new build
+                </button>
+              </div>
+            ) : ctxLevel === 'warn' ? (
+              <div className="text-[11px] text-tertiary bg-warning/10 border border-warning/30 rounded-lg px-2.5 py-1.5">
+                <p className="mb-1">This build conversation is getting long.</p>
+                <button onClick={handleNewBuild} className="font-bold text-primary underline">
+                  Start new build
+                </button>
+              </div>
+            ) : null}
+            {/* Pending attachment preview row */}
+            {pendingAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {pendingAttachments.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-1 bg-bial-bg border border-bial-border rounded-lg px-1.5 py-1 text-[11px] text-tertiary"
+                  >
+                    {TEXT_MEDIA_TYPES.has(a.mediaType) ? (
+                      <span className="flex-shrink-0 text-primary" title={a.name}>
+                        {a.mediaType === 'text/csv' ? <FileSpreadsheet size={11} /> : <FileText size={11} />}
+                      </span>
+                    ) : a.mediaType === 'application/pdf' ? (
+                      <button
+                        type="button"
+                        onClick={() => openPdf(a.base64, a.name)}
+                        title={`Open ${a.name}`}
+                        className="flex-shrink-0 text-primary hover:opacity-80 transition"
+                      >
+                        <FileText size={11} />
+                      </button>
+                    ) : (
+                      <img
+                        src={`data:${a.mediaType};base64,${a.base64}`}
+                        alt={a.name}
+                        title={`View ${a.name}`}
+                        onClick={() => setViewer({ name: a.name, src: `data:${a.mediaType};base64,${a.base64}` })}
+                        className="h-6 w-6 object-cover rounded cursor-zoom-in hover:opacity-90 transition"
+                      />
+                    )}
+                    <span className="truncate max-w-[7rem]">{a.name}</span>
+                    <button onClick={() => removePending(a.id)} className="text-neutral hover:text-danger transition" title="Remove">
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="flex gap-2 items-end">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT_ATTR}
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={generating}
+                title="Attach images, PDFs, or text files (CSV, TXT)"
+                className="flex-shrink-0 w-9 h-9 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
+              >
+                <Paperclip size={13} />
+              </button>
               <textarea
                 ref={inputRef}
                 value={input}
@@ -309,13 +624,13 @@ export default function BuilderPage() {
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || generating}
+                disabled={(!input.trim() && pendingAttachments.length === 0) || generating || ctxLevel === 'full'}
                 className="flex-shrink-0 w-9 h-9 bg-secondary hover:bg-secondary-600 disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition"
               >
                 <Send size={13} />
               </button>
             </div>
-            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send</p>
+            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send · Images, PDFs & text files supported</p>
           </div>
         </div>
 
@@ -336,6 +651,18 @@ export default function BuilderPage() {
         visible={toast.visible}
         onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
       />
+
+      {/* Attachment validation / cap toast */}
+      {attachToast && (
+        <div className="fixed bottom-6 left-6 z-50 bg-white border border-bial-border rounded-xl shadow-xl px-4 py-3 text-sm text-tertiary font-medium max-w-xs">
+          {attachToast}
+        </div>
+      )}
+
+      {/* Pending-attachment image lightbox */}
+      {viewer && (
+        <AttachmentLightbox name={viewer.name} src={viewer.src} onClose={() => setViewer(null)} />
+      )}
     </div>
   )
 }

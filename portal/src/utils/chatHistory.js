@@ -1,62 +1,31 @@
-const STORAGE_KEY = 'bial_chat_history'
+import { contentToText } from './attachmentStore.js'
+import { createConversationStore } from './conversationStore.js'
 
-export function loadHistory() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
+// App Builder planning-chat history. Keyed `bial_chat_history:<user>`, id prefix
+// `chat`. The store logic lives in the shared factory (Decision 4) so BIAL Chat
+// can mount an isolated sibling instance (assistantHistory.js) without forking
+// it. Every existing import below stays valid — behaviour is byte-for-byte the
+// same as the pre-factory module.
+const store = createConversationStore('bial_chat_history', 'chat')
 
-export function saveHistory(conversations) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations))
-}
-
-export function newConversation(firstMessage) {
-  const id = `chat_${Date.now()}`
-  const title = firstMessage.trim().slice(0, 40) + (firstMessage.trim().length > 40 ? '…' : '')
-  const now = new Date().toISOString()
-  const conversation = {
-    id,
-    title,
-    createdAt: now,
-    updatedAt: now,
-    messages: [],
-  }
-  const history = loadHistory()
-  saveHistory([conversation, ...history])
-  return id
-}
-
-export function appendMessage(chatId, message) {
-  const history = loadHistory()
-  const updated = history.map((c) => {
-    if (c.id !== chatId) return c
-    return {
-      ...c,
-      updatedAt: new Date().toISOString(),
-      messages: [...c.messages, message],
-    }
-  })
-  saveHistory(updated)
-}
-
-export function getConversation(chatId) {
-  return loadHistory().find((c) => c.id === chatId) || null
-}
-
-export function deleteConversation(chatId) {
-  saveHistory(loadHistory().filter((c) => c.id !== chatId))
-}
+export const {
+  loadHistory,
+  saveHistory,
+  newConversation,
+  appendMessage,
+  getConversation,
+  deleteConversation,
+} = store
 
 export function buildPromptFromHistory(messages) {
   const userMessages = messages.filter((m) => m.role === 'user')
-  const goal = userMessages[0]?.content || ''
+  // contentToText so an attachment turn (ContentBlock[]) yields its text, not
+  // "[object Object]", in the Builder handoff transcript.
+  const goal = contentToText(userMessages[0]?.content ?? '')
 
   const contextMessages = messages.slice(-10)
   const transcript = contextMessages
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${contentToText(m.content)}`)
     .join('\n\n')
 
   return `Based on the following planning conversation, build the described application:

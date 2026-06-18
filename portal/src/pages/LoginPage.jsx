@@ -1,37 +1,69 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Lock, User, Building2, ArrowRight, Zap, Shield, Cloud } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
+import { Eye, EyeOff, Lock, Mail, ArrowRight, Zap, Shield, Cloud } from 'lucide-react'
 import BIALLogo from '../components/BIALLogo'
+import { setSession, consumeSignoutReason, SIGNOUT_REASONS } from '../utils/auth'
+
+const SIGNOUT_BANNERS = {
+  [SIGNOUT_REASONS.EXPIRED]: 'Your session expired. Please sign in again.',
+  [SIGNOUT_REASONS.LOGGED_OUT]: 'You have been signed out.',
+}
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [remember, setRemember] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  // One-time contextual banner explaining why the user landed back on /login.
+  useEffect(() => {
+    const reason = consumeSignoutReason()
+    if (reason && SIGNOUT_BANNERS[reason]) setNotice(SIGNOUT_BANNERS[reason])
+  }, [])
+
+  const onField = (setter) => (e) => {
+    setter(e.target.value)
+    setError('')
+  }
 
   const handleLogin = async (e) => {
     e.preventDefault()
+    if (loading) return // a second click before the response is a no-op
     setError('')
     if (!username || !password) {
-      setError('Please enter your Staff ID and password.')
+      setError('Please enter your email and password.')
       return
     }
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 1000))
-    setLoading(false)
-    localStorage.setItem('bial_user', JSON.stringify({ username, name: 'Alex Chen', role: 'Terminal Lead', isAdmin: true }))
-    navigate('/dashboard')
-  }
-
-  const handleSSO = async () => {
-    setLoading(true)
-    await new Promise((r) => setTimeout(r, 700))
-    setLoading(false)
-    localStorage.setItem('bial_user', JSON.stringify({ username: 'sso-user', name: 'Alex Chen', role: 'Terminal Lead', isAdmin: true }))
-    navigate('/dashboard')
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      if (!res.ok) {
+        setLoading(false)
+        if (res.status === 400) {
+          setError('Please enter your email and password.')
+        } else if (res.status === 429) {
+          setError('Too many sign-in attempts. Please wait a few minutes and try again.')
+        } else {
+          setError('Incorrect email or password. Please try again.')
+        }
+        return
+      }
+      const data = await res.json()
+      setSession({ accessToken: data.accessToken, refreshToken: data.refreshToken, user: data.user })
+      setNotice('')
+      setLoading(false)
+      navigate('/dashboard')
+    } catch {
+      setLoading(false)
+      setError('Unable to sign in right now. Please try again.')
+    }
   }
 
   return (
@@ -100,6 +132,12 @@ export default function LoginPage() {
           <h2 className="text-center text-2xl font-bold text-tertiary mb-1">Welcome Back</h2>
           <p className="text-center text-neutral text-sm mb-8">Access your workspace and tools</p>
 
+          {notice && (
+            <div className="mb-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+              {notice}
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">
               {error}
@@ -109,16 +147,18 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-worksans font-semibold tracking-wider text-neutral uppercase mb-1.5">
-                Staff Username
+                Email Address
               </label>
               <div className="relative">
-                <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
+                <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
                 <input
-                  type="text"
-                  placeholder="BIAL-12345"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="name@bialairport.com"
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full pl-9 pr-4 py-3 border border-bial-border rounded-xl text-tertiary text-sm placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition"
+                  onChange={onField(setUsername)}
+                  disabled={loading}
+                  className="w-full pl-9 pr-4 py-3 border border-bial-border rounded-xl text-tertiary text-sm placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition disabled:opacity-60"
                 />
               </div>
             </div>
@@ -131,10 +171,12 @@ export default function LoginPage() {
                 <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-10 py-3 border border-bial-border rounded-xl text-tertiary text-sm placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition"
+                  onChange={onField(setPassword)}
+                  disabled={loading}
+                  className="w-full pl-9 pr-10 py-3 border border-bial-border rounded-xl text-tertiary text-sm placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition disabled:opacity-60"
                 />
                 <button
                   type="button"
@@ -146,64 +188,29 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                  className="w-4 h-4 rounded accent-primary"
-                />
-                <span className="text-sm text-neutral">Remember me</span>
-              </label>
-              <button type="button" className="text-sm text-primary font-medium hover:underline">
-                Forgot password?
-              </button>
-            </div>
-
             <button
               type="submit"
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-600 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition shadow-md shadow-primary/20"
             >
               {loading ? (
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
+                <>
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Signing in…
+                </>
               ) : (
-                <>Login with Staff ID <ArrowRight size={15} /></>
+                <>Login <ArrowRight size={15} /></>
               )}
             </button>
           </form>
 
-          <div className="flex items-center gap-3 my-5">
-            <div className="flex-1 h-px bg-bial-border" />
-            <span className="text-xs text-neutral uppercase tracking-wider">or use sso</span>
-            <div className="flex-1 h-px bg-bial-border" />
-          </div>
-
-          <button
-            onClick={handleSSO}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 border-2 border-bial-border hover:border-primary hover:bg-primary/5 text-tertiary font-semibold py-3 rounded-xl transition"
-          >
-            <Building2 size={17} className="text-primary" />
-            BIAL Corporate Login
-          </button>
-
           <p className="text-center text-xs text-neutral mt-6">
             Need assistance? Contact{' '}
-            <a href="#" className="text-primary font-medium hover:underline">IT Support Desk</a>
+            <Link to="/help" className="text-primary font-medium hover:underline">IT Support Desk</Link>
           </p>
-
-          <div className="flex justify-center gap-4 mt-3">
-            {['Privacy Policy', 'Security Standards', 'System Status'].map((link) => (
-              <a key={link} href="#" className="text-[10px] text-neutral uppercase tracking-wider hover:text-primary transition">
-                {link}
-              </a>
-            ))}
-          </div>
         </div>
       </div>
     </div>

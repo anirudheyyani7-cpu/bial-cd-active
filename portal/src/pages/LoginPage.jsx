@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Lock, Mail, ArrowRight, Zap, Shield, Cloud } from 'lucide-react'
 import BIALLogo from '../components/BIALLogo'
 import { setSession, consumeSignoutReason, SIGNOUT_REASONS } from '../utils/auth'
@@ -206,11 +206,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          <p className="text-center text-xs text-neutral mt-6">
-            Need assistance? Contact{' '}
-            <Link to="/help" className="text-primary font-medium hover:underline">IT Support Desk</Link>
-          </p>
         </div>
       </div>
     </div>

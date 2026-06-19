@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-19
+
+### Fixed
+- **No more surprise logouts while navigating.** The route guard now silently
+  refreshes an expired access token (using the still-valid 7-day refresh token)
+  before redirecting, instead of bouncing you to the login screen the moment the
+  15-minute access token lapsed mid-session. A transient network error during the
+  refresh no longer wipes your session either — only a genuine auth failure signs
+  you out, so a brief connectivity blip lets the next action retry.
+
+### Removed
+- **Deploy feature removed.** The non-functional "Deploy App" button — and its
+  mock deploy page/route — is gone, along with the related Help Center FAQ, the
+  "Understanding Deployment" section, and the deploy references in the App Builder
+  copy.
+- **Login "Contact IT Support Desk" link removed**, as it pointed at a
+  non-functional destination.
+
+### Changed
+- **Consistent "Plan with AI" naming.** The App Builder sandbox's planning toggle
+  is now labelled "Plan with AI" (was "Chat & Plan"), matching the hero and
+  history CTAs. The duplicate "Plan with AI" button in the workspace empty state
+  was removed, since the hero card above it already offers the same action.
+
 ## [1.1.1] - 2026-06-19
 
 ### Changed

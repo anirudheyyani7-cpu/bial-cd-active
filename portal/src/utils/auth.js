@@ -191,9 +191,12 @@ async function refreshOrAdopt(staleToken) {
     broadcastRotated(session)
     return data.accessToken
   } catch {
-    // Network error — fail closed without nuking the (possibly still valid)
-    // session reason; treat as expired so the caller redirects to login.
-    clearSession(SIGNOUT_REASONS.EXPIRED)
+    // Network/abort error (fetch threw, or the 10s AbortSignal fired) — fail
+    // OPEN: the refresh token is likely still valid, so leave the session
+    // intact and return null. The caller retries on the next navigation/API
+    // call once connectivity returns, instead of being logged out on a blip.
+    // A genuine auth rejection takes the !res.ok / missing-accessToken paths
+    // above, which DO clear the session.
     return null
   }
 }

@@ -46,7 +46,7 @@ const DONTS = [
 const FAQS = [
   {
     q: 'What is the BIAL Citizen Developer portal?',
-    a: 'It is an internal platform that empowers Bangalore International Airport staff to build custom operational tools and digital solutions without writing code. You describe what you need in plain English, and the AI generates a working application that can be deployed to the terminal operations dashboard.',
+    a: 'It is an internal platform that empowers Bangalore International Airport staff to build custom operational tools and digital solutions without writing code. You describe what you need in plain English, and the AI generates a working application for terminal operations.',
   },
   {
     q: 'Who can use this portal?',
@@ -61,10 +61,6 @@ const FAQS = [
     a: 'Yes. The chat panel on the left side of the builder lets you request changes in plain English. You can ask to change colors, add tables, remove sections, switch to mobile layout, and more.',
   },
   {
-    q: 'What does "Deploy" do?',
-    a: 'Deploying pushes your app to the terminal operations dashboard where other staff can access it. You choose whether to keep it private, share with your team, or submit it for enterprise-wide publishing (which requires IT review).',
-  },
-  {
     q: 'Can I see the actual code behind my app?',
     a: 'Yes. Click the "View Code" button in the builder toolbar to see the generated React code. However, you do not need to understand or edit the code — the AI chat handles all changes.',
   },
@@ -74,7 +70,7 @@ const FAQS = [
   },
   {
     q: 'Is there a limit to how many apps I can build?',
-    a: 'There is no hard limit during the current phase. Build as many prototypes as you need. Deployed apps are subject to IT resource allocation policies.',
+    a: 'There is no hard limit during the current phase. Build as many prototypes as you need.',
   },
   {
     q: 'Who do I contact for help?',
@@ -114,7 +110,7 @@ export default function HelpPage() {
           <div>
             <h1 className="text-3xl font-extrabold text-tertiary mb-2">Help Center</h1>
             <p className="text-neutral leading-relaxed">
-              Everything you need to know about building, deploying, and managing apps on the BIAL Citizen Developer portal.
+              Everything you need to know about building and managing apps on the BIAL Citizen Developer portal.
             </p>
           </div>
 
@@ -126,7 +122,7 @@ export default function HelpPage() {
               {[
                 { n: '1', title: 'Describe your app', body: 'Write a plain English prompt in the Sandbox describing what tool you need.' },
                 { n: '2', title: 'Refine with AI', body: 'Our AI assistant will generate the app. Use the chat to adjust layout, data, and features.' },
-                { n: '3', title: 'Deploy to Terminal', body: 'Push your app live to the terminal operations dashboard with one click.' },
+                { n: '3', title: 'Save & Revisit', body: 'Your app is saved to My Workspace — reopen it anytime to keep refining.' },
               ].map(({ n, title, body }) => (
                 <div key={n} className="bg-white/10 rounded-xl p-4">
                   <div className="w-6 h-6 rounded-full bg-white/20 text-white text-xs font-bold flex items-center justify-center mb-3">{n}</div>
@@ -214,35 +210,6 @@ export default function HelpPage() {
             <div className="mt-4">
               {FAQS.map(({ q, a }) => (
                 <AccordionItem key={q} question={q} answer={a} />
-              ))}
-            </div>
-          </div>
-
-          {/* Deployment Strategy */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-            <h2 className="text-lg font-bold text-tertiary mb-4">Understanding Deployment</h2>
-            <div className="space-y-4">
-              {[
-                {
-                  title: 'Workspace deployment',
-                  color: 'bg-gray-100 text-gray-600',
-                  body: 'Keeps your app private. Only you can access it from your My Workspace page. Use this for prototyping, testing ideas, and iterating on prompts before sharing.',
-                },
-                {
-                  title: 'Team deployment',
-                  color: 'bg-primary/10 text-primary',
-                  body: 'Shares the app with your department\'s Team Space. All team members can access and use the app. The app creator retains edit permissions. This is ideal for department-specific tools like shift handover checklists or equipment trackers.',
-                },
-                {
-                  title: 'Enterprise deployment',
-                  color: 'bg-secondary/10 text-secondary',
-                  body: 'Submits the app for IT review. Once approved, the app becomes available in the Enterprise Space where all terminal staff can access it. Enterprise apps must meet compliance and security standards. The typical review cycle is 2–3 business days.',
-                },
-              ].map(({ title, color, body }) => (
-                <div key={title} className="flex gap-4">
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 h-fit mt-0.5 ${color}`}>{title}</span>
-                  <p className="text-sm text-neutral leading-relaxed">{body}</p>
-                </div>
               ))}
             </div>
           </div>

@@ -130,6 +130,20 @@ describe('refreshAccessToken', () => {
     expect(consumeSignoutReason()).toBe('session_expired')
   })
 
+  it('fails OPEN on a network/abort error: returns null but PRESERVES the session (no logout on a blip)', async () => {
+    setSession({ accessToken: expiredJwt('alice'), refreshToken: 'rt', user: { username: 'alice' } })
+    // fetch throwing (network down) or the AbortSignal.timeout firing both reach
+    // the catch; unlike a 401, this must NOT clear the session — the refresh
+    // token is still valid, so the next navigation/API call can retry.
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+
+    const result = await refreshAccessToken()
+    expect(result).toBeNull()
+    expect(getRefreshToken()).toBe('rt')
+    expect(getStoredUser()).toMatchObject({ username: 'alice' })
+    expect(consumeSignoutReason()).toBeNull() // not marked expired — no logout
+  })
+
   it('returns null and clears when no refresh token is present', async () => {
     const result = await refreshAccessToken()
     expect(result).toBeNull()

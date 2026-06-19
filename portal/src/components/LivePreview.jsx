@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Monitor, Smartphone, Rocket, Code2, LayoutTemplate, X } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Monitor, Smartphone, Code2, LayoutTemplate, X } from 'lucide-react'
 
 const VIEWPORTS = { Desktop: 'w-full', Mobile: 'max-w-[390px]' }
 const VP_ICONS = { Desktop: Monitor, Mobile: Smartphone }
@@ -15,8 +14,7 @@ const STAGE_TEXT = [
   'Ready',
 ]
 
-export default function LivePreview({ previewCode, generating, generationStage, prompt }) {
-  const navigate = useNavigate()
+export default function LivePreview({ previewCode, generating, generationStage }) {
   const [viewport, setViewport] = useState('Desktop')
   const [showCode, setShowCode] = useState(false)
   const iframeRef = useRef(null)
@@ -80,12 +78,6 @@ export default function LivePreview({ previewCode, generating, generationStage, 
             }`}
           >
             <Code2 size={11} />View Code
-          </button>
-          <button
-            onClick={() => navigate('/workspace/deploy', { state: { appDesc: prompt || '' } })}
-            className="flex items-center gap-1.5 text-xs font-worksans font-bold text-white bg-primary hover:bg-primary-600 rounded-lg px-3 py-1.5 transition"
-          >
-            <Rocket size={11} />Deploy App
           </button>
         </div>
       </div>

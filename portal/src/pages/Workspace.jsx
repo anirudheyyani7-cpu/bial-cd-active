@@ -8,7 +8,7 @@ import { loadBuilds } from '../utils/builderHistory'
 const VIBE_STEPS = [
   { n: 1, text: 'Type a prompt explaining the intent and data source.' },
   { n: 2, text: 'Review the generated app and refine the UI components visually.' },
-  { n: 3, text: 'Click Deploy to push the app to the terminal dashboard.' },
+  { n: 3, text: 'Your work is saved automatically — find it under Recent Conversations to continue anytime.' },
 ]
 
 // Merge the logged-in user's recent chats + builds into one timeline, tagging
@@ -69,7 +69,7 @@ export default function Workspace() {
           <div>
             <h1 className="text-3xl font-extrabold text-tertiary mb-1">App Builder</h1>
             <p className="text-neutral text-sm max-w-xl leading-relaxed">
-              Plan with AI or jump straight into building, then deploy operational tools directly to the terminal floor.
+              Plan with AI or jump straight into building operational tools for the terminal floor.
             </p>
           </div>
         </div>
@@ -158,15 +158,9 @@ export default function Workspace() {
                 <Sparkles size={20} className="text-primary" />
               </div>
               <p className="text-sm font-bold text-tertiary mb-1">No conversations yet</p>
-              <p className="text-xs text-neutral max-w-sm leading-relaxed mb-4">
+              <p className="text-xs text-neutral max-w-sm leading-relaxed">
                 Plan an app with AI or start a build, and your recent work will show up here.
               </p>
-              <button
-                onClick={() => navigate('/workspace/chat/new')}
-                className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition shadow-sm"
-              >
-                <MessageSquare size={14} /> Plan with AI
-              </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

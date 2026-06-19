@@ -225,7 +225,7 @@ export default function SandboxPage() {
             }`}
           >
             <MessageSquare size={14} />
-            Chat &amp; Plan
+            Plan with AI
           </button>
         </div>
 

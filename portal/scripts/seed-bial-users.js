@@ -1,8 +1,7 @@
 /**
  * Preseed the BIAL dev / VM environment with the pilot users + one admin.
  *
- *   node scripts/seed-bial-users.js              # create any missing users (CSPRNG pw, printed ONCE)
- *   node scripts/seed-bial-users.js --rotate     # ALSO reset passwords for users that already exist
+ *   node scripts/seed-bial-users.js              # create missing users AND reset existing ones' passwords
  *   node scripts/seed-bial-users.js --dry-run    # connect + show the plan, write NOTHING (read-only)
  *
  * Run this ON the target box, or with that box's MONGODB_* in scope — it writes to
@@ -10,10 +9,11 @@
  * points at the VM's Mongo, so running it there seeds the VM database.
  *
  * Login is by USERNAME, matched as an exact `_id` point-read, so usernames are the
- * emails LOWERCASED (people type lowercase). Each user gets a distinct CSPRNG
- * password, printed ONCE for out-of-band distribution and stored only as an
- * Argon2id hash. Re-running is idempotent: existing users are left untouched (their
- * distributed password keeps working) unless you pass --rotate.
+ * emails LOWERCASED (people type lowercase). Each user gets a deterministic,
+ * memorable temporary password of the shape `<LastName>BIAL@123` (e.g.
+ * `FernandezBIAL@123`), stored only as an Argon2id hash. Every run is a full
+ * upsert: missing users are created and existing users have their password reset
+ * to the derived value — so the pilot always knows everyone's current password.
  *
  * Reuses the tested seedUsers() upsert from seed-users.js — same hashing, same
  * doc shape, same preserve-createdAt/limits/session semantics.
@@ -22,7 +22,7 @@ import 'dotenv/config'
 import { pathToFileURL } from 'node:url'
 import { createUsersRepo } from '../server/users-repo.js'
 import { getUsersCollection } from '../server/cosmos.js'
-import { seedUsers, assertValidUsername } from './seed-users.js'
+import { seedUsers, assertValidUsername, derivePassword } from './seed-users.js'
 
 // One admin + the nine pilot users. Emails normalized to lowercase for login.
 // Change the admin line below if you want a different admin identity.
@@ -39,47 +39,42 @@ export const BIAL_USERS = [
   { username: 'adiseshu@bialairport.com',       email: 'adiseshu@bialairport.com',       name: 'Adi',                   role: 'user' },
 ]
 
-function printResults(results) {
-  const changed = results.filter((r) => r.password)
-  const unchanged = results.filter((r) => !r.password)
-  if (changed.length) {
-    console.log('\nSeeded BIAL users (shown ONCE — capture and distribute out of band):\n')
-    console.log('  ' + 'STATUS'.padEnd(9) + 'ROLE'.padEnd(7) + 'USERNAME (login)'.padEnd(34) + 'PASSWORD')
-    for (const r of changed) {
-      console.log('  ' + r.status.padEnd(9) + r.role.padEnd(7) + r.username.padEnd(34) + r.password)
-    }
-  }
-  if (unchanged.length) {
-    console.log(
-      `\nUnchanged (already existed; password NOT reset — pass --rotate to reset):\n  ` +
-        unchanged.map((r) => r.username).join(', '),
-    )
-  }
-  console.log('\nPasswords are stored only as Argon2id hashes. Sign in at /login with the username + password above.\n')
+/** The seed map this script ships: every pilot user → its derived password. */
+export function bialPasswords(users = BIAL_USERS) {
+  return Object.fromEntries(users.map((u) => [u.username, derivePassword(u.name)]))
 }
 
-async function dryRun(repo) {
+function printResults(results) {
+  console.log('\nBIAL pilot users — temporary memorable passwords (<LastName>BIAL@123):\n')
+  console.log('  ' + 'STATUS'.padEnd(9) + 'ROLE'.padEnd(7) + 'USERNAME (login)'.padEnd(34) + 'PASSWORD')
+  for (const r of results) {
+    console.log('  ' + r.status.padEnd(9) + r.role.padEnd(7) + r.username.padEnd(34) + r.password)
+  }
+  console.log('\nPasswords are deterministic temporary credentials, stored only as Argon2id hashes at rest.')
+  console.log('Sign in at /login with the username + password above.\n')
+}
+
+export async function dryRun(repo) {
   console.log('\nDRY RUN — no writes. Planned actions against the loaded database:\n')
+  console.log('  ' + 'ACTION'.padEnd(16) + 'ROLE'.padEnd(7) + 'USERNAME (login)'.padEnd(34) + 'PASSWORD')
   for (const u of BIAL_USERS) {
     assertValidUsername(u.username)
     const existing = await repo.findByUsername(u.username)
-    const status = existing ? 'EXISTS (skip unless --rotate)' : 'WOULD CREATE'
-    console.log('  ' + status.padEnd(30) + u.role.padEnd(7) + u.username.padEnd(34) + `(${u.name})`)
+    const action = existing ? 'UPDATE pw' : 'CREATE'
+    console.log('  ' + action.padEnd(16) + u.role.padEnd(7) + u.username.padEnd(34) + derivePassword(u.name))
   }
   console.log('')
 }
 
 async function main() {
-  const argv = process.argv.slice(2)
-  const rotate = argv.includes('--rotate')
-  const dry = argv.includes('--dry-run')
+  const dry = process.argv.slice(2).includes('--dry-run')
   try {
     const repo = createUsersRepo(await getUsersCollection())
     if (dry) {
       await dryRun(repo)
       return
     }
-    printResults(await seedUsers(repo, { users: BIAL_USERS, rotate }))
+    printResults(await seedUsers(repo, { users: BIAL_USERS, passwords: bialPasswords() }))
   } catch (err) {
     console.error('seed-bial-users failed:', err.message)
     process.exitCode = 1

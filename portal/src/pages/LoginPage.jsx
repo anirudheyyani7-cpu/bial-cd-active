@@ -83,7 +83,7 @@ export default function LoginPage() {
         />
 
         <div className="relative z-10">
-          <BIALLogo size={44} />
+          <BIALLogo dark />
         </div>
 
         <div className="relative z-10 space-y-5">
@@ -115,7 +115,7 @@ export default function LoginPage() {
       {/* Right panel */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 bg-white">
         <div className="lg:hidden mb-8">
-          <BIALLogo size={40} />
+          <BIALLogo />
         </div>
 
         <div className="w-full max-w-sm">

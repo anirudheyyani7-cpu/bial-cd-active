@@ -10,6 +10,7 @@ import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import { clearForUser } from '../../utils/attachmentStore'
 import { CHAT_ENABLED } from '../../config/features'
 import FeedbackModal from '../FeedbackModal'
+import BIALLogo from '../BIALLogo'
 
 const NAV_LINKS = [
   { label: 'App Builder', to: '/workspace' },
@@ -137,8 +138,8 @@ export default function Navbar() {
         <div className="px-6 h-14 flex items-center justify-between gap-4">
           {/* Brand + Nav */}
           <div className="flex items-center gap-8">
-            <NavLink to="/dashboard" className="text-primary font-bold text-lg tracking-tight whitespace-nowrap">
-              BIAL Citizen Developer
+            <NavLink to="/dashboard" className="flex items-center whitespace-nowrap">
+              <BIALLogo />
             </NavLink>
             <div className="hidden md:flex items-center gap-6">
               {[...NAV_LINKS, ...(user.isAdmin ? [ADMIN_LINK] : [])].map(({ label, to }) => (

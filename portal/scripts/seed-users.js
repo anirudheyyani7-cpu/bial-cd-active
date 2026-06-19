@@ -25,6 +25,30 @@ export function generatePassword(bytes = 18) {
 }
 
 /**
+ * Memorable temporary password for the BIAL pilot: `<LastName>BIAL@123`, where
+ * `<LastName>` is the last whitespace-delimited token of `name` with its first
+ * letter capitalized (single-token names use the whole name). Each token is
+ * stripped to ASCII alphanumerics — accented letters are dropped so the result
+ * stays easy to type — and tokens that strip to empty are skipped, so a trailing
+ * punctuation token (e.g. "Foo -") falls back to the prior word. Capitalizing
+ * guarantees the leading-uppercase the login policy expects regardless of input
+ * casing; for any name with an alphanumeric token the result satisfies
+ * upper/lower/digit/symbol + length ≥ 8 by construction. Not unique — two users
+ * sharing a last name collide harmlessly. Used by the BIAL pilot seed only; the
+ * generic seed path keeps the CSPRNG `generatePassword` above.
+ */
+export function derivePassword(name) {
+  const tokens = String(name)
+    .trim()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(Boolean)
+  const lastToken = tokens[tokens.length - 1] ?? ''
+  const capitalized = lastToken.charAt(0).toUpperCase() + lastToken.slice(1)
+  return `${capitalized}BIAL@123`
+}
+
+/**
  * Reject usernames that would break the `${username}:${IST-date}` usage doc _id
  * keying (plan Decision 3). Usernames are emails today, but guard the creation
  * path so a `:`/whitespace username can never collide usage rows.

@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { FileText, Rocket, Bot, ArrowRight } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import { getStoredUser } from '../utils/auth'
+import { CHAT_ENABLED } from '../config/features'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -27,11 +28,13 @@ export default function Dashboard() {
           </p>
         )}
         <p className="text-neutral text-base leading-relaxed max-w-2xl mb-10">
-          Ready to build the future of aviation? Plan and build operational tools in the App Builder, or ask BIAL Chat anything.
+          Ready to build the future of aviation? Plan and build operational tools in the App Builder{CHAT_ENABLED ? ', or ask BIAL Chat anything' : ''}.
         </p>
 
-        {/* Two entry points — distinct identity + job-to-be-done copy (Decision 7) */}
-        <div className="grid gap-5 sm:grid-cols-2 max-w-3xl">
+        {/* Entry points — distinct identity + job-to-be-done copy (Decision 7).
+            BIAL Chat is temporarily hidden (CHAT_ENABLED); collapse to one column
+            so the lone App Builder card isn't stranded in a 2-col grid. */}
+        <div className={`grid gap-5 ${CHAT_ENABLED ? 'sm:grid-cols-2 max-w-3xl' : 'max-w-md'}`}>
           {/* App Builder — plan and build operational tools */}
           <div
             onClick={() => navigate('/workspace')}
@@ -54,27 +57,30 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* BIAL Chat — general assistant (distinct icon, dark identity, JTBD copy) */}
-          <div
-            onClick={() => navigate('/chat')}
-            className="relative rounded-2xl p-6 flex flex-col overflow-hidden cursor-pointer transition-transform hover:-translate-y-1 bg-tertiary text-white shadow-xl shadow-tertiary/20"
-          >
-            <div className="absolute top-0 right-0 w-32 h-32 rounded-bl-full opacity-10 bg-white" />
+          {/* BIAL Chat — general assistant (distinct icon, dark identity, JTBD copy).
+              Temporarily hidden via CHAT_ENABLED; the /chat route stays live. */}
+          {CHAT_ENABLED && (
+            <div
+              onClick={() => navigate('/chat')}
+              className="relative rounded-2xl p-6 flex flex-col overflow-hidden cursor-pointer transition-transform hover:-translate-y-1 bg-tertiary text-white shadow-xl shadow-tertiary/20"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 rounded-bl-full opacity-10 bg-white" />
 
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4 bg-white/20 text-white">
-              <Bot size={18} />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4 bg-white/20 text-white">
+                <Bot size={18} />
+              </div>
+
+              <h2 className="text-lg font-bold mb-2 text-white">BIAL Chat</h2>
+              <p className="text-sm leading-relaxed flex-1 mb-6 text-white/80">
+                Ask anything — draft, summarize, or analyze a file. A general-purpose AI assistant for everyday work.
+              </p>
+
+              <button className="flex items-center gap-1 text-sm font-semibold text-white hover:text-white/80 transition">
+                Open BIAL Chat
+                <ArrowRight size={14} />
+              </button>
             </div>
-
-            <h2 className="text-lg font-bold mb-2 text-white">BIAL Chat</h2>
-            <p className="text-sm leading-relaxed flex-1 mb-6 text-white/80">
-              Ask anything — draft, summarize, or analyze a file. A general-purpose AI assistant for everyday work.
-            </p>
-
-            <button className="flex items-center gap-1 text-sm font-semibold text-white hover:text-white/80 transition">
-              Open BIAL Chat
-              <ArrowRight size={14} />
-            </button>
-          </div>
+          )}
         </div>
       </main>
 

@@ -8,11 +8,12 @@ import {
 import { getStoredUser, getAccessToken, clearSession, isAuthenticated, SIGNOUT_REASONS } from '../../utils/auth'
 import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import { clearForUser } from '../../utils/attachmentStore'
+import { CHAT_ENABLED } from '../../config/features'
 import FeedbackModal from '../FeedbackModal'
 
 const NAV_LINKS = [
   { label: 'App Builder', to: '/workspace' },
-  { label: 'BIAL Chat', to: '/chat' },
+  ...(CHAT_ENABLED ? [{ label: 'BIAL Chat', to: '/chat' }] : []),
   { label: 'Help', to: '/help' },
 ]
 
@@ -27,7 +28,7 @@ const SETTINGS_ITEMS = [
 
 const SEARCH_PAGES = [
   { label: 'App Builder', to: '/workspace', icon: FileText },
-  { label: 'BIAL Chat', to: '/chat', icon: Bot },
+  ...(CHAT_ENABLED ? [{ label: 'BIAL Chat', to: '/chat', icon: Bot }] : []),
   { label: 'Help Center', to: '/help', icon: BookOpen },
 ]
 

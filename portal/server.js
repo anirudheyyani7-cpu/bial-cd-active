@@ -26,7 +26,21 @@ import { createUsersRepo } from './server/users-repo.js'
 import { createUsageRepo, istDateKey, nextIstMidnightIso } from './server/usage-repo.js'
 import { createFeedbackRepo } from './server/feedback-repo.js'
 import { makeFeedbackLimiter, createFeedbackHandler } from './server/feedback.js'
-import { getUsersCollection, getUsageCollection, getFeedbackCollection } from './server/cosmos.js'
+import { createConversationsRepo } from './server/conversations-repo.js'
+import { createMessagesRepo } from './server/messages-repo.js'
+import { createAttachmentsRepo } from './server/attachments-repo.js'
+import { createConversationsRouter } from './server/conversations.js'
+import { createAttachmentsRouter } from './server/attachments.js'
+import { validateAttachments } from './server/message-content.js'
+import { getObjectStore } from './server/object-store.js'
+import {
+  getUsersCollection,
+  getUsageCollection,
+  getFeedbackCollection,
+  getConversationsCollection,
+  getMessagesCollection,
+  getAttachmentUsageCollection,
+} from './server/cosmos.js'
 import {
   DEFAULT_DAILY_TOKEN_LIMIT,
   DEFAULT_CONTEXT_SOFT_LIMIT,
@@ -132,90 +146,6 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
 </body></html>`
 
 /**
- * Allowlisted attachment media types → the magic-number prefix the decoded
- * bytes must start with. The relay validates BOTH (declared type ∈ allowlist AND
- * bytes match) before forwarding, so a client can't smuggle arbitrary bytes
- * under a claimed image/PDF type. WebP is a RIFF container ("RIFF"..."WEBP"); the
- * cheap leading "RIFF" check is sufficient for this interim trust boundary.
- */
-const ALLOWED_MEDIA = {
-  'image/png': [0x89, 0x50, 0x4e, 0x47], // \x89PNG
-  'image/jpeg': [0xff, 0xd8], // \xFF\xD8
-  'image/gif': [0x47, 0x49, 0x46, 0x38], // GIF8
-  'image/webp': [0x52, 0x49, 0x46, 0x46], // RIFF
-  'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
-}
-
-// Upper bound on a single inlined text-attachment block (≈512 KB, ~2× the client
-// 256 KB per-file cap to absorb the `<attachment>` wrapper). The client cap is
-// advisory/bypassable; this is the real trust boundary for inline text — text
-// was previously the only attachment class with no server-side size check.
-const TEXT_BLOCK_MAX_CHARS = 512 * 1024
-
-function magicMatches(bytes, magic) {
-  if (bytes.length < magic.length) return false
-  return magic.every((b, i) => bytes[i] === b)
-}
-
-/**
- * Validate every attachment content block in `messages`. Returns an error
- * message string on the first violation, or null when all blocks are valid.
- * String content (no attachments) is unchanged and skipped. Cheap: decodes only
- * a short base64 prefix to check the magic number.
- */
-function validateAttachments(messages) {
-  if (!Array.isArray(messages)) return null
-  for (const msg of messages) {
-    const content = msg?.content
-    if (!Array.isArray(content)) continue // string content = no attachments (unchanged path)
-    for (const block of content) {
-      if (block?.type === 'text') {
-        // A text block must carry a string; a malformed one would 400 upstream
-        // after the relay commits, so reject it cleanly here.
-        if (typeof block.text !== 'string') return 'Invalid attachment: malformed text block.'
-        // Bound inlined text-attachment blocks. The client caps text files at
-        // 256 KB but that's bypassable; this is the server-side bound.
-        if (Buffer.byteLength(block.text, 'utf8') > TEXT_BLOCK_MAX_CHARS) {
-          return 'A text attachment is too large. Please trim the file and try again.'
-        }
-        continue
-      }
-      if (block?.type !== 'image' && block?.type !== 'document') continue
-      const src = block.source
-      if (!src || src.type !== 'base64' || typeof src.data !== 'string') {
-        return 'Invalid attachment: malformed source.'
-      }
-      // Enforce block.type ↔ media_type: a document block must be a PDF and an
-      // image block an image/* type. A mismatched pair (e.g. a document block
-      // carrying image/png) would pass the allowlist + magic check below but
-      // Anthropic rejects it after the relay commits — surface a clean 400 here.
-      const isPdf = src.media_type === 'application/pdf'
-      if (block.type === 'document' && !isPdf) {
-        return `A document attachment must be a PDF, not ${src.media_type}.`
-      }
-      if (block.type === 'image' && isPdf) {
-        return 'An image attachment must be an image type, not application/pdf.'
-      }
-      const magic = ALLOWED_MEDIA[src.media_type]
-      if (!magic) {
-        return `Unsupported attachment type: ${src.media_type}. Allowed: PNG, JPEG, GIF, WebP, PDF.`
-      }
-      const prefix = Buffer.from(src.data.slice(0, 24), 'base64') // 24 b64 chars → 18 bytes, plenty
-      if (!magicMatches(prefix, magic)) {
-        return `Attachment bytes do not match the declared type ${src.media_type}.`
-      }
-      // WebP is a RIFF container; the leading "RIFF" also matches WAV/AVI, so
-      // additionally require the "WEBP" form-type at offset 8. (This is a prefix
-      // sniff — bytes past the prefix are forwarded unvalidated.)
-      if (src.media_type === 'image/webp' && prefix.toString('latin1', 8, 12) !== 'WEBP') {
-        return 'Attachment bytes do not match the declared type image/webp.'
-      }
-    }
-  }
-  return null
-}
-
-/**
  * Resolve the Express `trust proxy` setting. CRITICAL for correct rate-limiting:
  * it must equal the real number of proxy hops that append to X-Forwarded-For in
  * the deployment so req.ip is the actual client IP, not a shared LB address —
@@ -243,6 +173,9 @@ export function createApp({
   repo,
   usageRepo,
   feedbackRepo,
+  conversationsRepo,
+  messagesRepo,
+  attachmentsRepo,
   claudeClient,
   distDir = DEFAULT_DIST,
   dailyTokenLimit = Number.parseInt(process.env.DAILY_TOKEN_LIMIT, 10) || DEFAULT_DAILY_TOKEN_LIMIT,
@@ -286,6 +219,13 @@ export function createApp({
   // specific parser FIRST means it consumes the /api/claude body, after which the
   // global parser's `req._body` guard makes it no-op for that path.
   app.use('/api/claude', express.json({ limit: '35mb' }))
+  // /api/attachments uploads one base64 image/PDF per request; a 4 MB binary is
+  // ≈5.5 MB base64, so a 6 MB cap fits one file (NOT the 35 MB /api/claude ceiling).
+  app.use('/api/attachments', express.json({ limit: '6mb' }))
+  // Message-persist bodies carry parts[]; an inline csv/txt attachment can be a
+  // ~512 KB text part (TEXT_BLOCK_MAX_CHARS), and a builder code snapshot is sizable
+  // — both exceed the 100 KB default, so /api/conversations gets a 2 MB cap.
+  app.use('/api/conversations', express.json({ limit: '2mb' }))
   app.use(express.json())
 
   // --- API routes (registered BEFORE the SPA fallback) -------------------
@@ -300,6 +240,13 @@ export function createApp({
   // feedbackRepo backs both the submit endpoint and the admin read; same
   // fail-loud stance — a missing dep must surface at boot, not as a silent 404.
   if (!feedbackRepo) throw new Error('createApp: feedbackRepo is required')
+  // Persistence repos back the chats/images/code routes. Same fail-loud stance:
+  // a missing dep would make the persistence routes silently 404 (the SPA
+  // fallback would answer index.html and the client's res.json() would throw), so
+  // surface it at boot. start() always wires them with real collections.
+  if (!conversationsRepo) throw new Error('createApp: conversationsRepo is required')
+  if (!messagesRepo) throw new Error('createApp: messagesRepo is required')
+  if (!attachmentsRepo) throw new Error('createApp: attachmentsRepo is required')
 
   // The standard plan: the injected daily ceiling (env-driven) + the fixed
   // context thresholds. Per-user overrides resolve on top of this.
@@ -451,6 +398,11 @@ export function createApp({
   // The handler takes the author from the verified token, never the body.
   app.post('/api/feedback', requireAuth, makeFeedbackLimiter(), createFeedbackHandler(feedbackRepo))
 
+  // Per-user persistence: conversations + messages (chats/builder) and attachment
+  // bytes. Gated at the mount point; every handler scopes by req.user.sub.
+  app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
+  app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo }))
+
   // Isolated builder-preview renderer. The generated app runs inside a sandboxed
   // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the
   // main app's policy stays strict. Code is delivered via postMessage, never here.
@@ -478,13 +430,18 @@ async function start() {
   const repo = createUsersRepo(collection)
   const usageRepo = createUsageRepo(await getUsageCollection()) // pre-created usage collection; fails loud
   const feedbackRepo = createFeedbackRepo(await getFeedbackCollection()) // pre-created feedback collection; fails loud
+  // Persistence: pre-created collections + the object store; each fails loud on a
+  // missing env var. Bytes live in the object store, never the metadata DB.
+  const conversationsRepo = createConversationsRepo(await getConversationsCollection())
+  const messagesRepo = createMessagesRepo(await getMessagesCollection())
+  const attachmentsRepo = createAttachmentsRepo(getObjectStore(), await getAttachmentUsageCollection())
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,
     baseURL: `https://${process.env.AZURE_FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/anthropic`,
     apiVersion: '2023-06-01',
   })
 
-  const app = createApp({ repo, usageRepo, feedbackRepo, claudeClient })
+  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, claudeClient })
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => console.log(`✈  BIAL portal (API + SPA) → http://localhost:${PORT}`))
 }

@@ -18,6 +18,9 @@ let clientPromise = null
 let usersCollection = null
 let usageCollection = null
 let feedbackCollection = null
+let conversationsCollection = null
+let messagesCollection = null
+let attachmentUsageCollection = null
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -97,10 +100,61 @@ export async function getFeedbackCollection() {
   return feedbackCollection
 }
 
+/**
+ * Resolve the pre-created `conversations` collection (cached after first call).
+ * Holds one lightweight HEADER document per conversation (chats + builder
+ * sessions) keyed by a client-minted `_id` (uuid); the per-message bodies live in
+ * the `messages` collection. Like the others, provisioned out-of-band — this only
+ * connects and returns the handle. Maps 1:1 to a Postgres `conversations` table.
+ */
+export async function getConversationsCollection() {
+  if (conversationsCollection) return conversationsCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_CONVERSATIONS_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  conversationsCollection = db.collection(collectionId)
+  return conversationsCollection
+}
+
+/**
+ * Resolve the pre-created `messages` collection (cached after first call). One
+ * document per message (never an unbounded array on a growing document), keyed by
+ * a client-minted `_id` (uuid), carrying a structured `parts[]` content array.
+ * Provisioned out-of-band; this only connects. Maps to a Postgres `messages`
+ * table with a `parts JSONB` column.
+ */
+export async function getMessagesCollection() {
+  if (messagesCollection) return messagesCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_MESSAGES_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  messagesCollection = db.collection(collectionId)
+  return messagesCollection
+}
+
+/**
+ * Resolve the pre-created `attachment_usage` collection (cached after first
+ * call). One document per user (`_id` = username) holding the O(1) running byte
+ * total for the per-user attachment quota — the ONLY attachment metadata in the
+ * DB; the bytes themselves live in the object store. Provisioned out-of-band;
+ * this only connects. Maps to a Postgres numeric counter.
+ */
+export async function getAttachmentUsageCollection() {
+  if (attachmentUsageCollection) return attachmentUsageCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_ATTACHMENT_USAGE_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  attachmentUsageCollection = db.collection(collectionId)
+  return attachmentUsageCollection
+}
+
 /** Test hook: drop cached handles so a fresh client/collection is built. */
 export function _resetMongo() {
   clientPromise = null
   usersCollection = null
   usageCollection = null
   feedbackCollection = null
+  conversationsCollection = null
+  messagesCollection = null
+  attachmentUsageCollection = null
 }

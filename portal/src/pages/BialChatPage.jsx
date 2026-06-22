@@ -13,9 +13,10 @@ import {
   getConversation,
   deleteConversation,
   relativeTime,
+  deriveTitle,
 } from '../utils/assistantHistory'
-import { assembleApiMessages, putAttachment, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { assembleApiMessages, buildUserParts, partsToText, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
 // General-assistant prompt — explicitly NOT the app-builder identity. Includes
@@ -49,6 +50,7 @@ export default function BialChatPage() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [hydrating, setHydrating] = useState(false) // loading a saved transcript over the network
   const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
 
   const { sendMessage, error } = useClaudeAPI()
@@ -59,18 +61,34 @@ export default function BialChatPage() {
   const fileInputRef = useRef(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+  // Source of truth for the active conversation id, in lockstep with activeChatId
+  // via setActive — the streaming guard reads it synchronously so an assistant
+  // write never lands on the wrong (or a deleted) conversation after a switch.
+  const activeChatIdRef = useRef(null)
 
   // Empty state = no active conversation and nothing on screen. Drives the
   // centered→bottom layout switch (immediate, via React state — no animation).
-  const isEmpty = messages.length === 0 && !activeChatId
+  // Never "empty" while a transcript is loading (avoids a flash of the greeting).
+  const isEmpty = !hydrating && messages.length === 0 && !activeChatId
 
   // Running context-length estimate → 'ok' | 'warn' | 'full'.
   const ctxTokens = estimateConversationTokens(messages, BIAL_ASSISTANT_SYSTEM_PROMPT)
   const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
   const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
-  const refreshHistory = useCallback(() => {
-    setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+  // Set the active conversation id in state AND the ref together.
+  const setActive = useCallback((id) => {
+    activeChatIdRef.current = id
+    setActiveChatId(id)
+  }, [])
+
+  const refreshHistory = useCallback(async () => {
+    try {
+      const list = await loadHistory()
+      setHistory(list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+    } catch {
+      // Keep the current sidebar on a transient error; the next refresh recovers.
+    }
   }, [])
 
   useEffect(() => {
@@ -79,18 +97,38 @@ export default function BialChatPage() {
 
   // Route param → load (or reset to empty). BIAL Chat has no initial-message
   // handoff; /chat is the empty/new state and /chat/:id loads a conversation.
+  // Hydration is async with a stale-response guard so a fast switch can't let an
+  // older fetch clobber the newer view.
   useEffect(() => {
     if (!chatId) {
-      setActiveChatId(null)
+      setActive(null)
       setMessages([])
       return
     }
-    const conv = getConversation(chatId)
-    if (conv) {
-      setActiveChatId(chatId)
-      setMessages(conv.messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })))
-    } else {
-      navigate('/chat', { replace: true })
+    // Already active locally (e.g. a brand-new chat we just minted) — don't
+    // hydrate-over it; the send path is writing its first turns.
+    if (activeChatIdRef.current === chatId) return
+
+    let alive = true
+    setHydrating(true)
+    getConversation(chatId)
+      .then((conv) => {
+        if (!alive) return
+        if (conv) {
+          setActive(chatId)
+          setMessages(conv.messages)
+        } else {
+          navigate('/chat', { replace: true })
+        }
+      })
+      .catch(() => {
+        if (alive) navigate('/chat', { replace: true })
+      })
+      .finally(() => {
+        if (alive) setHydrating(false)
+      })
+    return () => {
+      alive = false
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId])
@@ -106,61 +144,62 @@ export default function BialChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length === 0])
 
-  const persistMessage = useCallback((cid, msg) => {
-    appendMessage(cid, {
-      id: msg.id,
-      role: msg.role,
-      content: msg.content, // plain text only — attachment bytes never enter localStorage
-      ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
-      timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
-    })
-  }, [])
-
   const fireMessage = useCallback(async (rawText, attachments = [], explicitChatId) => {
     if (generating) return
     const text = rawText.trim() || (attachments.length ? 'Please review the attached file(s).' : '')
     if (!text && attachments.length === 0) return
     const currentChatId = explicitChatId ?? activeChatId
+    if (!currentChatId) return
 
-    // Persist attachment BYTES to IndexedDB (never localStorage); the message
-    // keeps only lightweight refs. A cap/storage error aborts the send.
-    let refs = []
-    if (attachments.length > 0) {
-      try {
-        for (const a of attachments) {
-          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
-        }
-        refs = attachments.map(toAttachmentRef)
-      } catch (err) {
-        showAttachToast(err?.message || 'Could not store the attachment.')
-        return
-      }
+    // The transcript BEFORE this turn, captured before any await/render.
+    const priorMessages = messagesRef.current
+    const baseSeq = priorMessages.length
+    const isFirstTurn = baseSeq === 0
+
+    // Build the user turn's parts: uploads each image/PDF (server file ref) and
+    // inlines each csv/txt as a text part. An upload/cap failure aborts the send.
+    let parts
+    try {
+      parts = await buildUserParts(text, attachments)
+    } catch (err) {
+      showAttachToast(err?.message || 'Could not upload the attachment.')
+      return
     }
 
-    const userMsg = {
-      id: `msg_${Date.now()}`,
-      role: 'user',
-      content: text,
-      ...(refs.length ? { attachments: refs } : {}),
-      timestamp: new Date(),
-    }
-
+    const userMsg = { id: `local_${Date.now()}`, role: 'user', parts, seq: baseSeq, createdAt: new Date().toISOString() }
     setMessages((prev) => [...prev, userMsg])
-    persistMessage(currentChatId, userMsg)
     setGenerating(true)
 
-    const apiMessages = await assembleApiMessages([...messagesRef.current, userMsg])
+    // Persist the user turn (upserts the header + inserts the message) before
+    // streaming. On failure, abort and roll back the optimistic bubble.
+    try {
+      await appendMessage(
+        currentChatId,
+        { role: 'user', parts, seq: baseSeq },
+        isFirstTurn ? { title: deriveTitle(partsToText(parts)) } : {},
+      )
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id))
+      setGenerating(false)
+      showAttachToast('Could not save your message. Check your connection and try again.')
+      return
+    }
+    refreshHistory()
 
-    const assistantId = `msg_${Date.now()}_a`
+    const byteMap = new Map(attachments.map((a) => [a.id, a.base64]))
+    const apiMessages = assembleApiMessages([...priorMessages, userMsg], (id) => byteMap.get(id))
+
+    const assistantId = `local_${Date.now()}_a`
     let assistantText = ''
 
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', timestamp: new Date() }])
+    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', parts: [{ type: 'text', text: '' }], seq: baseSeq + 1, createdAt: new Date().toISOString() }])
 
     const result = await sendMessage(
       apiMessages,
       (delta) => {
+        if (activeChatIdRef.current !== currentChatId) return // navigated away mid-stream
         assistantText += delta
-        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: assistantText } : m)))
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, parts: [{ type: 'text', text: assistantText }] } : m)))
       },
       { systemPrompt: BIAL_ASSISTANT_SYSTEM_PROMPT },
     )
@@ -168,17 +207,25 @@ export default function BialChatPage() {
     setGenerating(false)
 
     // A falsy result means the send failed (429/network), was aborted, OR
-    // streamed zero text. Drop the optimistic empty assistant bubble so it isn't
-    // persisted as content:'' (the API rejects that on the next turn). Any error
+    // streamed zero text. Drop the optimistic empty assistant bubble. Any error
     // surfaces in the banner.
     if (!result) {
       setMessages((prev) => prev.filter((m) => m.id !== assistantId))
       return
     }
 
-    refreshHistory()
-    persistMessage(currentChatId, { id: assistantId, role: 'assistant', content: assistantText, timestamp: new Date() })
-  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory, showAttachToast])
+    // Persist the assistant turn — NO-OP if the user navigated away or deleted the
+    // conversation mid-stream, so an in-flight stream can't resurrect a deleted
+    // conversation or land on the wrong one.
+    if (activeChatIdRef.current === currentChatId) {
+      try {
+        await appendMessage(currentChatId, { role: 'assistant', parts: [{ type: 'text', text: assistantText }], seq: baseSeq + 1 }, {})
+        refreshHistory()
+      } catch {
+        showAttachToast('Your reply could not be saved.')
+      }
+    }
+  }, [activeChatId, generating, sendMessage, refreshHistory, showAttachToast])
 
   const handleSend = () => {
     const text = input.trim()
@@ -200,8 +247,8 @@ export default function BialChatPage() {
     clearPending()
 
     if (!activeChatId) {
-      const id = newConversation(text || 'Attachment')
-      setActiveChatId(id)
+      const id = newConversation()
+      setActive(id)
       navigate(`/chat/${id}`, { replace: true })
       // Pass the new id explicitly — activeChatId state hasn't committed yet.
       setTimeout(() => fireMessage(text, attachments, id), 0)
@@ -218,19 +265,27 @@ export default function BialChatPage() {
   const handleNewChat = () => {
     setViewer(null)
     setMessages([])
-    setActiveChatId(null)
+    setActive(null)
     navigate('/chat')
   }
 
-  const handleDeleteChat = (e, id) => {
+  const handleDeleteChat = async (e, id) => {
     e.stopPropagation()
-    deleteConversation(id)
-    refreshHistory()
-    if (activeChatId === id) {
+    // Clear the active id FIRST if it's the one being deleted, so any in-flight
+    // stream's assistant write no-ops (the guard sees the change) — no resurrection.
+    if (activeChatIdRef.current === id) {
       setMessages([])
-      setActiveChatId(null)
+      setActive(null)
       navigate('/chat')
     }
+    setHistory((prev) => prev.filter((c) => c.id !== id)) // optimistic removal
+    try {
+      await deleteConversation(id)
+    } catch {
+      refreshHistory() // reconcile — row reappears if the delete didn't land
+      return
+    }
+    refreshHistory()
   }
 
   // The composer (banners + pending row + input row) is identical in the centered
@@ -395,7 +450,16 @@ export default function BialChatPage() {
 
         {/* Chat area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {isEmpty ? (
+          {hydrating ? (
+            /* Loading a saved transcript over the network */
+            <div className="flex-1 flex items-center justify-center">
+              <div className="flex gap-1.5">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="w-2 h-2 bg-tertiary/60 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+            </div>
+          ) : isEmpty ? (
             /* Centered empty state: greeting + composer + starters */
             <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6 py-8">
               <div className="w-full max-w-2xl">
@@ -459,11 +523,9 @@ export default function BialChatPage() {
                         ? 'bg-tertiary text-white rounded-tr-sm'
                         : 'bg-white border border-bial-border text-tertiary rounded-tl-sm'
                     }`}>
-                      <MessageContent content={msg.content} attachments={msg.attachments} isUser={msg.role === 'user'} />
+                      <MessageContent parts={msg.parts} isUser={msg.role === 'user'} />
                       <p className="text-[10px] mt-1.5 opacity-40">
-                        {msg.timestamp instanceof Date
-                          ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                          : new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                       </p>
                     </div>
                   </div>

@@ -25,6 +25,7 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3'
+import { BlobServiceClient } from '@azure/storage-blob'
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -92,22 +93,83 @@ export function createS3ObjectStore({
   }
 }
 
+/**
+ * Build an ObjectStore backed by **Azure Blob Storage** (native API via
+ * `@azure/storage-blob`). Azure Blob is NOT S3-compatible, so it needs its own
+ * backend rather than the S3 client — same tiny interface, different SDK. The
+ * `container` is the namespace (analogous to an S3 bucket); blob names carry the
+ * `att/<username>/<id>` key verbatim (Azure allows `/` as a virtual directory).
+ * Auth is a connection string (account key or SAS). Local dev points at Azurite.
+ */
+export function createAzureObjectStore({ connectionString, container } = {}) {
+  if (!connectionString) throw new Error('createAzureObjectStore: connectionString is required')
+  if (!container) throw new Error('createAzureObjectStore: container is required')
+  const containerClient = BlobServiceClient.fromConnectionString(connectionString).getContainerClient(
+    container,
+  )
+  const blob = (key) => containerClient.getBlockBlobClient(key)
+
+  return {
+    async put(key, body, contentType) {
+      await blob(key).uploadData(body, { blobHTTPHeaders: { blobContentType: contentType } })
+    },
+
+    /** Return the blob's full bytes as a Buffer (attachments are ≤4 MB). */
+    async get(key) {
+      try {
+        return await blob(key).downloadToBuffer()
+      } catch (err) {
+        // Normalize Azure's 404 (RestError code BlobNotFound) to the shape the
+        // download route's isNotFound() recognizes, so a miss is a 404 not a 500.
+        if (err?.statusCode === 404 || err?.code === 'BlobNotFound') {
+          const e = new Error('NotFound')
+          e.name = 'NotFound'
+          e.$metadata = { httpStatusCode: 404 }
+          throw e
+        }
+        throw err
+      }
+    },
+
+    async delete(key) {
+      await blob(key).deleteIfExists()
+    },
+
+    async exists(key) {
+      return await blob(key).exists()
+    },
+  }
+}
+
 let objectStore = null
 
 /**
  * Lazily build + cache the configured ObjectStore (mirrors cosmos.js's
- * getXCollection idiom). Fails loud when a required var is missing. The bucket +
- * access policy are a deploy prerequisite — this only connects, never creates.
+ * getXCollection idiom). The backend is chosen by `OBJECT_STORE_PROVIDER`
+ * (`s3` default, or `azure`). Fails loud when a required var is missing. The
+ * bucket/container + access policy are a deploy prerequisite — this only
+ * connects, never creates.
  */
 export function getObjectStore() {
   if (objectStore) return objectStore
-  objectStore = createS3ObjectStore({
-    endpoint: requireEnv('OBJECT_STORE_ENDPOINT'),
-    bucket: requireEnv('OBJECT_STORE_BUCKET'),
-    accessKeyId: requireEnv('OBJECT_STORE_ACCESS_KEY'),
-    secretAccessKey: requireEnv('OBJECT_STORE_SECRET_KEY'),
-    region: process.env.OBJECT_STORE_REGION || 'us-east-1',
-  })
+  const provider = (process.env.OBJECT_STORE_PROVIDER || 's3').toLowerCase()
+  if (provider === 'azure') {
+    objectStore = createAzureObjectStore({
+      connectionString: requireEnv('AZURE_STORAGE_CONNECTION_STRING'),
+      container: requireEnv('OBJECT_STORE_BUCKET'), // reuse the bucket var as the container name
+    })
+  } else if (provider === 's3') {
+    objectStore = createS3ObjectStore({
+      endpoint: requireEnv('OBJECT_STORE_ENDPOINT'),
+      bucket: requireEnv('OBJECT_STORE_BUCKET'),
+      accessKeyId: requireEnv('OBJECT_STORE_ACCESS_KEY'),
+      secretAccessKey: requireEnv('OBJECT_STORE_SECRET_KEY'),
+      region: process.env.OBJECT_STORE_REGION || 'us-east-1',
+    })
+  } else {
+    // Fail loud on a typo'd provider rather than silently falling back to S3.
+    throw new Error(`Unknown OBJECT_STORE_PROVIDER: "${provider}". Use "azure" or "s3".`)
+  }
   return objectStore
 }
 

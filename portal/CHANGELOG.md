@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-22
+
+### Added
+- **Your chats, generated apps, and uploaded files now follow you across browsers
+  and devices.** Planning chats, App Builder sessions, the generated app code, and
+  attachments are saved to your account on the server instead of only in this
+  browser. Sign in on another machine and your recent work is already there;
+  clearing your browser no longer loses anything.
+- **Image and PDF attachments are kept in cloud object storage.** Attachment files
+  live in a dedicated object store (Azure Blob Storage in production, or any
+  S3-compatible store) and are served back through an authenticated, per-user link,
+  so your files are only ever readable by you. Small text files (CSV/TXT) travel
+  inline with the message. Supported uploads: PNG, JPEG, GIF, WebP, and PDF, up to
+  4 MB each, with a 50 MB per-user total; unsupported files are rejected with a
+  clear message.
+
+### Changed
+- **Conversations and generated code load from the server.** The App Builder and
+  chat history, message order, and the latest generated app preview are read from
+  the server on every open and refresh, replacing the previous browser-only
+  storage. Signing out clears your local session while your work stays safe on the
+  server.
+
 ## [1.2.0] - 2026-06-19
 
 ### Fixed

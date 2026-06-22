@@ -1,31 +1,25 @@
-import { contentToText } from './attachmentStore.js'
-import { createConversationStore } from './conversationStore.js'
+import { partsToText } from './attachmentStore.js'
+import { createConversationStore, deriveTitle } from './conversationApi.js'
 
-// App Builder planning-chat history. Keyed `bial_chat_history:<user>`, id prefix
-// `chat`. The store logic lives in the shared factory (Decision 4) so BIAL Chat
-// can mount an isolated sibling instance (assistantHistory.js) without forking
-// it. Every existing import below stays valid — behaviour is byte-for-byte the
-// same as the pre-factory module.
-const store = createConversationStore('bial_chat_history', 'chat')
+// App Builder planning-chat history, now server-backed (kind 'planning'). The
+// async store logic lives in the shared factory so BIAL Chat can mount an
+// isolated sibling (assistantHistory.js) by kind alone. The exported names are
+// unchanged — loadHistory/getConversation/appendMessage/deleteConversation are
+// now async (return Promises); newConversation stays synchronous (mints a UUID).
+const store = createConversationStore('planning')
 
-export const {
-  loadHistory,
-  saveHistory,
-  newConversation,
-  appendMessage,
-  getConversation,
-  deleteConversation,
-} = store
+export const { loadHistory, newConversation, getConversation, deleteConversation, appendMessage } = store
+
+export { deriveTitle }
 
 export function buildPromptFromHistory(messages) {
   const userMessages = messages.filter((m) => m.role === 'user')
-  // contentToText so an attachment turn (ContentBlock[]) yields its text, not
-  // "[object Object]", in the Builder handoff transcript.
-  const goal = contentToText(userMessages[0]?.content ?? '')
+  // partsToText so an attachment turn yields its prose, not "[object Object]".
+  const goal = partsToText(userMessages[0]?.parts ?? '')
 
   const contextMessages = messages.slice(-10)
   const transcript = contextMessages
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${contentToText(m.content)}`)
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${partsToText(m.parts)}`)
     .join('\n\n')
 
   return `Based on the following planning conversation, build the described application:

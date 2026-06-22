@@ -1,38 +1,37 @@
 import { useState, useEffect } from 'react'
 import { FileText, FileSpreadsheet, ImageOff } from 'lucide-react'
-import { getAttachment } from '../utils/attachmentStore'
-import { TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
-import { openPdf } from '../utils/attachmentViewer'
+import { fetchAttachmentObjectUrl } from '../utils/attachmentApi'
+import { openUrlInNewTab } from '../utils/attachmentViewer'
 import AttachmentLightbox from './AttachmentLightbox'
 
 /**
- * Render a single persisted attachment ref by reading its bytes back from the
- * IndexedDB store. Images become inline thumbnails that open a full-size
- * lightbox on click; PDFs become a labelled chip that opens the file in a new
- * tab; text/CSV become a labelled file-icon chip (no byte read — the content
- * already travelled inline in the prompt); a ref whose bytes are gone (cleared /
- * different browser) shows an "unavailable" placeholder instead of crashing.
+ * Render one persisted attachment descriptor `{ attachmentId, kind, name,
+ * mediaType }` (derived from a message's parts). Images fetch their bytes from
+ * the server object store as an object URL and show an inline thumbnail that
+ * opens a lightbox; PDFs open in a new tab on click; text/CSV show a labelled
+ * file-icon chip (no byte read — the content travelled inline in the prompt); an
+ * image whose bytes are gone/forbidden shows an "unavailable" placeholder.
  */
 function AttachmentChip({ att }) {
-  const isPdf = att.mediaType === 'application/pdf'
-  const isText = TEXT_MEDIA_TYPES.has(att.mediaType)
+  const isText = att.kind === 'text'
+  const isPdf = att.kind === 'document' || att.mediaType === 'application/pdf'
   const [src, setSrc] = useState(null)
   const [missing, setMissing] = useState(false)
   const [zoomed, setZoomed] = useState(false)
 
   useEffect(() => {
-    // PDFs and text files don't preview from bytes — skip the read entirely.
+    // Only images preview from bytes.
     if (isPdf || isText) return undefined
     let active = true
-    getAttachment(att.id).then((b64) => {
+    fetchAttachmentObjectUrl(att.attachmentId).then((url) => {
       if (!active) return
-      if (b64) setSrc(`data:${att.mediaType};base64,${b64}`)
+      if (url) setSrc(url)
       else setMissing(true)
     })
     return () => {
       active = false
     }
-  }, [att.id, att.mediaType, isPdf, isText])
+  }, [att.attachmentId, isPdf, isText])
 
   if (isText) {
     const Icon = att.mediaType === 'text/csv' ? FileSpreadsheet : FileText
@@ -52,8 +51,8 @@ function AttachmentChip({ att }) {
       <button
         type="button"
         onClick={async () => {
-          const b64 = await getAttachment(att.id)
-          if (b64) openPdf(b64, att.name)
+          const url = await fetchAttachmentObjectUrl(att.attachmentId)
+          if (url) openUrlInNewTab(url, att.name)
         }}
         title={`Open ${att.name}`}
         className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg px-2 py-1 text-[11px] max-w-[12rem] cursor-pointer transition"
@@ -92,7 +91,7 @@ export default function AttachmentChips({ attachments }) {
   return (
     <div className="flex flex-wrap gap-2 mb-2">
       {attachments.map((att) => (
-        <AttachmentChip key={att.id} att={att} />
+        <AttachmentChip key={att.attachmentId} att={att} />
       ))}
     </div>
   )

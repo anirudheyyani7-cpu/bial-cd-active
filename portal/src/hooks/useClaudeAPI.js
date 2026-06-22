@@ -2,7 +2,6 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getAccessToken, refreshAccessToken, clearSession, getStoredUser, SIGNOUT_REASONS } from '../utils/auth.js'
 import { notifyUsageChanged } from '../utils/usage.js'
-import { TEXT_MEDIA_TYPES } from '../utils/attachmentInput.js'
 
 const SYSTEM_PROMPT = `You are Citizen Developer AI, an expert app generation and refinement specialist for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic.
 
@@ -131,32 +130,32 @@ export function getContextLimits() {
 
 /**
  * Estimate a conversation's input size the way assembleApiMessages actually
- * sends it: text for every turn + the system prompt + attachment costs. Mirrors
- * the sticky/newest-only split in assembleApiMessages —
- *  - TEXT attachments are sticky (re-sent every turn), so each is counted on
- *    EVERY turn it appears, by its byte size (size / CHARS_PER_TOKEN) — a 200 KB
- *    CSV is ~50k tokens, not a flat 1600.
- *  - IMAGE/PDF attachments send only on the newest turn, so they're counted as a
+ * sends it, reading the neutral `parts[]` message model. Mirrors the
+ * sticky/newest-only split in assembleApiMessages —
+ *  - TEXT parts (prose AND inline text-attachment parts, whose `text` holds the
+ *    file content) are sent on EVERY turn, so each is counted by its character
+ *    length on every turn it appears — a 200 KB inlined CSV is ~50k tokens, not a
+ *    flat 1600.
+ *  - FILE parts (image/PDF) send only on the newest turn, so they're counted as a
  *    flat per-file nominal there and ignored on older turns.
  * Heuristic (4 chars/token) used only to drive the warn/block UI — never to gate
  * the API call directly.
  */
 export function estimateConversationTokens(messages, systemText = '') {
   if (!Array.isArray(messages)) return 0
-  const textTokens = estimateTokens(messages)
   const systemTokens = Math.ceil((systemText?.length || 0) / CHARS_PER_TOKEN)
   const lastIdx = messages.length - 1
-  let attachmentTokens = 0
+  let tokens = 0
   messages.forEach((m, i) => {
-    for (const a of m?.attachments || []) {
-      if (TEXT_MEDIA_TYPES.has(a.mediaType)) {
-        attachmentTokens += Math.ceil((a.size || 0) / CHARS_PER_TOKEN)
-      } else if (i === lastIdx) {
-        attachmentTokens += NOMINAL_FILE_TOKENS
+    for (const p of m?.parts || []) {
+      if (p?.type === 'text') {
+        tokens += Math.ceil((p.text || '').length / CHARS_PER_TOKEN)
+      } else if (p?.type === 'file' && i === lastIdx) {
+        tokens += NOMINAL_FILE_TOKENS
       }
     }
   })
-  return textTokens + systemTokens + attachmentTokens
+  return tokens + systemTokens
 }
 
 const AUTH_FAILED = 'AUTH_REFRESH_FAILED'

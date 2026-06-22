@@ -1,274 +1,148 @@
 /**
- * Per-user attachment byte store (IndexedDB) + content-block helpers.
+ * Parts-model transform helpers (the byte store is gone — bytes live server-side
+ * via attachmentApi.js). This module knows how the neutral `parts[]` content
+ * model maps onto the Anthropic request shape and onto display.
  *
- * The single owner of attachment *bytes* in the interim build: the conversation
- * (localStorage) keeps only lightweight refs `{id, name, mediaType, size}`, the
- * base64 bytes live here keyed by `id`. Mirrors the isolation idiom of
- * chatHistory.js / auth.js — one module, named exports, defensive try/catch.
+ * A message's `parts[]` is one of:
+ *   - { type:'text', text }                              — user/assistant prose
+ *   - { type:'text', text, attachment:{attachmentId,name,mediaType,size} }
+ *                                                        — an inline csv/txt
+ *                                                          attachment (content in
+ *                                                          `text`, shown as a chip,
+ *                                                          re-inlined every turn)
+ *   - { type:'file', attachmentId, key, kind:'image'|'document', name, mediaType, size }
+ *                                                        — image/PDF bytes in the
+ *                                                          object store
  *
- * Namespacing is per user (resolved from getStoredUser): every record carries a
- * `user` field and each user has a tiny `__meta__:<user>` record holding an O(1)
- * running byte total, so the cap check on put never scans the store. (Bytes
- * still physically remain in this browser across users — accepted residual;
- * real isolation arrives with the FastAPI backend.)
- *
- * The buildContentBlocks / contentToText helpers live here because this is the
- * only module that knows how bytes map onto Anthropic content blocks.
+ * The send path is download-free for binaries: only the NEWEST turn's image/PDF
+ * bytes are inflated (from the in-memory composer via `getNewestBinaryBase64`);
+ * historical binaries are dropped; text attachments are inline (no fetch ever).
  */
-import { getStoredUser } from './auth.js'
 import { TEXT_MEDIA_TYPES } from './attachmentInput.js'
-
-const DB_NAME = 'bial_attachments'
-const STORE = 'attachments'
-const DB_VERSION = 1
-// ~50 MB per-user running total, to stop the browser store from bloating.
-const TOTAL_CAP = 50 * 1024 * 1024
-
-/** Thrown when a put would exceed the per-user total cap; the UI catches it. */
-export class AttachmentCapError extends Error {
-  constructor(message) {
-    super(message)
-    this.name = 'AttachmentCapError'
-    this.code = 'ATTACHMENT_STORE_FULL'
-  }
-}
-
-function currentUser() {
-  return getStoredUser()?.username || '__anon__'
-}
-
-const metaId = (user) => `__meta__:${user}`
-
-let dbPromise = null
-function openDB() {
-  if (dbPromise) return dbPromise
-  dbPromise = new Promise((resolve, reject) => {
-    let req
-    try {
-      req = indexedDB.open(DB_NAME, DB_VERSION)
-    } catch (err) {
-      reject(err)
-      return
-    }
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' })
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  }).catch((err) => {
-    // Don't cache a rejected open: a transient failure (private mode, quota,
-    // storage disabled) would otherwise make every later call fail for the tab's
-    // lifetime. Reset so the next call retries a fresh open.
-    dbPromise = null
-    throw err
-  })
-  return dbPromise
-}
-
-function reqToPromise(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-// One transaction per op (not a shared multi-request tx): an `await` between
-// requests in the same IndexedDB transaction can hit the real-browser
-// "transaction inactive" race. Atomicity isn't needed for an interim store.
-function get(db, key) {
-  return reqToPromise(db.transaction(STORE, 'readonly').objectStore(STORE).get(key))
-}
-function put(db, value) {
-  return reqToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).put(value))
-}
-function del(db, key) {
-  return reqToPromise(db.transaction(STORE, 'readwrite').objectStore(STORE).delete(key))
-}
+import { uploadAttachment as defaultUpload } from './attachmentApi.js'
 
 /**
- * Store base64 bytes for an attachment. Enforces the per-user total cap up front
- * (rejecting with AttachmentCapError, store left unchanged). Errors propagate —
- * unlike the reads below — so the cap error and any storage failure surface to
- * the UI rather than silently dropping the bytes.
+ * Decode stored base64 bytes back to text via Uint8Array → TextDecoder (UTF-8)
+ * so multibyte content (accents, €, CJK) round-trips; bare `atob` yields latin1.
+ * A leading U+FEFF BOM is stripped.
  */
-export async function putAttachment({ id, base64, mediaType, size }) {
-  const user = currentUser()
-  const db = await openDB()
-  // Adjust the running total by the DELTA vs any existing record for this id, so
-  // re-putting the same id (overwrite, no new storage) doesn't double-count and
-  // inflate the total toward false-positive cap rejections.
-  const existing = await get(db, id)
-  const delta = size - (existing?.size || 0)
-  const meta = (await get(db, metaId(user))) || { id: metaId(user), user, total: 0 }
-  if (meta.total + delta > TOTAL_CAP) {
-    throw new AttachmentCapError('Attachment storage is full. Remove some attachments and try again.')
-  }
-  await put(db, { id, user, base64, mediaType, size })
-  meta.total += delta
-  await put(db, meta)
-}
-
-/** base64 bytes for `id`, or null (unknown id / IndexedDB unavailable). */
-export async function getAttachment(id) {
-  try {
-    const db = await openDB()
-    const rec = await get(db, id)
-    return rec?.base64 ?? null
-  } catch {
-    return null
-  }
-}
-
-/** Remove an attachment and decrement its owner's running total. Best-effort. */
-export async function deleteAttachment(id) {
-  try {
-    const db = await openDB()
-    const rec = await get(db, id)
-    if (!rec) return
-    await del(db, id)
-    const meta = await get(db, metaId(rec.user))
-    if (meta) {
-      meta.total = Math.max(0, meta.total - (rec.size || 0))
-      await put(db, meta)
-    }
-  } catch {
-    // best-effort; a dangling total is harmless and self-heals on clear.
-  }
-}
-
-/** O(1) read of a user's running byte total (no store scan). 0 on miss/error. */
-export async function getTotalSize(user = currentUser()) {
-  try {
-    const db = await openDB()
-    const meta = await get(db, metaId(user))
-    return meta?.total || 0
-  } catch {
-    return 0
-  }
-}
-
-/** Delete all of one user's records (incl. their meta total). Best-effort. */
-export async function clearForUser(user = currentUser()) {
-  try {
-    const db = await openDB()
-    const store = db.transaction(STORE, 'readwrite').objectStore(STORE)
-    await new Promise((resolve, reject) => {
-      const req = store.openCursor()
-      req.onsuccess = () => {
-        const cursor = req.result
-        if (!cursor) return resolve()
-        if (cursor.value?.user === user) cursor.delete()
-        cursor.continue()
-      }
-      req.onerror = () => reject(req.error)
-    })
-  } catch {
-    // best-effort
-  }
-}
-
-/**
- * Decode stored base64 bytes back to text. Goes via Uint8Array → TextDecoder
- * (UTF-8) so multibyte content (accents, €, CJK) round-trips correctly — bare
- * `atob` yields latin1 and mojibakes it. A leading U+FEFF BOM is stripped.
- */
-function decodeBase64Text(b64) {
+export function decodeBase64Text(b64) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
   const text = new TextDecoder().decode(bytes)
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
 }
 
-/**
- * Assemble a message's `content` for the API. With no attachments returns the
- * plain string (the unchanged path). With attachments returns a ContentBlock[]
- * with the file blocks BEFORE the text block (Anthropic ordering). A ref whose
- * bytes are missing is skipped rather than sent as a null-data block.
- *
- * Text attachments (CSV/plain-text) are emitted as a fenced `<attachment>` TEXT
- * block (decoded inline) regardless of `binary`, because they're sticky — re-sent
- * on every turn they appear. Binary attachments (image/PDF) are emitted ONLY when
- * `binary` is true (the newest turn); on older turns they'd bloat the body, so
- * they're dropped (the model already saw them in the turn they were sent).
- */
-export async function buildContentBlocks(text, attachments, getBytes = getAttachment, { binary = true } = {}) {
-  if (!attachments || attachments.length === 0) return text
-  const blocks = []
-  for (const a of attachments) {
-    const isText = TEXT_MEDIA_TYPES.has(a.mediaType)
-    if (!isText && !binary) continue // binary block, not the newest turn → skip
-    const data = await getBytes(a.id)
-    if (!data) continue
-    if (isText) {
-      // Decode can throw on corrupt/non-base64 stored bytes (e.g. a partial
-      // IndexedDB write). Skip the bad attachment rather than rejecting the whole
-      // send — same philosophy as the missing-bytes `continue` above. Without
-      // this, one corrupt text ref would throw out of assembleApiMessages and
-      // leave the composer stuck mid-send.
-      let decoded
-      try {
-        decoded = decodeBase64Text(data)
-      } catch {
-        continue
-      }
-      // Fenced in unambiguous delimiters: the model must read this as uploaded
-      // file DATA, not instructions (the system prompt reinforces this).
-      blocks.push({ type: 'text', text: `<attachment name="${a.name}" type="text">\n${decoded}\n</attachment>` })
-    } else if (a.mediaType === 'application/pdf') {
-      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } })
-    } else {
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mediaType, data } })
-    }
-  }
-  blocks.push({ type: 'text', text })
-  return blocks
-}
-
-/** Total attachment refs across a conversation's messages (count, not bytes). */
-export function countAttachments(messages) {
-  if (!Array.isArray(messages)) return 0
-  return messages.reduce((n, m) => n + (m?.attachments?.length || 0), 0)
-}
-
-/** Extract human-readable text from string OR ContentBlock[] content. */
-export function contentToText(content) {
-  if (typeof content === 'string') return content
-  return (content || [])
-    .filter((b) => b?.type === 'text')
-    .map((b) => b.text)
+/** Plain prose text from a `parts[]` (display bubble + transcript). Excludes
+ * inline-attachment parts (those render as chips) and file parts. Accepts a raw
+ * string too (defensive, for any legacy/assistant content). */
+export function partsToText(parts) {
+  if (typeof parts === 'string') return parts
+  if (!Array.isArray(parts)) return ''
+  return parts
+    .filter((p) => p?.type === 'text' && !p.attachment && typeof p.text === 'string')
+    .map((p) => p.text)
     .join('\n')
 }
 
-/**
- * Map a conversation's messages to the API `{ role, content }` shape, turning a
- * turn that carries attachment refs into a ContentBlock[] (bytes re-read from
- * the store, files before text) and leaving plain turns as strings. Shared by
- * both chat surfaces so the assembly can't drift between them.
- */
-export async function assembleApiMessages(messages, getBytes = getAttachment) {
-  // Only the NEWEST turn's BINARY (image/PDF) attachment bytes are inflated into
-  // the request body. Re-base64-ing every historical binary on every send grows
-  // the body unbounded across turns and eventually blows past the 35MB route /
-  // 32MB API ceiling. Older binary turns send their text only — the model
-  // already saw those files in the turn they were sent.
-  //
-  // TEXT attachments are the exception: they're small (capped) and STICKY, so a
-  // turn carrying one is re-assembled into its fenced text block on EVERY send,
-  // even when it's no longer the newest turn — otherwise the assistant would
-  // "forget" an attached CSV after one reply (Decision 2).
-  const lastIdx = messages.length - 1
-  return Promise.all(
-    messages.map(async (m, i) => {
-      const atts = m.attachments
-      if (!atts?.length) return { role: m.role, content: contentToText(m.content) }
-      const isNewest = i === lastIdx
-      const hasText = atts.some((a) => TEXT_MEDIA_TYPES.has(a.mediaType))
-      // Older turn with only binary attachments → text-only (unchanged path).
-      if (!isNewest && !hasText) return { role: m.role, content: contentToText(m.content) }
-      return {
-        role: m.role,
-        content: await buildContentBlocks(contentToText(m.content), atts, getBytes, { binary: isNewest }),
-      }
-    }),
+/** The attachment descriptors in a message's parts (file parts + inline-text
+ * attachments), for AttachmentChips. */
+export function attachmentsFromParts(parts) {
+  if (!Array.isArray(parts)) return []
+  const out = []
+  for (const p of parts) {
+    if (p?.type === 'file') {
+      out.push({ attachmentId: p.attachmentId, kind: p.kind, name: p.name, mediaType: p.mediaType })
+    } else if (p?.type === 'text' && p.attachment) {
+      out.push({ attachmentId: p.attachment.attachmentId, kind: 'text', name: p.attachment.name, mediaType: p.attachment.mediaType })
+    }
+  }
+  return out
+}
+
+/** Total attachment count across a conversation's messages (for the per-
+ * conversation cap). Counts file parts + inline-text attachment parts. */
+export function countAttachments(messages) {
+  if (!Array.isArray(messages)) return 0
+  return messages.reduce(
+    (n, m) => n + (m?.parts || []).filter((p) => p?.type === 'file' || (p?.type === 'text' && p?.attachment)).length,
+    0,
   )
+}
+
+/** Build one message's Anthropic `content` from its parts (string when no
+ * attachment blocks are emitted — the unchanged path). */
+function buildContent(parts, isNewest, getNewestBinaryBase64) {
+  if (!Array.isArray(parts)) return ''
+  const blocks = []
+  const prose = []
+  for (const p of parts) {
+    if (p?.type === 'text') {
+      if (p.attachment) {
+        // Inline text attachment: STICKY (re-sent every turn), fenced as DATA so
+        // the model never reads it as instructions.
+        blocks.push({
+          type: 'text',
+          text: `<attachment name="${p.attachment.name}" type="text">\n${p.text}\n</attachment>`,
+        })
+      } else if (typeof p.text === 'string') {
+        prose.push(p.text)
+      }
+    } else if (p?.type === 'file') {
+      if (!isNewest) continue // historical binary dropped — the model already saw it
+      const data = getNewestBinaryBase64(p.attachmentId)
+      if (!data) continue // bytes unavailable → skip rather than a null-data block
+      if (p.kind === 'document' || p.mediaType === 'application/pdf') {
+        blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } })
+      } else {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: p.mediaType, data } })
+      }
+    }
+  }
+  const proseText = prose.join('\n')
+  if (blocks.length === 0) return proseText // plain string
+  blocks.push({ type: 'text', text: proseText }) // text after files (Anthropic ordering)
+  return blocks
+}
+
+/**
+ * Map a conversation's `parts[]` messages to the API `{ role, content }` shape.
+ * SYNCHRONOUS and download-free: the newest turn's image/PDF bytes come from
+ * `getNewestBinaryBase64(attachmentId)` (the in-memory composer), historical
+ * binaries are dropped, text attachments are inline.
+ */
+export function assembleApiMessages(messages, getNewestBinaryBase64 = () => undefined) {
+  const lastIdx = messages.length - 1
+  return messages.map((m, i) => ({
+    role: m.role,
+    content: buildContent(m.parts, i === lastIdx, getNewestBinaryBase64),
+  }))
+}
+
+/**
+ * Build a user turn's `parts[]` from the composer: uploads each image/PDF (via
+ * `upload`, returning a file ref) and inlines each csv/txt as a text-attachment
+ * part; the typed prose becomes the final text part. Attachment parts come first
+ * (display chips above text, and Anthropic file-before-text ordering at assembly).
+ * An upload failure propagates so the caller can abort the send.
+ *
+ * @param {string} text                       the typed message
+ * @param {Array}  pendingAttachments         [{id,name,mediaType,size,base64}]
+ * @param {Function} [upload]                  uploadAttachment (injectable for tests)
+ */
+export async function buildUserParts(text, pendingAttachments = [], upload = defaultUpload) {
+  const parts = []
+  for (const a of pendingAttachments) {
+    if (TEXT_MEDIA_TYPES.has(a.mediaType)) {
+      parts.push({
+        type: 'text',
+        text: decodeBase64Text(a.base64),
+        attachment: { attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size },
+      })
+    } else {
+      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })
+      parts.push({ type: 'file', attachmentId: ref.attachmentId, key: ref.key, kind: ref.kind, name: ref.name, mediaType: ref.mediaType, size: ref.size })
+    }
+  }
+  parts.push({ type: 'text', text })
+  return parts
 }

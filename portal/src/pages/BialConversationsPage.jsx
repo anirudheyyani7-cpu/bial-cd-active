@@ -9,19 +9,48 @@ const PAGE_SIZE = 8
 // BIAL Chat "View all": title search + pagination over the assistant store only
 // (no builds, so no Chats/Builds filter — single type). Mirrors ConversationsPage
 // but reads bial_assistant_history and routes to /chat (Decision 8).
+async function loadSorted() {
+  const list = await loadHistory()
+  return list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+}
+
 export default function BialConversationsPage() {
   const navigate = useNavigate()
-  const [items, setItems] = useState(() => loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
 
-  const refresh = () => setItems(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
-
-  // Re-read when returning to the tab (e.g. after opening a chat) so the list
-  // and timestamps stay current. localStorage reads are synchronous.
+  // Fetch on mount and (debounced) when the tab regains focus so the list stays
+  // current without a request on every rapid refocus.
   useEffect(() => {
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    let active = true
+    let timer
+    const refresh = async () => {
+      try {
+        const next = await loadSorted()
+        if (active) {
+          setItems(next)
+          setError(false)
+        }
+      } catch {
+        if (active) setError(true)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    refresh()
+    const onFocus = () => {
+      clearTimeout(timer)
+      timer = setTimeout(refresh, 400)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      clearTimeout(timer)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   // Reset to the first page whenever the search narrows the list.
@@ -40,10 +69,19 @@ export default function BialConversationsPage() {
 
   const openItem = (it) => navigate(`/chat/${it.id}`)
 
-  const removeItem = (it, e) => {
+  const removeItem = async (it, e) => {
     e.stopPropagation()
-    deleteConversation(it.id)
-    refresh()
+    // Optimistic removal; reconcile by refetch on failure.
+    setItems((prev) => prev.filter((x) => x.id !== it.id))
+    try {
+      await deleteConversation(it.id)
+    } catch {
+      try {
+        setItems(await loadSorted())
+      } catch {
+        setError(true)
+      }
+    }
   }
 
   return (
@@ -85,7 +123,27 @@ export default function BialConversationsPage() {
         </div>
 
         {/* List */}
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="flex items-center gap-3 bg-white border border-bial-border rounded-xl px-4 py-3 animate-pulse">
+                <div className="w-9 h-9 rounded-lg bg-gray-100 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="h-3 bg-gray-100 rounded w-1/2 mb-2" />
+                  <div className="h-2 bg-gray-50 rounded w-1/4" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
+            <p className="text-sm font-semibold text-tertiary">Couldn't load your conversations</p>
+            <p className="text-xs text-neutral mt-1 mb-3">Check your connection and try again.</p>
+            <button onClick={() => window.location.reload()} className="text-xs text-primary font-semibold hover:underline">
+              Retry
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="bg-white border border-bial-border rounded-2xl py-16 px-6 text-center">
             <Bot size={26} className="mx-auto text-primary/50 mb-3" />
             <p className="text-sm font-semibold text-tertiary">

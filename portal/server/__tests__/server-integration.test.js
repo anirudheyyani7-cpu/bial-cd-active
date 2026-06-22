@@ -7,14 +7,28 @@ import { createApp } from '../../server.js'
 import { createUsersRepo } from '../users-repo.js'
 import { createUsageRepo } from '../usage-repo.js'
 import { createFeedbackRepo } from '../feedback-repo.js'
+import { createConversationsRepo } from '../conversations-repo.js'
+import { createMessagesRepo } from '../messages-repo.js'
+import { createAttachmentsRepo } from '../attachments-repo.js'
 import { signAccessToken } from '../auth/tokens.js'
 import { hashPassword } from '../auth/password.js'
 import { makeFakeContainer } from './fakeCosmos.js'
 import { makeFakeUsageContainer } from './fakeUsageCosmos.js'
 import { makeFakeFeedbackContainer } from './fakeFeedbackCosmos.js'
+import { makeFakeConversationsContainer } from './fakeConversationsCosmos.js'
+import { makeFakeMessagesContainer } from './fakeMessagesCosmos.js'
+import { makeFakeAttachmentUsageContainer } from './fakeAttachmentUsageCosmos.js'
+import { makeFakeObjectStore } from './fakeObjectStore.js'
 
 /** A fresh in-memory feedback repo for the createApp DI seam. */
 const fakeFeedbackRepo = () => createFeedbackRepo(makeFakeFeedbackContainer([]))
+
+/** Fresh in-memory persistence repos for the createApp DI seam (chats/images/code). */
+const fakePersistence = () => ({
+  conversationsRepo: createConversationsRepo(makeFakeConversationsContainer([])),
+  messagesRepo: createMessagesRepo(makeFakeMessagesContainer([])),
+  attachmentsRepo: createAttachmentsRepo(makeFakeObjectStore(), makeFakeAttachmentUsageContainer([])),
+})
 
 const SPA_HTML = '<!doctype html><title>BIAL</title><div id="root"></div>'
 let distDir
@@ -69,7 +83,7 @@ function makeServer({ usageRepo, streamOpts, dailyTokenLimit } = {}) {
   const container = makeFakeContainer([])
   const repo = createUsersRepo(container)
   const resolvedUsageRepo = usageRepo ?? createUsageRepo(makeFakeUsageContainer([]))
-  return createApp({ repo, usageRepo: resolvedUsageRepo, feedbackRepo: fakeFeedbackRepo(), claudeClient: makeClaudeClient(streamOpts), distDir, dailyTokenLimit })
+  return createApp({ repo, usageRepo: resolvedUsageRepo, feedbackRepo: fakeFeedbackRepo(), ...fakePersistence(), claudeClient: makeClaudeClient(streamOpts), distDir, dailyTokenLimit })
 }
 
 const validToken = () => signAccessToken({ sub: 'alice', username: 'alice', role: 'user' })
@@ -157,6 +171,7 @@ describe('server integration', () => {
       repo: createUsersRepo(container),
       usageRepo: createUsageRepo(makeFakeUsageContainer([])),
       feedbackRepo: fakeFeedbackRepo(),
+      ...fakePersistence(),
       claudeClient: makeClaudeClient(),
       distDir,
     })
@@ -211,6 +226,15 @@ describe('createApp dependency guards', () => {
       /feedbackRepo is required/,
     )
   })
+
+  it('throws when a persistence repo is omitted (chats/images/code routes must not silently 404)', () => {
+    const repo = createUsersRepo(makeFakeContainer([]))
+    const usageRepo = createUsageRepo(makeFakeUsageContainer([]))
+    const feedbackRepo = fakeFeedbackRepo()
+    expect(() => createApp({ repo, usageRepo, feedbackRepo, claudeClient: makeClaudeClient(), distDir })).toThrow(
+      /conversationsRepo is required/,
+    )
+  })
 })
 
 describe('POST /api/feedback wired through createApp', () => {
@@ -220,6 +244,7 @@ describe('POST /api/feedback wired through createApp', () => {
       repo: createUsersRepo(makeFakeContainer([])),
       usageRepo: createUsageRepo(makeFakeUsageContainer([])),
       feedbackRepo: createFeedbackRepo(feedbackContainer),
+      ...fakePersistence(),
       claudeClient: makeClaudeClient(),
       distDir,
     })
@@ -379,7 +404,7 @@ describe('per-user daily limit', () => {
       getUsage: vi.fn(async () => ({ inputTokens: used, outputTokens: 0 })),
       addUsage: vi.fn(async () => {}),
     }
-    return createApp({ repo, usageRepo, feedbackRepo: fakeFeedbackRepo(), claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
+    return createApp({ repo, usageRepo, feedbackRepo: fakeFeedbackRepo(), ...fakePersistence(), claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
   }
 
   it('blocks a default user where an override user passes (used=1500)', async () => {

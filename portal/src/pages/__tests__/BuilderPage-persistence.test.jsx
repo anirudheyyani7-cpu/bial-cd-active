@@ -1,0 +1,143 @@
+/**
+ * U11 generation-persistence guards. These exercise the resurrection bug fixed by
+ * the deletedRef guard in BuilderPage.generate(): deleting a build while its
+ * generation is still streaming must NOT persist the assistant turn / code (which
+ * would re-upsert the just-deleted header and resurrect it), while a mid-stream
+ * build SWITCH must still attribute the result to the build the run started on.
+ *
+ * The component is driven through its real UI (type → Enter → Recent dropdown →
+ * delete/switch); the API + history store are mocked at the module boundary so we
+ * can hold the stream open (deferred sendMessage) and assert exactly what is
+ * persisted. The two-route MemoryRouter mirrors App.jsx so navigate() preserves
+ * the BuilderPage instance (its refs survive), matching production.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
+
+const h = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
+  loadBuilds: vi.fn(),
+  newBuild: vi.fn(),
+  appendBuilderMessage: vi.fn(),
+  getBuild: vi.fn(),
+  deleteBuild: vi.fn(),
+  patchBuildCode: vi.fn(),
+}))
+
+vi.mock('../../hooks/useClaudeAPI', () => ({
+  useClaudeAPI: () => ({ sendMessage: h.sendMessage, error: null }),
+  buildSystemPrompt: () => 'sys',
+  getContextLimits: () => ({ soft: 1e9, hard: 1e9 }),
+  estimateConversationTokens: () => 0,
+}))
+vi.mock('../../utils/builderHistory', () => ({
+  loadBuilds: h.loadBuilds,
+  newBuild: h.newBuild,
+  appendBuilderMessage: h.appendBuilderMessage,
+  getBuild: h.getBuild,
+  deleteBuild: h.deleteBuild,
+  patchBuildCode: h.patchBuildCode,
+  deriveTitle: (t) => (t || '').slice(0, 40),
+}))
+vi.mock('../../utils/chatHistory', () => ({ relativeTime: () => 'now' }))
+vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
+vi.mock('../../components/LivePreview', () => ({ default: () => null }))
+
+import BuilderPage from '../BuilderPage'
+
+const CODE_RESULT = '```jsx:preview\nexport default function PreviewApp(){return null}\n```'
+
+// Make sendMessage stay pending until the returned `release(result)` is called.
+function deferredSend() {
+  let resolveFn
+  h.sendMessage.mockImplementation(() => new Promise((res) => { resolveFn = res }))
+  return (result) => act(async () => { resolveFn(result); await Promise.resolve() })
+}
+
+function renderBuilder() {
+  return render(
+    <MemoryRouter initialEntries={['/workspace/builder']}>
+      <Routes>
+        <Route path="/workspace/builder" element={<BuilderPage />} />
+        <Route path="/workspace/builder/:buildId" element={<BuilderPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+// Type a refinement and send it, returning the stream-release fn once the
+// generation is in flight (sendMessage called, seed user turn already persisted).
+async function startGeneration() {
+  const release = deferredSend()
+  const textarea = await screen.findByPlaceholderText(/Type instructions/i)
+  fireEvent.change(textarea, { target: { value: 'make it blue' } })
+  fireEvent.keyDown(textarea, { key: 'Enter' })
+  await waitFor(() => expect(h.sendMessage).toHaveBeenCalledTimes(1))
+  return release
+}
+
+const assistantWrites = () => h.appendBuilderMessage.mock.calls.filter((c) => c[1].role === 'assistant')
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  Element.prototype.scrollIntoView = vi.fn() // jsdom doesn't implement it
+  h.newBuild.mockReturnValue('build-X')
+  h.appendBuilderMessage.mockResolvedValue({ ok: true })
+  h.patchBuildCode.mockResolvedValue({ ok: true })
+  h.deleteBuild.mockResolvedValue(true)
+  h.getBuild.mockResolvedValue(null)
+  h.loadBuilds.mockResolvedValue([])
+})
+afterEach(() => cleanup())
+
+describe('BuilderPage — generation persistence guards (U11)', () => {
+  it('deleting the active build mid-generation does NOT resurrect it (no assistant turn, no code patch)', async () => {
+    h.loadBuilds.mockResolvedValue([{ id: 'build-X', title: 'My build', updatedAt: new Date().toISOString() }])
+    renderBuilder()
+    const release = await startGeneration()
+
+    // Only the seed user turn has been persisted so far.
+    expect(h.appendBuilderMessage).toHaveBeenCalledTimes(1)
+    expect(h.appendBuilderMessage.mock.calls[0][1].role).toBe('user')
+
+    // Delete build-X while the stream is still open.
+    fireEvent.click(screen.getByTitle('Recent builds'))
+    fireEvent.click(await screen.findByTitle('Delete build'))
+    await waitFor(() => expect(h.deleteBuild).toHaveBeenCalledWith('build-X'))
+
+    // Stream finishes after the delete.
+    await release(CODE_RESULT)
+
+    // The deleted build must not be written back to (resurrection prevented).
+    expect(assistantWrites()).toHaveLength(0)
+    expect(h.patchBuildCode).not.toHaveBeenCalled()
+  })
+
+  it('switching builds mid-generation still attributes the assistant turn + code to the ORIGINAL build', async () => {
+    h.loadBuilds.mockResolvedValue([
+      { id: 'build-X', title: 'My build', updatedAt: new Date().toISOString() },
+      { id: 'build-Y', title: 'Other build', updatedAt: new Date(Date.now() - 1000).toISOString() },
+    ])
+    h.getBuild.mockImplementation(async (id) =>
+      id === 'build-Y' ? { id: 'build-Y', title: 'Other build', messages: [], context: null, code: null } : null,
+    )
+    renderBuilder()
+    const release = await startGeneration()
+
+    // Switch to build-Y mid-stream.
+    fireEvent.click(screen.getByTitle('Recent builds'))
+    fireEvent.click(await screen.findByText('Other build'))
+    await waitFor(() => expect(h.getBuild).toHaveBeenCalledWith('build-Y'))
+
+    await release(CODE_RESULT)
+
+    // Result lands on build-X (the run's origin), not the now-active build-Y.
+    await waitFor(() => expect(assistantWrites()).toHaveLength(1))
+    expect(assistantWrites()[0][0]).toBe('build-X')
+    expect(h.patchBuildCode).toHaveBeenCalledWith(
+      'build-X',
+      expect.objectContaining({ source: expect.any(String), entry: 'PreviewApp' }),
+    )
+  })
+})

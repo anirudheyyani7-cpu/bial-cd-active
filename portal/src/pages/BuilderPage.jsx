@@ -10,22 +10,15 @@ import AttachmentChips from '../components/AttachmentChips'
 import AttachmentLightbox from '../components/AttachmentLightbox'
 import { useClaudeAPI, buildSystemPrompt, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
-import { assembleApiMessages, contentToText, putAttachment, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
-import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild } from '../utils/builderHistory'
+import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild, patchBuildCode, deriveTitle } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
 
-// Serialise a live message to the persisted shape (refs only, ISO timestamp).
-function toStored(msg) {
-  return {
-    id: msg.id,
-    role: msg.role,
-    content: msg.content,
-    ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
-    timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
-  }
-}
+// The from-scratch greeting (ephemeral — never persisted).
+const WELCOME_TEXT = "Hello! I'm Citizen Developer AI. Tell me what you'd like to build for BIAL operations."
+const welcomeMessage = () => ({ id: 'welcome', role: 'assistant', parts: [{ type: 'text', text: WELCOME_TEXT }], createdAt: new Date().toISOString() })
 
 const STAGE_MESSAGES = [
   'Got it! Analyzing your requirements and identifying the right data sources...',
@@ -54,9 +47,9 @@ export function extractPreviewCode(text) {
   return match ? match[1].trim() : null
 }
 
-// Expects a STRING. Callers must run content through contentToText first so an
-// attachment turn (ContentBlock[]) never reaches `.replace` (which throws on an
-// array). Exported for unit coverage of that contract.
+// Expects a STRING. Callers derive it with partsToText first so a parts[] message
+// never reaches `.replace` (which throws on a non-string). Strips the jsx:preview
+// fence (rendered in the live preview, not the chat). Exported for unit coverage.
 export function filterCodeFromContent(content) {
   if (!content) return ''
   return content
@@ -97,16 +90,17 @@ function Toast({ stage, done, visible, onDismiss }) {
   )
 }
 
-function MessageContent({ content, attachments }) {
-  // content may be a ContentBlock[] (attachment turn). Derive text FIRST —
-  // filterCodeFromContent does content.replace(...) and throws on an array.
-  const filtered = filterCodeFromContent(contentToText(content))
-  if (!filtered && !attachments?.length) return null
-  const parts = filtered.split(/(\*\*[^*]+\*\*|\n)/g)
+function MessageContent({ parts }) {
+  // Derive prose from the parts model, then strip the jsx:preview code fence (it
+  // renders in the live preview, not the chat bubble). Attachments render as chips.
+  const filtered = filterCodeFromContent(partsToText(parts))
+  const attachments = attachmentsFromParts(parts)
+  if (!filtered && attachments.length === 0) return null
+  const segments = filtered.split(/(\*\*[^*]+\*\*|\n)/g)
   return (
     <span>
-      {attachments?.length > 0 && <AttachmentChips attachments={attachments} />}
-      {parts.map((part, i) => {
+      {attachments.length > 0 && <AttachmentChips attachments={attachments} />}
+      {segments.map((part, i) => {
         if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>
         if (part === '\n') return <br key={i} />
         return <span key={i}>{part}</span>
@@ -148,6 +142,8 @@ export default function BuilderPage() {
   const toastTimer = useRef(null)
   const buildIdRef = useRef(null) // the active build being persisted
   const initFiredRef = useRef(false) // fire-once guard for the initial-create effect
+  const seqRef = useRef(0) // next message sort key for the active build's persisted turns
+  const deletedRef = useRef(new Set()) // builds deleted mid-run: their in-flight persist must no-op (no resurrection)
 
   // Running context-length estimate → 'ok' | 'warn' | 'full'. The builder's
   // system prompt includes any uploaded reference files, so size it from the
@@ -156,8 +152,13 @@ export default function BuilderPage() {
   const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
   const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
-  const refreshBuilds = useCallback(() => {
-    setBuilds(loadBuilds().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+  const refreshBuilds = useCallback(async () => {
+    try {
+      const list = await loadBuilds()
+      setBuilds(list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+    } catch {
+      // Keep the current list on a transient error; the next refresh recovers.
+    }
   }, [])
 
   useEffect(() => {
@@ -172,24 +173,43 @@ export default function BuilderPage() {
   }, [refreshBuilds])
 
   // Resume a saved build when the :buildId route param points at one (refresh,
-  // or a click in Recent builds). Skipped when this build is already active
-  // (e.g. just created below) so an in-flight generation isn't clobbered.
+  // or a click in Recent builds). Async (server round-trip) with a stale-response
+  // guard. Skipped when this build is already active (e.g. just created below) so
+  // an in-flight generation isn't clobbered.
   useEffect(() => {
     if (!buildId || buildIdRef.current === buildId) return
-    const saved = getBuild(buildId)
-    if (!saved) {
-      navigate('/workspace/builder', { replace: true })
-      return
+    let alive = true
+    getBuild(buildId)
+      .then((saved) => {
+        if (!alive) return
+        if (!saved) {
+          navigate('/workspace/builder', { replace: true })
+          return
+        }
+        clearTimers()
+        buildIdRef.current = saved.id
+        seqRef.current = saved.messages.length // next persisted turn's sort key
+        if (saved.context) contextRef.current = saved.context
+        setMessages(saved.messages)
+        // Render from the stored code snapshot (a single point read); fall back to
+        // scanning the transcript only when no code.current is present (legacy build).
+        const stored = saved.code?.current?.source
+        if (stored) {
+          setPreviewCode(stored)
+        } else {
+          const lastAssistant = [...saved.messages].reverse().find((m) => m.role === 'assistant')
+          setPreviewCode(extractPreviewCode(partsToText(lastAssistant?.parts)))
+        }
+        setGenerating(false)
+        setGenerationStage(0)
+        setToast({ stage: 0, done: false, visible: false })
+      })
+      .catch(() => {
+        if (alive) navigate('/workspace/builder', { replace: true })
+      })
+    return () => {
+      alive = false
     }
-    clearTimers()
-    buildIdRef.current = saved.id
-    if (saved.context) contextRef.current = saved.context
-    setMessages(saved.messages.map((m) => ({ ...m, timestamp: m.timestamp ? new Date(m.timestamp) : new Date() })))
-    const lastAssistant = [...saved.messages].reverse().find((m) => m.role === 'assistant')
-    setPreviewCode(extractPreviewCode(lastAssistant?.content || ''))
-    setGenerating(false)
-    setGenerationStage(0)
-    setToast({ stage: 0, done: false, visible: false })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildId])
 
@@ -200,21 +220,33 @@ export default function BuilderPage() {
     if (initFiredRef.current) return // fire-once: StrictMode/remount must not create a 2nd build or 2nd generation
     initFiredRef.current = true
     if (initialPrompt) {
-      const id = newBuild(initialPrompt, contextRef.current)
+      const id = newBuild() // sync UUID; header created on the first append
       buildIdRef.current = id
-      const userMsg = { id: 'initial-user', role: 'user', content: initialPrompt, timestamp: new Date() }
-      appendBuilderMessage(id, toStored(userMsg))
-      refreshBuilds()
+      seqRef.current = 0
+      const parts = [{ type: 'text', text: initialPrompt }]
+      const userSeq = seqRef.current
+      seqRef.current += 1
+      const userMsg = { id: 'initial-user', role: 'user', parts, seq: userSeq, createdAt: new Date().toISOString() }
       setMessages([userMsg])
-      generate([userMsg])
       navigate(`/workspace/builder/${id}`, { replace: true })
+      // Persist the seed user turn (creates the header with title + context), then
+      // generate. Generation is the value here, so a persist blip surfaces a toast
+      // but doesn't abort — the assistant turn re-creates the header idempotently.
+      ;(async () => {
+        try {
+          await appendBuilderMessage(
+            id,
+            { role: 'user', parts, seq: userSeq },
+            { title: deriveTitle(initialPrompt), context: contextRef.current },
+          )
+          refreshBuilds()
+        } catch {
+          showAttachToast('Could not save this build. Check your connection.')
+        }
+        generate([userMsg])
+      })()
     } else {
-      setMessages([{
-        id: 'welcome',
-        role: 'assistant',
-        content: "Hello! I'm Citizen Developer AI. Tell me what you'd like to build for BIAL operations.",
-        timestamp: new Date(),
-      }])
+      setMessages([welcomeMessage()])
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -228,10 +260,12 @@ export default function BuilderPage() {
     timerRefs.current = []
   }
 
-  const generate = async (currentMessages) => {
-    // Capture the build this run belongs to, so a mid-generation switch to
-    // another build can't misattribute this result.
+  const generate = async (currentMessages, byteMap = new Map()) => {
+    // Capture the build this run belongs to + reserve its assistant sort key, so a
+    // mid-generation switch to another build can't misattribute this result.
     const activeBuildId = buildIdRef.current
+    const assistantSeq = seqRef.current
+    seqRef.current += 1
     setGenerating(true)
     setGenerationStage(1)
     clearTimers()
@@ -242,8 +276,8 @@ export default function BuilderPage() {
         {
           id: `stage-${index}-${Date.now()}`,
           role: 'assistant',
-          content: STAGE_MESSAGES[index],
-          timestamp: new Date(),
+          parts: [{ type: 'text', text: STAGE_MESSAGES[index] }],
+          createdAt: new Date().toISOString(),
           isStage: true,
           showChips: index === 4,
         },
@@ -258,11 +292,11 @@ export default function BuilderPage() {
     timerRefs.current.push(setTimeout(() => { setGenerationStage(4); addStage(3); setToast({ stage: 4, done: false, visible: true }) }, 10000))
 
     // currentMessages already includes the new user turn; map the real
-    // (non-stage, non-welcome) messages to the API shape, turning any
-    // attachment turn into a ContentBlock[] (files before text). No separate
-    // re-append of the latest turn — that would duplicate it (and its images).
+    // (non-stage, non-welcome) messages to the API shape. Only the newest turn's
+    // image/PDF bytes are inflated (from the composer via byteMap); historical
+    // binaries are dropped (the model already saw them).
     const realMessages = currentMessages.filter((m) => !m.isStage && m.id !== 'welcome')
-    const apiMessages = await assembleApiMessages(realMessages)
+    const apiMessages = assembleApiMessages(realMessages, (id) => byteMap.get(id))
 
     const result = await sendMessage(
       apiMessages,
@@ -288,24 +322,29 @@ export default function BuilderPage() {
       return
     }
 
-    // Persist the REAL assistant result (with code) so a resume can re-extract
-    // the preview. Stage/welcome bubbles are never persisted. Attributed to the
-    // build this run started on, regardless of any later switch.
-    if (activeBuildId) {
-      appendBuilderMessage(activeBuildId, {
-        id: `msg_${Date.now()}_a`,
-        role: 'assistant',
-        content: result,
-        timestamp: new Date().toISOString(),
-      })
-      refreshBuilds()
+    // Persist the REAL assistant result turn (parts) AND the extracted code
+    // snapshot (code.current), attributed to the build this run started on,
+    // regardless of any later switch — but NOT if that build was deleted mid-run
+    // (deletedRef): the append upserts the header, which would resurrect a build
+    // the user just deleted. Stage/welcome bubbles are never persisted. On resume
+    // the preview renders from code.current — no transcript scan.
+    const finalCode = extractPreviewCode(result)
+    if (activeBuildId && !deletedRef.current.has(activeBuildId)) {
+      try {
+        await appendBuilderMessage(activeBuildId, { role: 'assistant', parts: [{ type: 'text', text: result }], seq: assistantSeq }, {})
+        if (finalCode) {
+          await patchBuildCode(activeBuildId, { source: finalCode, entry: 'PreviewApp', createdAt: new Date().toISOString() })
+        }
+        refreshBuilds()
+      } catch {
+        showAttachToast('Your generated app could not be saved.')
+      }
     }
 
     // If the user switched to a different build while this one was generating,
     // don't clobber the now-displayed build with this run's preview/stages/toast.
     if (buildIdRef.current !== activeBuildId) return
 
-    const finalCode = extractPreviewCode(result)
     if (finalCode) setPreviewCode(finalCode)
 
     setGenerationStage(5)
@@ -336,42 +375,49 @@ export default function BuilderPage() {
     setInput('')
     clearPending()
 
-    // Persist attachment BYTES to the shared IndexedDB store; the message keeps
-    // only refs. A cap/storage error aborts the send.
-    let refs = []
-    if (attachments.length > 0) {
-      try {
-        for (const a of attachments) {
-          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
-        }
-        refs = attachments.map(toAttachmentRef)
-      } catch (err) {
-        showAttachToast(err?.message || 'Could not store the attachment.')
-        return
-      }
+    // Build the user turn's parts: uploads each image/PDF (server file ref) and
+    // inlines each csv/txt as a text part. An upload/cap failure aborts the send.
+    let parts
+    try {
+      parts = await buildUserParts(text || 'Please review the attached file(s).', attachments)
+    } catch (err) {
+      showAttachToast(err?.message || 'Could not upload the attachment.')
+      return
     }
 
-    const userMsg = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: text || 'Please review the attached file(s).',
-      ...(refs.length ? { attachments: refs } : {}),
-      timestamp: new Date(),
-    }
-
-    // Ensure a build exists (a from-scratch session has none yet), then persist
-    // the user turn before generating.
+    // Ensure a build exists (a from-scratch session has none yet).
     if (!buildIdRef.current) {
-      const id = newBuild(userMsg.content, contextRef.current)
+      const id = newBuild() // sync UUID; header created on the first append
       buildIdRef.current = id
+      seqRef.current = 0
       navigate(`/workspace/builder/${id}`, { replace: true })
     }
-    appendBuilderMessage(buildIdRef.current, toStored(userMsg))
-    refreshBuilds()
+    const activeBuildId = buildIdRef.current
+    const userSeq = seqRef.current
+    seqRef.current += 1
 
+    const userMsg = { id: `local_${Date.now()}`, role: 'user', parts, seq: userSeq, createdAt: new Date().toISOString() }
     const updated = [...messages, userMsg]
     setMessages(updated)
-    await generate(updated)
+
+    // Persist the user turn (upserts the header) before generating. Title +
+    // generation context only on the first turn. On failure, abort + roll back.
+    try {
+      await appendBuilderMessage(
+        activeBuildId,
+        { role: 'user', parts, seq: userSeq },
+        userSeq === 0 ? { title: deriveTitle(partsToText(parts)), context: contextRef.current } : {},
+      )
+    } catch {
+      showAttachToast('Could not save your message. Check your connection and try again.')
+      setMessages(messages)
+      seqRef.current = userSeq
+      return
+    }
+    refreshBuilds()
+
+    const byteMap = new Map(attachments.map((a) => [a.id, a.base64]))
+    await generate(updated, byteMap)
   }
 
   const handleSelectBuild = (id) => {
@@ -385,24 +431,32 @@ export default function BuilderPage() {
     setShowBuilds(false)
     setViewer(null)
     buildIdRef.current = null
+    seqRef.current = 0
     navigate('/workspace/builder', { replace: true, state: {} })
     clearTimers()
-    setMessages([{
-      id: 'welcome',
-      role: 'assistant',
-      content: "Hello! I'm Citizen Developer AI. Tell me what you'd like to build for BIAL operations.",
-      timestamp: new Date(),
-    }])
+    setMessages([welcomeMessage()])
     setPreviewCode(null)
     setGenerating(false)
     setGenerationStage(0)
   }
 
-  const handleDeleteBuild = (e, id) => {
+  const handleDeleteBuild = async (e, id) => {
     e.stopPropagation()
-    deleteBuild(id)
-    refreshBuilds()
+    // Mark the id deleted BEFORE the reset/await so an in-flight generation's
+    // assistant persist short-circuits (the deletedRef check in generate) — the
+    // upsert-on-append would otherwise re-create the header and resurrect the
+    // build. Resetting to a fresh build also stops the UI clobber (buildIdRef change).
+    deletedRef.current.add(id)
     if (id === buildIdRef.current) handleNewBuild()
+    setBuilds((prev) => prev.filter((b) => b.id !== id)) // optimistic removal
+    try {
+      await deleteBuild(id)
+    } catch {
+      deletedRef.current.delete(id) // delete didn't land — allow future writes to it again
+      refreshBuilds() // reconcile — the row reappears if the delete didn't land
+      return
+    }
+    refreshBuilds()
   }
 
   return (
@@ -496,9 +550,9 @@ export default function BuilderPage() {
                       ? 'bg-tertiary text-white rounded-tr-sm'
                       : 'bg-bial-bg text-tertiary rounded-tl-sm'
                   }`}>
-                    <MessageContent content={msg.content} attachments={msg.attachments} />
+                    <MessageContent parts={msg.parts} />
                     <p className="text-[10px] mt-1 opacity-40">
-                      {msg.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                     </p>
                   </div>
                 </div>

@@ -55,24 +55,28 @@ describe('truncateMessages', () => {
 })
 
 describe('estimateConversationTokens', () => {
-  it('counts message text + system prompt + the newest turn\'s attachments', () => {
+  // Helpers to build parts-model messages (the in-memory shape the pages hold).
+  const textPart = (text) => ({ type: 'text', text })
+  const filePart = (attachmentId, mediaType = 'image/png') => ({ type: 'file', attachmentId, kind: 'image', mediaType })
+
+  it("counts message text + system prompt + the newest turn's file parts", () => {
     const messages = [
-      { role: 'user', content: 'a'.repeat(400) }, // 100 tokens
-      { role: 'assistant', content: 'b'.repeat(400) }, // 100 tokens
-      { role: 'user', content: 'c'.repeat(400), attachments: [{ id: '1' }, { id: '2' }] }, // 100 + 2 files
+      { role: 'user', parts: [textPart('a'.repeat(400))] }, // 100 tokens
+      { role: 'assistant', parts: [textPart('b'.repeat(400))] }, // 100 tokens
+      { role: 'user', parts: [textPart('c'.repeat(400)), filePart('1'), filePart('2')] }, // 100 + 2 files
     ]
     const system = 's'.repeat(2000) // 500 tokens
     const est = estimateConversationTokens(messages, system)
-    // 300 (text) + 500 (system) + 2 * 1600 (nominal per last-turn attachment) = 4000
+    // 300 (text) + 500 (system) + 2 * 1600 (nominal per last-turn file part) = 4000
     expect(est).toBe(4000)
   })
 
-  it('does not count attachments on non-final turns (they send text-only)', () => {
+  it('does not count file parts on non-final turns (they send text-only)', () => {
     const withOldAttach = [
-      { role: 'user', content: '', attachments: [{ id: '1' }, { id: '2' }, { id: '3' }] },
-      { role: 'assistant', content: '' },
+      { role: 'user', parts: [filePart('1'), filePart('2'), filePart('3')] },
+      { role: 'assistant', parts: [textPart('')] },
     ]
-    // only text (0) + system (0) + last turn has no attachments → 0
+    // only text (0) + system (0) + last turn has no file parts → 0
     expect(estimateConversationTokens(withOldAttach, '')).toBe(0)
   })
 
@@ -82,25 +86,26 @@ describe('estimateConversationTokens', () => {
     expect(CONTEXT_SOFT_LIMIT).toBeLessThan(CONTEXT_HARD_LIMIT)
   })
 
-  it('counts a text attachment by its byte size on EVERY turn it appears (not a flat 1600)', () => {
-    const textRef = { id: 't', mediaType: 'text/csv', size: 200 * 1024 } // ~51,200 tokens
+  it('counts an inline text-attachment part by its content length on EVERY turn (sticky, not a flat 1600)', () => {
+    // An inline csv/txt is a text part whose `text` holds the file content.
+    const csv = 'x'.repeat(200 * 1024) // ~51,200 tokens
+    const inlineText = { type: 'text', text: csv, attachment: { attachmentId: 't', name: 'd.csv', mediaType: 'text/csv', size: 200 * 1024 } }
     const messages = [
-      { role: 'user', content: '', attachments: [textRef] }, // old turn — still counted (sticky)
-      { role: 'assistant', content: '' },
-      { role: 'user', content: '' }, // newest, no attachments
+      { role: 'user', parts: [inlineText] }, // old turn — still counted (sticky)
+      { role: 'assistant', parts: [textPart('')] },
+      { role: 'user', parts: [textPart('')] }, // newest, no attachments
     ]
     const est = estimateConversationTokens(messages, '')
-    expect(est).toBe(Math.ceil((200 * 1024) / 4)) // 51,200 — text counted though it's not the newest turn
+    expect(est).toBe(Math.ceil((200 * 1024) / 4)) // 51,200 — counted though it's not the newest turn
   })
 
-  it('still counts an image/PDF attachment as a flat nominal on the newest turn only', () => {
-    const img = { id: 'i', mediaType: 'image/png', size: 4_000_000 }
-    // Image on the newest turn → one flat nominal (1600), NOT size-based.
-    expect(estimateConversationTokens([{ role: 'user', content: '', attachments: [img] }], '')).toBe(1600)
-    // Same image on a non-newest turn → not re-sent, so not counted.
+  it('still counts an image/PDF file part as a flat nominal on the newest turn only', () => {
+    // File part on the newest turn → one flat nominal (1600), NOT size-based.
+    expect(estimateConversationTokens([{ role: 'user', parts: [filePart('i')] }], '')).toBe(1600)
+    // Same file part on a non-newest turn → not re-sent, so not counted.
     const older = [
-      { role: 'user', content: '', attachments: [img] },
-      { role: 'assistant', content: '' },
+      { role: 'user', parts: [filePart('i')] },
+      { role: 'assistant', parts: [textPart('')] },
     ]
     expect(estimateConversationTokens(older, '')).toBe(0)
   })

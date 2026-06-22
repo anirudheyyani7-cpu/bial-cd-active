@@ -15,27 +15,53 @@ const FILTERS = [
   { key: 'build', label: 'Builds' },
 ]
 
-// Merge the two per-user local stores into one list, newest first. Each item is
+// Merge the two per-user server stores into one list, newest first. Each item is
 // tagged with its kind so the row can route/badge correctly.
-function loadAll() {
-  const chats = loadHistory().map((c) => ({ ...c, kind: 'chat' }))
-  const builds = loadBuilds().map((b) => ({ ...b, kind: 'build' }))
+async function loadAll() {
+  const [chatsRaw, buildsRaw] = await Promise.all([loadHistory(), loadBuilds()])
+  const chats = chatsRaw.map((c) => ({ ...c, kind: 'chat' }))
+  const builds = buildsRaw.map((b) => ({ ...b, kind: 'build' }))
   return [...chats, ...builds].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
 }
 
 export default function ConversationsPage() {
   const navigate = useNavigate()
-  const [items, setItems] = useState(loadAll)
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [page, setPage] = useState(0)
 
-  // Re-read when returning to the tab (e.g. after opening a chat/build) so the
-  // list and timestamps stay current. localStorage reads are synchronous.
+  // Fetch on mount and (debounced) when the tab regains focus, so the list and
+  // timestamps stay current without a request on every rapid refocus.
   useEffect(() => {
-    const refresh = () => setItems(loadAll())
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    let active = true
+    let timer
+    const refresh = async () => {
+      try {
+        const next = await loadAll()
+        if (active) {
+          setItems(next)
+          setError(false)
+        }
+      } catch {
+        if (active) setError(true)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    refresh()
+    const onFocus = () => {
+      clearTimeout(timer)
+      timer = setTimeout(refresh, 400)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      clearTimeout(timer)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   // Reset to the first page whenever the search/filter narrows the list.
@@ -59,11 +85,21 @@ export default function ConversationsPage() {
   const openItem = (it) =>
     navigate(it.kind === 'build' ? `/workspace/builder/${it.id}` : `/workspace/chat/${it.id}`)
 
-  const removeItem = (it, e) => {
+  const removeItem = async (it, e) => {
     e.stopPropagation()
-    if (it.kind === 'build') deleteBuild(it.id)
-    else deleteConversation(it.id)
-    setItems(loadAll())
+    // Optimistic: drop the row immediately, then persist. On failure, refetch to
+    // reconcile (the row reappears if the delete didn't land).
+    setItems((prev) => prev.filter((x) => !(x.kind === it.kind && x.id === it.id)))
+    try {
+      if (it.kind === 'build') await deleteBuild(it.id)
+      else await deleteConversation(it.id)
+    } catch {
+      try {
+        setItems(await loadAll())
+      } catch {
+        setError(true)
+      }
+    }
   }
 
   return (
@@ -126,7 +162,27 @@ export default function ConversationsPage() {
         </div>
 
         {/* List */}
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="flex items-center gap-3 bg-white border border-bial-border rounded-xl px-4 py-3 animate-pulse">
+                <div className="w-9 h-9 rounded-lg bg-gray-100 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="h-3 bg-gray-100 rounded w-1/2 mb-2" />
+                  <div className="h-2 bg-gray-50 rounded w-1/4" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
+            <p className="text-sm font-semibold text-tertiary">Couldn't load your conversations</p>
+            <p className="text-xs text-neutral mt-1 mb-3">Check your connection and try again.</p>
+            <button onClick={() => window.location.reload()} className="text-xs text-primary font-semibold hover:underline">
+              Retry
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="bg-white border border-bial-border rounded-2xl py-16 px-6 text-center">
             <Sparkles size={26} className="mx-auto text-primary/50 mb-3" />
             <p className="text-sm font-semibold text-tertiary">

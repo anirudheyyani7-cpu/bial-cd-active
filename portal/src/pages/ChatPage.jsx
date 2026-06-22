@@ -13,9 +13,10 @@ import {
   getConversation,
   deleteConversation,
   relativeTime,
+  deriveTitle,
 } from '../utils/chatHistory'
-import { assembleApiMessages, putAttachment, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, toAttachmentRef, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { assembleApiMessages, buildUserParts, partsToText, countAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic Claude.
@@ -45,12 +46,18 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [hydrating, setHydrating] = useState(false) // loading a saved transcript over the network
   const [showBuildModal, setShowBuildModal] = useState(false)
   const [showPromptModal, setShowPromptModal] = useState(false)
   const [builderPrompt, setBuilderPrompt] = useState('')
   const [summarizing, setSummarizing] = useState(false)
   const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
   const buildSuggestionFiredRef = useRef(false)
+  // Source of truth for "which conversation is active", kept in lockstep with
+  // activeChatId via setActive. The streaming send path guards every assistant
+  // write against this ref so a turn never lands on the wrong (or a deleted)
+  // conversation after a mid-stream navigate/delete.
+  const activeChatIdRef = useRef(null)
 
   const { sendMessage, error } = useClaudeAPI()
   const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
@@ -67,8 +74,20 @@ export default function ChatPage() {
   const { soft: ctxSoft, hard: ctxHard } = getContextLimits()
   const ctxLevel = ctxTokens >= ctxHard ? 'full' : ctxTokens >= ctxSoft ? 'warn' : 'ok'
 
-  const refreshHistory = useCallback(() => {
-    setHistory(loadHistory().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+  // Set the active conversation id in state AND the ref together, so the
+  // streaming guard can read the current id synchronously.
+  const setActive = useCallback((id) => {
+    activeChatIdRef.current = id
+    setActiveChatId(id)
+  }, [])
+
+  const refreshHistory = useCallback(async () => {
+    try {
+      const list = await loadHistory()
+      setHistory(list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)))
+    } catch {
+      // Keep the current sidebar on a transient error; the next refresh recovers.
+    }
   }, [])
 
   // Load sidebar history on mount and when activeChatId changes
@@ -76,30 +95,53 @@ export default function ChatPage() {
     refreshHistory()
   }, [refreshHistory, activeChatId])
 
-  // Handle route param and initial message from SandboxPage
+  // Handle route param and initial message from SandboxPage. Hydration is async
+  // (server round-trip) with a stale-response guard so a fast conversation switch
+  // can't let an older fetch clobber the newer view.
   useEffect(() => {
     if (chatId === 'new') {
       const initialMessage = location.state?.initialMessage
       if (initialMessage) {
-        const id = newConversation(initialMessage)
-        setActiveChatId(id)
+        // Mint the id synchronously; the header is created server-side on the
+        // first appendMessage, so navigate + the fire-initial effect are unchanged.
+        const id = newConversation()
+        setActive(id)
         navigate(`/workspace/chat/${id}`, { replace: true, state: { initialMessage } })
       } else {
         // New chat with no initial message — just show empty state
-        setActiveChatId(null)
+        setActive(null)
         setMessages([])
       }
-    } else if (chatId) {
-      const conv = getConversation(chatId)
-      if (conv) {
-        setActiveChatId(chatId)
-        setMessages(
-          conv.messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }))
-        )
-        buildSuggestionFiredRef.current = false
-      } else {
-        navigate('/workspace/chat/new', { replace: true })
-      }
+      return
+    }
+    if (!chatId) return
+    // Already active locally (e.g. a brand-new chat we just minted) — its first
+    // turns are being written by the send path; don't hydrate-over an empty header.
+    if (activeChatIdRef.current === chatId) return
+
+    let alive = true
+    setHydrating(true)
+    getConversation(chatId)
+      .then((conv) => {
+        if (!alive) return
+        if (conv) {
+          setActive(chatId)
+          setMessages(conv.messages)
+          buildSuggestionFiredRef.current = false
+        } else {
+          navigate('/workspace/chat/new', { replace: true })
+        }
+      })
+      .catch(() => {
+        // A real load failure (the 401 case is handled by the auth gate + refresh)
+        // — fall back to a fresh chat rather than crashing the shell.
+        if (alive) navigate('/workspace/chat/new', { replace: true })
+      })
+      .finally(() => {
+        if (alive) setHydrating(false)
+      })
+    return () => {
+      alive = false
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId])
@@ -109,7 +151,7 @@ export default function ChatPage() {
     if (!activeChatId) return
     const initialMessage = location.state?.initialMessage
     if (initialMessage && messages.length === 0) {
-      fireMessage(initialMessage)
+      fireMessage(initialMessage, [], activeChatId)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId])
@@ -118,16 +160,6 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, generating])
 
-  const persistMessage = useCallback((chatId, msg) => {
-    appendMessage(chatId, {
-      id: msg.id,
-      role: msg.role,
-      content: msg.content, // plain text only — attachment bytes never enter localStorage
-      ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
-      timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
-    })
-  }, [])
-
   const fireMessage = useCallback(async (rawText, attachments = [], explicitChatId) => {
     if (generating) return
     const text = rawText.trim() || (attachments.length ? 'Please review the attached file(s).' : '')
@@ -135,55 +167,70 @@ export default function ChatPage() {
     // A brand-new chat passes its id explicitly: setActiveChatId hasn't committed
     // yet when handleSend schedules this, so the activeChatId closure is stale.
     const currentChatId = explicitChatId ?? activeChatId
+    if (!currentChatId) return
 
-    // Persist attachment BYTES to IndexedDB (never localStorage); the message
-    // keeps only lightweight refs. A cap/storage error aborts the send.
-    let refs = []
-    if (attachments.length > 0) {
-      try {
-        for (const a of attachments) {
-          await putAttachment({ id: a.id, base64: a.base64, mediaType: a.mediaType, size: a.size })
-        }
-        refs = attachments.map(toAttachmentRef)
-      } catch (err) {
-        showAttachToast(err?.message || 'Could not store the attachment.')
-        return
-      }
+    // The transcript BEFORE this turn, captured before any await/render so the
+    // API assembly and seq are stable regardless of intervening re-renders.
+    const priorMessages = messagesRef.current
+    const baseSeq = priorMessages.length
+    const isFirstTurn = baseSeq === 0
+
+    // Build the user turn's parts: uploads each image/PDF (returning a server file
+    // ref) and inlines each csv/txt as a text part. An upload failure — including
+    // the per-user storage cap — aborts the send before anything is shown.
+    let parts
+    try {
+      parts = await buildUserParts(text, attachments)
+    } catch (err) {
+      showAttachToast(err?.message || 'Could not upload the attachment.')
+      return
     }
 
-    const userMsg = {
-      id: `msg_${Date.now()}`,
-      role: 'user',
-      content: text,
-      ...(refs.length ? { attachments: refs } : {}),
-      timestamp: new Date(),
-    }
-
+    const userMsg = { id: `local_${Date.now()}`, role: 'user', parts, seq: baseSeq, createdAt: new Date().toISOString() }
     setMessages((prev) => [...prev, userMsg])
-    persistMessage(currentChatId, userMsg)
     setGenerating(true)
 
-    // Assemble the API messages: a turn with attachment refs becomes a
-    // ContentBlock[] (files before text, bytes re-read from the store); a plain
-    // turn stays a string. The server forwards the blocks untouched.
-    const apiMessages = await assembleApiMessages([...messagesRef.current, userMsg])
+    // Persist the user turn (the single route call upserts the header AND inserts
+    // the message, so the conversation exists before streaming). On failure, abort
+    // the send and roll back the optimistic bubble — no orphan assistant turn.
+    try {
+      await appendMessage(
+        currentChatId,
+        { role: 'user', parts, seq: baseSeq },
+        isFirstTurn ? { title: deriveTitle(partsToText(parts)) } : {},
+      )
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id))
+      setGenerating(false)
+      showAttachToast('Could not save your message. Check your connection and try again.')
+      return
+    }
+    refreshHistory()
 
-    const assistantId = `msg_${Date.now()}_a`
+    // Assemble the API messages from in-memory bytes: only the newest turn's
+    // image/PDF bytes are inflated (from the composer), historical binaries dropped.
+    const byteMap = new Map(attachments.map((a) => [a.id, a.base64]))
+    const apiMessages = assembleApiMessages([...priorMessages, userMsg], (id) => byteMap.get(id))
+
+    const assistantId = `local_${Date.now()}_a`
     let assistantText = ''
 
     setMessages((prev) => [...prev, {
       id: assistantId,
       role: 'assistant',
-      content: '',
-      timestamp: new Date(),
+      parts: [{ type: 'text', text: '' }],
+      seq: baseSeq + 1,
+      createdAt: new Date().toISOString(),
     }])
 
     const result = await sendMessage(
       apiMessages,
       (delta) => {
+        // Ignore deltas if the user navigated to a different conversation mid-stream.
+        if (activeChatIdRef.current !== currentChatId) return
         assistantText += delta
         setMessages((prev) =>
-          prev.map((m) => m.id === assistantId ? { ...m, content: assistantText } : m)
+          prev.map((m) => m.id === assistantId ? { ...m, parts: [{ type: 'text', text: assistantText }] } : m)
         )
       },
       { systemPrompt: PLANNING_SYSTEM_PROMPT }
@@ -192,23 +239,24 @@ export default function ChatPage() {
     setGenerating(false)
 
     // A falsy result means the send failed (429/network), was aborted, OR
-    // streamed zero text. Drop the optimistic empty assistant bubble so it isn't
-    // persisted as content:'' (which the API rejects on the next turn) and isn't
-    // left blank on screen. Any error message surfaces via the `error` banner.
+    // streamed zero text. Drop the optimistic empty assistant bubble so nothing
+    // blank is shown or persisted. Any error message surfaces via the `error` banner.
     if (!result) {
       setMessages((prev) => prev.filter((m) => m.id !== assistantId))
       return
     }
 
-    refreshHistory()
-
-    const finalMsg = {
-      id: assistantId,
-      role: 'assistant',
-      content: assistantText,
-      timestamp: new Date(),
+    // Persist the assistant turn — but NO-OP if the user navigated away or deleted
+    // the conversation mid-stream (guard on the active id), so an in-flight stream
+    // can never resurrect a deleted conversation or write onto the wrong one.
+    if (activeChatIdRef.current === currentChatId) {
+      try {
+        await appendMessage(currentChatId, { role: 'assistant', parts: [{ type: 'text', text: assistantText }], seq: baseSeq + 1 }, {})
+        refreshHistory()
+      } catch {
+        showAttachToast('Your reply could not be saved.')
+      }
     }
-    persistMessage(currentChatId, finalMsg)
 
     // Check if we should suggest moving to builder
     const allMessages = [...messagesRef.current]
@@ -224,7 +272,7 @@ export default function ChatPage() {
       buildSuggestionFiredRef.current = true
       setTimeout(() => setShowBuildModal(true), 600)
     }
-  }, [activeChatId, generating, sendMessage, persistMessage, refreshHistory, showAttachToast])
+  }, [activeChatId, generating, sendMessage, refreshHistory, showAttachToast])
 
   const handleSend = () => {
     const text = input.trim()
@@ -247,8 +295,8 @@ export default function ChatPage() {
     clearPending()
 
     if (!activeChatId) {
-      const id = newConversation(text || 'Attachment')
-      setActiveChatId(id)
+      const id = newConversation()
+      setActive(id)
       navigate(`/workspace/chat/${id}`, { replace: true })
       // Pass the new id explicitly — the activeChatId state hasn't committed yet,
       // so fireMessage's closure would otherwise persist against a null chat id.
@@ -267,20 +315,29 @@ export default function ChatPage() {
   const handleNewChat = () => {
     setViewer(null)
     setMessages([])
-    setActiveChatId(null)
+    setActive(null)
     buildSuggestionFiredRef.current = false
     navigate('/workspace/chat/new', { replace: true, state: {} })
   }
 
-  const handleDeleteChat = (e, id) => {
+  const handleDeleteChat = async (e, id) => {
     e.stopPropagation()
-    deleteConversation(id)
-    refreshHistory()
-    if (activeChatId === id) {
+    // If the active conversation is being deleted, clear the active id FIRST so any
+    // in-flight stream's assistant write no-ops (the guard sees the id change) — an
+    // in-flight reply can't resurrect the just-deleted conversation.
+    if (activeChatIdRef.current === id) {
       setMessages([])
-      setActiveChatId(null)
+      setActive(null)
       navigate('/workspace/chat/new', { replace: true, state: {} })
     }
+    setHistory((prev) => prev.filter((c) => c.id !== id)) // optimistic removal
+    try {
+      await deleteConversation(id)
+    } catch {
+      refreshHistory() // reconcile — the row reappears if the delete didn't land
+      return
+    }
+    refreshHistory()
   }
 
   const handleBuildApp = useCallback(async () => {
@@ -290,7 +347,7 @@ export default function ChatPage() {
     setBuilderPrompt('')
 
     const transcript = messages
-      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${partsToText(m.parts)}`)
       .join('\n\n')
 
     let accumulated = ''
@@ -392,19 +449,29 @@ export default function ChatPage() {
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 scrollbar-thin">
-            {messages.length === 0 && !generating && (
-              <div className="h-full flex flex-col items-center justify-center text-center pb-8">
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-                  <Sparkles size={28} className="text-primary" />
+            {hydrating ? (
+              <div className="h-full flex items-center justify-center">
+                <div className="flex gap-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                  ))}
                 </div>
-                <h2 className="text-lg font-bold text-tertiary mb-2">Plan your next app</h2>
-                <p className="text-sm text-neutral max-w-sm leading-relaxed">
-                  Describe what you need in plain English. I'll help you think it through before you build.
-                </p>
               </div>
+            ) : (
+              messages.length === 0 && !generating && (
+                <div className="h-full flex flex-col items-center justify-center text-center pb-8">
+                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+                    <Sparkles size={28} className="text-primary" />
+                  </div>
+                  <h2 className="text-lg font-bold text-tertiary mb-2">Plan your next app</h2>
+                  <p className="text-sm text-neutral max-w-sm leading-relaxed">
+                    Describe what you need in plain English. I'll help you think it through before you build.
+                  </p>
+                </div>
+              )
             )}
 
-            {messages.map((msg) => (
+            {!hydrating && messages.map((msg) => (
               <div key={msg.id} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
                   msg.role === 'assistant' ? 'bg-primary/10' : 'bg-secondary/10'
@@ -419,11 +486,9 @@ export default function ChatPage() {
                     ? 'bg-tertiary text-white rounded-tr-sm'
                     : 'bg-white border border-bial-border text-tertiary rounded-tl-sm'
                 }`}>
-                  <MessageContent content={msg.content} attachments={msg.attachments} isUser={msg.role === 'user'} />
+                  <MessageContent parts={msg.parts} isUser={msg.role === 'user'} />
                   <p className="text-[10px] mt-1.5 opacity-40">
-                    {msg.timestamp instanceof Date
-                      ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                      : new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                   </p>
                 </div>
               </div>

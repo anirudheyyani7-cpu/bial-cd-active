@@ -1,22 +1,24 @@
 import ReactMarkdown from 'react-markdown'
 import AttachmentChips from '../AttachmentChips'
-import { contentToText } from '../../utils/attachmentStore'
+import { partsToText, attachmentsFromParts } from '../../utils/attachmentStore'
 
 /**
- * Render one chat message bubble's inner content. Shared by ChatPage (App
- * Builder planning chat) and BialChatPage (general assistant) — the ReactMarkdown
- * variant. (BuilderPage keeps its own MessageContent: it strips jsx:preview code
- * fences, a different behaviour, so it is NOT a consumer of this module.)
+ * Render one chat message bubble's inner content from the neutral `parts[]`
+ * model. Shared by ChatPage (App Builder planning chat) and BialChatPage (general
+ * assistant) — the ReactMarkdown variant. (BuilderPage keeps its own
+ * MessageContent: it strips jsx:preview code fences, a different behaviour, so it
+ * is NOT a consumer of this module.)
  *
- * `content` may be a string OR a ContentBlock[] (attachment turn); contentToText
- * always derives plain text so react-markdown / the user div never receives an
- * array and renders "[object Object]".
+ * `partsToText` yields the prose for display (text parts only); `attachmentsFromParts`
+ * yields the attachment descriptors (file parts + inline-text attachments) rendered
+ * as chips above the text. A plain string is still accepted defensively.
  */
-export default function MessageContent({ content, attachments, isUser }) {
-  const text = contentToText(content)
+export default function MessageContent({ parts, isUser }) {
+  const text = partsToText(parts)
+  const attachments = attachmentsFromParts(parts)
   return (
     <>
-      {attachments?.length > 0 && <AttachmentChips attachments={attachments} />}
+      {attachments.length > 0 && <AttachmentChips attachments={attachments} />}
       {isUser ? (
         <div className="whitespace-pre-wrap break-words">{text}</div>
       ) : (

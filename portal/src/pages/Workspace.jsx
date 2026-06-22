@@ -12,11 +12,13 @@ const VIBE_STEPS = [
 ]
 
 // Merge the logged-in user's recent chats + builds into one timeline, tagging
-// each with kind so the card can route + badge correctly, newest first.
-function loadRecents() {
+// each with kind so the card can route + badge correctly, newest first. The two
+// stores are now server-backed (async), so fetch them in parallel.
+async function loadRecents() {
+  const [chats, builds] = await Promise.all([loadHistory(), loadBuilds()])
   const items = [
-    ...loadHistory().map((c) => ({ ...c, kind: 'chat' })),
-    ...loadBuilds().map((b) => ({ ...b, kind: 'build' })),
+    ...chats.map((c) => ({ ...c, kind: 'chat' })),
+    ...builds.map((b) => ({ ...b, kind: 'build' })),
   ]
   return items.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
 }
@@ -49,14 +51,39 @@ function RecentCard({ item, onClick }) {
 export default function Workspace() {
   const navigate = useNavigate()
   const [recents, setRecents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
 
-  // Re-read the per-user store on mount and whenever the tab regains focus, so
-  // returning from a chat/build shows the freshly-updated timeline.
+  // Fetch the per-user timeline on mount and (debounced) whenever the tab regains
+  // focus, so returning from a chat/build shows the freshly-updated list without
+  // firing a request on every rapid refocus.
   useEffect(() => {
-    const refresh = () => setRecents(loadRecents())
+    let active = true
+    let timer
+    const refresh = async () => {
+      try {
+        const items = await loadRecents()
+        if (active) {
+          setRecents(items)
+          setError(false)
+        }
+      } catch {
+        if (active) setError(true)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
     refresh()
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    const onFocus = () => {
+      clearTimeout(timer)
+      timer = setTimeout(refresh, 400)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      clearTimeout(timer)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   return (
@@ -152,7 +179,25 @@ export default function Workspace() {
             )}
           </div>
 
-          {recents.length === 0 ? (
+          {loading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 h-32 animate-pulse">
+                  <div className="w-9 h-9 rounded-lg bg-gray-100 mb-3" />
+                  <div className="h-3 bg-gray-100 rounded w-3/4 mb-2" />
+                  <div className="h-2 bg-gray-50 rounded w-1/3" />
+                </div>
+              ))}
+            </div>
+          ) : error ? (
+            <div className="bg-white rounded-xl border border-danger/20 p-10 flex flex-col items-center justify-center text-center">
+              <p className="text-sm font-bold text-tertiary mb-1">Couldn't load your recent work</p>
+              <p className="text-xs text-neutral mb-3">Check your connection and try again.</p>
+              <button onClick={() => window.location.reload()} className="text-xs text-primary font-semibold hover:underline">
+                Retry
+              </button>
+            </div>
+          ) : recents.length === 0 ? (
             <div className="bg-white rounded-xl border border-dashed border-gray-200 p-10 flex flex-col items-center justify-center text-center">
               <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
                 <Sparkles size={20} className="text-primary" />

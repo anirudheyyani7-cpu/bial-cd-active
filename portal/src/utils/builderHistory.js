@@ -1,69 +1,33 @@
 /**
- * Per-user builder-session store (browser-only, interim). Mirrors chatHistory.js
- * exactly — namespaced key, defensive try/catch, named exports — so builder
- * sessions, which today vanish on refresh, get the same per-user persistence and
- * survive a token-expiry (clearSession no longer wipes anything).
+ * Builder-session store, now server-backed (kind 'builder'). Mirrors
+ * chatHistory.js via the shared async factory; the generated app code rides on
+ * the conversation header as `code.current` (patched with patchBuildCode), so a
+ * reopened build renders from a single point read — no transcript scan.
  *
- * A build record is `{ id, title, createdAt, updatedAt, context, messages }`:
- *   - context: the generation settings (dataSource/theme/hasSchema/uploadedFiles)
- *     so refinements after a resume keep their configuration.
- *   - messages: REAL turns only (user + assistant result). Ephemeral stage /
- *     welcome bubbles are excluded by the caller before persisting.
+ * A build header is `{ id, title, createdAt, updatedAt, context, code }`:
+ *   - context: generation settings (dataSource/theme/hasSchema/uploadedFiles),
+ *     passed via the first appendBuilderMessage's header so refinements after a
+ *     resume keep their configuration.
+ *   - code.current: the latest extracted PreviewApp snapshot.
+ * Messages are REAL turns only (user + assistant result); the caller excludes
+ * ephemeral stage/welcome bubbles before persisting.
+ *
+ * Names are unchanged from the localStorage version; loadBuilds/getBuild/
+ * appendBuilderMessage/deleteBuild are now async; newBuild stays synchronous.
  */
-import { getStoredUser } from './auth.js'
-import { deleteAttachment } from './attachmentStore.js'
+import { createConversationStore, patchConversation, deriveTitle } from './conversationApi.js'
 
-const STORAGE_KEY_PREFIX = 'bial_builder_history'
+const store = createConversationStore('builder')
 
-function storageKey() {
-  const username = getStoredUser()?.username || '__anon__'
-  return `${STORAGE_KEY_PREFIX}:${username}`
+export const loadBuilds = store.loadHistory
+export const newBuild = store.newConversation // sync UUID; header created on first append
+export const getBuild = store.getConversation
+export const deleteBuild = store.deleteConversation
+export const appendBuilderMessage = store.appendMessage // (id, message, header)
+
+/** Persist the latest generated code snapshot on the build header. */
+export function patchBuildCode(id, codeCurrent, deps) {
+  return patchConversation(id, { code: codeCurrent }, deps)
 }
 
-export function loadBuilds() {
-  try {
-    const raw = localStorage.getItem(storageKey())
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
-
-function saveBuilds(builds) {
-  try {
-    localStorage.setItem(storageKey(), JSON.stringify(builds))
-  } catch {
-    // storage full / unavailable — best-effort for the interim build
-  }
-}
-
-export function newBuild(prompt, context) {
-  // Random suffix so builds created in the same millisecond don't collide.
-  const id = `build_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-  const trimmed = (prompt || '').trim()
-  const title = (trimmed.slice(0, 40) || 'Untitled build') + (trimmed.length > 40 ? '…' : '')
-  const now = new Date().toISOString()
-  const build = { id, title, createdAt: now, updatedAt: now, context: context || null, messages: [] }
-  saveBuilds([build, ...loadBuilds()])
-  return id
-}
-
-export function appendBuilderMessage(buildId, message) {
-  const builds = loadBuilds()
-  const updated = builds.map((b) =>
-    b.id === buildId ? { ...b, updatedAt: new Date().toISOString(), messages: [...b.messages, message] } : b,
-  )
-  saveBuilds(updated)
-}
-
-export function getBuild(buildId) {
-  return loadBuilds().find((b) => b.id === buildId) || null
-}
-
-export function deleteBuild(buildId) {
-  const build = getBuild(buildId)
-  // Free this build's attachment bytes (see chatHistory.deleteConversation) so
-  // the shared per-user IndexedDB cap isn't a one-way ratchet. Best-effort.
-  build?.messages.forEach((m) => m.attachments?.forEach((a) => deleteAttachment(a.id)))
-  saveBuilds(loadBuilds().filter((b) => b.id !== buildId))
-}
+export { deriveTitle }

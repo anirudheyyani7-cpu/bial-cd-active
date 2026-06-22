@@ -1,273 +1,125 @@
-import 'fake-indexeddb/auto'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
-  putAttachment,
-  getAttachment,
-  deleteAttachment,
-  getTotalSize,
-  clearForUser,
-  buildContentBlocks,
-  contentToText,
-  assembleApiMessages,
+  partsToText,
+  attachmentsFromParts,
   countAttachments,
-  AttachmentCapError,
+  assembleApiMessages,
+  buildUserParts,
+  decodeBase64Text,
 } from '../attachmentStore.js'
 
-function setUser(username) {
-  localStorage.setItem('bial_user', JSON.stringify({ username }))
-}
+const b64Utf8 = (s) => Buffer.from(s, 'utf8').toString('base64')
 
-// Tests share the fake-indexeddb singleton, so each uses distinct users/ids.
-beforeEach(() => {
-  localStorage.clear()
+const textAttachmentPart = (name, content) => ({
+  type: 'text',
+  text: content,
+  attachment: { attachmentId: `${name}-id`, name, mediaType: name.endsWith('.csv') ? 'text/csv' : 'text/plain', size: content.length },
 })
+const imagePart = (id) => ({ type: 'file', attachmentId: id, key: `att/u/${id}`, kind: 'image', mediaType: 'image/png', name: `${id}.png`, size: 10 })
 
-describe('attachmentStore — bytes', () => {
-  it('put then get round-trips the exact base64', async () => {
-    setUser('rt@x')
-    await putAttachment({ id: 'a1', base64: 'QUJD', mediaType: 'image/png', size: 3 })
-    expect(await getAttachment('a1')).toBe('QUJD')
+describe('partsToText', () => {
+  it('joins prose text parts and ignores file + inline-attachment parts', () => {
+    const parts = [imagePart('a'), textAttachmentPart('roster.csv', 'x,y'), { type: 'text', text: 'hello' }, { type: 'text', text: 'world' }]
+    expect(partsToText(parts)).toBe('hello\nworld')
   })
-
-  it('getAttachment on an unknown id returns null; deleteAttachment removes a stored one', async () => {
-    setUser('del@x')
-    expect(await getAttachment('nope')).toBeNull()
-    await putAttachment({ id: 'd1', base64: 'WA==', mediaType: 'image/png', size: 2 })
-    expect(await getAttachment('d1')).toBe('WA==')
-    await deleteAttachment('d1')
-    expect(await getAttachment('d1')).toBeNull()
-  })
-
-  it('exceeding the total cap rejects with AttachmentCapError; store + total unchanged', async () => {
-    setUser('cap@x')
-    const CAP = 50 * 1024 * 1024
-    // `size` is a logical byte count, decoupled from the tiny base64 we store —
-    // lets us exercise the 50 MB cap without allocating 50 MB of data.
-    await putAttachment({ id: 'c1', base64: 'AA==', mediaType: 'image/png', size: CAP })
-    expect(await getTotalSize('cap@x')).toBe(CAP)
-
-    await expect(
-      putAttachment({ id: 'c2', base64: 'BB==', mediaType: 'image/png', size: 1 }),
-    ).rejects.toBeInstanceOf(AttachmentCapError)
-
-    expect(await getAttachment('c2')).toBeNull() // not stored
-    expect(await getTotalSize('cap@x')).toBe(CAP) // unchanged
-  })
-
-  it('does not double-count the running total when the same id is re-put', async () => {
-    setUser('reput@x')
-    await putAttachment({ id: 'r1', base64: 'AA==', mediaType: 'image/png', size: 100 })
-    expect(await getTotalSize('reput@x')).toBe(100)
-    // Re-put the same id (overwrite, no new storage) — total must stay at the delta.
-    await putAttachment({ id: 'r1', base64: 'BB==', mediaType: 'image/png', size: 100 })
-    expect(await getTotalSize('reput@x')).toBe(100)
-    // Re-put with a larger size adjusts by the difference only.
-    await putAttachment({ id: 'r1', base64: 'CC==', mediaType: 'image/png', size: 150 })
-    expect(await getTotalSize('reput@x')).toBe(150)
-  })
-
-  it('maintains an O(1) running total across put/delete and isolates it per user', async () => {
-    setUser('alice@x')
-    await putAttachment({ id: 'al1', base64: 'AA==', mediaType: 'image/png', size: 100 })
-    await putAttachment({ id: 'al2', base64: 'AA==', mediaType: 'image/png', size: 250 })
-    expect(await getTotalSize('alice@x')).toBe(350)
-    await deleteAttachment('al1')
-    expect(await getTotalSize('alice@x')).toBe(250)
-
-    setUser('bob@x')
-    await putAttachment({ id: 'bo1', base64: 'AA==', mediaType: 'image/png', size: 99 })
-    expect(await getTotalSize('bob@x')).toBe(99)
-
-    // Clearing alice leaves bob's records + total intact.
-    await clearForUser('alice@x')
-    expect(await getTotalSize('alice@x')).toBe(0)
-    expect(await getAttachment('al2')).toBeNull()
-    expect(await getTotalSize('bob@x')).toBe(99)
-    expect(await getAttachment('bo1')).toBe('AA==')
+  it('accepts a raw string defensively', () => {
+    expect(partsToText('legacy assistant text')).toBe('legacy assistant text')
   })
 })
 
-describe('attachmentStore — content-block helpers', () => {
-  it('buildContentBlocks: no attachments → plain string', async () => {
-    expect(await buildContentBlocks('hi', [])).toBe('hi')
-    expect(await buildContentBlocks('hi', undefined)).toBe('hi')
-  })
-
-  it('buildContentBlocks: image → image block, pdf → document block, files BEFORE text', async () => {
-    const getBytes = async (id) => ({ img: 'IMGDATA', pdf: 'PDFDATA' })[id]
-    const blocks = await buildContentBlocks(
-      'caption',
-      [
-        { id: 'img', mediaType: 'image/png' },
-        { id: 'pdf', mediaType: 'application/pdf' },
-      ],
-      getBytes,
-    )
-    expect(blocks).toHaveLength(3)
-    expect(blocks[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'IMGDATA' } })
-    expect(blocks[1]).toEqual({
-      type: 'document',
-      source: { type: 'base64', media_type: 'application/pdf', data: 'PDFDATA' },
-    })
-    expect(blocks[2]).toEqual({ type: 'text', text: 'caption' })
-  })
-
-  it('contentToText returns the string for strings and joined text blocks for arrays', () => {
-    expect(contentToText('plain')).toBe('plain')
-    expect(
-      contentToText([{ type: 'image', source: {} }, { type: 'text', text: 'line1' }, { type: 'text', text: 'line2' }]),
-    ).toBe('line1\nline2')
-  })
-
-  // base64 of UTF-8 bytes, the way putAttachment stores a decoded text file.
-  const b64Utf8 = (s) => Buffer.from(s, 'utf8').toString('base64')
-
-  it('buildContentBlocks: a text attachment → fenced <attachment> text block before the user text', async () => {
-    const getBytes = async () => b64Utf8('name,role\nAsha,ops')
-    const blocks = await buildContentBlocks(
-      'summarise this',
-      [{ id: 't', name: 'roster.csv', mediaType: 'text/csv' }],
-      getBytes,
-    )
-    expect(blocks).toHaveLength(2)
-    expect(blocks[0]).toEqual({
-      type: 'text',
-      text: '<attachment name="roster.csv" type="text">\nname,role\nAsha,ops\n</attachment>',
-    })
-    expect(blocks[1]).toEqual({ type: 'text', text: 'summarise this' })
-  })
-
-  it('buildContentBlocks: decodes multibyte + BOM-prefixed text correctly (not bare atob)', async () => {
-    const getBytes = async () => b64Utf8('﻿café,€,日本') // leading BOM, accents, euro, CJK
-    const blocks = await buildContentBlocks('go', [{ id: 't', name: 'm.txt', mediaType: 'text/plain' }], getBytes)
-    // BOM stripped, bytes round-trip exactly — bare atob would mojibake these.
-    expect(blocks[0].text).toBe('<attachment name="m.txt" type="text">\ncafé,€,日本\n</attachment>')
-  })
-
-  it('buildContentBlocks: text block is emitted even when binary:false (sticky); binary is skipped', async () => {
-    const getBytes = async (id) => (id === 'txt' ? b64Utf8('hi,there') : 'IMGDATA')
-    const blocks = await buildContentBlocks(
-      'q',
-      [
-        { id: 'txt', name: 'a.csv', mediaType: 'text/csv' },
-        { id: 'img', name: 'b.png', mediaType: 'image/png' },
-      ],
-      getBytes,
-      { binary: false },
-    )
-    // Only the sticky text block + the user text; the image is dropped on a non-newest turn.
-    expect(blocks).toHaveLength(2)
-    expect(blocks[0].text).toContain('<attachment name="a.csv"')
-    expect(blocks[1]).toEqual({ type: 'text', text: 'q' })
-  })
-
-  it('buildContentBlocks skips a text attachment with corrupt base64 instead of throwing the whole send', async () => {
-    // '@@@' isn't valid base64 → decode throws; the bad ref must be skipped (like
-    // the missing-bytes path), not reject assembly and lock the composer.
-    const getBytes = async (id) => (id === 'good' ? b64Utf8('ok,1') : '@@@not-base64@@@')
-    const blocks = await buildContentBlocks(
-      'q',
-      [
-        { id: 'bad', name: 'bad.csv', mediaType: 'text/csv' },
-        { id: 'good', name: 'good.csv', mediaType: 'text/csv' },
-      ],
-      getBytes,
-    )
-    expect(blocks).toHaveLength(2) // bad skipped; good text block + user text remain
-    expect(blocks[0].text).toContain('good.csv')
-    expect(blocks[1]).toEqual({ type: 'text', text: 'q' })
-  })
-
-  it('buildContentBlocks skips a ref whose bytes are missing (no null-data block)', async () => {
-    const getBytes = async (id) => (id === 'present' ? 'DATA' : null)
-    const blocks = await buildContentBlocks(
-      'caption',
-      [
-        { id: 'gone', mediaType: 'image/png' },
-        { id: 'present', mediaType: 'image/png' },
-      ],
-      getBytes,
-    )
-    // Only the present image block + the text block; the missing one is dropped.
-    expect(blocks).toHaveLength(2)
-    expect(blocks[0]).toMatchObject({ type: 'image', source: { data: 'DATA' } })
-    expect(blocks[1]).toEqual({ type: 'text', text: 'caption' })
-  })
-
-  it('assembleApiMessages maps string turns through and attachment turns to blocks', async () => {
-    const getBytes = async () => 'IMGDATA'
-    const out = await assembleApiMessages(
-      [
-        { role: 'user', content: 'plain question' },
-        { role: 'assistant', content: 'plain answer' },
-        { role: 'user', content: 'look at this', attachments: [{ id: 'a', mediaType: 'image/png' }] },
-      ],
-      getBytes,
-    )
-    expect(out[0]).toEqual({ role: 'user', content: 'plain question' })
-    expect(out[1]).toEqual({ role: 'assistant', content: 'plain answer' })
-    expect(Array.isArray(out[2].content)).toBe(true)
-    expect(out[2].content[0]).toMatchObject({ type: 'image', source: { data: 'IMGDATA' } }) // file first
-    expect(out[2].content[1]).toEqual({ type: 'text', text: 'look at this' }) // text last
-  })
-
-  it('keeps a text attachment sticky across turns but does NOT re-send an old image', async () => {
-    const getBytes = async (id) => (id === 'csv' ? Buffer.from('a,b\n1,2', 'utf8').toString('base64') : 'IMGDATA')
-    const out = await assembleApiMessages(
-      [
-        { role: 'user', content: 'turn 1', attachments: [
-          { id: 'csv', name: 'd.csv', mediaType: 'text/csv' },
-          { id: 'img', name: 'p.png', mediaType: 'image/png' },
-        ] },
-        { role: 'assistant', content: 'ok' },
-        { role: 'user', content: 'turn 2 question' }, // newest, no attachments
-      ],
-      getBytes,
-    )
-    // Turn 1 is no longer newest: the CSV is still inlined (sticky) but the image is gone.
-    expect(Array.isArray(out[0].content)).toBe(true)
-    const turn1Text = out[0].content.map((b) => b.text || '').join('|')
-    expect(turn1Text).toContain('<attachment name="d.csv"')
-    expect(out[0].content.some((b) => b.type === 'image')).toBe(false)
-    // Plain turns unchanged.
-    expect(out[1]).toEqual({ role: 'assistant', content: 'ok' })
-    expect(out[2]).toEqual({ role: 'user', content: 'turn 2 question' })
+describe('attachmentsFromParts', () => {
+  it('extracts file + inline-text descriptors (for AttachmentChips)', () => {
+    const parts = [imagePart('img1'), textAttachmentPart('d.csv', 'a,b'), { type: 'text', text: 'caption' }]
+    expect(attachmentsFromParts(parts)).toEqual([
+      { attachmentId: 'img1', kind: 'image', name: 'img1.png', mediaType: 'image/png' },
+      { attachmentId: 'd.csv-id', kind: 'text', name: 'd.csv', mediaType: 'text/csv' },
+    ])
   })
 })
 
 describe('countAttachments', () => {
-  it('sums attachment refs across all turns', () => {
+  it('sums file + inline-text attachment parts across turns', () => {
     const messages = [
-      { role: 'user', content: 'hi', attachments: [{ id: '1' }, { id: '2' }] },
-      { role: 'assistant', content: 'ok' }, // no attachments key
-      { role: 'user', content: 'more', attachments: [{ id: '3' }] },
+      { role: 'user', parts: [imagePart('1'), textAttachmentPart('r.csv', 'a'), { type: 'text', text: 'hi' }] },
+      { role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', parts: [imagePart('2'), { type: 'text', text: 'more' }] },
     ]
     expect(countAttachments(messages)).toBe(3)
   })
-
-  it('is 0 for empty / attachment-free / non-array inputs', () => {
+  it('is 0 for empty / attachment-free / non-array', () => {
     expect(countAttachments([])).toBe(0)
-    expect(countAttachments([{ role: 'user', content: 'x' }])).toBe(0)
+    expect(countAttachments([{ role: 'user', parts: [{ type: 'text', text: 'x' }] }])).toBe(0)
     expect(countAttachments(null)).toBe(0)
-    expect(countAttachments(undefined)).toBe(0)
   })
 })
 
-describe('attachmentStore — resilience', () => {
-  it('a throwing/absent IndexedDB is swallowed by reads (get → null, total → 0)', async () => {
-    vi.resetModules()
-    const orig = globalThis.indexedDB
-    globalThis.indexedDB = {
-      open: () => {
-        throw new Error('no indexeddb here')
-      },
+describe('assembleApiMessages — download-free parts transform', () => {
+  it('newest turn with a new image builds an image block from in-memory bytes (no historical fetch)', () => {
+    const messages = [
+      { role: 'user', parts: [imagePart('old'), { type: 'text', text: 'turn 1' }] },
+      { role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', parts: [imagePart('new'), { type: 'text', text: 'look' }] },
+    ]
+    const lookups = []
+    const getBytes = (id) => {
+      lookups.push(id)
+      return id === 'new' ? 'IMGDATA' : undefined
     }
-    try {
-      const mod = await import('../attachmentStore.js')
-      expect(await mod.getAttachment('whatever')).toBeNull()
-      expect(await mod.getTotalSize('nobody')).toBe(0)
-    } finally {
-      globalThis.indexedDB = orig
-    }
+    const out = assembleApiMessages(messages, getBytes)
+    // Turn 1 (historical binary) dropped → plain string; never fetched 'old'.
+    expect(out[0]).toEqual({ role: 'user', content: 'turn 1' })
+    expect(out[1]).toEqual({ role: 'assistant', content: 'ok' })
+    // Newest turn: image block from in-memory bytes, file before text.
+    expect(out[2].content[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'IMGDATA' } })
+    expect(out[2].content[1]).toEqual({ type: 'text', text: 'look' })
+    expect(lookups).toEqual(['new']) // only the newest binary was looked up
+  })
+
+  it('keeps an inline text attachment STICKY across turns (no fetch), drops old images', () => {
+    const messages = [
+      { role: 'user', parts: [textAttachmentPart('d.csv', 'a,b\n1,2'), imagePart('img'), { type: 'text', text: 'turn 1' }] },
+      { role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', parts: [{ type: 'text', text: 'turn 2' }] },
+    ]
+    const out = assembleApiMessages(messages, () => undefined) // no byte source at all
+    // Turn 1 not newest: CSV still inlined (sticky), image gone.
+    expect(Array.isArray(out[0].content)).toBe(true)
+    expect(out[0].content.some((b) => b.type === 'image')).toBe(false)
+    expect(out[0].content[0].text).toContain('<attachment name="d.csv" type="text">')
+    expect(out[0].content[0].text).toContain('a,b\n1,2')
+    expect(out[2]).toEqual({ role: 'user', content: 'turn 2' }) // plain
+  })
+
+  it('a turn with only prose → plain string content', () => {
+    const out = assembleApiMessages([{ role: 'user', parts: [{ type: 'text', text: 'just text' }] }])
+    expect(out[0]).toEqual({ role: 'user', content: 'just text' })
+  })
+})
+
+describe('decodeBase64Text', () => {
+  it('round-trips multibyte + strips a leading BOM (not bare atob)', () => {
+    expect(decodeBase64Text(b64Utf8('﻿café,€,日本'))).toBe('café,€,日本')
+  })
+})
+
+describe('buildUserParts', () => {
+  it('inlines text attachments and uploads binaries, prose text last', async () => {
+    const upload = vi.fn(async (a) => ({ attachmentId: a.attachmentId, key: `att/u/${a.attachmentId}`, kind: 'image', name: a.name, mediaType: a.mediaType, size: a.size }))
+    const pending = [
+      { id: 'csv1', name: 'r.csv', mediaType: 'text/csv', size: 5, base64: b64Utf8('a,b\n1') },
+      { id: 'img1', name: 'p.png', mediaType: 'image/png', size: 10, base64: 'AAAA' },
+    ]
+    const parts = await buildUserParts('analyze these', pending, upload)
+    expect(parts[0]).toEqual({ type: 'text', text: 'a,b\n1', attachment: { attachmentId: 'csv1', name: 'r.csv', mediaType: 'text/csv', size: 5 } })
+    expect(parts[1]).toMatchObject({ type: 'file', attachmentId: 'img1', kind: 'image', mediaType: 'image/png' })
+    expect(parts[2]).toEqual({ type: 'text', text: 'analyze these' })
+    expect(upload).toHaveBeenCalledTimes(1) // only the binary uploaded
+  })
+
+  it('propagates an upload failure so the caller can abort the send', async () => {
+    const upload = vi.fn(async () => {
+      throw new Error('cap hit')
+    })
+    await expect(buildUserParts('x', [{ id: 'i', name: 'p.png', mediaType: 'image/png', size: 1, base64: 'AA' }], upload)).rejects.toThrow('cap hit')
   })
 })

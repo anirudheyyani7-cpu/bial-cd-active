@@ -50,3 +50,22 @@ export function openAttachmentBytes(base64, name, mediaType = 'application/pdf')
 export function openPdf(base64, name) {
   return openAttachmentBytes(base64, name, 'application/pdf')
 }
+
+/**
+ * Open an EXISTING object URL (e.g. one served by attachmentApi and cached) in a
+ * new tab via the same user-gesture anchor click. Unlike openAttachmentBytes it
+ * does NOT revoke the URL — the caller's cache owns its lifetime. Returns false
+ * if there's no URL.
+ */
+export function openUrlInNewTab(url, name) {
+  if (!url) return false
+  const a = document.createElement('a')
+  a.href = url
+  a.target = '_blank'
+  a.rel = 'noopener noreferrer'
+  if (name) a.title = name
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  return true
+}

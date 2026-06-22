@@ -1,16 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { filterCodeFromContent, extractPreviewCode } from '../BuilderPage.jsx'
-import { contentToText } from '../../utils/attachmentStore.js'
+import { partsToText } from '../../utils/attachmentStore.js'
 
 describe('BuilderPage content helpers', () => {
-  it('filterCodeFromContent(contentToText(arrayContent)) never throws or yields [object Object]', () => {
-    const arrayContent = [
-      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+  it('filterCodeFromContent(partsToText(parts)) never throws or yields [object Object]', () => {
+    // A parts[] message with a file part + a prose text part holding a code fence.
+    const parts = [
+      { type: 'file', attachmentId: 'a1', kind: 'image', name: 'd.png', mediaType: 'image/png' },
       { type: 'text', text: 'build an app like this ```jsx:preview\nconst x = 1\n``` thanks' },
     ]
     let out
     expect(() => {
-      out = filterCodeFromContent(contentToText(arrayContent))
+      out = filterCodeFromContent(partsToText(parts))
     }).not.toThrow()
     expect(out).toContain('build an app like this')
     expect(out).not.toContain('[object Object]')

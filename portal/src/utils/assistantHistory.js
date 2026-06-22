@@ -1,19 +1,13 @@
-import { createConversationStore } from './conversationStore.js'
+import { createConversationStore, deriveTitle } from './conversationApi.js'
 
-// BIAL Chat (general assistant) history. A per-user store keyed
-// `bial_assistant_history:<user>`, id prefix `bchat`, isolated from App Builder's
-// `bial_chat_history` so the two surfaces' recents never mix (Decision 8). Built
-// from the same factory as chatHistory.js — only the prefixes differ.
-const store = createConversationStore('bial_assistant_history', 'bchat')
+// BIAL Chat (general assistant) history, server-backed (kind 'assistant'),
+// isolated from App Builder's 'planning' kind so the two surfaces' recents never
+// mix. Built from the same async factory as chatHistory.js — only the kind differs.
+const store = createConversationStore('assistant')
 
-export const {
-  loadHistory,
-  saveHistory,
-  newConversation,
-  appendMessage,
-  getConversation,
-  deleteConversation,
-} = store
+export const { loadHistory, newConversation, getConversation, deleteConversation, appendMessage } = store
+
+export { deriveTitle }
 
 // relativeTime is presentation-only and surface-agnostic; re-export App Builder's
 // so the assistant pages share one implementation.

@@ -6,8 +6,8 @@
  */
 
 // Native Anthropic image/document types PLUS inline text files (CSV/plain-text).
-// Text files aren't native documents — they travel as fenced inline text blocks
-// (see attachmentStore.buildContentBlocks), but they share this allowlist so the
+// Text files aren't native documents — they travel as fenced inline text parts
+// (see attachmentStore.buildUserParts), but they share this allowlist so the
 // validator and OS file picker accept them.
 export const ALLOWED_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/csv', 'text/plain']
 // Text media types are special-cased everywhere binary attachments are: inlined
@@ -26,8 +26,8 @@ export const MAX_TEXT_FILE_SIZE = 256 * 1024
 export const MAX_TEXT_BYTES_PER_CONVERSATION = 512 * 1024
 export const MAX_FILES_PER_MESSAGE = 5
 // Cumulative cap across a whole conversation (all turns). Distinct from the
-// per-message cap above and the per-user 50 MB IndexedDB store cap; checked at
-// send time where the full conversation is visible.
+// per-message cap above and the per-user 50 MB object-store cap (enforced
+// server-side); checked at send time where the full conversation is visible.
 export const MAX_ATTACHMENTS_PER_CONVERSATION = 20
 
 export const WORD_REJECT_MSG = "Word docs aren't supported — please save as PDF and re-upload."

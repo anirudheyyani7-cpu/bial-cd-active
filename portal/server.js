@@ -35,6 +35,8 @@ import { createAppRegistryRepo } from './server/app-registry-repo.js'
 import { createDataRecordsRepo } from './server/data-records-repo.js'
 import { createAuditRepo } from './server/audit-repo.js'
 import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from './server/app-data.js'
+import { createDeployRouter } from './server/deploy.js'
+import { createAdminAppsRouter } from './server/admin/apps-routes.js'
 import { validateAttachments } from './server/message-content.js'
 import { getObjectStore } from './server/object-store.js'
 import {
@@ -297,6 +299,15 @@ export function createApp({
   }
 
   app.use('/api/auth', createAuthRouter({ repo, defaults }))
+  // Admin-only App Registry: approve/reject (U8) + list/toggle/disable/clear-data/
+  // delete/audit (U10). Mounted BEFORE the broader /api/admin so its specific
+  // prefix matches first (no double-auth). Gated at the mount; handlers assume admin.
+  app.use(
+    '/api/admin/apps',
+    requireAuth,
+    requireAdmin,
+    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo, conversationsRepo }),
+  )
   // Admin-only per-user limit management + feedback read. Gated at the mount point.
   app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults }))
 
@@ -436,6 +447,12 @@ export function createApp({
   // auth chain (requireAppKey → requireLoginIfRequired → per-app limiter), so an
   // open app admits anonymous writes while a login app reuses the portal token.
   app.use('/api/apps/:appId/records', createAppDataRouter({ registryRepo, dataRecordsRepo, auditRepo }))
+
+  // Deploy lifecycle (owner-facing provision + submit). Mounted at /api/apps AFTER
+  // the records router (more specific) so /api/apps/:id/records is never shadowed;
+  // each route applies the shared requireAuth itself (so it does NOT gate the
+  // anonymous-friendly records router). Ownership is the build conversation's.
+  app.use('/api/apps', createDeployRouter({ registryRepo, conversationsRepo, auditRepo }))
 
   // Isolated builder-preview renderer. The generated app runs inside a sandboxed
   // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the

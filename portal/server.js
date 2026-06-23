@@ -28,6 +28,7 @@ import { createFeedbackRepo } from './server/feedback-repo.js'
 import { makeFeedbackLimiter, createFeedbackHandler } from './server/feedback.js'
 import { createConversationsRepo } from './server/conversations-repo.js'
 import { createMessagesRepo } from './server/messages-repo.js'
+import { ensureIndexes } from './server/ensure-indexes.js'
 import { createAttachmentsRepo } from './server/attachments-repo.js'
 import { createConversationsRouter } from './server/conversations.js'
 import { createAttachmentsRouter } from './server/attachments.js'
@@ -523,6 +524,15 @@ async function start() {
   const registryRepo = createAppRegistryRepo(await getAppRegistryCollection())
   const dataRecordsRepo = createDataRecordsRepo(await getDataRecordsCollection(), registryRepo)
   const auditRepo = createAuditRepo(await getAuditCollection())
+  // Cosmos for MongoDB needs composite indexes to serve our filter+sort reads
+  // (it 400s otherwise — see ensure-indexes.js). Idempotent + resilient, so it's
+  // safe on every boot; the getters return the same cached handles. Awaited so the
+  // build is kicked off before the first request, but a per-index failure only logs.
+  await ensureIndexes({
+    conversations: await getConversationsCollection(),
+    messages: await getMessagesCollection(),
+    feedback: await getFeedbackCollection(),
+  })
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,
     baseURL: `https://${process.env.AZURE_FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/anthropic`,

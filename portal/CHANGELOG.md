@@ -34,6 +34,38 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   native form submissions can't smuggle it out, and the long-lived refresh token is
   never handed to an app.
 
+## [1.3.3] - 2026-06-23
+
+### Fixed
+- **Opening a conversation now actually loads its messages on the deployed app.** A
+  live probe against the Cosmos account showed it serves only single-field ORDER BY
+  — any multi-field sort (`{seq, createdAt}`, `{seq, createdAt, _id}`) returns the
+  same 400, even with a matching compound index, which is why 1.3.1/1.3.2 did not
+  fully resolve it. Messages now sort by `seq` alone; `seq` is a unique, monotonic
+  per-conversation counter (user = N, assistant = N+1) so it fully orders messages
+  with no tiebreak, and the matching index drops to `{conversationId, username, seq}`.
+
+## [1.3.2] - 2026-06-23
+
+### Fixed
+- **Opening a chat or App Builder conversation works on the deployed app.** The
+  1.3.1 indexes fixed the conversation list, but loading a single conversation's
+  messages still failed with the same Cosmos 400 because the message read sorted by
+  `_id` as a final tiebreak — and Azure Cosmos DB for MongoDB will not serve an
+  ORDER BY that includes `_id`, even with the index present. Messages now sort by
+  `{seq, createdAt}` and the matching index drops `_id`, so the read is served.
+
+## [1.3.1] - 2026-06-23
+
+### Fixed
+- **Chat and App Builder history loads again on the deployed app.** On Azure Cosmos
+  DB, listing your conversations and opening a chat were failing with a 400 error
+  because the database had no composite index to serve those sorted, filtered
+  reads (it worked locally, where the database does not require one). The required
+  indexes are now created automatically on server start, so a fresh deployment
+  fixes itself. To unblock a running deployment without redeploying, run
+  `node scripts/ensure-indexes.js`.
+
 ## [1.3.0] - 2026-06-22
 
 ### Added

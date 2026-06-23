@@ -2,7 +2,7 @@
  * In-memory double for the Mongo `messages` collection (Cosmos for MongoDB API).
  * Models the slice the repo uses: insertOne (duplicate `_id` → E11000, so the
  * idempotent-retry path is exercised), a multi-key `find().sort().limit().toArray()`
- * chain (sort {seq,createdAt,_id}) honoring the full `{ conversationId, username }`
+ * chain (sort {seq}) honoring the full `{ conversationId, username }`
  * filter, and deleteMany. Documents are keyed by `_id` (a client-minted uuid).
  *
  * Mirrors the dedicated-fake precedent of fakeFeedbackCosmos.js.

@@ -161,7 +161,10 @@ export default function LivePreview({ previewCode, generating, generationStage, 
                   src="/preview"
                   className="w-full h-full border-0"
                   title="App Preview"
-                  sandbox="allow-scripts"
+                  /* allow-forms so the app's <form onSubmit> handlers fire (parity with
+                     the deployed runner frame); native form navigation is blocked by the
+                     /preview CSP's form-action 'none', so the injected token can't leak. */
+                  sandbox="allow-scripts allow-forms"
                 />
               )}
             </div>

@@ -28,7 +28,10 @@ describe('runner — shell (/apps/:appId)', () => {
   it('serves a same-origin shell that embeds a sandboxed (no allow-same-origin) app frame', async () => {
     const res = await request(harness()).get('/apps/app-open')
     expect(res.status).toBe(200)
-    expect(res.text).toContain("setAttribute('sandbox','allow-scripts')")
+    // allow-forms lets a generated app's <form onSubmit> handler fire (native form
+    // navigation is blocked by the frame CSP's form-action 'none'); still NO
+    // allow-same-origin, so the frame can't read the portal session.
+    expect(res.text).toContain("setAttribute('sandbox','allow-scripts allow-forms')")
     expect(res.text).not.toContain('allow-same-origin') // can't read the portal session
     expect(res.text).toContain('/apps/app-open/frame') // embeds the frame route
     expect(res.text).toContain('"loginRequired":false')
@@ -67,6 +70,13 @@ describe('runner — frame (/apps/:appId/frame)', () => {
     const csp = res.headers['content-security-policy']
     expect(csp).not.toContain('unsafe-eval') // pre-compiled → no eval needed
     expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/) // scoped to the portal origin
+    // the token-bearing frame must have NO bare https: img egress (an <img> beacon
+    // would exfiltrate window.__BIAL_TOKEN past the scoped connect-src)
+    expect(csp).toContain("img-src 'self' data:")
+    expect(csp).not.toMatch(/img-src[^;]*https:/)
+    // allow-forms is enabled on the frame, so a native form navigation must be blocked
+    // outright — a token-bearing <form> can't POST window.__BIAL_TOKEN off-origin.
+    expect(csp).toContain("form-action 'none'")
   })
 
   it('the frame route 404s for an unservable app', async () => {

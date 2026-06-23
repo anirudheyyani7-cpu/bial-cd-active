@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-06-23
+
+### Fixed
+- **Chat and App Builder history loads again on the deployed app.** On Azure Cosmos
+  DB, listing your conversations and opening a chat were failing with a 400 error
+  because the database had no composite index to serve those sorted, filtered
+  reads (it worked locally, where the database does not require one). The required
+  indexes are now created automatically on server start, so a fresh deployment
+  fixes itself. To unblock a running deployment without redeploying, run
+  `node scripts/ensure-indexes.js`.
+
 ## [1.3.0] - 2026-06-22
 
 ### Added

@@ -65,6 +65,14 @@ const INDEX_SPECS = {
     // search(appId, collection, sort=updatedAt).
     { appId: 1, collection: 1, updatedAt: -1 },
   ],
+  appFiles: [
+    // app-files-repo list(appId): ready files newest-first across ALL collections
+    // for one tenant — `collection` must NOT sit between the `appId` equality and the
+    // `createdAt` sort, so this 2-field index is dedicated (mirrors dataRecords).
+    { appId: 1, createdAt: -1 },
+    // list(appId, collection): files in one logical collection, newest-first.
+    { appId: 1, collection: 1, createdAt: -1 },
+  ],
 }
 
 /**

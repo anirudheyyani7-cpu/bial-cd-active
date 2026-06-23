@@ -11,6 +11,16 @@
  *   get(key)                      -> Promise<Buffer>
  *   delete(key)                   -> Promise<void>
  *   exists(key)                   -> Promise<boolean>
+ *   getDownloadUrl(key, opts)     -> Promise<string>   (short-lived read URL)
+ *
+ * `getDownloadUrl` is the SYMMETRIC download-offload seam (per-app file storage):
+ * Azure mints an account-key SAS, S3/MinIO a presigned GET. It is read-only,
+ * single-blob, short-TTL, content-disposition-pinned, and (Azure) IP-scoped via
+ * FILE_SAS_SIGNED_IP. A backend that cannot sign THROWS — the route maps that to a
+ * 501 and the client falls back to the same-origin `/content` proxy. Note this
+ * REVERSES the v1.3.0 attachment "no signed URLs" stance for the download path
+ * only (the blob host stays out of the sandbox CSP — the URL is consumed by an
+ * `<a download>` navigation, never a `connect-src` fetch).
  *
  * The concrete backend (MinIO on the BIAL network for the POC; Azure Blob's S3
  * endpoint or AWS S3 later) is one swappable module: a single S3 client pointed
@@ -25,7 +35,8 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3'
-import { BlobServiceClient } from '@azure/storage-blob'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { BlobServiceClient, BlobSASPermissions } from '@azure/storage-blob'
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -33,6 +44,31 @@ function requireEnv(name) {
     throw new Error(`Missing required object-store env var: ${name}. Copy .env.example to .env.`)
   }
   return value
+}
+
+// Default SAS / presign lifetime (seconds). Short by design — a leaked URL is
+// usable only for this window. Overridden per-call by the route (FILE_SAS_TTL_SECONDS).
+const DEFAULT_DOWNLOAD_TTL_SECONDS = 120
+
+/**
+ * Parse FILE_SAS_SIGNED_IP into an Azure SAS `ipRange` ({ start, end? }). Accepts
+ * a single IP (`1.2.3.4`) or a range (`1.2.3.4-1.2.3.40`). Returns null when unset
+ * so the caller can warn + mint without an IP scope (POC fallback). The IP scope is
+ * a load-bearing containment control: it makes a leaked SAS unusable off the BIAL
+ * egress range even if the storage account is publicly reachable.
+ */
+function parseSignedIp(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return null
+  const [start, end] = raw.trim().split('-').map((s) => s.trim())
+  return end ? { start, end } : { start }
+}
+
+/** Build a safe `Content-Disposition: attachment` value; never inject a raw filename. */
+function attachmentDisposition(filename) {
+  // The route already validates the filename against a strict regex (no quotes/CRLF/;),
+  // but re-guard here so the seam can't emit a header-injecting disposition.
+  const safe = typeof filename === 'string' ? filename.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 200) : ''
+  return `attachment; filename="${safe || 'download'}"`
 }
 
 /**
@@ -90,6 +126,22 @@ export function createS3ObjectStore({
         throw err
       }
     },
+
+    /**
+     * Presigned GET URL (read-only, single object, short TTL). The pinned
+     * `ResponseContentDisposition`/`ResponseContentType` force the download
+     * filename + MIME even cross-origin. Used only for download-to-disk; the
+     * presigned host is NEVER added to the sandbox CSP.
+     */
+    async getDownloadUrl(key, { expiresInSeconds = DEFAULT_DOWNLOAD_TTL_SECONDS, filename, contentType } = {}) {
+      const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ResponseContentDisposition: attachmentDisposition(filename),
+        ResponseContentType: contentType || undefined,
+      })
+      return await getSignedUrl(client, command, { expiresIn: expiresInSeconds })
+    },
   }
 }
 
@@ -137,6 +189,40 @@ export function createAzureObjectStore({ connectionString, container } = {}) {
 
     async exists(key) {
       return await blob(key).exists()
+    },
+
+    /**
+     * Mint a short-lived, read-only, single-blob ACCOUNT-KEY SAS (Decision 4). The
+     * shared-key credential is already inside the `fromConnectionString` client, so
+     * `generateSasUrl` signs with no separately-constructed credential. Scoped as
+     * tightly as the API allows: read permission only, this one blob, short TTL,
+     * pinned content-disposition/content-type, and `ipRange` from FILE_SAS_SIGNED_IP
+     * (the BIAL egress range) so a leaked URL is unusable off-network. THROWS when the
+     * connection string carries no account key (e.g. a SAS connection string) — the
+     * route maps that to a 501 and the client falls back to the `/content` proxy.
+     * The account-key SAS is non-revocable until key rotation; user-delegation SAS
+     * (AAD) is the deferred hardening.
+     */
+    async getDownloadUrl(key, { expiresInSeconds = DEFAULT_DOWNLOAD_TTL_SECONDS, filename, contentType } = {}) {
+      const now = Date.now()
+      const options = {
+        permissions: BlobSASPermissions.parse('r'),
+        // Backdate the start a few minutes to tolerate portal↔Azure clock skew (an
+        // un-backdated `st` can 403 a just-minted SAS as "not yet valid").
+        startsOn: new Date(now - 5 * 60 * 1000),
+        expiresOn: new Date(now + expiresInSeconds * 1000),
+        contentDisposition: attachmentDisposition(filename),
+      }
+      if (contentType) options.contentType = contentType
+      const ipRange = parseSignedIp(process.env.FILE_SAS_SIGNED_IP)
+      if (ipRange) {
+        options.ipRange = ipRange
+      } else {
+        console.warn(
+          'getDownloadUrl: FILE_SAS_SIGNED_IP is unset — minting a SAS with NO IP restriction. Set it to the BIAL egress range before go-live.',
+        )
+      }
+      return await blob(key).generateSasUrl(options)
     },
   }
 }

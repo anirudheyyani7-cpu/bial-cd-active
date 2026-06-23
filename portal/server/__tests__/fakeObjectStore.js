@@ -31,5 +31,20 @@ export function makeFakeObjectStore(initial = {}) {
     async exists(key) {
       return store.has(key)
     },
+
+    /**
+     * Deterministic stub for the download-URL seam: an https URL embedding the key
+     * + a fake signature + the TTL + a content-disposition. https-prefixed so the
+     * BIALData downloadFile https-scheme guard accepts it; no network involved.
+     */
+    async getDownloadUrl(key, { expiresInSeconds = 120, filename, contentType } = {}) {
+      const params = new URLSearchParams({
+        sig: 'fake-signature',
+        se: String(expiresInSeconds),
+        rscd: `attachment; filename="${filename || 'download'}"`,
+      })
+      if (contentType) params.set('rsct', contentType)
+      return `https://fake-objectstore.local/${key}?${params.toString()}`
+    },
   }
 }

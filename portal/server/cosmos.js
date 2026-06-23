@@ -23,6 +23,7 @@ let messagesCollection = null
 let attachmentUsageCollection = null
 let appRegistryCollection = null
 let dataRecordsCollection = null
+let appFilesCollection = null
 let auditCollection = null
 
 function requireEnv(name) {
@@ -185,6 +186,22 @@ export async function getDataRecordsCollection() {
 }
 
 /**
+ * Resolve the pre-created `app_files` collection (cached after first call). The
+ * per-app FILE metadata store: one doc per uploaded file, partitioned by `/appId`,
+ * carrying filename/contentType/size/blobKey + a `pending|ready` status (the bytes
+ * live in the object store, never here). Provisioned out-of-band; this only
+ * connects. Maps to a Postgres `app_files` table.
+ */
+export async function getAppFilesCollection() {
+  if (appFilesCollection) return appFilesCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_APP_FILES_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  appFilesCollection = db.collection(collectionId)
+  return appFilesCollection
+}
+
+/**
  * Resolve the pre-created `audit_logs` collection (cached after first call). One
  * append-only event per data mutation AND per admin registry action (who did
  * what, especially deletes); record contents are never stored. Keyed by a
@@ -211,5 +228,6 @@ export function _resetMongo() {
   attachmentUsageCollection = null
   appRegistryCollection = null
   dataRecordsCollection = null
+  appFilesCollection = null
   auditCollection = null
 }

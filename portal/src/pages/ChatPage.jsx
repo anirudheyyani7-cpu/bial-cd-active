@@ -366,7 +366,7 @@ export default function ChatPage() {
   const handleLaunchBuilder = useCallback(() => {
     setShowPromptModal(false)
     navigate('/workspace/builder', {
-      state: { prompt: builderPrompt, dataSource: 'none', theme: 'bial', hasSchema: false, uploadedFiles: [] },
+      state: { prompt: builderPrompt, theme: 'bial', uploadedFiles: [] },
     })
   }, [builderPrompt, navigate])
 

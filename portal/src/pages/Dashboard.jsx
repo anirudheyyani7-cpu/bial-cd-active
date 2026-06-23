@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { FileText, Rocket, Bot, ArrowRight } from 'lucide-react'
+import { FileText, Rocket, Bot, ArrowRight, Info } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import { getStoredUser } from '../utils/auth'
 import { CHAT_ENABLED } from '../config/features'
@@ -22,14 +22,21 @@ export default function Dashboard() {
         <h1 className="text-4xl font-extrabold text-tertiary mb-3">
           Hello, {greetingName}
         </h1>
-        {user?.role && (
-          <p className="text-sm font-worksans font-semibold text-primary mb-3 capitalize">
-            {user.role}
-          </p>
-        )}
-        <p className="text-neutral text-base leading-relaxed max-w-2xl mb-10">
+        <p className="text-neutral text-base leading-relaxed max-w-2xl mb-6">
           Ready to build the future of aviation? Plan and build operational tools in the App Builder{CHAT_ENABLED ? ', or ask BIAL Chat anything' : ''}.
         </p>
+
+        {/* Pilot (POC) disclaimer — sets expectations that this is an early
+            proof-of-concept, not a production system. */}
+        <div className="flex items-start gap-3 max-w-2xl mb-10 rounded-2xl border border-bial-border bg-primary/5 px-4 py-3">
+          <Info size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-tertiary">Pilot (POC)</p>
+            <p className="text-xs text-neutral leading-relaxed">
+              This is an early proof-of-concept of the Citizen Developer Portal. Apps and data are for demonstration only and may change or reset.
+            </p>
+          </div>
+        </div>
 
         {/* Entry points — distinct identity + job-to-be-done copy (Decision 7).
             BIAL Chat is temporarily hidden (CHAT_ENABLED); collapse to one column

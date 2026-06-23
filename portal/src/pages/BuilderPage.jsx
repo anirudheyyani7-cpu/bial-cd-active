@@ -24,7 +24,7 @@ const WELCOME_TEXT = "Hello! I'm Citizen Developer AI. Tell me what you'd like t
 const welcomeMessage = () => ({ id: 'welcome', role: 'assistant', parts: [{ type: 'text', text: WELCOME_TEXT }], createdAt: new Date().toISOString() })
 
 const STAGE_MESSAGES = [
-  'Got it! Analyzing your requirements and identifying the right data sources...',
+  'Got it! Analyzing your requirements and mapping out the app structure...',
   'Requirements mapped. Creating the wireframe layout for your app...',
   'Wireframe ready. Generating the application code now — this takes a moment...',
   'Code generation complete. Rendering your live preview...',
@@ -134,9 +134,7 @@ export default function BuilderPage() {
   const { buildId } = useParams()
   const initialPrompt = location.state?.prompt || ''
   const contextRef = useRef({
-    dataSource: location.state?.dataSource || null,
     theme: location.state?.theme || 'bial',
-    hasSchema: location.state?.hasSchema || false,
     uploadedFiles: location.state?.uploadedFiles || [],
   })
   const { sendMessage, error } = useClaudeAPI()

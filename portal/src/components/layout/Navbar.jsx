@@ -165,7 +165,7 @@ export default function Navbar() {
                 <Search size={13} className="text-neutral flex-shrink-0" />
                 <input
                   type="text"
-                  placeholder="Search apps, pages, or actions..."
+                  placeholder="Search pages or actions..."
                   value={searchQuery}
                   onChange={(e) => { setSearchQuery(e.target.value); setActiveDropdown('search') }}
                   className="bg-transparent text-sm text-tertiary placeholder:text-gray-400 focus:outline-none w-48"
@@ -225,25 +225,31 @@ export default function Navbar() {
               )}
             </div>
 
-            {/* Daily token usage */}
-            {usage && (
-              <div
-                className="hidden md:flex flex-col justify-center px-2.5 mr-0.5 select-none"
-                title={`Daily AI tokens used today · resets at midnight IST`}
-              >
-                <span className="text-[10px] font-semibold text-neutral leading-none whitespace-nowrap">
-                  {usage.used.toLocaleString('en-US')} / {usage.limit.toLocaleString('en-US')} tokens
-                </span>
-                <div className="mt-1 h-1 w-24 rounded-full bg-surface-muted overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      usage.remaining <= 0 ? 'bg-danger' : 'bg-primary'
-                    }`}
-                    style={{ width: `${Math.min(100, usage.limit ? (usage.used / usage.limit) * 100 : 0)}%` }}
-                  />
+            {/* Daily token usage — prominent status chip bound to the live
+                /api/usage/today source. Three-state colour: healthy (primary) →
+                nearing the limit (accent/amber) → exhausted (danger). */}
+            {usage && (() => {
+              const pct = usage.limit ? Math.min(100, (usage.used / usage.limit) * 100) : 0
+              const exhausted = usage.remaining <= 0
+              const nearing = !exhausted && pct >= 80
+              const barColor = exhausted ? 'bg-danger' : nearing ? 'bg-accent' : 'bg-primary'
+              return (
+                <div
+                  className="hidden md:flex flex-col justify-center gap-1 bg-surface-muted border border-bial-border rounded-full px-3 py-1.5 mr-1 select-none"
+                  title="Daily AI tokens used today · resets at midnight IST"
+                >
+                  <span className={`text-xs font-semibold leading-none whitespace-nowrap ${exhausted ? 'text-danger' : 'text-tertiary'}`}>
+                    {usage.used.toLocaleString('en-US')} / {usage.limit.toLocaleString('en-US')} tokens
+                  </span>
+                  <div className="h-1.5 w-28 rounded-full bg-white overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${barColor}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {/* Feedback — always visible (every authed user); icon-only on mobile */}
             <button

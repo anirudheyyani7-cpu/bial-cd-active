@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-06-23
+
+### Added
+- **Pilot (POC) notice on the home screen.** A short banner now states this is an
+  early proof-of-concept and that apps and data are for demonstration only and may
+  change or reset, so first-time users know what to expect.
+
+### Changed
+- **The daily AI token counter is now easy to see.** It moved from tiny grey text to
+  a clear status chip showing `used / limit` that turns amber as you near the limit
+  and red when it's used up. It still reads your live usage and resets at midnight IST.
+- **Clearer "Plan with AI" vs "Build an App".** The App Builder now explains that
+  Plan with AI scopes your requirements in a guided chat first (no code yet), while
+  Build an App jumps straight to a working draft.
+- **Honest global search.** The search box no longer advertises apps it can't find —
+  it now reads "Search pages or actions…" to match what it actually searches.
+
+### Removed
+- **Removed the non-functional "Data Source" dropdown and "Backend Schema" toggle**
+  from the build sandbox. They connected to no real system, so they are gone, along
+  with the misleading help text that claimed the portal connects to AODB, FIDS, and
+  other airport systems. File upload, the Theme picker, and saved app data are
+  unchanged.
+- **Removed the meaningless role label** ("User") shown under the home-screen greeting.
+
 ## [1.4.0] - 2026-06-23
 
 ### Added

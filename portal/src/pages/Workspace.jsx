@@ -6,7 +6,7 @@ import { loadHistory, relativeTime } from '../utils/chatHistory'
 import { loadBuilds } from '../utils/builderHistory'
 
 const VIBE_STEPS = [
-  { n: 1, text: 'Type a prompt explaining the intent and data source.' },
+  { n: 1, text: 'Type a prompt describing the tool you want and the data it should work with.' },
   { n: 2, text: 'Review the generated app and refine the UI components visually.' },
   { n: 3, text: 'Your work is saved automatically — find it under Recent Conversations to continue anytime.' },
 ]
@@ -96,7 +96,7 @@ export default function Workspace() {
           <div>
             <h1 className="text-3xl font-extrabold text-tertiary mb-1">App Builder</h1>
             <p className="text-neutral text-sm max-w-xl leading-relaxed">
-              Plan with AI or jump straight into building operational tools for the terminal floor.
+              Talk through your requirements with AI first, then build — or jump straight into the build sandbox.
             </p>
           </div>
         </div>
@@ -121,7 +121,7 @@ export default function Workspace() {
                 What operational tool do you want to build today?
               </h2>
               <p className="text-white/70 text-sm max-w-sm leading-relaxed">
-                Describe your idea in plain English. Plan it out with AI first, or jump straight into the build sandbox.
+                Describe your idea in plain English, then choose how to start.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
                 <button
@@ -137,6 +137,9 @@ export default function Workspace() {
                   Build an App <Sparkles size={15} />
                 </button>
               </div>
+              <p className="text-white/70 text-xs max-w-sm leading-relaxed mt-1">
+                <strong className="font-semibold text-white">Plan with AI</strong> scopes your requirements in a guided chat — no code yet. <strong className="font-semibold text-white">Build an App</strong> jumps straight to a working draft.
+              </p>
               <div className="flex items-center gap-2 bg-white/10 text-white/80 text-xs px-4 py-2 rounded-full mt-1">
                 <Lightbulb size={12} />
                 Try: "Build a baggage delay tracker for Gate B12"

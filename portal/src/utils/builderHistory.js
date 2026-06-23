@@ -5,7 +5,7 @@
  * reopened build renders from a single point read — no transcript scan.
  *
  * A build header is `{ id, title, createdAt, updatedAt, context, code }`:
- *   - context: generation settings (dataSource/theme/hasSchema/uploadedFiles),
+ *   - context: generation settings (theme/uploadedFiles),
  *     passed via the first appendBuilderMessage's header so refinements after a
  *     resume keep their configuration.
  *   - code.current: the latest extracted PreviewApp snapshot.

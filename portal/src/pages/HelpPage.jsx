@@ -11,12 +11,12 @@ const EXAMPLE_PROMPTS = [
   {
     level: 'Intermediate',
     color: 'bg-blue-100 text-blue-700',
-    text: 'Create a gate assignment dashboard that shows all Terminal 2 gates on a map layout. Color-code gates by status: green for available, amber for scheduled, red for delayed. Pull data from AODB and auto-refresh every 60 seconds.',
+    text: 'Create a gate assignment dashboard that shows all Terminal 2 gates on a map layout. Color-code gates by status: green for available, amber for scheduled, red for delayed. I will upload the current day\'s gate schedule to populate it.',
   },
   {
     level: 'Advanced',
     color: 'bg-purple-100 text-purple-700',
-    text: 'Build a predictive delay alert system for Terminal 3 operations. Use flight schedule data from FIDS and historical delay patterns to flag flights likely to experience delays exceeding 20 minutes. Show a priority-ranked list with estimated delay duration, affected gate, and suggested resource reallocation. Include a one-tap escalation button that notifies the shift supervisor.',
+    text: 'Build a predictive delay alert system for Terminal 3 operations. Use the flight schedule and historical delay patterns I upload to flag flights likely to experience delays exceeding 20 minutes. Show a priority-ranked list with estimated delay duration, affected gate, and suggested resource reallocation. Include a one-tap escalation button that notifies the shift supervisor.',
   },
   {
     level: 'Full-stack',
@@ -27,7 +27,7 @@ const EXAMPLE_PROMPTS = [
 
 const DOS = [
   'Name the specific terminal, gate, or zone',
-  'Mention the data source (AODB, BHS, etc.)',
+  'Describe the data the app works with (uploads or records it captures)',
   'Describe 3–5 key features explicitly',
   'Specify the user type (ground ops, control room, passenger-facing)',
   'Mention layout preference (mobile-first, dashboard, kiosk)',
@@ -65,8 +65,8 @@ const FAQS = [
     a: 'Yes. Click the "View Code" button in the builder toolbar to see the generated React code. However, you do not need to understand or edit the code — the AI chat handles all changes.',
   },
   {
-    q: 'What data sources are available?',
-    a: 'The portal connects to AODB (Airport Operations Database), Vision Analytics System, Flight Information Display System (FIDS), Baggage Handling System telemetry, Staff Roster database, and Passenger Flow Analytics. You can select your data source from the dropdown on the Sandbox page.',
+    q: 'How does my app get its data?',
+    a: 'Apps work with the data you provide — upload an Excel or CSV file to view and analyze it, or let the app capture and store records through the built-in data service. The portal does not connect to external airport systems during this pilot.',
   },
   {
     q: 'Is there a limit to how many apps I can build?',
@@ -144,7 +144,7 @@ export default function HelpPage() {
                 <div className="space-y-3">
                   {[
                     { title: 'Be specific about the problem', body: 'Instead of "Build a tracking app", say "Build a real-time baggage carousel status tracker for Terminal 3, showing load percentage, motor temperature, and maintenance alerts for belts 12A through 24C."' },
-                    { title: 'Name your data source', body: 'Mention which airport system your app should pull from — AODB, Vision Analytics, BHS Telemetry, Staff Roster, or FIDS. If you are unsure, select it from the Data Source dropdown.' },
+                    { title: 'Describe the data', body: 'Explain what information the app works with — the columns of an Excel/CSV you will upload, or the records the app should capture and store. Attaching a sample file in the Sandbox grounds the app in real data.' },
                     { title: 'Describe the users', body: 'Who will use this app? Ground ops staff on mobile during shifts? Control room operators on desktop dashboards? Knowing the user shapes the layout.' },
                     { title: 'Specify key features', body: 'List the 3–5 most important features. For example: "Include a calendar view, a status dashboard, alert notifications, and a CSV export button."' },
                     { title: 'Set design expectations', body: 'Mention if you want mobile-first, dashboard-style, kiosk-friendly, or standard desktop layout. Selecting a Theme from the dropdown also helps.' },

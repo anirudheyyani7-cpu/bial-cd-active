@@ -34,6 +34,8 @@ function projectApp(a) {
     loginRequired: Boolean(a.loginRequired),
     dataCount: a.dataCount || 0,
     dataBytes: a.dataBytes || 0,
+    fileCount: a.fileCount || 0,
+    fileBytes: a.fileBytes || 0,
     hasApprovedSnapshot: typeof a.code?.approvedSnapshot?.compiled === 'string',
     approvedBy: a.approvedBy || null,
     approvedAt: a.approvedAt || null,
@@ -53,10 +55,12 @@ const safe = (fn) => async (req, res) => {
   }
 }
 
-export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo } = {}) {
+export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo, appFilesRepo, objectStore } = {}) {
   if (!registryRepo) throw new Error('createAdminAppsRouter: registryRepo is required')
   if (!auditRepo) throw new Error('createAdminAppsRouter: auditRepo is required')
   if (!dataRecordsRepo) throw new Error('createAdminAppsRouter: dataRecordsRepo is required')
+  if (!appFilesRepo) throw new Error('createAdminAppsRouter: appFilesRepo is required')
+  if (!objectStore) throw new Error('createAdminAppsRouter: objectStore is required')
   const router = express.Router()
 
   // Single-use clear-data confirm tokens (token → { appId, exp }).
@@ -64,6 +68,28 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
   const pruneClearTokens = () => {
     const now = Date.now()
     for (const [t, v] of clearTokens) if (v.exp < now) clearTokens.delete(t)
+  }
+
+  /** An object-store error that means "blob already absent" (idempotent delete). */
+  const isNotFound = (err) =>
+    err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
+
+  /**
+   * Best-effort delete of a `[{ fileId, blobKey }]` list from the object store. The
+   * metadata is already gone by the time we get here (purgeByApp/recompute delete it
+   * and RETURN the keys), so a genuine store error is logged but never aborts: the
+   * residual is a bounded storage-cost orphan the deferred blob-GC mops up — far less
+   * harmful than failing the whole admin op after the metadata is destroyed.
+   */
+  const deleteBlobs = async (blobs) => {
+    for (const b of blobs || []) {
+      if (!b?.blobKey) continue
+      try {
+        await objectStore.delete(b.blobKey)
+      } catch (err) {
+        if (!isNotFound(err)) console.error('admin file blob delete failed (non-fatal):', b.blobKey, err.message)
+      }
+    }
   }
 
   // List apps (optionally filtered by status), newest-first, explicitly projected.
@@ -201,7 +227,14 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
       pruneClearTokens()
       const confirmToken = randomBytes(16).toString('base64url')
       clearTokens.set(confirmToken, { appId, exp: Date.now() + CLEAR_TOKEN_TTL_MS })
-      res.json({ appId, dataCount: app.dataCount || 0, dataBytes: app.dataBytes || 0, confirmToken })
+      res.json({
+        appId,
+        dataCount: app.dataCount || 0,
+        dataBytes: app.dataBytes || 0,
+        fileCount: app.fileCount || 0,
+        fileBytes: app.fileBytes || 0,
+        confirmToken,
+      })
     }),
   )
 
@@ -217,14 +250,40 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
         return res.status(400).json({ error: { message: 'Invalid or expired confirmation. Please retry.' } })
       }
       clearTokens.delete(confirmToken) // single-use
-      const { removed } = await dataRecordsRepo.purgeByApp(appId, { createdInDraftOnly: Boolean(createdInDraftOnly) })
+      const draftOnly = Boolean(createdInDraftOnly)
+      const { removed } = await dataRecordsRepo.purgeByApp(appId, { createdInDraftOnly: draftOnly })
       await auditRepo.record({ appId, username: req.user.sub, action: 'clear-data', count: removed })
-      res.json({ appId, removed })
+      // Files share the same two-step gate. purgeByApp deletes the metadata + reconciles
+      // the counters and RETURNS the blobKeys; we then delete the blobs (best-effort).
+      const filePurge = await appFilesRepo.purgeByApp(appId, { createdInDraftOnly: draftOnly })
+      await deleteBlobs(filePurge.blobs)
+      if (filePurge.removed > 0) {
+        await auditRepo.record({ appId, username: req.user.sub, action: 'file:clear', count: filePurge.removed })
+      }
+      res.json({ appId, removed, filesRemoved: filePurge.removed })
     }),
   )
 
-  // Hard-delete an app: write a FINAL app:delete audit event, purge all its data,
-  // then delete the registry doc (deletion governance, Decision 7).
+  // Recompute file counters from the `ready`-metadata aggregate (fixing bounded drift
+  // from a partial-failure compensation) and sweep stale `pending` rows (crashed
+  // uploads). A SYSTEM governance action (no human-authored mutation) → audited file:gc.
+  router.post(
+    '/:appId/recompute-files',
+    safe(async (req, res) => {
+      const { appId } = req.params
+      const app = await registryRepo.getApp(appId)
+      if (!app) return res.status(404).json({ error: { message: 'App not found.' } })
+      const result = await appFilesRepo.recompute(appId)
+      await deleteBlobs(result.sweptBlobs) // best-effort: drop any blob a crashed upload did write
+      await auditRepo.record({ appId, username: req.user.sub, action: 'file:gc', count: result.sweptPending })
+      res.json({ appId, fileCount: result.fileCount, fileBytes: result.fileBytes, sweptPending: result.sweptPending })
+    }),
+  )
+
+  // Hard-delete an app: write a FINAL app:delete audit event, purge all its data AND
+  // files (blobs too — the blobKeys live in the file metadata, which the registry doc
+  // delete does not cascade), THEN delete the registry doc (deletion governance,
+  // Decision 7). File blobs are purged BEFORE the registry doc is gone.
   router.delete(
     '/:appId',
     safe(async (req, res) => {
@@ -233,6 +292,8 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
       if (!app) return res.status(404).json({ error: { message: 'App not found.' } })
       await auditRepo.record({ appId, username: req.user.sub, action: 'app:delete', count: app.dataCount || 0 })
       await dataRecordsRepo.purgeByApp(appId, {})
+      const filePurge = await appFilesRepo.purgeByApp(appId, {})
+      await deleteBlobs(filePurge.blobs)
       await registryRepo.deleteApp(appId)
       res.json({ ok: true })
     }),

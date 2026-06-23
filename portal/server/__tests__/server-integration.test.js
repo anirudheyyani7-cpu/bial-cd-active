@@ -341,6 +341,10 @@ describe('Data Service routes wired through createApp', () => {
     const csp = res.headers['content-security-policy']
     // opaque-origin frame → connect-src must name the portal origin explicitly (not just 'self')
     expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/)
+    // U5: blob: added to img-src for inline render; NOT a bare https: nor the portal origin.
+    expect(csp).toContain("img-src 'self' data: blob:")
+    expect(csp).not.toMatch(/img-src[^;]*https:/)
+    expect(csp).not.toMatch(/img-src[^;]*(127\.0\.0\.1|localhost):\d+/)
   })
 
   it('a null-origin (opaque iframe) preflight to a data route succeeds, while the SPA cors still rejects :3000', async () => {

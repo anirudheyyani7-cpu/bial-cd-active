@@ -46,4 +46,13 @@ describe('LivePreview — forwards data wiring + token to the sandboxed preview 
       '*',
     )
   })
+
+  it('sandboxes the preview frame with allow-downloads (SAS <a download>) but no allow-same-origin', () => {
+    const { iframe } = setup()
+    const sandbox = iframe.getAttribute('sandbox')
+    expect(sandbox).toContain('allow-scripts')
+    expect(sandbox).toContain('allow-forms')
+    expect(sandbox).toContain('allow-downloads') // U5: download navigation enabled
+    expect(sandbox).not.toContain('allow-same-origin') // still can't read the portal session
+  })
 })

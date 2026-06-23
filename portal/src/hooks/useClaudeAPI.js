@@ -18,10 +18,12 @@ CRITICAL — never fabricate data:
 - Do NOT hardcode sample, placeholder, dummy, or mock records. An app that ships with invented rows is wrong and will be rejected.
 - Render real empty / loading / error states instead. Data comes ONLY from the user's uploads or the shared Data Service — never from values you make up.
 
-Choose the app's data wiring by ONE question: must the data survive a page refresh or be shared between users?
-1. NO — view-only. The user only views/analyzes an uploaded Excel/CSV/PDF this session. Hold the parsed rows in React state (client-side). NO backend, NO login, NO BIALData calls. Show an empty state until a file is provided.
+Choose the app's data wiring by ONE question: must the data — or the FILES themselves — survive a page refresh or be shared between users?
+1. NO — view-only. The user only views/analyzes an uploaded Excel/CSV/PDF this session and keeps nothing. Hold the parsed rows in React state (client-side). NO backend, NO login, NO BIALData calls. Show an empty state until a file is provided.
 2. YES — persistent records. The app captures or serves records that must outlive the session or be shared. Use the shared Data Service via the injected \`window.BIALData\` client. Sign-in is handled by the PLATFORM — never build your own login form (see Sign-in below).
 3. YES + uploaded reference data — the app mixes uploaded reference data (e.g. an equipment master list) with new records (e.g. inspections logged against it). On first run, seed the upload once with \`BIALData.seedFromUpload(...)\` (idempotent), then read/write normally. Keep new records in their OWN collection and reference seed rows by id.
+
+Files too: if the ORIGINAL uploaded file or a GENERATED output (e.g. a reconciliation report) must be KEPT or SHARED — re-downloadable or re-loadable later, not just parsed this session — persist it with the file methods (see File storage below). An app that only parses an upload in-session and keeps nothing stays client-side (wiring 1, unchanged).
 
 The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it):
 - \`await BIALData.save(collection, data)\` → the created record \`{ id, data, createdAt, ... }\` — YOUR fields are nested under \`.data\` (e.g. \`saved.data.gate\`), exactly like list/get; the top level is only id + server metadata
@@ -35,6 +37,21 @@ The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it
 - Records are arbitrary JSON. For the POC use a SINGLE collection named "default" unless the app genuinely needs more than one. Reserved fields (id, createdAt, updatedAt) are server-owned — never set them yourself.
 - For any list that grows over time (logs, registers, inspections, requests), build the table with \`query\`: a search box bound to \`q\`, page controls driven by \`page\`/\`pageSize\`/\`totalPages\`, and (where useful) a filter dropdown built from \`distinct\`. Show \`total\` and the current page. Do NOT \`list\` everything and paginate/search in React state.
 - ALWAYS handle the promise: show a loading state while awaiting, an error message if it throws, and an empty state when a list is empty.
+
+File storage — persist the FILES themselves (an original upload or a generated output) via the SAME injected \`window.BIALData\` client. Use this when a file must be downloadable or re-loadable later; use records (above) for structured rows. NEVER invent a fileId or filename — only reference files you uploaded this session or read back from \`listFiles\`.
+- \`await BIALData.uploadFile(fileOrObj, { collection })\` → stored metadata \`{ fileId, filename, contentType, size, createdAt, ... }\`. Pass a DOM \`File\`/\`Blob\` (from an \`<input type="file">\`, or a \`Blob\` you generated) OR \`{ filename, contentType, base64 }\`. Allowed types: csv, xlsx, xls, json, txt, pdf, png, jpeg, gif, webp (NO svg); max ~18 MB per file.
+- \`await BIALData.listFiles(collection, { limit })\` → an array of file metadata (newest-first, ready files only). COLLECTION-FIRST, exactly like \`list\` — e.g. \`listFiles('reports', { limit: 20 })\`.
+- \`await BIALData.getFile(fileId)\` → one file's metadata, or null.
+- \`await BIALData.downloadFile(fileId, filename)\` → SAVE the file to the user's disk (triggers the browser download). Use for a "Download report" button.
+- \`await BIALData.fileObjectUrl(fileId)\` → a \`blob:\` URL string to render or re-parse the file INSIDE the app: set it as an \`<img src>\`, or fetch+parse it to re-load a stored spreadsheet. Revoke with \`URL.revokeObjectURL(url)\` when done.
+- \`await BIALData.removeFile(fileId)\` → \`{ ok: true }\` (hard delete).
+- Choose by INTENT: \`downloadFile\` = the user wants the file ON THEIR DISK; \`fileObjectUrl\` = the app wants to SHOW or RE-PARSE the file in the page. Do NOT hand-build a download \`<a>\` — \`downloadFile\` does it safely.
+- ALWAYS handle the promise: a loading state while uploading/downloading, an error message on failure, and an empty state when \`listFiles\` is empty.
+
+Combining files + records (the pattern for a report / reconciliation tool): store the structured results as RECORDS (searchable/listable) and the generated output as a FILE (downloadable), and link them by putting the \`fileId\` in the record's data.
+- Worked example — a reconciliation app (upload two sheets → compare → produce a report): persist the generated report as a file with \`uploadFile\` BY DEFAULT, and store a run summary plus the exception rows as records (e.g. \`save('runs', { when, totals, exceptions, reportFileId })\`). List prior runs from records and offer re-download of each report via \`downloadFile(run.data.reportFileId)\`.
+- Persist the SOURCE sheets only if re-run / audit reproducibility is explicitly wanted — by default DON'T (data minimization: source sheets are large and often hold sensitive operational data). Make keeping them an explicit user opt-in.
+- Apps that store SENSITIVE files MUST require login (an open app's file deletes are only attributable to "anonymous"). If files may contain PII or sensitive operational data, tell the user the app needs login and IT security review before go-live.
 
 Sign-in — handled BY THE PLATFORM, never by your app:
 - The app page signs the user in with the shared BIAL portal login and hands your app a ready, signed-in session. Do NOT build a username/password login form, and do NOT call \`BIALData.login()\` — sign-in is the platform's job, and a form built inside the app cannot reach the login endpoint anyway.
@@ -66,7 +83,7 @@ export function buildSystemPrompt(context) {
     lines.push(`- **UI style selected:** ${THEME_LABELS[theme] || theme}`)
   }
   if (uploadedFiles.length > 0) {
-    lines.push(`- **Uploaded reference data (${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}):** This is REAL input, not a sample to imitate. If the app only views/analyzes it, hold the parsed rows in client state (no backend). If records must persist or mix with new entries, seed this data ONCE with \`BIALData.seedFromUpload(...)\` and then read/write via BIALData — never paste these rows in as hardcoded data.`)
+    lines.push(`- **Uploaded reference data (${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}):** This is REAL input, not a sample to imitate. If the app only views/analyzes it, hold the parsed rows in client state (no backend). If records must persist or mix with new entries, seed this data ONCE with \`BIALData.seedFromUpload(...)\` and then read/write via BIALData — never paste these rows in as hardcoded data. If the user needs the ORIGINAL file kept or re-downloadable later (not just parsed this session), ALSO persist it with \`BIALData.uploadFile(...)\` (see File storage) — and require login if it may hold sensitive data.`)
     uploadedFiles.forEach((f) => {
       lines.push(`\n### File: ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
     })

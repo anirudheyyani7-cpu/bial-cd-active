@@ -40,6 +40,11 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     return baseUrl + '/apps/' + appId + '/records' + (suffix || '')
   }
 
+  function filesUrl(suffix) {
+    const { baseUrl, appId } = getConfig()
+    return baseUrl + '/apps/' + appId + '/files' + (suffix || '')
+  }
+
   async function call(url, method, body) {
     const { appKey } = getConfig()
     const headers = { 'X-App-Key': appKey }
@@ -165,6 +170,147 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     return { seeded: rows.length, skipped: false }
   }
 
+  // ── File storage (Decisions 2, 3, 5, 9) ─────────────────────────────────────
+  // Per-app FILE persistence, the twin of the record methods above. Same single
+  // config/token source, same `X-App-Key` (+ Bearer) headers, same opaque-frame
+  // discipline (reads the injected token, never the portal's browser storage). The SAME portal
+  // access token authorizes file calls as records (the recorded POC tradeoff at the
+  // top of this file; the refresh token is never injected). Two read paths encode
+  // the intent split: `downloadFile` (SAS, save-to-disk; bytes bypass Node) vs
+  // `fileObjectUrl` (same-origin `/content` proxy → blob: URL for inline render /
+  // re-parse). The blob host is NEVER in the sandbox CSP — downloads ride the
+  // `allow-downloads` navigation, inline render rides the already-admitted
+  // `connect-src` portal origin via fetch('/content').
+
+  /** Encode raw bytes to base64 in browser AND Node (btoa is global in both); chunked to bound the call stack. */
+  function bytesToBase64(bytes) {
+    var binary = ''
+    var chunk = 0x8000
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk))
+    }
+    return btoa(binary)
+  }
+
+  /** Build the X-App-Key (+ Bearer) headers used by the byte-proxy fetch (which can't go through `call`, since it returns bytes not JSON). */
+  function fileHeaders() {
+    const { appKey } = getConfig()
+    const headers = { 'X-App-Key': appKey }
+    const token = getToken()
+    if (token) headers['Authorization'] = 'Bearer ' + token
+    return headers
+  }
+
+  /** Trigger a browser download via a transient `<a download>` (the only in-frame download primitive; rides the sandbox `allow-downloads`). */
+  function triggerAnchorDownload(href, filename, revokeAfter) {
+    const a = document.createElement('a')
+    a.href = href
+    a.download = filename || '' // cross-origin SAS uses its pinned content-disposition; same-origin uses this
+    if (document.body) document.body.appendChild(a)
+    a.click()
+    if (document.body && a.parentNode) document.body.removeChild(a)
+    if (revokeAfter && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+      setTimeout(function () {
+        URL.revokeObjectURL(href)
+      }, 0) // defer so the navigation can latch onto the blob: URL first
+    }
+  }
+
+  /**
+   * Upload one file. Accepts a DOM `File`/`Blob` (read to base64 here) OR a plain
+   * `{ filename, contentType, base64 }`. POSTs to `…/files`; returns the stored
+   * metadata `{ fileId, collection, filename, contentType, size, createdBy,
+   * createdInDraft, createdAt }`. Type/size/quota are enforced server-side.
+   */
+  async function uploadFile(fileOrObj, opts) {
+    opts = opts || {}
+    let filename, contentType, base64
+    if (fileOrObj && typeof fileOrObj.arrayBuffer === 'function') {
+      const buf = await fileOrObj.arrayBuffer()
+      base64 = bytesToBase64(new Uint8Array(buf))
+      filename = fileOrObj.name || 'upload'
+      contentType = fileOrObj.type || 'application/octet-stream'
+    } else if (fileOrObj && typeof fileOrObj === 'object') {
+      filename = fileOrObj.filename
+      contentType = fileOrObj.contentType
+      base64 = fileOrObj.base64
+    } else {
+      throw new Error('uploadFile needs a File/Blob or { filename, contentType, base64 }.')
+    }
+    const body = { filename: filename, contentType: contentType, base64: base64 }
+    if (opts.collection) body.collection = opts.collection
+    return call(filesUrl(), 'POST', body)
+  }
+
+  /** List ready files (newest-first). COLLECTION-FIRST, mirroring `list` so the model doesn't mis-call. `opts.limit` caps the page. Returns an array. */
+  async function listFiles(collection, opts) {
+    const params = []
+    if (collection) params.push('collection=' + encodeURIComponent(collection))
+    if (opts && opts.limit) params.push('limit=' + encodeURIComponent(opts.limit))
+    const suffix = params.length ? '?' + params.join('&') : ''
+    const out = await call(filesUrl(suffix), 'GET')
+    return (out && out.files) || []
+  }
+
+  /** Read one file's metadata by id. Returns the metadata or null on 404. */
+  async function getFile(fileId) {
+    const out = await call(filesUrl('/' + encodeURIComponent(fileId)), 'GET')
+    return (out && out.file) || null
+  }
+
+  /** Mint a short-lived download URL (SAS) for `<a download>`. Returns `{ url, expiresAt }`; throws (e.g. 501) if the provider can't sign. */
+  function getDownloadUrl(fileId) {
+    return call(filesUrl('/' + encodeURIComponent(fileId) + '/url'), 'GET')
+  }
+
+  /**
+   * SAVE a file to disk. Mints a SAS via `/url` and clicks an `<a download>` whose
+   * href is the cross-origin SAS URL. SECURITY: the SAS URL is validated to be
+   * `https:` before it is assigned to the anchor — untrusted model code shares this
+   * frame and could tamper a patched client into pointing the href at a
+   * `javascript:`/`data:` URL. On a 501 (provider can't sign) OR a non-`https:` URL,
+   * falls back to the same-origin `/content` proxy via `fileObjectUrl`.
+   */
+  async function downloadFile(fileId, filename) {
+    let info = null
+    try {
+      info = await getDownloadUrl(fileId)
+    } catch (e) {
+      info = null // 501 / network → fall back to the /content proxy
+    }
+    const url = info && info.url
+    if (typeof url === 'string' && url.indexOf('https://') === 0) {
+      triggerAnchorDownload(url, filename, false)
+      return { downloaded: true, via: 'sas' }
+    }
+    // Fallback: same-origin object URL (no SAS, or a tampered/non-https URL was returned).
+    const objectUrl = await fileObjectUrl(fileId)
+    triggerAnchorDownload(objectUrl, filename, true)
+    return { downloaded: true, via: 'content' }
+  }
+
+  /**
+   * RENDER / RE-PARSE a stored file inside the app. Fetches `…/files/:id/content`
+   * (same-origin, carrying X-App-Key/Bearer — rides the already-admitted
+   * `connect-src` portal origin), returns a `blob:` object-URL string for `<img src>`
+   * or to re-parse the bytes. The caller revokes it (`URL.revokeObjectURL`) when done.
+   */
+  async function fileObjectUrl(fileId) {
+    const res = await fetchImpl(filesUrl('/' + encodeURIComponent(fileId) + '/content'), {
+      method: 'GET',
+      headers: fileHeaders(),
+    })
+    if (res.status === 401) throw new Error('Please sign in to use this app.')
+    if (!res.ok) throw new Error('Could not load the file (' + res.status + ').')
+    const blob = await res.blob()
+    return URL.createObjectURL(blob)
+  }
+
+  /** Hard-delete a file (blob + metadata); returns `{ ok: true }`. */
+  function removeFile(fileId) {
+    return call(filesUrl('/' + encodeURIComponent(fileId)), 'DELETE')
+  }
+
   /**
    * Sign in. In the DEPLOYED app the platform has already signed the user in (the
    * shared BIAL login on the app page) and injected the session, so this reuses that
@@ -221,6 +367,13 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     update: update,
     remove: remove,
     seedFromUpload: seedFromUpload,
+    uploadFile: uploadFile,
+    listFiles: listFiles,
+    getFile: getFile,
+    getDownloadUrl: getDownloadUrl,
+    downloadFile: downloadFile,
+    fileObjectUrl: fileObjectUrl,
+    removeFile: removeFile,
     login: login,
     currentUser: currentUser,
   }

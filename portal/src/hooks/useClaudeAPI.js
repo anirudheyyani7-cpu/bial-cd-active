@@ -50,18 +50,6 @@ When generating a preview app:
 
 When refining, acknowledge what changed and suggest next steps.`
 
-const DATA_SOURCE_LABELS = {
-  aodb: 'AODB (Airport Operations Database)',
-  dar: 'DAR (Daily Airport Report)',
-  vision: 'Vision Analytics System',
-  namaskara: 'Namaskara Terminal',
-  xovis: 'Xovis (Crowd Management)',
-  fids: 'Flight Information Display (FIDS)',
-  bhs: 'BHS Telemetry (Baggage Handling System)',
-  passenger: 'Passenger Flow Analytics',
-  none: 'None / Custom (user-defined data)',
-}
-
 const THEME_LABELS = {
   bial: 'Bangalore Airport Theme — use official BIAL teal (#00818A) and amber (#D9A036) brand colors',
   mobile: 'App Style (iOS/Android) — clean mobile-first layout, card-based, bottom navigation',
@@ -72,19 +60,10 @@ const THEME_LABELS = {
 export function buildSystemPrompt(context) {
   if (!context) return SYSTEM_PROMPT
   if (context.systemPrompt) return context.systemPrompt
-  const { dataSource, theme, hasSchema, uploadedFiles = [], dataSchema } = context
+  const { theme, uploadedFiles = [], dataSchema } = context
   const lines = []
-  if (dataSource && dataSource !== 'none') {
-    // The data source names the REAL record shape — NOT a license to invent mock
-    // rows. Persisted records should match this system's entities/field names and
-    // flow through the Data Service.
-    lines.push(`- **Data source selected:** ${DATA_SOURCE_LABELS[dataSource] || dataSource} — model the app's REAL records on this system's entities and field names. When records must persist, store and read them through the shared Data Service (BIALData) using those entity/field names. Do NOT fabricate mock rows.`)
-  }
   if (theme) {
     lines.push(`- **UI style selected:** ${THEME_LABELS[theme] || theme}`)
-  }
-  if (hasSchema) {
-    lines.push(`- **Backend schema requested:** Yes — after generating the UI, include a \`## Data Model\` section describing the key entities, fields, and types`)
   }
   if (uploadedFiles.length > 0) {
     lines.push(`- **Uploaded reference data (${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}):** This is REAL input, not a sample to imitate. If the app only views/analyzes it, hold the parsed rows in client state (no backend). If records must persist or mix with new entries, seed this data ONCE with \`BIALData.seedFromUpload(...)\` and then read/write via BIALData — never paste these rows in as hardcoded data.`)

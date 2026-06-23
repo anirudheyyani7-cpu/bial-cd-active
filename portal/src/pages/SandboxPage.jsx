@@ -1,21 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, BarChart3, Database, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
+import { Users, BarChart3, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import Navbar from '../components/layout/Navbar'
 import { validatePrompt } from '../utils/promptGuardrails'
-
-const DATA_SOURCES = [
-  { id: 'aodb', name: 'AODB', subtitle: 'Airport Operations Database' },
-  { id: 'dar', name: 'DAR', subtitle: 'Daily Airport Report' },
-  { id: 'vision', name: 'Vision Analytics System', subtitle: 'Camera and sensor analytics' },
-  { id: 'namaskara', name: 'Namaskara Terminal', subtitle: 'Terminal Updates' },
-  { id: 'xovis', name: 'Xovis', subtitle: 'Video Analytics Powered Crowd Management' },
-  { id: 'fids', name: 'Flight Information Display (FIDS)', subtitle: 'Real-time flight status data' },
-  { id: 'bhs', name: 'BHS Telemetry', subtitle: 'Baggage handling system sensors' },
-  { id: 'passenger', name: 'Passenger Flow Analytics', subtitle: 'Terminal movement heatmaps' },
-  { id: 'none', name: 'None / Custom', subtitle: 'I will define my own data' },
-]
 
 const THEMES = [
   { id: 'bial', name: 'Bangalore Airport Theme', subtitle: 'Official BIAL brand colors and typography' },
@@ -104,9 +92,7 @@ function SelectDropdown({ icon: Icon, options, value, onChange, placeholder }) {
 export default function SandboxPage() {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
-  const [dataSource, setDataSource] = useState(null)
   const [theme, setTheme] = useState('bial')
-  const [hasSchema, setHasSchema] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState([])
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -175,7 +161,7 @@ export default function SandboxPage() {
       setGuardRailModal(guardResult)
       return
     }
-    navigate('/workspace/builder', { state: { prompt, dataSource, theme, hasSchema, uploadedFiles } })
+    navigate('/workspace/builder', { state: { prompt, theme, uploadedFiles } })
   }
 
   const handleChat = () => {
@@ -260,29 +246,6 @@ export default function SandboxPage() {
             {mode === 'build' && (
               <div className="flex flex-wrap items-center gap-2">
                 <SelectDropdown
-                  icon={Database}
-                  options={DATA_SOURCES}
-                  value={dataSource}
-                  onChange={setDataSource}
-                  placeholder="Select Data Source"
-                />
-
-                {/* Schema toggle */}
-                <button
-                  onClick={() => setHasSchema((s) => !s)}
-                  className={`flex items-center gap-2 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition flex-shrink-0 ${
-                    hasSchema
-                      ? 'bg-primary/5 border-primary text-primary'
-                      : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
-                  }`}
-                >
-                  <div className={`w-7 h-3.5 rounded-full relative transition-colors duration-200 flex-shrink-0 overflow-hidden ${hasSchema ? 'bg-primary' : 'bg-gray-200'}`}>
-                    <span className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform duration-200 ${hasSchema ? 'translate-x-3' : 'translate-x-0'}`} />
-                  </div>
-                  Backend Schema
-                </button>
-
-                <SelectDropdown
                   icon={Palette}
                   options={THEMES}
                   value={theme}
@@ -345,12 +308,6 @@ export default function SandboxPage() {
                   </span>
                 ))}
               </div>
-            )}
-
-            {mode === 'build' && hasSchema && (
-              <p className="text-[10px] text-primary/80 pl-1">
-                A data model will be generated based on your prompt and selected data source.
-              </p>
             )}
           </div>
         </div>

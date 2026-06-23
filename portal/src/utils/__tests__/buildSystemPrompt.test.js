@@ -44,11 +44,26 @@ describe('buildSystemPrompt — no fabricated data, real Data Service wiring (U1
     expect(prompt).toMatch(/refresh or be shared/i) // the discriminator
   })
 
-  it('a selected data source maps to the REAL record shape via the Data Service, not mock data', () => {
-    const prompt = buildSystemPrompt({ dataSource: 'aodb' })
-    expect(prompt).toContain('Data source selected')
-    expect(prompt).toMatch(/REAL records|entity\/field names|entities and field names/i)
-    expect(prompt).not.toMatch(/use .*mock data consistent/i)
+  it('ignores the removed dataSource/hasSchema options — emits neither line, and with no other options returns the base prompt', () => {
+    const prompt = buildSystemPrompt({ dataSource: 'aodb', hasSchema: true })
+    expect(prompt).not.toContain('Data source selected')
+    expect(prompt).not.toContain('Backend schema requested')
+    // those were the only options → no Session Context block, base prompt unchanged
+    expect(prompt).not.toContain('## Session Context')
+    expect(prompt).toBe(buildSystemPrompt())
+  })
+
+  it('an empty context returns the base prompt with no Session Context block', () => {
+    const prompt = buildSystemPrompt({})
+    expect(prompt).toBe(buildSystemPrompt())
+    expect(prompt).not.toContain('## Session Context')
+  })
+
+  it('a selected theme emits the UI-style line in the Session Context', () => {
+    const prompt = buildSystemPrompt({ theme: 'bial' })
+    expect(prompt).toContain('## Session Context')
+    expect(prompt).toContain('UI style selected')
+    expect(prompt).toContain('Bangalore Airport Theme')
   })
 
   it('an uploaded file is treated as real input to view client-side or seed — never hardcoded', () => {
@@ -67,7 +82,7 @@ describe('buildSystemPrompt — no fabricated data, real Data Service wiring (U1
     expect(pinned).toContain('gate, status')
     expect(pinned).toMatch(/do NOT rename/i)
 
-    const none = buildSystemPrompt({ dataSource: 'aodb' })
+    const none = buildSystemPrompt({ theme: 'bial' })
     expect(none).not.toMatch(/reuse these EXACT/i)
   })
 })

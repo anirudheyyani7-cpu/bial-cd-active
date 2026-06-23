@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-06-23
+
+### Fixed
+- **Opening a chat or App Builder conversation works on the deployed app.** The
+  1.3.1 indexes fixed the conversation list, but loading a single conversation's
+  messages still failed with the same Cosmos 400 because the message read sorted by
+  `_id` as a final tiebreak — and Azure Cosmos DB for MongoDB will not serve an
+  ORDER BY that includes `_id`, even with the index present. Messages now sort by
+  `{seq, createdAt}` and the matching index drops `_id`, so the read is served.
+
 ## [1.3.1] - 2026-06-23
 
 ### Fixed

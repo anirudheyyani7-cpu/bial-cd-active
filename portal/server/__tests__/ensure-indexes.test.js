@@ -35,15 +35,16 @@ describe('ensureIndexes', () => {
     // `{username,kind,updatedAt}` index alone cannot serve it.
     expect(INDEX_SPECS.conversations).toContainEqual({ username: 1, updatedAt: -1 })
     expect(INDEX_SPECS.conversations).toContainEqual({ username: 1, kind: 1, updatedAt: -1 })
-    // messages-repo sorts by {seq, createdAt, _id}; the index must carry every
-    // ORDER BY field (after the equality filters) or Cosmos 400s.
+    // messages-repo sorts by {seq, createdAt} (NO _id — Cosmos won't serve an
+    // ORDER BY containing _id); the index must carry every ORDER BY field after
+    // the equality filters, and must NOT include _id.
     expect(INDEX_SPECS.messages).toContainEqual({
       conversationId: 1,
       username: 1,
       seq: 1,
       createdAt: 1,
-      _id: 1,
     })
+    expect(INDEX_SPECS.messages.some((s) => '_id' in s)).toBe(false)
   })
 
   it('skips a collection key that is not wired on this deploy', async () => {

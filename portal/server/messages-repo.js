@@ -39,15 +39,22 @@ export function createMessagesRepo(collection) {
 
   /**
    * All messages of a conversation the caller owns, in stored `seq` order
-   * (`createdAt`/`_id` tiebreak). Scoped by BOTH conversationId AND username, so
-   * a guessed conversationId from another user reads nothing. Capped to bound an
+   * (`createdAt` tiebreak). Scoped by BOTH conversationId AND username, so a
+   * guessed conversationId from another user reads nothing. Capped to bound an
    * unbounded RU scan (a conversation won't approach the cap in the POC).
+   *
+   * The sort deliberately stops at `createdAt` — NO `_id` tiebreak. Azure Cosmos
+   * DB for MongoDB accepts `_id` in a createIndex compound spec but will NOT use
+   * that index to serve an ORDER BY containing `_id`, so a `{seq,createdAt,_id}`
+   * sort 400s ("no corresponding composite index") even with the index present.
+   * `seq` is the client-minted order and `createdAt` breaks the rare tie; a third
+   * `_id` tiebreak was only defensive and is not worth an unservable query.
    */
   async function listByConversation(conversationId, username, { limit = 1000 } = {}) {
     return await withThrottleRetry(() =>
       collection
         .find({ conversationId, username })
-        .sort({ seq: 1, createdAt: 1, _id: 1 })
+        .sort({ seq: 1, createdAt: 1 })
         .limit(limit)
         .toArray(),
     )

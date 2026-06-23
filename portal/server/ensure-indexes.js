@@ -53,6 +53,18 @@ const INDEX_SPECS = {
     // the `createdAt` sort still needs its own index.
     { createdAt: -1 },
   ],
+  dataRecords: [
+    // data-records-repo list(appId) + search(appId, sort=createdAt): newest-first
+    // across ALL collections for one tenant — `collection` must NOT sit between the
+    // `appId` equality and the `createdAt` sort, so this 2-field index is dedicated.
+    { appId: 1, createdAt: -1 },
+    // list(appId, collection) + search(appId, collection, sort=createdAt).
+    { appId: 1, collection: 1, createdAt: -1 },
+    // search(appId, sort=updatedAt) — the other whitelisted top-level sort key.
+    { appId: 1, updatedAt: -1 },
+    // search(appId, collection, sort=updatedAt).
+    { appId: 1, collection: 1, updatedAt: -1 },
+  ],
 }
 
 /**

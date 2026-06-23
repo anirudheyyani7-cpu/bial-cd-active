@@ -268,8 +268,15 @@ export function createDataRecordsRepo(collection, registryRepo) {
     if (q) filter._search = { $regex: escapeRegex(String(q).toLowerCase()) }
     const safePageSize = Math.min(Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE)
     const safePage = Math.max(1, Number(page) || 1)
-    // `_id` tiebreaker → stable ordering across pages even when the sort key ties.
-    const sortSpec = { [sortPath]: order === 'asc' ? 1 : -1, _id: 1 }
+    // SINGLE-field sort only. This Azure Cosmos DB for MongoDB account serves just a
+    // single-field ORDER BY — a multi-field sort like `{ sortPath, _id }` 400s even
+    // with a matching composite index (same constraint that forced messages-repo to
+    // sort by `seq` alone; see ensure-indexes.js). Unlike messages, records have no
+    // unique monotonic per-tenant counter to tiebreak on, so when the sort key TIES
+    // (e.g. bulk-seeded rows sharing a millisecond `createdAt`, or many rows sharing
+    // a `data.<field>` value) skip/limit paging is NOT guaranteed stable across pages
+    // under concurrent writes. Acceptable at POC scale; a per-tenant `seq` is the fix.
+    const sortSpec = { [sortPath]: order === 'asc' ? 1 : -1 }
     const [items, total] = await Promise.all([
       withThrottleRetry(() =>
         collection.find(filter).sort(sortSpec).skip((safePage - 1) * safePageSize).limit(safePageSize).toArray(),

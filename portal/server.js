@@ -522,7 +522,8 @@ async function start() {
   // Dynamic app data service: registry, schemaless record store, audit trail.
   // The data-records repo takes the registry repo for the atomic quota counters.
   const registryRepo = createAppRegistryRepo(await getAppRegistryCollection())
-  const dataRecordsRepo = createDataRecordsRepo(await getDataRecordsCollection(), registryRepo)
+  const dataRecordsCollection = await getDataRecordsCollection()
+  const dataRecordsRepo = createDataRecordsRepo(dataRecordsCollection, registryRepo)
   const auditRepo = createAuditRepo(await getAuditCollection())
   // Cosmos for MongoDB needs composite indexes to serve our filter+sort reads
   // (it 400s otherwise — see ensure-indexes.js). Idempotent + resilient, so it's
@@ -532,6 +533,7 @@ async function start() {
     conversations: await getConversationsCollection(),
     messages: await getMessagesCollection(),
     feedback: await getFeedbackCollection(),
+    dataRecords: dataRecordsCollection,
   })
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,

@@ -34,6 +34,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   native form submissions can't smuggle it out, and the long-lived refresh token is
   never handed to an app.
 
+### Fixed
+- **Record search and lists work on the deployed (Azure Cosmos DB) database, not
+  just locally.** Record search now sorts on a single field, and the per-app
+  list/search reads ship the tenant-scoped composite indexes Cosmos requires — it
+  rejects a multi-field sort, or a filtered-and-sorted read with no matching index,
+  with a 400 (the same constraint that broke chat history in 1.3.1–1.3.3). The
+  indexes are created automatically on server start and can be applied to a running
+  deployment with `node scripts/ensure-indexes.js`.
+
 ## [1.3.3] - 2026-06-23
 
 ### Fixed

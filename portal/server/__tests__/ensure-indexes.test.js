@@ -18,15 +18,29 @@ describe('ensureIndexes', () => {
     const conversations = recordingCollection()
     const messages = recordingCollection()
     const feedback = recordingCollection()
+    const dataRecords = recordingCollection()
 
-    const result = await ensureIndexes({ conversations, messages, feedback })
+    const result = await ensureIndexes({ conversations, messages, feedback, dataRecords })
 
     expect(conversations.calls).toEqual(INDEX_SPECS.conversations)
     expect(messages.calls).toEqual(INDEX_SPECS.messages)
     expect(feedback.calls).toEqual(INDEX_SPECS.feedback)
+    expect(dataRecords.calls).toEqual(INDEX_SPECS.dataRecords)
     const total =
-      INDEX_SPECS.conversations.length + INDEX_SPECS.messages.length + INDEX_SPECS.feedback.length
+      INDEX_SPECS.conversations.length +
+      INDEX_SPECS.messages.length +
+      INDEX_SPECS.feedback.length +
+      INDEX_SPECS.dataRecords.length
     expect(result).toEqual({ created: total, failed: 0 })
+  })
+
+  it('data-records list/search reads have their tenant-scoped composite indexes', async () => {
+    // list(appId) + search(appId, sort=createdAt) — the unfiltered, newest-first read.
+    expect(INDEX_SPECS.dataRecords).toContainEqual({ appId: 1, createdAt: -1 })
+    // list(appId, collection) — `collection` in the prefix before the sort key.
+    expect(INDEX_SPECS.dataRecords).toContainEqual({ appId: 1, collection: 1, createdAt: -1 })
+    // Every dataRecords index is `appId`-prefixed — tenant isolation rides the index.
+    expect(INDEX_SPECS.dataRecords.every((s) => Object.keys(s)[0] === 'appId')).toBe(true)
   })
 
   it('covers both conversation list variants AND the full message ORDER BY', async () => {

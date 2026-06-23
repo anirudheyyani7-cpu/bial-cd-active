@@ -36,6 +36,7 @@ const RESERVED_KEYS = new Set([
   'createdBy',
   'createdInDraft',
   'bytes',
+  '_search',
   'createdAt',
   'updatedAt',
 ])
@@ -46,6 +47,13 @@ const MAX_DATA_DEPTH = 8
 // Default per-list page cap (RU-bounded); a request may ask for less, never more.
 const DEFAULT_LIST_LIMIT = 100
 const MAX_LIST_LIMIT = 500
+// Search pagination defaults/caps (page-number paging; smaller page than list).
+const DEFAULT_PAGE_SIZE = 25
+const MAX_PAGE_SIZE = 100
+// Cap on the derived `_search` blob so a huge record can't bloat the index entry.
+const MAX_SEARCH_BLOB = 8192
+// Top-level (server-owned) fields a client may sort by; anything else is `data.<key>`.
+const SORTABLE_TOP = new Set(['createdAt', 'updatedAt'])
 
 const COLLECTION_RE = /^[A-Za-z0-9_-]{1,64}$/
 
@@ -114,6 +122,82 @@ function byteSize(data) {
 }
 
 /**
+ * Build the derived `_search` blob: a lowercased, space-joined concat of EVERY
+ * scalar leaf in `data` (recursive, depth-capped, length-capped). Lets a single
+ * escaped `$regex` match free-text across ALL fields of a schemaless record
+ * without knowing its keys. Server-owned/reserved (a client can't set it) and
+ * excluded from the quota `bytes` (it's derived, not user payload).
+ */
+export function buildSearchBlob(data) {
+  const parts = []
+  const walk = (value, depth) => {
+    if (depth > MAX_DATA_DEPTH || value === null || value === undefined) return
+    const t = typeof value
+    if (t === 'string') parts.push(value.toLowerCase())
+    else if (t === 'number' || t === 'boolean') parts.push(String(value).toLowerCase())
+    else if (Array.isArray(value)) for (const el of value) walk(el, depth + 1)
+    else if (t === 'object') for (const v of Object.values(value)) walk(v, depth + 1)
+  }
+  walk(data, 1)
+  return parts.join(' ').slice(0, MAX_SEARCH_BLOB)
+}
+
+/** Escape user text so it's matched as a LITERAL substring (no regex injection / ReDoS). */
+export function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Validate a single user-supplied field name (for distinct / sort). Rejects `$`/`.`
+ * operator-ish keys and reserved server fields; PURE, shared with the route.
+ * @returns {{ok:true, value:string} | {ok:false, error:string}}
+ */
+export function sanitizeFieldName(name) {
+  if (typeof name !== 'string' || name.length === 0) return { ok: false, error: 'field is required.' }
+  if (name.startsWith('$') || name.includes('.') || RESERVED_KEYS.has(name)) {
+    return { ok: false, error: `invalid field name: ${name}` }
+  }
+  return { ok: true, value: name }
+}
+
+/**
+ * Resolve a client `sort` key to a SAFE Mongo path: the whitelisted top-level
+ * timestamps, or `data.<field>` for an app's own field. PURE; shared with the route.
+ * @returns {{ok:true, value:string} | {ok:false, error:string}}
+ */
+export function resolveSortPath(sort) {
+  if (sort === undefined || sort === null || sort === '') return { ok: true, value: 'createdAt' }
+  if (SORTABLE_TOP.has(sort)) return { ok: true, value: sort }
+  const field = sanitizeFieldName(sort)
+  if (!field.ok) return { ok: false, error: `invalid sort field: ${sort}` }
+  return { ok: true, value: 'data.' + field.value }
+}
+
+/**
+ * Turn a client `{ field: scalar }` object into sanitized `data.<field>` EQUALITY
+ * pairs for a Mongo filter. Rejects `$`/`.`/reserved keys (operator injection) and
+ * non-scalar values (no nested operators in the POC). PURE; shared with the route.
+ * @returns {{ok:true, value:object} | {ok:false, error:string}}
+ */
+export function buildDataFilter(filterObj) {
+  if (filterObj === undefined || filterObj === null) return { ok: true, value: {} }
+  if (typeof filterObj !== 'object' || Array.isArray(filterObj)) {
+    return { ok: false, error: 'filter must be a JSON object of field:value pairs.' }
+  }
+  const value = {}
+  for (const [k, v] of Object.entries(filterObj)) {
+    if (k.startsWith('$') || k.includes('.') || RESERVED_KEYS.has(k)) {
+      return { ok: false, error: `invalid filter field: ${k}` }
+    }
+    if (v !== null && typeof v === 'object') {
+      return { ok: false, error: `filter value for "${k}" must be a string, number, boolean, or null.` }
+    }
+    value['data.' + k] = v
+  }
+  return { ok: true, value }
+}
+
+/**
  * @param {object} collection   - the `data_records` collection handle (or a fake)
  * @param {object} registryRepo - the app-registry repo (for the atomic quota counters)
  */
@@ -140,6 +224,7 @@ export function createDataRecordsRepo(collection, registryRepo) {
       createdBy: createdBy ?? null,
       createdInDraft: Boolean(createdInDraft),
       bytes,
+      _search: buildSearchBlob(data), // derived: free-text search across all fields
       createdAt: now,
       updatedAt: now,
     }
@@ -170,6 +255,66 @@ export function createDataRecordsRepo(collection, registryRepo) {
     )
   }
 
+  /**
+   * Paged, generic SEARCH within one tenant. Free-text `q` matches across ALL
+   * fields via the derived `_search` blob (escaped `$regex`, case-insensitive
+   * contains); `dataFilter` is sanitized `data.<key>` equality pairs; `sortPath`
+   * is a pre-resolved safe path. Returns `{ items, total, page, pageSize }`; the
+   * route assembles `totalPages`. `appId` stays inside the filter (BOLA).
+   */
+  async function search(appId, { collection: coll, q, dataFilter, sortPath = 'createdAt', order, page, pageSize } = {}) {
+    const filter = coll ? { appId, collection: coll } : { appId }
+    if (dataFilter) Object.assign(filter, dataFilter)
+    if (q) filter._search = { $regex: escapeRegex(String(q).toLowerCase()) }
+    const safePageSize = Math.min(Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE)
+    const safePage = Math.max(1, Number(page) || 1)
+    // `_id` tiebreaker → stable ordering across pages even when the sort key ties.
+    const sortSpec = { [sortPath]: order === 'asc' ? 1 : -1, _id: 1 }
+    const [items, total] = await Promise.all([
+      withThrottleRetry(() =>
+        collection.find(filter).sort(sortSpec).skip((safePage - 1) * safePageSize).limit(safePageSize).toArray(),
+      ),
+      withThrottleRetry(() => collection.countDocuments(filter)),
+    ])
+    return { items, total, page: safePage, pageSize: safePageSize }
+  }
+
+  /**
+   * Distinct values of one app field (`data.<field>`) within the tenant — for
+   * building filter dropdowns / status chips. `field` is assumed validated by the
+   * route. Drops null/undefined so the UI gets a clean value set.
+   */
+  async function distinct(appId, { collection: coll, field }) {
+    const filter = coll ? { appId, collection: coll } : { appId }
+    const values = await withThrottleRetry(() => collection.distinct('data.' + field, filter))
+    return (values || []).filter((v) => v !== null && v !== undefined)
+  }
+
+  /**
+   * One-time backfill: populate `_search` on legacy records written before this
+   * field existed. Idempotent — only touches docs missing `_search`, so re-running
+   * is a no-op. Optionally scoped to one `appId`. Returns `{ updated }`.
+   */
+  async function backfillSearchDocs({ appId, batch = 500 } = {}) {
+    const filter = appId ? { appId, _search: { $exists: false } } : { _search: { $exists: false } }
+    let updated = 0
+    // Each update removes a doc from the `$exists:false` set, so re-querying the
+    // same filter walks the remainder; bounded by `batch` per round.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const docs = await withThrottleRetry(() => collection.find(filter).limit(batch).toArray())
+      if (docs.length === 0) break
+      for (const d of docs) {
+        await withThrottleRetry(() =>
+          collection.updateOne({ _id: d._id }, { $set: { _search: buildSearchBlob(d.data) } }),
+        )
+        updated++
+      }
+      if (docs.length < batch) break
+    }
+    return { updated }
+  }
+
   /** Point-read one record in the caller's tenant (composite `{_id, appId}`). null on miss. */
   async function get(appId, id) {
     return await withThrottleRetry(() => collection.findOne({ _id: id, appId }))
@@ -197,7 +342,12 @@ export function createDataRecordsRepo(collection, registryRepo) {
     let res
     try {
       res = await withThrottleRetry(() =>
-        collection.updateOne({ _id: id, appId }, { $set: { data: merged, bytes: newBytes, updatedAt: now } }),
+        collection.updateOne(
+          { _id: id, appId },
+          // recompute `_search` from the MERGED object (PATCH is a shallow merge),
+          // so search stays consistent after partial updates.
+          { $set: { data: merged, bytes: newBytes, _search: buildSearchBlob(merged), updatedAt: now } },
+        ),
       )
     } catch (err) {
       if (delta !== 0) await releaseQuota(appId, 0, delta) // failed write → roll the reserve back (no drift)
@@ -247,5 +397,5 @@ export function createDataRecordsRepo(collection, registryRepo) {
     return { removed, bytes }
   }
 
-  return { insert, list, get, update, del, purgeByApp }
+  return { insert, list, search, distinct, backfillSearchDocs, get, update, del, purgeByApp }
 }

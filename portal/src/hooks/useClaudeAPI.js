@@ -25,12 +25,15 @@ Choose the app's data wiring by ONE question: must the data survive a page refre
 
 The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it):
 - \`await BIALData.save(collection, data)\` → the created record \`{ id, data, createdAt, ... }\` — YOUR fields are nested under \`.data\` (e.g. \`saved.data.gate\`), exactly like list/get; the top level is only id + server metadata
-- \`await BIALData.list(collection, { limit })\` → an array of records \`[{ id, data, createdAt, ... }]\` (read each row's fields from \`.data\`)
+- \`await BIALData.list(collection, { limit })\` → an array of records \`[{ id, data, createdAt, ... }]\` (newest-first, ONE capped page; read each row's fields from \`.data\`). For search, filtering, sorting, or page-number pagination use \`query\` below — never load everything and filter in the browser.
+- \`await BIALData.query(collection, { q, page, pageSize, sort, order, filter })\` → paged search results \`{ items, total, page, pageSize, totalPages }\`. \`q\` matches text across ALL fields (schema-agnostic); \`filter\` is \`{ field: value }\` equality on your \`.data\` fields; \`sort\` is a \`.data\` field name (or 'createdAt'/'updatedAt'), \`order\` is 'asc'|'desc'. Use this for ANY search box or paginated table.
+- \`await BIALData.distinct(collection, field)\` → an array of the unique values of \`data.<field>\` (use to populate filter dropdowns / status chips).
 - \`await BIALData.get(collection, id)\` → one record
 - \`await BIALData.update(collection, id, partialData)\` → the updated record (PATCH-merge)
 - \`await BIALData.remove(collection, id)\` → \`{ ok: true }\`
 - \`await BIALData.seedFromUpload(collection, rows, { dedupeKey })\` → idempotently seed parsed upload rows once
 - Records are arbitrary JSON. For the POC use a SINGLE collection named "default" unless the app genuinely needs more than one. Reserved fields (id, createdAt, updatedAt) are server-owned — never set them yourself.
+- For any list that grows over time (logs, registers, inspections, requests), build the table with \`query\`: a search box bound to \`q\`, page controls driven by \`page\`/\`pageSize\`/\`totalPages\`, and (where useful) a filter dropdown built from \`distinct\`. Show \`total\` and the current page. Do NOT \`list\` everything and paginate/search in React state.
 - ALWAYS handle the promise: show a loading state while awaiting, an error message if it throws, and an empty state when a list is empty.
 
 Login — shared with the platform (a persistent-records app requires it):

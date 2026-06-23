@@ -3,6 +3,11 @@ import {
   createDataRecordsRepo,
   sanitizeData,
   sanitizeCollection,
+  sanitizeFieldName,
+  resolveSortPath,
+  buildDataFilter,
+  buildSearchBlob,
+  escapeRegex,
   RecordQuotaError,
 } from '../data-records-repo.js'
 import { createAppRegistryRepo, APP_RECORD_COUNT_CAP } from '../app-registry-repo.js'
@@ -257,5 +262,190 @@ describe('data-records-repo — throttle resilience', () => {
       throw err
     }
     await expect(repo2.insert({ appId: A, collection: 'default', data: { a: 1 } })).rejects.toThrow('boom')
+  })
+})
+
+describe('data-records-repo — _search blob (derived, reserved, never user-set)', () => {
+  it('insert builds a lowercased _search blob from ALL scalar leaves (nested + arrays)', async () => {
+    const { repo, dataContainer } = setup()
+    const rec = await repo.insert({
+      appId: A,
+      collection: 'default',
+      data: { gate: 'A5', inspector: 'R. Mehta', tags: ['Hinges', 'Greased'], meta: { status: 'Pass' }, count: 3, ok: true },
+    })
+    expect(dataContainer._get(rec._id)._search).toBe('a5 r. mehta hinges greased pass 3 true')
+  })
+
+  it('update recomputes _search from the MERGED object (untouched keys survive, replaced value gone)', async () => {
+    const { repo, dataContainer } = setup()
+    const rec = await repo.insert({ appId: A, collection: 'default', data: { gate: 'A5', status: 'open' } })
+    await repo.update(A, rec._id, { status: 'closed' })
+    const blob = dataContainer._get(rec._id)._search
+    expect(blob).toContain('a5') // untouched key still searchable
+    expect(blob).toContain('closed') // merged value
+    expect(blob).not.toContain('open') // replaced value gone
+  })
+
+  it('a client-sent _search is stripped (server-owned reserved field)', () => {
+    const out = sanitizeData({ _search: 'spoofed', gate: 'A5' })
+    expect(out.ok).toBe(true)
+    expect(out.value).toEqual({ gate: 'A5' })
+  })
+})
+
+describe('data-records-repo — search (paged, generic, tenant-scoped)', () => {
+  async function seed(repo) {
+    await repo.insert({ appId: A, collection: 'inspections', data: { gate: 'A1', inspector: 'R. Mehta', status: 'Pass', notes: 'Hinges greased' } })
+    await repo.insert({ appId: A, collection: 'inspections', data: { gate: 'A2', inspector: 'S. Rao', status: 'Fail', notes: 'Proximity sensor misaligned' } })
+    await repo.insert({ appId: A, collection: 'inspections', data: { gate: 'B3', inspector: 'P. Nair', status: 'Pass', notes: 'No issues found' } })
+    await repo.insert({ appId: A, collection: 'other', data: { gate: 'Z9', status: 'Pass' } })
+    await repo.insert({ appId: B, collection: 'inspections', data: { gate: 'A1', status: 'Pass', notes: 'tenant B secret' } })
+  }
+
+  it('free-text q matches across ALL fields, case-insensitively', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    expect((await repo.search(A, { collection: 'inspections', q: 'sensor' })).items.map((x) => x.data.gate)).toEqual(['A2'])
+    expect((await repo.search(A, { collection: 'inspections', q: 'mehta' })).items.map((x) => x.data.gate)).toEqual(['A1'])
+    expect((await repo.search(A, { collection: 'inspections', q: 'PASS' })).total).toBe(2) // case-insensitive on status
+  })
+
+  it('paginates with a true total and echoes page/pageSize', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    const p1 = await repo.search(A, { collection: 'inspections', sortPath: 'data.gate', order: 'asc', page: 1, pageSize: 2 })
+    expect({ total: p1.total, page: p1.page, pageSize: p1.pageSize }).toEqual({ total: 3, page: 1, pageSize: 2 })
+    expect(p1.items.map((x) => x.data.gate)).toEqual(['A1', 'A2'])
+    const p2 = await repo.search(A, { collection: 'inspections', sortPath: 'data.gate', order: 'asc', page: 2, pageSize: 2 })
+    expect(p2.items.map((x) => x.data.gate)).toEqual(['B3'])
+  })
+
+  it('sorts by a data field ascending and descending', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    expect((await repo.search(A, { collection: 'inspections', sortPath: 'data.gate', order: 'asc' })).items.map((x) => x.data.gate)).toEqual(['A1', 'A2', 'B3'])
+    expect((await repo.search(A, { collection: 'inspections', sortPath: 'data.gate', order: 'desc' })).items.map((x) => x.data.gate)).toEqual(['B3', 'A2', 'A1'])
+  })
+
+  it('filters by equality on data.<key>, with a true total', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    const r = await repo.search(A, { collection: 'inspections', dataFilter: { 'data.status': 'Pass' }, sortPath: 'data.gate', order: 'asc' })
+    expect(r.items.map((x) => x.data.gate)).toEqual(['A1', 'B3'])
+    expect(r.total).toBe(2)
+  })
+
+  it('combines q + equality filter', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    const r = await repo.search(A, { collection: 'inspections', dataFilter: { 'data.status': 'Pass' }, q: 'issues' })
+    expect(r.items.map((x) => x.data.gate)).toEqual(['B3'])
+    expect(r.total).toBe(1)
+  })
+
+  it('never returns another tenant’s rows (BOLA), even on a matching q', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    const own = await repo.search(B, { collection: 'inspections', q: 'secret' })
+    expect(own.items.map((x) => x.data.gate)).toEqual(['A1'])
+    expect(own.total).toBe(1)
+    expect((await repo.search(B, { collection: 'inspections', q: 'mehta' })).total).toBe(0) // A-only text
+  })
+
+  it('clamps pageSize to the max and page to >= 1', async () => {
+    const { repo } = setup()
+    await seed(repo)
+    const r = await repo.search(A, { collection: 'inspections', pageSize: 9999, page: 0 })
+    expect(r.pageSize).toBe(100) // MAX_PAGE_SIZE
+    expect(r.page).toBe(1)
+  })
+})
+
+describe('data-records-repo — distinct (filter-dropdown values)', () => {
+  it('returns unique values of data.<field> within the tenant + collection', async () => {
+    const { repo } = setup()
+    await repo.insert({ appId: A, collection: 'inspections', data: { status: 'Pass' } })
+    await repo.insert({ appId: A, collection: 'inspections', data: { status: 'Fail' } })
+    await repo.insert({ appId: A, collection: 'inspections', data: { status: 'Pass' } })
+    await repo.insert({ appId: A, collection: 'other', data: { status: 'Escalated' } }) // other collection
+    await repo.insert({ appId: B, collection: 'inspections', data: { status: 'TenantB' } }) // other tenant
+    expect((await repo.distinct(A, { collection: 'inspections', field: 'status' })).sort()).toEqual(['Fail', 'Pass'])
+  })
+
+  it('drops records missing the field and stays tenant-scoped', async () => {
+    const { repo } = setup()
+    await repo.insert({ appId: A, collection: 'default', data: { status: 'Open' } })
+    await repo.insert({ appId: A, collection: 'default', data: { other: 'x' } }) // no status field
+    expect(await repo.distinct(A, { collection: 'default', field: 'status' })).toEqual(['Open'])
+  })
+})
+
+describe('data-records-repo — backfillSearchDocs (idempotent migration)', () => {
+  it('adds _search to legacy rows missing it, leaves the rest, and re-runs as a no-op', async () => {
+    const { repo, dataContainer } = setup({
+      records: [
+        { _id: 'old1', appId: A, collection: 'default', data: { gate: 'A1', status: 'Pass' }, bytes: 5, createdAt: '2026-01-01T00:00:01.000Z' },
+        { _id: 'old2', appId: A, collection: 'default', data: { gate: 'B2' }, bytes: 5, createdAt: '2026-01-01T00:00:02.000Z' },
+        { _id: 'new1', appId: A, collection: 'default', data: { gate: 'C3' }, _search: 'c3', bytes: 5, createdAt: '2026-01-01T00:00:03.000Z' },
+      ],
+    })
+    expect((await repo.backfillSearchDocs({})).updated).toBe(2)
+    expect(dataContainer._get('old1')._search).toBe('a1 pass')
+    expect(dataContainer._get('old2')._search).toBe('b2')
+    expect(dataContainer._get('new1')._search).toBe('c3') // already had one → untouched
+    expect((await repo.backfillSearchDocs({})).updated).toBe(0) // idempotent
+  })
+
+  it('scopes to one appId when given', async () => {
+    const { repo, dataContainer } = setup({
+      records: [
+        { _id: 'a1', appId: A, collection: 'default', data: { x: 'aaa' }, bytes: 5 },
+        { _id: 'b1', appId: B, collection: 'default', data: { x: 'bbb' }, bytes: 5 },
+      ],
+    })
+    expect((await repo.backfillSearchDocs({ appId: A })).updated).toBe(1)
+    expect(dataContainer._get('a1')._search).toBe('aaa')
+    expect(dataContainer._get('b1')._search).toBeUndefined() // B left for its own run
+  })
+})
+
+describe('data-records-repo — query helpers (pure, shared with the route)', () => {
+  it('buildSearchBlob lowercases + space-joins scalar leaves; empty for {}/null', () => {
+    expect(buildSearchBlob({ a: 'Hello', b: 5, c: true, nested: { d: 'World' }, list: ['X', 'y'] })).toBe('hello 5 true world x y')
+    expect(buildSearchBlob({})).toBe('')
+    expect(buildSearchBlob(null)).toBe('')
+  })
+
+  it('escapeRegex neutralises regex metacharacters (literal substring match)', () => {
+    expect(escapeRegex('a.b*c')).toBe('a\\.b\\*c')
+  })
+
+  it('resolveSortPath whitelists timestamps, maps data fields, rejects injection/reserved', () => {
+    expect(resolveSortPath(undefined)).toEqual({ ok: true, value: 'createdAt' })
+    expect(resolveSortPath('updatedAt')).toEqual({ ok: true, value: 'updatedAt' })
+    expect(resolveSortPath('gate')).toEqual({ ok: true, value: 'data.gate' })
+    expect(resolveSortPath('a.b').ok).toBe(false)
+    expect(resolveSortPath('$where').ok).toBe(false)
+    expect(resolveSortPath('_id').ok).toBe(false)
+  })
+
+  it('buildDataFilter prefixes data., rejects operator keys + non-scalar values, allows null', () => {
+    expect(buildDataFilter({ status: 'Pass', count: 3 })).toEqual({ ok: true, value: { 'data.status': 'Pass', 'data.count': 3 } })
+    expect(buildDataFilter(undefined)).toEqual({ ok: true, value: {} })
+    expect(buildDataFilter({ active: null })).toEqual({ ok: true, value: { 'data.active': null } })
+    expect(buildDataFilter({ $where: 1 }).ok).toBe(false)
+    expect(buildDataFilter({ 'a.b': 1 }).ok).toBe(false)
+    expect(buildDataFilter({ _id: 'x' }).ok).toBe(false)
+    expect(buildDataFilter({ tags: ['a'] }).ok).toBe(false) // array value
+    expect(buildDataFilter({ meta: { x: 1 } }).ok).toBe(false) // nested object value
+    expect(buildDataFilter('nope').ok).toBe(false)
+  })
+
+  it('sanitizeFieldName rejects empty / operator / dotted / reserved', () => {
+    expect(sanitizeFieldName('status')).toEqual({ ok: true, value: 'status' })
+    expect(sanitizeFieldName('').ok).toBe(false)
+    expect(sanitizeFieldName('$x').ok).toBe(false)
+    expect(sanitizeFieldName('a.b').ok).toBe(false)
+    expect(sanitizeFieldName('_search').ok).toBe(false)
   })
 })

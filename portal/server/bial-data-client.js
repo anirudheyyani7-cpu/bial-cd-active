@@ -80,6 +80,37 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl }) {
     return (out && out.records) || []
   }
 
+  /**
+   * Generic paged SEARCH (use for any search box or paged table — do NOT fetch
+   * everything with `list` and filter client-side). `opts.q` matches free-text
+   * across ALL fields; `opts.filter` is `{ field: value }` equality on your `.data`
+   * fields; `opts.sort` is a `.data` field (or 'createdAt'/'updatedAt'); `opts.order`
+   * is 'asc'|'desc'; `opts.page`/`opts.pageSize` page the results. Returns
+   * `{ items, total, page, pageSize, totalPages }`.
+   */
+  async function query(collection, opts) {
+    opts = opts || {}
+    const params = []
+    if (collection) params.push('collection=' + encodeURIComponent(collection))
+    if (opts.q) params.push('q=' + encodeURIComponent(opts.q))
+    if (opts.page) params.push('page=' + encodeURIComponent(opts.page))
+    if (opts.pageSize) params.push('pageSize=' + encodeURIComponent(opts.pageSize))
+    if (opts.sort) params.push('sort=' + encodeURIComponent(opts.sort))
+    if (opts.order) params.push('order=' + encodeURIComponent(opts.order))
+    if (opts.filter) params.push('filter=' + encodeURIComponent(JSON.stringify(opts.filter)))
+    const suffix = '/search' + (params.length ? '?' + params.join('&') : '')
+    const out = await call(recordsUrl(suffix), 'GET')
+    return out || { items: [], total: 0, page: 1, pageSize: 25, totalPages: 0 }
+  }
+
+  /** Unique values of `data.<field>` in `collection` (for filter dropdowns / chips). Returns an array. */
+  async function distinct(collection, field) {
+    const params = ['field=' + encodeURIComponent(field)]
+    if (collection) params.unshift('collection=' + encodeURIComponent(collection))
+    const out = await call(recordsUrl('/distinct?' + params.join('&')), 'GET')
+    return (out && out.values) || []
+  }
+
   /** Read one record by id. Returns the record or null on 404. */
   async function get(collection, id) {
     const out = await call(recordsUrl('/' + encodeURIComponent(id)), 'GET')
@@ -102,6 +133,13 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl }) {
    * `opts.dedupeKey`, only rows whose key value is not already present are added
    * (re-runnable). Without it, seeding is skipped entirely once the collection has
    * ANY rows — so a refresh/redeploy never duplicates the reference data.
+   *
+   * POC limitation: the `dedupeKey` "already present" check reads only the newest
+   * 500 rows (the Data Service list cap), so it is reliable for reference sets up to
+   * ~500 rows; a larger set could re-insert older rows on a re-seed. For big seed
+   * sets prefer the no-`dedupeKey` (skip-if-non-empty) mode, which stays idempotent
+   * at any size. A server-side upsert keyed on (appId, collection, dedupeKey) is the
+   * proper fix and is deferred past the POC.
    */
   async function seedFromUpload(collection, rows, opts) {
     opts = opts || {}
@@ -154,6 +192,8 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl }) {
   return {
     save: save,
     list: list,
+    query: query,
+    distinct: distinct,
     get: get,
     update: update,
     remove: remove,

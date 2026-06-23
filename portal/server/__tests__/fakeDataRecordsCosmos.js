@@ -6,16 +6,36 @@
  * `{_id, appId}`):
  *   - insertOne(doc)                              — random uuid, reject duplicate.
  *   - findOne({_id, appId})                       — composite point read.
- *   - find({appId, collection?}).sort().limit().toArray() — per-tenant list.
+ *   - find({appId, collection?, ...}).sort().skip().limit().toArray() — list/search.
+ *   - countDocuments(filter)                      — search `total`.
+ *   - distinct('data.field', filter)             — filter-dropdown values.
  *   - updateOne({_id, appId}, {$set})             — patch.
  *   - deleteOne({_id, appId})                     — hard delete.
  *   - deleteMany({appId, createdInDraft?})        — admin clear-data.
  *
  * Mirrors fakeConversationsCosmos.js (composite-owner filter, dotted $set).
+ * Filters support flat equality, dotted paths (`data.<key>`), and `{ $regex }`
+ * (used by the search `_search` blob) — exactly the slice the repo exercises.
  */
 
+/** Read a possibly-dotted path (e.g. 'data.status') from a doc; undefined if absent. */
+function getPath(obj, path) {
+  return path.split('.').reduce((cur, k) => (cur == null ? undefined : cur[k]), obj)
+}
+
 function matches(doc, filter) {
-  return Object.entries(filter).every(([k, v]) => doc[k] === v)
+  return Object.entries(filter).every(([k, v]) => {
+    const actual = getPath(doc, k)
+    if (v !== null && typeof v === 'object') {
+      if ('$regex' in v) {
+        if (actual === undefined || actual === null) return false
+        const re = v.$regex instanceof RegExp ? v.$regex : new RegExp(v.$regex, v.$options || '')
+        return re.test(String(actual))
+      }
+      if ('$exists' in v) return v.$exists ? actual !== undefined : actual === undefined
+    }
+    return actual === v
+  })
 }
 
 /** Apply a $set value to a possibly-dotted path (e.g. 'data.foo'). */
@@ -55,12 +75,21 @@ export function makeFakeDataRecordsContainer(initialDocs = []) {
       let docs = [...store.values()].filter((d) => matches(d, filter)).map((d) => structuredClone(d))
       const cursor = {
         sort(spec = {}) {
-          const [[field, dir] = ['createdAt', -1]] = Object.entries(spec)
+          // Multi-key sort with dotted paths (e.g. { 'data.gate': 1, _id: 1 }).
+          const entries = Object.entries(spec)
           docs.sort((a, b) => {
-            if (a[field] < b[field]) return dir < 0 ? 1 : -1
-            if (a[field] > b[field]) return dir < 0 ? -1 : 1
+            for (const [field, dir] of entries) {
+              const av = getPath(a, field)
+              const bv = getPath(b, field)
+              if (av < bv) return dir < 0 ? 1 : -1
+              if (av > bv) return dir < 0 ? -1 : 1
+            }
             return 0
           })
+          return cursor
+        },
+        skip(n) {
+          docs = docs.slice(Math.max(0, n | 0))
           return cursor
         },
         limit(n) {
@@ -72,6 +101,21 @@ export function makeFakeDataRecordsContainer(initialDocs = []) {
         },
       }
       return cursor
+    },
+
+    async countDocuments(filter = {}) {
+      return [...store.values()].filter((d) => matches(d, filter)).length
+    },
+
+    async distinct(field, filter = {}) {
+      const seen = new Set()
+      for (const d of [...store.values()]) {
+        if (!matches(d, filter)) continue
+        const v = getPath(d, field)
+        if (Array.isArray(v)) v.forEach((x) => seen.add(x))
+        else if (v !== undefined) seen.add(v)
+      }
+      return [...seen]
     },
 
     async updateOne(filter = {}, update = {}) {

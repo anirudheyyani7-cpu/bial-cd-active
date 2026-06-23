@@ -82,6 +82,39 @@ describe('BIALData — CRUD hits /api/apps/:appId/records with X-App-Key (+ Bear
   })
 })
 
+describe('BIALData — query + distinct (search / pagination / filter)', () => {
+  it('query builds /records/search with all params and returns the paged envelope', async () => {
+    const envelope = { items: [{ id: 'r1', data: { gate: 'A2' } }], total: 1, page: 2, pageSize: 25, totalPages: 1 }
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, envelope) })
+    const out = await client.query('inspections', { q: 'sensor', page: 2, pageSize: 25, sort: 'gate', order: 'asc', filter: { status: 'Fail' } })
+    expect(out).toEqual(envelope)
+    const url = calls[0].url
+    expect(url.startsWith('/api/apps/app-1/records/search?')).toBe(true)
+    expect(url).toContain('collection=inspections')
+    expect(url).toContain('q=sensor')
+    expect(url).toContain('page=2')
+    expect(url).toContain('pageSize=25')
+    expect(url).toContain('sort=gate')
+    expect(url).toContain('order=asc')
+    expect(url).toContain('filter=' + encodeURIComponent(JSON.stringify({ status: 'Fail' })))
+    expect(calls[0].opts.method).toBe('GET')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+  })
+
+  it('query with no opts still hits /records/search and defaults the envelope on an empty body', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, null) })
+    const out = await client.query('inspections')
+    expect(calls[0].url).toBe('/api/apps/app-1/records/search?collection=inspections')
+    expect(out).toEqual({ items: [], total: 0, page: 1, pageSize: 25, totalPages: 0 })
+  })
+
+  it('distinct hits /records/distinct?collection=&field= and unwraps values', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, { values: ['Pass', 'Fail'] }) })
+    expect(await client.distinct('inspections', 'status')).toEqual(['Pass', 'Fail'])
+    expect(calls[0].url).toBe('/api/apps/app-1/records/distinct?collection=inspections&field=status')
+  })
+})
+
 describe('BIALData — seedFromUpload idempotency', () => {
   it('seeds rows once; a second run does not duplicate them', async () => {
     const store = []

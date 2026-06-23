@@ -28,7 +28,17 @@ import { Router } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import cors from 'cors'
 import { createAppContext } from './app-context.js'
-import { sanitizeData, sanitizeCollection, RecordQuotaError } from './data-records-repo.js'
+import {
+  sanitizeData,
+  sanitizeCollection,
+  sanitizeFieldName,
+  resolveSortPath,
+  buildDataFilter,
+  RecordQuotaError,
+} from './data-records-repo.js'
+
+// Free-text search query cap (a UI search box; long inputs are pointless + costly).
+const MAX_SEARCH_Q = 200
 
 // Per-app body cap: one record is small JSON; 256kb is generous and far under the
 // global 100kb default it overrides for this path (applied at the server mount).
@@ -124,6 +134,18 @@ export function createAppDataRouter({ dataRecordsRepo, auditRepo, registryRepo }
   const actorOf = (req) => req.user?.sub ?? null
   const draftTag = (req) => req.appCtx.status !== 'approved'
 
+  // Audit is best-effort and runs AFTER the mutation has already committed. A failed
+  // audit write must NOT turn a successful create/update/delete into a 500 — that
+  // would invite a client retry and a duplicate/redundant mutation. audit-repo
+  // already tolerates a dropped event under throttle (Decision 9), so log and swallow.
+  const audit = async (event) => {
+    try {
+      await auditRepo.record(event)
+    } catch (err) {
+      console.error('app-data audit write failed (non-fatal):', err.message)
+    }
+  }
+
   // Create a record.
   router.post(
     '/',
@@ -141,7 +163,7 @@ export function createAppDataRouter({ dataRecordsRepo, auditRepo, registryRepo }
           createdBy: actorOf(req),
           createdInDraft: draftTag(req),
         })
-        await auditRepo.record({
+        await audit({
           appId: req.appCtx.appId,
           username: actorOf(req),
           action: 'create',
@@ -171,6 +193,78 @@ export function createAppDataRouter({ dataRecordsRepo, auditRepo, registryRepo }
     }),
   )
 
+  // Generic paged SEARCH: free-text `q` across ALL fields (via the derived
+  // `_search` blob) + equality `filter` on `data.<key>` + server-side `sort`/`order`
+  // + page-number pagination with a TRUE `total`. Registered BEFORE `/:id` so the
+  // literal path isn't captured as a record id. Reads are NOT audited (Decision 9).
+  router.get(
+    '/search',
+    safe(async (req, res) => {
+      let collection
+      if (typeof req.query.collection === 'string') {
+        const coll = sanitizeCollection(req.query.collection)
+        if (!coll.ok) return res.status(400).json({ error: { message: coll.error } })
+        collection = coll.value
+      }
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+      if (q.length > MAX_SEARCH_Q) {
+        return res.status(400).json({ error: { message: `q must be ${MAX_SEARCH_Q} characters or fewer.` } })
+      }
+      const sort = resolveSortPath(req.query.sort)
+      if (!sort.ok) return res.status(400).json({ error: { message: sort.error } })
+      const order = req.query.order === 'asc' ? 'asc' : 'desc'
+      let dataFilter
+      if (typeof req.query.filter === 'string' && req.query.filter.length > 0) {
+        let parsed
+        try {
+          parsed = JSON.parse(req.query.filter)
+        } catch {
+          return res.status(400).json({ error: { message: 'filter must be valid JSON.' } })
+        }
+        const built = buildDataFilter(parsed)
+        if (!built.ok) return res.status(400).json({ error: { message: built.error } })
+        dataFilter = built.value
+      }
+      const page = req.query.page !== undefined ? Number(req.query.page) : undefined
+      const pageSize = req.query.pageSize !== undefined ? Number(req.query.pageSize) : undefined
+      const result = await dataRecordsRepo.search(req.appCtx.appId, {
+        collection,
+        q,
+        dataFilter,
+        sortPath: sort.value,
+        order,
+        page,
+        pageSize,
+      })
+      const totalPages = result.pageSize > 0 ? Math.ceil(result.total / result.pageSize) : 0
+      res.json({
+        items: result.items.map(project),
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        totalPages,
+      })
+    }),
+  )
+
+  // Distinct values of one app field (`data.<field>`) within the tenant — for
+  // building filter dropdowns / status chips. Registered BEFORE `/:id`.
+  router.get(
+    '/distinct',
+    safe(async (req, res) => {
+      let collection
+      if (typeof req.query.collection === 'string') {
+        const coll = sanitizeCollection(req.query.collection)
+        if (!coll.ok) return res.status(400).json({ error: { message: coll.error } })
+        collection = coll.value
+      }
+      const field = sanitizeFieldName(typeof req.query.field === 'string' ? req.query.field : undefined)
+      if (!field.ok) return res.status(400).json({ error: { message: field.error } })
+      const values = await dataRecordsRepo.distinct(req.appCtx.appId, { collection, field: field.value })
+      res.json({ values })
+    }),
+  )
+
   // Read one record in the caller's tenant.
   router.get(
     '/:id',
@@ -194,7 +288,7 @@ export function createAppDataRouter({ dataRecordsRepo, auditRepo, registryRepo }
       try {
         const rec = await dataRecordsRepo.update(req.appCtx.appId, id, clean.value)
         if (!rec) return res.status(404).json({ error: { message: 'Record not found.' } })
-        await auditRepo.record({
+        await audit({
           appId: req.appCtx.appId,
           username: actorOf(req),
           action: 'update',
@@ -217,7 +311,7 @@ export function createAppDataRouter({ dataRecordsRepo, auditRepo, registryRepo }
       if (!ID_RE.test(id)) return res.status(400).json({ error: { message: 'Invalid record id.' } })
       const result = await dataRecordsRepo.del(req.appCtx.appId, id)
       if (!result.deleted) return res.status(404).json({ error: { message: 'Record not found.' } })
-      await auditRepo.record({
+      await audit({
         appId: req.appCtx.appId,
         username: actorOf(req),
         action: 'delete',

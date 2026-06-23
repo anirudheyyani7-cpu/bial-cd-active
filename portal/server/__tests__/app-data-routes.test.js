@@ -183,6 +183,87 @@ describe('app-data routes — per-app rate limit (keyed by appId)', () => {
   })
 })
 
+describe('app-data routes — search (paged, filtered, schema-agnostic)', () => {
+  async function seed(app) {
+    await open(app, 'post', '/records').send({ collection: 'inspections', data: { gate: 'A1', inspector: 'R. Mehta', status: 'Pass', notes: 'Hinges greased' } })
+    await open(app, 'post', '/records').send({ collection: 'inspections', data: { gate: 'A2', inspector: 'S. Rao', status: 'Fail', notes: 'Proximity sensor misaligned' } })
+    await open(app, 'post', '/records').send({ collection: 'inspections', data: { gate: 'B3', inspector: 'P. Nair', status: 'Pass', notes: 'No issues found' } })
+  }
+
+  it('returns the paged envelope { items, total, page, pageSize, totalPages } and leaks no internal fields', async () => {
+    const { app } = harness()
+    await seed(app)
+    const res = await open(app, 'get', '/records/search?collection=inspections&sort=gate&order=asc&page=1&pageSize=2')
+    expect(res.status).toBe(200)
+    expect({ total: res.body.total, page: res.body.page, pageSize: res.body.pageSize, totalPages: res.body.totalPages }).toEqual({ total: 3, page: 1, pageSize: 2, totalPages: 2 })
+    expect(res.body.items.map((r) => r.data.gate)).toEqual(['A1', 'A2'])
+    const row = res.body.items[0]
+    expect(row).not.toHaveProperty('_search') // derived search blob never leaks
+    expect(row).not.toHaveProperty('appId')
+    expect(row).not.toHaveProperty('bytes')
+  })
+
+  it('free-text q matches across ALL fields', async () => {
+    const { app } = harness()
+    await seed(app)
+    expect((await open(app, 'get', '/records/search?collection=inspections&q=sensor')).body.items.map((r) => r.data.gate)).toEqual(['A2'])
+    expect((await open(app, 'get', '/records/search?collection=inspections&q=mehta')).body.items.map((r) => r.data.gate)).toEqual(['A1'])
+  })
+
+  it('equality filter on a data field', async () => {
+    const { app } = harness()
+    await seed(app)
+    const filter = encodeURIComponent(JSON.stringify({ status: 'Pass' }))
+    const res = await open(app, 'get', `/records/search?collection=inspections&sort=gate&order=asc&filter=${filter}`)
+    expect(res.body.items.map((r) => r.data.gate)).toEqual(['A1', 'B3'])
+    expect(res.body.total).toBe(2)
+  })
+
+  it('rejects bad params: oversize q, malformed filter JSON, $-injection in filter, dotted sort, bad collection', async () => {
+    const { app } = harness()
+    expect((await open(app, 'get', `/records/search?q=${'x'.repeat(201)}`)).status).toBe(400)
+    expect((await open(app, 'get', '/records/search?filter=not-json')).status).toBe(400)
+    expect((await open(app, 'get', `/records/search?filter=${encodeURIComponent(JSON.stringify({ $where: 1 }))}`)).status).toBe(400)
+    expect((await open(app, 'get', `/records/search?sort=${encodeURIComponent('a.b')}`)).status).toBe(400)
+    expect((await open(app, 'get', '/records/search?collection=bad/name')).status).toBe(400)
+  })
+
+  it('is app-key-gated, login-gated, and tenant-scoped like the rest of the router', async () => {
+    const { app } = harness()
+    await seed(app)
+    expect((await request(app).get('/api/apps/app-open/records/search')).status).toBe(401) // no key
+    expect((await request(app).get('/api/apps/app-login/records/search').set('X-App-Key', 'key-login')).status).toBe(401) // login app, no Bearer
+    const cross = await request(app).get('/api/apps/app-B/records/search?q=mehta').set('X-App-Key', 'key-B')
+    expect(cross.body.total).toBe(0) // app-open's rows never appear in app-B's search
+  })
+
+  it('the literal /search path is not captured by GET /:id', async () => {
+    const { app } = harness()
+    const res = await open(app, 'get', '/records/search')
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body.items)).toBe(true) // the search envelope, not a 400 "Invalid record id"
+  })
+})
+
+describe('app-data routes — distinct (filter-dropdown values)', () => {
+  it('returns the unique values of a field for the tenant', async () => {
+    const { app } = harness()
+    await open(app, 'post', '/records').send({ collection: 'inspections', data: { status: 'Pass' } })
+    await open(app, 'post', '/records').send({ collection: 'inspections', data: { status: 'Fail' } })
+    await open(app, 'post', '/records').send({ collection: 'inspections', data: { status: 'Pass' } })
+    const res = await open(app, 'get', '/records/distinct?collection=inspections&field=status')
+    expect(res.status).toBe(200)
+    expect([...res.body.values].sort()).toEqual(['Fail', 'Pass'])
+  })
+
+  it('requires a valid field; rejects missing / $ / dotted', async () => {
+    const { app } = harness()
+    expect((await open(app, 'get', '/records/distinct')).status).toBe(400) // no field
+    expect((await open(app, 'get', `/records/distinct?field=${encodeURIComponent('a.b')}`)).status).toBe(400)
+    expect((await open(app, 'get', '/records/distinct?field=$x')).status).toBe(400)
+  })
+})
+
 describe('app-data routes — CORS preflight for the opaque-origin iframe', () => {
   it('an OPTIONS preflight from Origin: null succeeds with the reflected origin', async () => {
     const { app } = harness()

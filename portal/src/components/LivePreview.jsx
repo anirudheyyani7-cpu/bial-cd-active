@@ -14,7 +14,7 @@ const STAGE_TEXT = [
   'Ready',
 ]
 
-export default function LivePreview({ previewCode, generating, generationStage, config, accessToken }) {
+export default function LivePreview({ previewCode, generating, generationStage, config, accessToken, user }) {
   const [viewport, setViewport] = useState('Desktop')
   const [showCode, setShowCode] = useState(false)
   const iframeRef = useRef(null)
@@ -26,6 +26,8 @@ export default function LivePreview({ previewCode, generating, generationStage, 
   configRef.current = config
   const tokenRef = useRef(accessToken)
   tokenRef.current = accessToken
+  const userRef = useRef(user)
+  userRef.current = user
 
   // The preview renders inside an isolated, same-origin /preview iframe that has
   // its OWN relaxed CSP (the main app's CSP stays strict). It runs as a sandboxed
@@ -38,7 +40,7 @@ export default function LivePreview({ previewCode, generating, generationStage, 
     const onMsg = (e) => {
       if (e.data?.previewReady && iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.postMessage(
-          { previewCode: previewCodeRef.current, config: configRef.current, accessToken: tokenRef.current },
+          { previewCode: previewCodeRef.current, config: configRef.current, accessToken: tokenRef.current, user: userRef.current },
           '*',
         )
       }
@@ -50,7 +52,7 @@ export default function LivePreview({ previewCode, generating, generationStage, 
   useEffect(() => {
     if (previewCode && iframeRef.current?.contentWindow) {
       iframeRef.current.contentWindow.postMessage(
-        { previewCode, config: configRef.current, accessToken: tokenRef.current },
+        { previewCode, config: configRef.current, accessToken: tokenRef.current, user: userRef.current },
         '*',
       )
     }
@@ -59,10 +61,10 @@ export default function LivePreview({ previewCode, generating, generationStage, 
   // Re-push the data wiring/token when they change on their own (e.g. provision
   // completes, or the token is (re)issued) without a code regeneration.
   useEffect(() => {
-    if ((config || accessToken) && iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage({ config, accessToken }, '*')
+    if ((config || accessToken || user) && iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage({ config, accessToken, user }, '*')
     }
-  }, [config, accessToken])
+  }, [config, accessToken, user])
 
   const progress = STAGE_PROGRESS[generationStage] ?? 0
   const stageText = STAGE_TEXT[generationStage] ?? ''

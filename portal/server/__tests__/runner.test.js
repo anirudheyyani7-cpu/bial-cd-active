@@ -35,8 +35,10 @@ describe('runner — shell (/apps/:appId)', () => {
     expect(res.text).not.toContain('allow-same-origin') // can't read the portal session
     expect(res.text).toContain('/apps/app-open/frame') // embeds the frame route
     expect(res.text).toContain('"loginRequired":false')
-    // only the access token is injected into the frame — never the refresh token
-    expect(res.text).toContain('postMessage({ config: CONFIG, accessToken: accessToken }')
+    // the access token AND the signed-in user are injected (so the app's currentUser()
+    // works without its own login form). The exact payload shape below also proves the
+    // refresh token is NOT among what's posted to the frame.
+    expect(res.text).toContain('postMessage({ config: CONFIG, accessToken: accessToken, user: currentUser }')
   })
 
   it('a login app carries loginRequired:true and renders the login box markup', async () => {

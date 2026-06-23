@@ -115,10 +115,11 @@ function renderShell({ appId, config }) {
 <script>
   var CONFIG = ${cfgJson};
   var ACCESS_KEY='bial_access_token', REFRESH_KEY='bial_refresh_token', USER_KEY='bial_user';
-  var frame = null, accessToken = null;
+  var frame = null, accessToken = null, currentUser = null;
 
   function decodeExp(t){ try{ var b=atob(String(t).split('.')[1].replace(/-/g,'+').replace(/_/g,'/')); return (JSON.parse(b).exp||0)*1000; }catch(e){ return 0; } }
   function validAccess(){ var t=localStorage.getItem(ACCESS_KEY); return (t && decodeExp(t) > Date.now()) ? t : null; }
+  function loadUser(){ try{ return JSON.parse(localStorage.getItem(USER_KEY)||'null'); }catch(e){ return null; } }
 
   function showApp(){
     document.getElementById('login').classList.add('hidden');
@@ -136,14 +137,16 @@ function renderShell({ appId, config }) {
     document.getElementById('appwrap').appendChild(frame);
     // runnerReady (from the frame) triggers postToFrame with the current token.
   }
-  // Inject ONLY the config + the short-lived access token — never the refresh token.
-  function postToFrame(){ if (frame && frame.contentWindow) frame.contentWindow.postMessage({ config: CONFIG, accessToken: accessToken }, '*'); }
+  // Inject the config + the short-lived access token + the signed-in user (so the app's
+  // BIALData.currentUser() works WITHOUT the app collecting credentials) — never the
+  // refresh token. The shell does the shared BIAL sign-in; the app just uses the session.
+  function postToFrame(){ if (frame && frame.contentWindow) frame.contentWindow.postMessage({ config: CONFIG, accessToken: accessToken, user: currentUser }, '*'); }
   function showLogin(){ document.getElementById('login').classList.remove('hidden'); }
 
   function persist(d){
     if (d.accessToken) localStorage.setItem(ACCESS_KEY, d.accessToken);
     if (d.refreshToken) localStorage.setItem(REFRESH_KEY, d.refreshToken);
-    if (d.user) localStorage.setItem(USER_KEY, JSON.stringify(d.user));
+    if (d.user) { localStorage.setItem(USER_KEY, JSON.stringify(d.user)); currentUser = d.user; }
   }
 
   async function tryRefresh(){
@@ -157,9 +160,12 @@ function renderShell({ appId, config }) {
   }
 
   async function init(){
-    if (!CONFIG.loginRequired){ accessToken = null; showApp(); return; }
-    var t = validAccess(); if (t){ accessToken = t; showApp(); return; }
-    if (await tryRefresh()){ showApp(); return; }
+    // Open app (no login): no token, no user — the app just reads/writes anonymously.
+    if (!CONFIG.loginRequired){ accessToken = null; currentUser = null; showApp(); return; }
+    // Login app: the shell owns sign-in. Reuse a valid session (token + stored user)
+    // and inject the user so the app's currentUser() is populated without its own form.
+    var t = validAccess(); if (t){ accessToken = t; currentUser = loadUser(); showApp(); return; }
+    if (await tryRefresh()){ currentUser = currentUser || loadUser(); showApp(); return; }
     showLogin();
   }
 
@@ -221,7 +227,8 @@ function renderFrame({ compiled }) {
     if (!e.data) return;
     if (e.data.config) window.__BIAL_CONFIG = e.data.config;
     if ('accessToken' in e.data) window.__BIAL_TOKEN = e.data.accessToken || null;
-    if (e.data.config) mount(); // render once the config (and token) have arrived
+    if ('user' in e.data) window.__BIAL_USER = e.data.user || null; // so currentUser() works — set BEFORE mount
+    if (e.data.config) mount(); // render once the config (token + user) have arrived
   });
   if (window.parent) window.parent.postMessage({ runnerReady: true }, '*');
   // Fallback for an open app whose shell injects no token: mount even if a config

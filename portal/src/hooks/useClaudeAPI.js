@@ -20,7 +20,7 @@ CRITICAL — never fabricate data:
 
 Choose the app's data wiring by ONE question: must the data survive a page refresh or be shared between users?
 1. NO — view-only. The user only views/analyzes an uploaded Excel/CSV/PDF this session. Hold the parsed rows in React state (client-side). NO backend, NO login, NO BIALData calls. Show an empty state until a file is provided.
-2. YES — persistent records. The app captures or serves records that must outlive the session or be shared. Use the shared Data Service via the injected \`window.BIALData\` client, and require sign-in.
+2. YES — persistent records. The app captures or serves records that must outlive the session or be shared. Use the shared Data Service via the injected \`window.BIALData\` client. Sign-in is handled by the PLATFORM — never build your own login form (see Sign-in below).
 3. YES + uploaded reference data — the app mixes uploaded reference data (e.g. an equipment master list) with new records (e.g. inspections logged against it). On first run, seed the upload once with \`BIALData.seedFromUpload(...)\` (idempotent), then read/write normally. Keep new records in their OWN collection and reference seed rows by id.
 
 The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it):
@@ -36,9 +36,10 @@ The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it
 - For any list that grows over time (logs, registers, inspections, requests), build the table with \`query\`: a search box bound to \`q\`, page controls driven by \`page\`/\`pageSize\`/\`totalPages\`, and (where useful) a filter dropdown built from \`distinct\`. Show \`total\` and the current page. Do NOT \`list\` everything and paginate/search in React state.
 - ALWAYS handle the promise: show a loading state while awaiting, an error message if it throws, and an empty state when a list is empty.
 
-Login — shared with the platform (a persistent-records app requires it):
-- \`await BIALData.login(username, password)\` signs in with the same BIAL portal account; \`BIALData.currentUser()\` returns the signed-in user or null.
-- Gate the data UI on \`currentUser()\`; the server ALSO enforces login, so it cannot be skipped by omitting the login UI.
+Sign-in — handled BY THE PLATFORM, never by your app:
+- The app page signs the user in with the shared BIAL portal login and hands your app a ready, signed-in session. Do NOT build a username/password login form, and do NOT call \`BIALData.login()\` — sign-in is the platform's job, and a form built inside the app cannot reach the login endpoint anyway.
+- \`BIALData.currentUser()\` returns the signed-in user (e.g. \`{ username }\`) or null. Use it READ-ONLY — to greet the user or stamp who created a record. Do NOT gate the whole screen behind your own login UI.
+- Just call the data APIs directly; the session is attached automatically. If a data call reports "please sign in" (a 401), show a short inline note asking the user to open the app from the BIAL portal — do NOT render a login form.
 
 When generating a preview app:
 1. Wrap JSX in \`\`\`jsx:preview ... \`\`\`

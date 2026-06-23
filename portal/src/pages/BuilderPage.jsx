@@ -10,7 +10,7 @@ import DeployBar from '../components/DeployBar'
 import AttachmentChips from '../components/AttachmentChips'
 import AttachmentLightbox from '../components/AttachmentLightbox'
 import { useClaudeAPI, buildSystemPrompt, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
-import { getAccessToken } from '../utils/auth'
+import { getAccessToken, getStoredUser } from '../utils/auth'
 import { provisionApp, submitApp, getAppStatus } from '../utils/appRegistryApi'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments } from '../utils/attachmentStore'
@@ -821,6 +821,7 @@ export default function BuilderPage() {
                 : undefined
             }
             accessToken={deploy?.loginRequired ? getAccessToken() : undefined}
+            user={deploy?.loginRequired ? getStoredUser() : undefined}
           />
         </div>
       </div>

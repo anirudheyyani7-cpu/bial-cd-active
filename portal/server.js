@@ -176,6 +176,7 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
     // and cannot read the portal's localStorage). BIALData reads these globals.
     if (e.data.config) window.__BIAL_CONFIG = e.data.config;
     if ('accessToken' in e.data) window.__BIAL_TOKEN = e.data.accessToken || null;
+    if ('user' in e.data) window.__BIAL_USER = e.data.user || null; // so currentUser() works in preview too
     if (typeof e.data.previewCode === 'string') renderPreview(e.data.previewCode);
   });
   if (window.parent) window.parent.postMessage({ previewReady: true }, '*');

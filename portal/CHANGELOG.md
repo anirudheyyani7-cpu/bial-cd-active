@@ -42,6 +42,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with a 400 (the same constraint that broke chat history in 1.3.1–1.3.3). The
   indexes are created automatically on server start and can be applied to a running
   deployment with `node scripts/ensure-indexes.js`.
+- **Sign-in works in deployed data-backed apps.** The app page now signs you in with
+  the shared BIAL login and hands the running app a ready session (your identity is
+  available to the app, never your password), so apps no longer try — and fail — to
+  log in from inside their sandbox. The App Builder also stops generating a redundant
+  in-app login form, and any older app that still has one now skips it automatically.
 
 ## [1.3.3] - 2026-06-23
 

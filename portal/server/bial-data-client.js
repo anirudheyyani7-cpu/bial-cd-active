@@ -30,8 +30,11 @@
  * @param {() => (string|null)} deps.getToken - returns the current access token (or null)
  * @param {(t: string|null) => void} deps.setToken - stores a token after login (in-memory only)
  * @param {Function} deps.fetchImpl - a fetch implementation
+ * @param {() => (object|null)} [deps.getUser] - returns the platform-injected signed-in
+ *   user (the shell signs in and posts it down), so `currentUser()` works WITHOUT the
+ *   app collecting credentials. Optional (absent in unit tests / the direct-login path).
  */
-export function createBIALData({ getConfig, getToken, setToken, fetchImpl }) {
+export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUser }) {
   function recordsUrl(suffix) {
     const { baseUrl, appId } = getConfig()
     return baseUrl + '/apps/' + appId + '/records' + (suffix || '')
@@ -163,17 +166,31 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl }) {
   }
 
   /**
-   * Sign in with the SHARED portal login (Decision 4). On success stores the
-   * access token IN MEMORY (never persisted to the portal origin) so subsequent
-   * data calls carry it, and returns `{ user }`. The refresh token is ignored.
+   * Sign in. In the DEPLOYED app the platform has already signed the user in (the
+   * shared BIAL login on the app page) and injected the session, so this reuses that
+   * session and never collects/forwards credentials — apps should not build a login
+   * form at all (the generation prompt says so). The direct-fetch path below stays
+   * only for the unit tests / any same-origin host; in a sandboxed app frame that
+   * fetch is cross-origin-blocked, so we surface a clear "sign in from the portal"
+   * message instead of a raw "Failed to fetch".
    */
   async function login(username, password) {
-    const { baseUrl } = getConfig()
-    const res = await fetchImpl(baseUrl + '/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username, password: password }),
-    })
+    const injected = typeof getUser === 'function' ? getUser() : null
+    if (injected) {
+      currentUserValue = injected
+      return { user: injected }
+    }
+    let res
+    try {
+      const { baseUrl } = getConfig()
+      res = await fetchImpl(baseUrl + '/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, password: password }),
+      })
+    } catch (e) {
+      throw new Error('Please sign in from the BIAL portal — this app does not handle sign-in itself.')
+    }
     if (!res.ok) {
       throw new Error('Incorrect username or password.')
     }
@@ -184,9 +201,15 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl }) {
   }
 
   var currentUserValue = null
-  /** The signed-in user (set by login), or null. */
+  /**
+   * The signed-in user: the platform-injected user if present (the normal deployed
+   * case), else whoever an in-app `login()` set. Read-only — apps use it to greet the
+   * user or stamp records, NOT to gate the screen behind a self-built login form.
+   */
   function currentUser() {
-    return currentUserValue
+    if (currentUserValue) return currentUserValue
+    const injected = typeof getUser === 'function' ? getUser() : null
+    return injected || null
   }
 
   return {
@@ -215,10 +238,12 @@ export function bialDataClientScript() {
 ${createBIALData.toString()}
 window.__BIAL_CONFIG = window.__BIAL_CONFIG || {};
 window.__BIAL_TOKEN = window.__BIAL_TOKEN || null;
+window.__BIAL_USER = window.__BIAL_USER || null;
 window.BIALData = createBIALData({
   getConfig: function () { return window.__BIAL_CONFIG; },
   getToken: function () { return window.__BIAL_TOKEN; },
   setToken: function (t) { window.__BIAL_TOKEN = t; },
+  getUser: function () { return window.__BIAL_USER; },
   fetchImpl: window.fetch.bind(window),
 });`
 }

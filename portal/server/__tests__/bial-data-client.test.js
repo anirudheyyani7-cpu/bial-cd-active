@@ -173,6 +173,53 @@ describe('BIALData — login (shared portal login, in-memory token)', () => {
   })
 })
 
+describe('BIALData — platform-injected session (Layer 2: deployed apps never build a login form)', () => {
+  it('currentUser() returns the platform-injected user without any in-app login', () => {
+    const client = createBIALData({
+      getConfig: () => CONFIG,
+      getToken: () => 'TOK',
+      setToken: () => {},
+      getUser: () => ({ username: 'anant' }),
+      fetchImpl: async () => jsonRes(200, {}),
+    })
+    expect(client.currentUser()).toEqual({ username: 'anant' })
+  })
+
+  it('login() reuses the injected session WITHOUT a network call (no credentials forwarded)', async () => {
+    const { fetchImpl, calls } = mockFetch(() => jsonRes(200, {}))
+    const client = createBIALData({
+      getConfig: () => CONFIG,
+      getToken: () => 'TOK',
+      setToken: () => {},
+      getUser: () => ({ username: 'anant' }),
+      fetchImpl,
+    })
+    const out = await client.login('ignored', 'ignored')
+    expect(out.user).toEqual({ username: 'anant' }) // the shell already signed them in
+    expect(calls).toHaveLength(0) // never hits /auth/login — no creds leave the sandbox
+  })
+
+  it('login() surfaces a clear "sign in from the portal" message when the sandboxed frame cannot reach the endpoint', async () => {
+    const client = createBIALData({
+      getConfig: () => CONFIG,
+      getToken: () => null,
+      setToken: () => {},
+      // no injected user + a fetch that REJECTS the way a blocked cross-origin call does
+      fetchImpl: async () => {
+        throw new TypeError('Failed to fetch')
+      },
+    })
+    await expect(client.login('a', 'b')).rejects.toThrow(/sign in from the BIAL portal/i)
+  })
+
+  it('the browser bootstrap wires the injected user (window.__BIAL_USER + getUser), still no localStorage', () => {
+    const src = bialDataClientScript()
+    expect(src).toContain('window.__BIAL_USER')
+    expect(src).toContain('getUser')
+    expect(src).not.toContain('localStorage')
+  })
+})
+
 describe('BIALData — archetype separation + injection hygiene', () => {
   it('creating the client makes no network calls (an upload-only app stays offline)', async () => {
     const { calls } = makeClient()

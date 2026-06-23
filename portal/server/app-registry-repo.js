@@ -36,6 +36,17 @@ import { withThrottleRetry } from './mongo-retry.js'
 export const APP_RECORD_COUNT_CAP = 50_000
 export const APP_DATA_BYTES_CAP = 100 * 1024 * 1024 // 100 MB per app
 
+// Per-app FILE quota — SEPARATE from the record quota so files and records don't
+// starve each other (a handful of reconciliation sheets would exhaust the 100 MB
+// record cap). Env-configurable (APP_FILE_*); resolved once at module load with a
+// POC-sized default. Exported so the files repo + tests share the exact thresholds.
+const _posInt = (raw, fallback) => {
+  const n = Number.parseInt(raw, 10)
+  return Number.isInteger(n) && n > 0 ? n : fallback
+}
+export const APP_FILE_COUNT_CAP = _posInt(process.env.APP_FILE_COUNT_CAP, 2000)
+export const APP_FILE_BYTES_CAP = _posInt(process.env.APP_FILE_BYTES_CAP, 500 * 1024 * 1024) // 500 MB per app
+
 // Bound an app name (advisory display label).
 export const MAX_APP_NAME = 120
 
@@ -108,6 +119,8 @@ export function createAppRegistryRepo(collection) {
             status: 'draft',
             dataCount: 0,
             dataBytes: 0,
+            fileCount: 0,
+            fileBytes: 0,
             createdAt: now,
           },
           $set: { updatedAt: now },
@@ -214,6 +227,50 @@ export function createAppRegistryRepo(collection) {
     )
   }
 
+  /**
+   * Atomically adjust the per-app FILE quota counters — the file-side twin of
+   * incData (separate caps so files and records don't starve each other). Increment
+   * is a CONDITIONAL reserve that only matches when both file counters have room;
+   * decrement uses the same filter (subtracting raises the threshold, so a release
+   * always matches). Returns the updated doc, or null when an increment would exceed
+   * a cap (or the app is missing).
+   *
+   * A registry doc created BEFORE this feature has no fileCount/fileBytes fields, and
+   * a `$lte` filter does NOT match a missing field — so a first upload would wrongly
+   * 413. Backfill the counters to 0 idempotently first (only writes when absent),
+   * mirroring attachments-repo's "ensure the counter exists before the conditional
+   * reserve" precedent. ensureDraft seeds them for new apps; this covers the rest.
+   */
+  async function incFiles(appId, dCount, dBytes) {
+    await withThrottleRetry(() =>
+      collection.updateOne(
+        { _id: appId, fileCount: { $exists: false } },
+        { $set: { fileCount: 0, fileBytes: 0 } },
+      ),
+    )
+    return await withThrottleRetry(() =>
+      collection.findOneAndUpdate(
+        {
+          _id: appId,
+          fileCount: { $lte: APP_FILE_COUNT_CAP - dCount },
+          fileBytes: { $lte: APP_FILE_BYTES_CAP - dBytes },
+        },
+        { $inc: { fileCount: dCount, fileBytes: dBytes }, $set: { updatedAt: new Date().toISOString() } },
+        { returnDocument: 'after' },
+      ),
+    )
+  }
+
+  /** Reset the FILE quota counters to an exact pair (admin purge / recompute). */
+  async function setFileCounters(appId, { fileCount, fileBytes }) {
+    return await withThrottleRetry(() =>
+      collection.updateOne(
+        { _id: appId },
+        { $set: { fileCount, fileBytes, updatedAt: new Date().toISOString() } },
+      ),
+    )
+  }
+
   /** Hard-delete the registry doc (admin app deletion; data/audit swept by the route). */
   async function deleteApp(appId) {
     return await withThrottleRetry(() => collection.deleteOne({ _id: appId }))
@@ -229,6 +286,8 @@ export function createAppRegistryRepo(collection) {
     patchApp,
     incData,
     setDataCounters,
+    incFiles,
+    setFileCounters,
     deleteApp,
   }
 }

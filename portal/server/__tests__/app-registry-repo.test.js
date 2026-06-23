@@ -4,6 +4,8 @@ import {
   validateAppRegistration,
   APP_RECORD_COUNT_CAP,
   APP_DATA_BYTES_CAP,
+  APP_FILE_COUNT_CAP,
+  APP_FILE_BYTES_CAP,
   MAX_APP_NAME,
 } from '../app-registry-repo.js'
 import { makeFakeAppRegistryContainer } from './fakeAppRegistryCosmos.js'
@@ -27,6 +29,8 @@ describe('app-registry-repo — ensureDraft (idempotent provision)', () => {
     expect(doc.loginRequired).toBe(false)
     expect(doc.dataCount).toBe(0)
     expect(doc.dataBytes).toBe(0)
+    expect(doc.fileCount).toBe(0)
+    expect(doc.fileBytes).toBe(0)
     expect(doc.appKey).toMatch(/^bial_[A-Za-z0-9_-]+$/)
     expect(container._store.size).toBe(1)
   })
@@ -182,6 +186,51 @@ describe('app-registry-repo — incData (atomic quota reserve + release)', () =>
     const down = await repo.incData(APP, -1, -100)
     expect(down.dataCount).toBe(APP_RECORD_COUNT_CAP - 1)
     expect(down.dataBytes).toBe(APP_DATA_BYTES_CAP - 100)
+  })
+})
+
+describe('app-registry-repo — incFiles / setFileCounters (separate file quota)', () => {
+  it('increments and decrements the FILE counters atomically (independent of data counters)', async () => {
+    const { repo } = setup()
+    await repo.ensureDraft(APP, OWNER)
+    const up = await repo.incFiles(APP, 1, 4096)
+    expect(up.fileCount).toBe(1)
+    expect(up.fileBytes).toBe(4096)
+    expect(up.dataCount).toBe(0) // record quota untouched
+    const down = await repo.incFiles(APP, -1, -4096)
+    expect(down.fileCount).toBe(0)
+    expect(down.fileBytes).toBe(0)
+  })
+
+  it('returns null when the file count or byte cap would be exceeded (counters unchanged)', async () => {
+    const { repo, container } = setup([
+      { _id: APP, status: 'draft', fileCount: APP_FILE_COUNT_CAP, fileBytes: 0 },
+    ])
+    expect(await repo.incFiles(APP, 1, 10)).toBeNull()
+    expect(container._get(APP).fileCount).toBe(APP_FILE_COUNT_CAP)
+    const { repo: repo2, container: c2 } = setup([
+      { _id: APP, status: 'draft', fileCount: 0, fileBytes: APP_FILE_BYTES_CAP },
+    ])
+    expect(await repo2.incFiles(APP, 1, 1)).toBeNull()
+    expect(c2._get(APP).fileBytes).toBe(APP_FILE_BYTES_CAP)
+  })
+
+  it('backfills missing file counters on a pre-existing app before reserving (no false 413)', async () => {
+    // A registry doc created before this feature has dataCount but NO fileCount.
+    const { repo } = setup([{ _id: APP, status: 'approved', dataCount: 3, dataBytes: 90 }])
+    const up = await repo.incFiles(APP, 1, 100)
+    expect(up).not.toBeNull() // would be null if the $lte filter missed the absent field
+    expect(up.fileCount).toBe(1)
+    expect(up.fileBytes).toBe(100)
+  })
+
+  it('setFileCounters resets both counters to an exact pair', async () => {
+    const { repo, container } = setup([
+      { _id: APP, status: 'draft', fileCount: 9, fileBytes: 9999 },
+    ])
+    await repo.setFileCounters(APP, { fileCount: 0, fileBytes: 0 })
+    expect(container._get(APP).fileCount).toBe(0)
+    expect(container._get(APP).fileBytes).toBe(0)
   })
 })
 

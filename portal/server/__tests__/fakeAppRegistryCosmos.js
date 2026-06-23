@@ -34,6 +34,8 @@ function matchOne(docVal, cond) {
           return Array.isArray(v) && v.includes(docVal)
         case '$ne':
           return docVal !== v
+        case '$exists':
+          return v ? docVal !== undefined : docVal === undefined
         default:
           return false
       }

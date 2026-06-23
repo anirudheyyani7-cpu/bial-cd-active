@@ -194,9 +194,23 @@ export function createDataRecordsRepo(collection, registryRepo) {
       }
     }
     const now = new Date().toISOString()
-    await withThrottleRetry(() =>
-      collection.updateOne({ _id: id, appId }, { $set: { data: merged, bytes: newBytes, updatedAt: now } }),
-    )
+    let res
+    try {
+      res = await withThrottleRetry(() =>
+        collection.updateOne({ _id: id, appId }, { $set: { data: merged, bytes: newBytes, updatedAt: now } }),
+      )
+    } catch (err) {
+      if (delta !== 0) await releaseQuota(appId, 0, delta) // failed write → roll the reserve back (no drift)
+      throw err
+    }
+    // The record vanished concurrently (a delete/purge landed between the read and
+    // this write): the composite filter matched nothing, so roll the reserved delta
+    // back and report the truth — null → the route 404s, with NO fabricated success
+    // record and NO spurious audit event.
+    if ((res?.matchedCount ?? 0) === 0) {
+      if (delta !== 0) await releaseQuota(appId, 0, delta)
+      return null
+    }
     return { ...existing, data: merged, bytes: newBytes, updatedAt: now }
   }
 

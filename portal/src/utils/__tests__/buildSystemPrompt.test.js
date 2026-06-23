@@ -21,6 +21,13 @@ describe('buildSystemPrompt — no fabricated data, real Data Service wiring (U1
     expect(prompt).toContain('currentUser')
   })
 
+  it('documents save() with the REAL nested record shape (fields under .data), not a flattened { id, ...data }', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).not.toContain('{ id, ...data }') // the wrong, flattened shape must be gone
+    expect(prompt).toMatch(/save\(collection, data\)`?\s*→\s*the created record `\{ id, data/) // nested, consistent with list/get
+    expect(prompt).toMatch(/nested under `\.data`/i)
+  })
+
   it('still names PreviewApp, the jsx:preview fence, classic-runtime globals, and no imports/exports', () => {
     const prompt = buildSystemPrompt()
     expect(prompt).toContain('PreviewApp')

@@ -58,7 +58,10 @@ function buildShellCsp() {
 // Frame CSP: pre-compiled JS, so NO 'unsafe-eval' and NO @babel/standalone. The
 // opaque-origin frame's data fetch is cross-origin, so connect-src names the
 // portal origin explicitly ('self' = the opaque origin, matching nothing),
-// scoped to exactly the Data-Service origin (no wildcard) per Decision 8.
+// scoped to EXACTLY the Data-Service origin per Decision 8. The CDNs load as
+// <script>/<style> (script-src/style-src) and are never fetch targets, so they
+// are deliberately ABSENT from connect-src — a token-bearing sandbox must not
+// have an off-origin XHR/beacon egress path it doesn't need.
 function buildFrameCsp(origin) {
   return [
     "default-src 'self'",
@@ -66,7 +69,7 @@ function buildFrameCsp(origin) {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: https:",
-    `connect-src 'self' ${origin} https://unpkg.com https://cdn.tailwindcss.com`,
+    `connect-src 'self' ${origin}`,
     "frame-ancestors 'self'", // only the same-origin shell may frame it
   ].join('; ')
 }

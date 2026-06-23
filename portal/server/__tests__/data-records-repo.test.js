@@ -108,6 +108,29 @@ describe('data-records-repo — update (PATCH merge + byte reconciliation)', () 
     const rec = await repo.insert({ appId: A, collection: 'default', data: { a: 1 } })
     expect(await repo.update(B, rec._id, { a: 2 })).toBeNull()
   })
+
+  it('rolls back the reserved byte delta + returns null when the record vanished concurrently (no drift, no false success)', async () => {
+    const { repo, registryContainer, dataContainer } = setup()
+    const rec = await repo.insert({ appId: A, collection: 'default', data: { a: 1 } })
+    const bytesBefore = registryContainer._get(A).dataBytes
+    // Simulate a concurrent delete landing between the read and the write: the
+    // composite-filter updateOne matches nothing.
+    dataContainer.updateOne = async () => ({ matchedCount: 0, modifiedCount: 0 })
+    const out = await repo.update(A, rec._id, { a: 1, padding: 'x'.repeat(200) }) // delta > 0
+    expect(out).toBeNull() // truthful — the route will 404, not fabricate a 200
+    expect(registryContainer._get(A).dataBytes).toBe(bytesBefore) // reserve rolled back, no drift
+  })
+
+  it('rolls back the reserved byte delta when the update write throws', async () => {
+    const { repo, registryContainer, dataContainer } = setup()
+    const rec = await repo.insert({ appId: A, collection: 'default', data: { a: 1 } })
+    const bytesBefore = registryContainer._get(A).dataBytes
+    dataContainer.updateOne = async () => {
+      throw new Error('write blew up')
+    }
+    await expect(repo.update(A, rec._id, { a: 1, padding: 'x'.repeat(200) })).rejects.toThrow('write blew up')
+    expect(registryContainer._get(A).dataBytes).toBe(bytesBefore) // no upward drift
+  })
 })
 
 describe('data-records-repo — hard delete + quota release', () => {

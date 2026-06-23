@@ -108,7 +108,10 @@ function buildPreviewCsp(origin) {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: https:",
-    `connect-src 'self' ${origin} https://unpkg.com https://cdn.tailwindcss.com`,
+    // CDNs load as <script>/<style> (covered above) and are never fetch targets,
+    // so connect-src stays scoped to the Data-Service origin — no off-origin XHR
+    // egress for the injected access token (matches the runner frame, Decision 8).
+    `connect-src 'self' ${origin}`,
     "frame-ancestors 'self'", // so the same-origin SPA can frame this renderer
   ].join('; ')
 }

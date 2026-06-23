@@ -24,8 +24,8 @@ Choose the app's data wiring by ONE question: must the data survive a page refre
 3. YES + uploaded reference data — the app mixes uploaded reference data (e.g. an equipment master list) with new records (e.g. inspections logged against it). On first run, seed the upload once with \`BIALData.seedFromUpload(...)\` (idempotent), then read/write normally. Keep new records in their OWN collection and reference seed rows by id.
 
 The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it):
-- \`await BIALData.save(collection, data)\` → the created record \`{ id, ...data }\`
-- \`await BIALData.list(collection, { limit })\` → an array of records \`[{ id, data, createdAt, ... }]\`
+- \`await BIALData.save(collection, data)\` → the created record \`{ id, data, createdAt, ... }\` — YOUR fields are nested under \`.data\` (e.g. \`saved.data.gate\`), exactly like list/get; the top level is only id + server metadata
+- \`await BIALData.list(collection, { limit })\` → an array of records \`[{ id, data, createdAt, ... }]\` (read each row's fields from \`.data\`)
 - \`await BIALData.get(collection, id)\` → one record
 - \`await BIALData.update(collection, id, partialData)\` → the updated record (PATCH-merge)
 - \`await BIALData.remove(collection, id)\` → \`{ ok: true }\`

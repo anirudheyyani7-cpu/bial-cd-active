@@ -324,7 +324,7 @@ export function createApp({
     '/api/admin/apps',
     requireAuth,
     requireAdmin,
-    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo, conversationsRepo }),
+    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo }),
   )
   // Admin-only per-user limit management + feedback read. Gated at the mount point.
   app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults }))

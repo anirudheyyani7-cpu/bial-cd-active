@@ -17,6 +17,7 @@
 import express from 'express'
 import { randomBytes } from 'node:crypto'
 import { compileJsx } from '../jsx-compile.js'
+import { isNotFound } from '../object-store.js'
 
 const MAX_NOTE = 1000
 // Two-step clear-data confirm tokens: minted by the data-summary preflight,
@@ -70,10 +71,6 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
     for (const [t, v] of clearTokens) if (v.exp < now) clearTokens.delete(t)
   }
 
-  /** An object-store error that means "blob already absent" (idempotent delete). */
-  const isNotFound = (err) =>
-    err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
-
   /**
    * Best-effort delete of a `[{ fileId, blobKey }]` list from the object store. The
    * metadata is already gone by the time we get here (purgeByApp/recompute delete it
@@ -81,14 +78,22 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
    * residual is a bounded storage-cost orphan the deferred blob-GC mops up — far less
    * harmful than failing the whole admin op after the metadata is destroyed.
    */
+  const DELETE_BLOBS_BATCH = 20
+  const deleteOneBlob = async (b) => {
+    if (!b?.blobKey) return
+    try {
+      await objectStore.delete(b.blobKey)
+    } catch (err) {
+      if (!isNotFound(err)) console.error('admin file blob delete failed (non-fatal):', b.blobKey, err.message)
+    }
+  }
   const deleteBlobs = async (blobs) => {
-    for (const b of blobs || []) {
-      if (!b?.blobKey) continue
-      try {
-        await objectStore.delete(b.blobKey)
-      } catch (err) {
-        if (!isNotFound(err)) console.error('admin file blob delete failed (non-fatal):', b.blobKey, err.message)
-      }
+    const list = blobs || []
+    // Batch the deletes (~20 at a time) instead of one serial await each, so clearing
+    // a large app doesn't block the response on hundreds of sequential round-trips.
+    // Each delete swallows its own error (best-effort), so allSettled never rejects.
+    for (let i = 0; i < list.length; i += DELETE_BLOBS_BATCH) {
+      await Promise.allSettled(list.slice(i, i + DELETE_BLOBS_BATCH).map(deleteOneBlob))
     }
   }
 

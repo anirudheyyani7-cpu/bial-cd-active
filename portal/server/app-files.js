@@ -27,6 +27,8 @@
 import { Router } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { createAppContext } from './app-context.js'
+import { posIntOr } from './util-validate.js'
+import { isNotFound } from './object-store.js'
 import {
   sanitizeFilename,
   sanitizeCollection,
@@ -36,19 +38,14 @@ import {
   FileQuotaError,
 } from './app-files-repo.js'
 
-const _posInt = (raw, fallback) => {
-  const n = Number.parseInt(raw, 10)
-  return Number.isInteger(n) && n > 0 ? n : fallback
-}
-
 // The raised express.json body-parser limit for the upload route (base64 inflates
 // ~37%, so this exceeds APP_FILE_MAX_BYTES). Mounted in server.js BEFORE the broad
 // /api/apps 256 KB parser — body-parser consumes once at first match.
 export const APP_FILE_MAX_JSON = process.env.APP_FILE_MAX_JSON || '25mb'
 // Max DECODED bytes per file (checked after base64 decode). The binding upload cap.
-const APP_FILE_MAX_BYTES = _posInt(process.env.APP_FILE_MAX_BYTES, 18 * 1024 * 1024)
+const APP_FILE_MAX_BYTES = posIntOr(process.env.APP_FILE_MAX_BYTES, 18 * 1024 * 1024)
 // Download SAS / presign lifetime (seconds). Short by design.
-const FILE_SAS_TTL_SECONDS = _posInt(process.env.FILE_SAS_TTL_SECONDS, 120)
+const FILE_SAS_TTL_SECONDS = posIntOr(process.env.FILE_SAS_TTL_SECONDS, 120)
 
 // Server-minted file ids are crypto.randomUUID(); bound the shape defensively.
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/
@@ -80,11 +77,6 @@ const safe = (fn) => async (req, res) => {
     console.error('app-files route error:', err.message)
     if (!res.headersSent) res.status(500).json({ error: { message: 'Request failed. Please retry.' } })
   }
-}
-
-/** An object-store error that means "blob absent" (idempotent delete / missing read). */
-function isNotFound(err) {
-  return err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
 }
 
 /** Client-facing file shape — never leaks the internal `appId`/`blobKey`/`status`. */
@@ -195,7 +187,20 @@ export function createAppFilesRouter({ appFilesRepo, auditRepo, registryRepo, ob
         }
         throw err
       }
-      await appFilesRepo.markReady(req.appCtx.appId, meta._id)
+      // markReady can also fail (a Cosmos throttle/timeout AFTER the blob is written):
+      // compensate it the same way as the put failure — delete the pending row + the
+      // just-written blob is left for recompute/blob-GC — so a failed flip never leaves
+      // a stuck `pending` reserve, then re-throw for `safe` to 500.
+      try {
+        await appFilesRepo.markReady(req.appCtx.appId, meta._id)
+      } catch (err) {
+        try {
+          await appFilesRepo.del(req.appCtx.appId, meta._id)
+        } catch (e) {
+          console.error('file markReady compensation failed (stale pending swept by recompute):', e.message)
+        }
+        throw err
+      }
       await audit({
         appId: req.appCtx.appId,
         username: actorOf(req),
@@ -314,7 +319,7 @@ export function createAppFilesRouter({ appFilesRepo, auditRepo, registryRepo, ob
         if (!isNotFound(err)) throw err // genuine store error → 500, row kept (retryable), quota not released
         // absent blob (NoSuchKey/NotFound) → idempotent success; continue.
       }
-      await appFilesRepo.del(req.appCtx.appId, id) // metadata delete + quota release
+      await appFilesRepo.del(req.appCtx.appId, id, { existing: meta }) // reuse the doc read above; skip the internal re-get
       await audit({ appId: req.appCtx.appId, username: actorOf(req), action: 'file:delete', recordId: id })
       res.json({ ok: true })
     }),

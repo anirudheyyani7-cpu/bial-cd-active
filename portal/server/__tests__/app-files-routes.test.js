@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import express from 'express'
 import request from 'supertest'
 import { createAppFilesRouter, makeAppFileLimiter, APP_FILE_MAX_JSON } from '../app-files.js'
@@ -298,6 +298,72 @@ describe('app-files routes — delete ordering + idempotency', () => {
     expect(filesContainer._store.has(id)).toBe(true) // row kept (retryable)
     expect(registryContainer._get('app-open').fileCount).toBe(1) // quota NOT released
     expect((await auditRepo.listByApp('app-open')).some((e) => e.action === 'file:delete')).toBe(false)
+  })
+})
+
+describe('app-files routes — /content store-error mapping', () => {
+  // Seed a ready metadata row directly so /content resolves meta, then read it back
+  // through a store whose get() throws the given error.
+  const ID = 'cfile-1'
+  const seedReady = (h) =>
+    h.filesContainer._store.set(ID, {
+      _id: ID, appId: 'app-open', collection: 'default', filename: 'report.pdf',
+      contentType: 'application/pdf', size: 14, blobKey: `apps/app-open/${ID}`,
+      status: 'ready', createdInDraft: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+  const getContent = (h) => request(h.app).get(filesUrl('app-open', `/${ID}/content`)).set('X-App-Key', 'key-open')
+
+  it('a NotFound from store.get → 404 (the blob vanished, not a 500)', async () => {
+    const notFound = spyStore({
+      get: async () => { const e = new Error('NoSuchKey'); e.name = 'NoSuchKey'; e.$metadata = { httpStatusCode: 404 }; throw e },
+    })
+    const h = harness({ objectStore: notFound })
+    seedReady(h)
+    expect((await getContent(h)).status).toBe(404)
+  })
+
+  it('a generic store error → 500 (NOT swallowed as a 404)', async () => {
+    const boom = spyStore({ get: async () => { throw new Error('storage 500') } })
+    const h = harness({ objectStore: boom })
+    seedReady(h)
+    expect((await getContent(h)).status).toBe(500)
+  })
+})
+
+describe('app-files routes — APP_FILE_MAX_BYTES decoded-size cap', () => {
+  it('an upload whose DECODED bytes exceed APP_FILE_MAX_BYTES → 413', async () => {
+    const prev = process.env.APP_FILE_MAX_BYTES
+    process.env.APP_FILE_MAX_BYTES = '8' // 8 bytes — tiny, so any real file is over
+    try {
+      vi.resetModules()
+      const { createAppFilesRouter: freshRouter, APP_FILE_MAX_JSON: freshJson } = await import('../app-files.js')
+      const { createAppFilesRepo: freshFilesRepo } = await import('../app-files-repo.js')
+      const { createDataRecordsRepo: freshDataRepo } = await import('../data-records-repo.js')
+      const { createAppRegistryRepo: freshRegistryRepo } = await import('../app-registry-repo.js')
+      const { createAuditRepo: freshAuditRepo } = await import('../audit-repo.js')
+
+      const registryRepo = freshRegistryRepo(makeFakeAppRegistryContainer(SEED))
+      const appFilesRepo = freshFilesRepo(makeFakeAppFilesContainer([]), registryRepo)
+      const dataRecordsRepo = freshDataRepo(makeFakeDataRecordsContainer([]), registryRepo)
+      const auditRepo = freshAuditRepo(makeFakeAuditContainer([]))
+      const store = spyStore()
+      const app = express()
+      app.use('/api/apps', makeDataServiceCors())
+      app.use('/api/apps/:appId/files', express.json({ limit: freshJson }))
+      app.use('/api/apps', express.json({ limit: APP_DATA_BODY_LIMIT }))
+      app.use('/api/apps/:appId/files', freshRouter({ appFilesRepo, auditRepo, registryRepo, objectStore: store }))
+
+      const res = await request(app)
+        .post(filesUrl('app-open'))
+        .set('X-App-Key', 'key-open')
+        .send(pdfBody()) // '%PDF-1.4 hello' decodes to >8 bytes
+      expect(res.status).toBe(413)
+      expect(store.calls.put).toBe(0) // rejected at the gateway, never written
+    } finally {
+      if (prev === undefined) delete process.env.APP_FILE_MAX_BYTES
+      else process.env.APP_FILE_MAX_BYTES = prev
+      vi.resetModules()
+    }
   })
 })
 

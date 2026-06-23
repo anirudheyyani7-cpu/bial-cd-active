@@ -28,6 +28,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { withThrottleRetry } from './mongo-retry.js'
+import { posIntOr } from './util-validate.js'
 
 // Per-app volume ceilings (origin doc §4.1 flood protection). POC-sized; bound
 // the total a single generated app can persist so one app can't exhaust the
@@ -40,12 +41,8 @@ export const APP_DATA_BYTES_CAP = 100 * 1024 * 1024 // 100 MB per app
 // starve each other (a handful of reconciliation sheets would exhaust the 100 MB
 // record cap). Env-configurable (APP_FILE_*); resolved once at module load with a
 // POC-sized default. Exported so the files repo + tests share the exact thresholds.
-const _posInt = (raw, fallback) => {
-  const n = Number.parseInt(raw, 10)
-  return Number.isInteger(n) && n > 0 ? n : fallback
-}
-export const APP_FILE_COUNT_CAP = _posInt(process.env.APP_FILE_COUNT_CAP, 2000)
-export const APP_FILE_BYTES_CAP = _posInt(process.env.APP_FILE_BYTES_CAP, 500 * 1024 * 1024) // 500 MB per app
+export const APP_FILE_COUNT_CAP = posIntOr(process.env.APP_FILE_COUNT_CAP, 2000)
+export const APP_FILE_BYTES_CAP = posIntOr(process.env.APP_FILE_BYTES_CAP, 500 * 1024 * 1024) // 500 MB per app
 
 // Bound an app name (advisory display label).
 export const MAX_APP_NAME = 120

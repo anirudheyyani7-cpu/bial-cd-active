@@ -344,6 +344,32 @@ describe('BIALData — file methods (/api/apps/:appId/files; proxy upload, SAS d
     expect(anchors[0].href).not.toContain('javascript:') // the tampered value never reached the anchor
   })
 
+  it('downloadFile refuses a non-https (http://attacker) /url response and falls back to /content', async () => {
+    const { anchors } = stubAnchorDom()
+    let contentHit = false
+    const handler = (url) => {
+      // a syntactically-valid but NON-https URL pointing off-origin — the https-scheme
+      // guard must reject it (not just javascript:/data:) and use the /content proxy.
+      if (url.endsWith('/url')) return jsonRes(200, { url: 'http://attacker.example/file', expiresAt: 'soon' })
+      if (url.endsWith('/content')) { contentHit = true; return blobRes(200, new Blob([Uint8Array.from([1])])) }
+      return jsonRes(200, {})
+    }
+    const { client } = makeClient({ handler })
+    const out = await client.downloadFile('f1', 'report.csv')
+    expect(out.via).toBe('content') // not 'sas' — the http URL was refused
+    expect(contentHit).toBe(true)
+    expect(anchors[0].href.startsWith('blob:')).toBe(true)
+    expect(anchors[0].href).not.toContain('attacker.example') // the http URL never reached the anchor
+  })
+
+  it('a server error surfaces its `code` on the thrown Error (e.g. FILE_QUOTA_EXCEEDED) so app code can branch', async () => {
+    const handler = () => jsonRes(413, { error: { message: 'over quota', code: 'FILE_QUOTA_EXCEEDED' } })
+    const { client } = makeClient({ handler })
+    await expect(
+      client.uploadFile({ filename: 'a.csv', contentType: 'text/csv', base64: 'AQ==' }),
+    ).rejects.toMatchObject({ message: 'over quota', code: 'FILE_QUOTA_EXCEEDED' })
+  })
+
   it('fileObjectUrl fetches /content WITH headers and returns a blob: URL (never a portal-origin string)', async () => {
     const handler = (url) => {
       if (url.endsWith('/content')) return blobRes(200, new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' }))

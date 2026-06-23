@@ -31,9 +31,14 @@
  */
 import { randomUUID } from 'node:crypto'
 import { withThrottleRetry } from './mongo-retry.js'
+import { APP_FILE_COUNT_CAP } from './app-registry-repo.js'
+import { sanitizeCollection } from './app-validators.js'
+
+// Re-export so existing consumers/tests that import sanitizeCollection from this repo
+// keep working; the definition now lives in app-validators.js (shared with records).
+export { sanitizeCollection }
 
 const FILENAME_RE = /^[A-Za-z0-9._-]{1,200}$/ // no quotes/CRLF/`;` → also blocks Content-Disposition injection
-const COLLECTION_RE = /^[A-Za-z0-9_-]{1,64}$/
 const DEFAULT_LIST_LIMIT = 100
 const MAX_LIST_LIMIT = 500
 // A `pending` row older than this with no matching `ready` is a crashed upload;
@@ -102,15 +107,6 @@ function allowedTypes() {
 export function sanitizeFilename(name) {
   if (typeof name !== 'string' || !FILENAME_RE.test(name)) {
     return { ok: false, error: 'filename must match ^[A-Za-z0-9._-]{1,200}$' }
-  }
-  return { ok: true, value: name }
-}
-
-/** Validate the logical `collection` label (absent → 'default'). PURE; shared with the route. */
-export function sanitizeCollection(name) {
-  if (name === undefined || name === null) return { ok: true, value: 'default' }
-  if (typeof name !== 'string' || !COLLECTION_RE.test(name)) {
-    return { ok: false, error: 'collection must match ^[A-Za-z0-9_-]{1,64}$' }
   }
   return { ok: true, value: name }
 }
@@ -256,9 +252,17 @@ export function createAppFilesRepo(collection, registryRepo) {
    * (the upload-failure compensation path). The ROUTE deletes the blob FIRST, then
    * calls this, so quota is released only after both stores have been addressed.
    * Returns `{ deleted, blobKey, size }`.
+   *
+   * `opts.existing` lets a caller that ALREADY read the metadata (the DELETE route
+   * resolves it to delete the blob first) pass it through, skipping the redundant
+   * internal re-get. It is still composite-`{_id, appId}`-scoped, so a stale/foreign
+   * doc can't be smuggled in: it must match the same appId, and deleteOne re-filters.
    */
-  async function del(appId, fileId) {
-    const existing = await get(appId, fileId, { includePending: true })
+  async function del(appId, fileId, { existing: provided } = {}) {
+    const existing =
+      provided && provided._id === fileId && provided.appId === appId
+        ? provided
+        : await get(appId, fileId, { includePending: true })
     if (!existing) return { deleted: false }
     const res = await withThrottleRetry(() => collection.deleteOne({ _id: fileId, appId }))
     const deleted = (res?.deletedCount ?? 0) > 0
@@ -275,8 +279,18 @@ export function createAppFilesRepo(collection, registryRepo) {
    * their blobKeys) before the metadata is deleted, so the keys are never lost.
    */
   async function purgeByApp(appId, { createdInDraftOnly = false } = {}) {
-    const filter = createdInDraftOnly ? { appId, createdInDraft: true } : { appId }
-    const doomed = await withThrottleRetry(() => collection.find(filter).limit(1_000_000).toArray())
+    // Snapshot the cutoff BEFORE the read and constrain BOTH the find and the
+    // deleteMany to `createdAt <= before`: a row inserted mid-sweep is never deleted
+    // without first being READ (so its blobKey is always captured) — no orphan blob.
+    const before = new Date().toISOString()
+    const filter = createdInDraftOnly
+      ? { appId, createdInDraft: true, createdAt: { $lte: before } }
+      : { appId, createdAt: { $lte: before } }
+    // Bound the fetch by the per-app file cap (+1) rather than an arbitrary 1M — a
+    // legitimate app can never exceed the cap, so this never truncates real data.
+    const doomed = await withThrottleRetry(() =>
+      collection.find(filter).limit(APP_FILE_COUNT_CAP + 1).toArray(),
+    )
     const blobs = doomed.map((d) => ({ fileId: d._id, blobKey: d.blobKey }))
     const removed = doomed.length
     const bytes = doomed.reduce((sum, d) => sum + (d.size ?? 0), 0)
@@ -284,6 +298,10 @@ export function createAppFilesRepo(collection, registryRepo) {
     if (createdInDraftOnly) {
       if (removed > 0) await releaseQuota(appId, removed, bytes)
     } else {
+      // Full purge zeroes the counters. A row inserted mid-sweep (after `before`)
+      // survives both the find and the deleteMany and is now uncounted — a bounded,
+      // downward drift, self-healed by recompute (clear-data runs on a quiesced app;
+      // the delete-app path drops the registry doc entirely right after).
       await registryRepo.setFileCounters(appId, { fileCount: 0, fileBytes: 0 })
     }
     return { removed, bytes, blobs }
@@ -297,21 +315,28 @@ export function createAppFilesRepo(collection, registryRepo) {
    * list (so the route can best-effort delete any blob those crashed uploads did write).
    */
   async function recompute(appId) {
+    // Bound the ready scan by the per-app file cap (+1) rather than an arbitrary 1M —
+    // an app can never hold more `ready` files than the cap, so this never truncates.
     const ready = await withThrottleRetry(() =>
-      collection.find({ appId, status: 'ready' }).limit(1_000_000).toArray(),
+      collection.find({ appId, status: 'ready' }).limit(APP_FILE_COUNT_CAP + 1).toArray(),
     )
     const fileCount = ready.length
     const fileBytes = ready.reduce((sum, d) => sum + (d.size ?? 0), 0)
     await registryRepo.setFileCounters(appId, { fileCount, fileBytes })
-    const cutoff = new Date(Date.now() - STALE_PENDING_MS).toISOString()
+    // Compute the stale cutoff ONCE and reuse the SAME value for the find and the
+    // deleteMany, so a row that crosses the threshold between the two calls is never
+    // deleted without its blobKey first captured in `sweptBlobs`.
+    const staleFilter = {
+      appId,
+      status: 'pending',
+      createdAt: { $lt: new Date(Date.now() - STALE_PENDING_MS).toISOString() },
+    }
     const stale = await withThrottleRetry(() =>
-      collection.find({ appId, status: 'pending', createdAt: { $lt: cutoff } }).limit(1_000_000).toArray(),
+      collection.find(staleFilter).limit(APP_FILE_COUNT_CAP + 1).toArray(),
     )
     const sweptBlobs = stale.map((d) => ({ fileId: d._id, blobKey: d.blobKey }))
     if (stale.length > 0) {
-      await withThrottleRetry(() =>
-        collection.deleteMany({ appId, status: 'pending', createdAt: { $lt: cutoff } }),
-      )
+      await withThrottleRetry(() => collection.deleteMany(staleFilter))
     }
     return { fileCount, fileBytes, sweptPending: stale.length, sweptBlobs }
   }

@@ -39,9 +39,10 @@ The data interface — \`window.BIALData\` is ALREADY injected (do NOT import it
 - ALWAYS handle the promise: show a loading state while awaiting, an error message if it throws, and an empty state when a list is empty.
 
 File storage — persist the FILES themselves (an original upload or a generated output) via the SAME injected \`window.BIALData\` client. Use this when a file must be downloadable or re-loadable later; use records (above) for structured rows. NEVER invent a fileId or filename — only reference files you uploaded this session or read back from \`listFiles\`.
-- \`await BIALData.uploadFile(fileOrObj, { collection })\` → stored metadata \`{ fileId, filename, contentType, size, createdAt, ... }\`. Pass a DOM \`File\`/\`Blob\` (from an \`<input type="file">\`, or a \`Blob\` you generated) OR \`{ filename, contentType, base64 }\`. Allowed types: csv, xlsx, xls, json, txt, pdf, png, jpeg, gif, webp (NO svg); max ~18 MB per file.
+- \`await BIALData.uploadFile(fileOrObj, { collection })\` → stored metadata \`{ fileId, filename, contentType, size, createdAt, updatedAt, ... }\` (FLAT — read \`result.fileId\`, NOT \`result.file.fileId\`). Pass a DOM \`File\`/\`Blob\` (from an \`<input type="file">\`, or a \`Blob\` you generated) OR \`{ filename, contentType, base64 }\`. Allowed types: csv, xlsx, xls, json, txt, pdf, png, jpeg, gif, webp (NO svg); max ~18 MB per file.
+- For a GENERATED \`Blob\` you MUST set its type — \`new Blob([str])\` has an empty type and is REJECTED (400). Pass it explicitly, e.g. \`new Blob([csv], { type: 'text/csv' })\` / \`new Blob([json], { type: 'application/json' })\`, or use the \`{ filename, contentType, base64 }\` form instead.
 - \`await BIALData.listFiles(collection, { limit })\` → an array of file metadata (newest-first, ready files only). COLLECTION-FIRST, exactly like \`list\` — e.g. \`listFiles('reports', { limit: 20 })\`.
-- \`await BIALData.getFile(fileId)\` → one file's metadata, or null.
+- \`await BIALData.getFile(fileId)\` → one file's metadata (the SAME flat \`{ fileId, ... }\` shape \`uploadFile\` returns), or null.
 - \`await BIALData.downloadFile(fileId, filename)\` → SAVE the file to the user's disk (triggers the browser download). Use for a "Download report" button.
 - \`await BIALData.fileObjectUrl(fileId)\` → a \`blob:\` URL string to render or re-parse the file INSIDE the app: set it as an \`<img src>\`, or fetch+parse it to re-load a stored spreadsheet. Revoke with \`URL.revokeObjectURL(url)\` when done.
 - \`await BIALData.removeFile(fileId)\` → \`{ ok: true }\` (hard delete).

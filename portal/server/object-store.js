@@ -36,7 +36,25 @@ import {
   HeadObjectCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
 import { BlobServiceClient, BlobSASPermissions } from '@azure/storage-blob'
+
+// Object-store request timeouts (ms). A hung blob host must not pin a Node request
+// (and its upload buffer) open indefinitely — bound both the connect and the
+// in-flight request. S3 wires these into the SDK handler; Azure via an AbortSignal.
+const STORE_REQUEST_TIMEOUT_MS = 30_000
+const STORE_CONNECT_TIMEOUT_MS = 5_000
+
+/**
+ * An object-store error that means "blob already absent" — covers the S3 SDK
+ * (`NoSuchKey` / `$metadata.httpStatusCode === 404`) and the Azure backend's
+ * normalized `NotFound`. This module owns the provider error shapes, so the
+ * idempotent-delete / missing-read 404 paths in the routes import this one
+ * definition rather than each re-declaring it.
+ */
+export function isNotFound(err) {
+  return err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
+}
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -92,6 +110,11 @@ export function createS3ObjectStore({
     region,
     credentials: { accessKeyId, secretAccessKey },
     forcePathStyle,
+    // Bound connect + in-flight request so a hung blob host can't pin a request open.
+    requestHandler: new NodeHttpHandler({
+      requestTimeout: STORE_REQUEST_TIMEOUT_MS,
+      connectionTimeout: STORE_CONNECT_TIMEOUT_MS,
+    }),
   })
 
   return {
@@ -163,13 +186,18 @@ export function createAzureObjectStore({ connectionString, container } = {}) {
 
   return {
     async put(key, body, contentType) {
-      await blob(key).uploadData(body, { blobHTTPHeaders: { blobContentType: contentType } })
+      await blob(key).uploadData(body, {
+        blobHTTPHeaders: { blobContentType: contentType },
+        abortSignal: AbortSignal.timeout(STORE_REQUEST_TIMEOUT_MS), // don't hang forever on a stalled host
+      })
     },
 
     /** Return the blob's full bytes as a Buffer (attachments are ≤4 MB). */
     async get(key) {
       try {
-        return await blob(key).downloadToBuffer()
+        return await blob(key).downloadToBuffer(undefined, undefined, {
+          abortSignal: AbortSignal.timeout(STORE_REQUEST_TIMEOUT_MS),
+        })
       } catch (err) {
         // Normalize Azure's 404 (RestError code BlobNotFound) to the shape the
         // download route's isNotFound() recognizes, so a miss is a 404 not a 500.

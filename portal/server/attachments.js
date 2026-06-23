@@ -11,6 +11,7 @@ import { Router } from 'express'
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 import { validateAttachmentBytes, sniffMediaType, ATTACHMENT_MAX_BYTES } from './message-content.js'
 import { AttachmentCapError } from './attachments-repo.js'
+import { isNotFound } from './object-store.js'
 
 // Client-minted attachment ids (crypto.randomUUID); it becomes part of the
 // object key, so bound it to a safe token (no '/', no '..').
@@ -41,10 +42,6 @@ const safe = (fn) => async (req, res) => {
     console.error('attachments route error:', err.message)
     if (!res.headersSent) res.status(500).json({ error: { message: 'Request failed. Please retry.' } })
   }
-}
-
-function isNotFound(err) {
-  return err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404
 }
 
 export function createAttachmentsRouter({ attachmentsRepo }, { limiter = makeAttachmentLimiter() } = {}) {

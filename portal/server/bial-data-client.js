@@ -45,11 +45,18 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     return baseUrl + '/apps/' + appId + '/files' + (suffix || '')
   }
 
-  async function call(url, method, body) {
+  /** The X-App-Key (+ Bearer) headers every data/file request carries. The Content-Type
+   *  branch is request-shaped and stays in `call`; the byte-proxy fetch reuses these. */
+  function baseHeaders() {
     const { appKey } = getConfig()
     const headers = { 'X-App-Key': appKey }
     const token = getToken()
     if (token) headers['Authorization'] = 'Bearer ' + token
+    return headers
+  }
+
+  async function call(url, method, body) {
+    const headers = baseHeaders()
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     const res = await fetchImpl(url, {
       method: method,
@@ -61,13 +68,19 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     }
     if (!res.ok) {
       let message = 'Request failed (' + res.status + ').'
+      let code = null
       try {
         const err = await res.json()
         if (err && err.error && err.error.message) message = err.error.message
+        if (err && err.error && err.error.code) code = err.error.code
       } catch (e) {
         // non-JSON error body — keep the generic message
       }
-      throw new Error(message)
+      // Surface the server error `code` (e.g. FILE_QUOTA_EXCEEDED) so generated app
+      // code can branch on it rather than string-matching the message.
+      const e = new Error(message)
+      if (code) e.code = code
+      throw e
     }
     if (res.status === 204) return null
     return res.json()
@@ -192,13 +205,9 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     return btoa(binary)
   }
 
-  /** Build the X-App-Key (+ Bearer) headers used by the byte-proxy fetch (which can't go through `call`, since it returns bytes not JSON). */
+  /** The X-App-Key (+ Bearer) headers for the byte-proxy fetch (which can't go through `call`, since it returns bytes not JSON). Same headers as `call` minus the JSON Content-Type. */
   function fileHeaders() {
-    const { appKey } = getConfig()
-    const headers = { 'X-App-Key': appKey }
-    const token = getToken()
-    if (token) headers['Authorization'] = 'Bearer ' + token
-    return headers
+    return baseHeaders()
   }
 
   /** Trigger a browser download via a transient `<a download>` (the only in-frame download primitive; rides the sandbox `allow-downloads`). */
@@ -220,7 +229,7 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
    * Upload one file. Accepts a DOM `File`/`Blob` (read to base64 here) OR a plain
    * `{ filename, contentType, base64 }`. POSTs to `…/files`; returns the stored
    * metadata `{ fileId, collection, filename, contentType, size, createdBy,
-   * createdInDraft, createdAt }`. Type/size/quota are enforced server-side.
+   * createdInDraft, createdAt, updatedAt }`. Type/size/quota are enforced server-side.
    */
   async function uploadFile(fileOrObj, opts) {
     opts = opts || {}

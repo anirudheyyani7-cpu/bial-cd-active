@@ -5,6 +5,7 @@ import {
   sanitizeCollection,
   assertContentType,
   sniffMagic,
+  sniffImageType,
   FileQuotaError,
 } from '../app-files-repo.js'
 import { createAppRegistryRepo, APP_FILE_BYTES_CAP, APP_FILE_COUNT_CAP } from '../app-registry-repo.js'
@@ -171,6 +172,28 @@ describe('app-files-repo — purgeByApp + recompute', () => {
     expect(registryContainer._get(A).fileBytes).toBe(0)
   })
 
+  it('a failed insert (E11000) after the reserve rolls the registry reserve back to 0', async () => {
+    const { repo, registryContainer, filesContainer } = setup()
+    // Make the very next insert fail AFTER the quota reserve has been taken, mirroring
+    // a duplicate-key collision on the server-minted _id.
+    const realInsert = filesContainer.insertOne.bind(filesContainer)
+    let failed = false
+    filesContainer.insertOne = async (doc) => {
+      if (!failed) {
+        failed = true
+        const err = new Error('E11000 duplicate key error')
+        err.code = 11000
+        throw err
+      }
+      return realInsert(doc)
+    }
+    await expect(repo.insert(newFile({ size: 1234 }))).rejects.toThrow(/E11000/)
+    // the reserve (+1, +1234) taken before the insert must be released → back to 0
+    expect(registryContainer._get(A).fileCount).toBe(0)
+    expect(registryContainer._get(A).fileBytes).toBe(0)
+    expect([...filesContainer._store.values()]).toHaveLength(0) // nothing persisted
+  })
+
   it('recompute rebuilds counters from ready metadata and sweeps stale pending rows', async () => {
     const { repo, registryContainer, filesContainer } = setup()
     const ready = await repo.insert(newFile({ size: 100, filename: 'a.csv', contentType: 'text/csv' }))
@@ -243,5 +266,22 @@ describe('app-files-repo — file-type validator (self-contained; SVG excluded)'
     expect(sniffMagic('text/csv', Buffer.from('a,b,c')).ok).toBe(true)
     expect(sniffMagic('text/plain', Buffer.from('hello')).ok).toBe(true)
     expect(sniffMagic('application/json', Buffer.from('{}')).ok).toBe(true)
+  })
+
+  it('sniffImageType reverse-detects JPEG/GIF from magic and returns null for a non-image (WAVE)', () => {
+    // JPEG = FF D8; GIF = 47 49 46 38 ("GIF8")
+    expect(sniffImageType(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]))).toBe('image/jpeg')
+    expect(sniffImageType(Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))).toBe('image/gif')
+    expect(sniffImageType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]))).toBe('image/png')
+    // a true WebP (RIFF + "WEBP" form-type @8) reverse-sniffs to image/webp
+    const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP')])
+    expect(sniffImageType(webp)).toBe('image/webp')
+    // RIFF container with "WAVE" @8 (a .wav) is NOT an image → null, so it can never
+    // be served inline; non-image bytes fall through to octet-stream + attachment.
+    const wave = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVE')])
+    expect(sniffImageType(wave)).toBeNull()
+    // empty + plain-text bytes are not images
+    expect(sniffImageType(Buffer.alloc(0))).toBeNull()
+    expect(sniffImageType(Buffer.from('not an image'))).toBeNull()
   })
 })

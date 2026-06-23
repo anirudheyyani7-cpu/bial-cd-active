@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-06-23
+
+### Fixed
+- **Opening a conversation now actually loads its messages on the deployed app.** A
+  live probe against the Cosmos account showed it serves only single-field ORDER BY
+  — any multi-field sort (`{seq, createdAt}`, `{seq, createdAt, _id}`) returns the
+  same 400, even with a matching compound index, which is why 1.3.1/1.3.2 did not
+  fully resolve it. Messages now sort by `seq` alone; `seq` is a unique, monotonic
+  per-conversation counter (user = N, assistant = N+1) so it fully orders messages
+  with no tiebreak, and the matching index drops to `{conversationId, username, seq}`.
+
 ## [1.3.2] - 2026-06-23
 
 ### Fixed

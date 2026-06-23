@@ -40,12 +40,13 @@ const INDEX_SPECS = {
     { username: 1, kind: 1, updatedAt: -1 },
   ],
   messages: [
-    // listByConversation(conversationId, username): owned messages in stored order.
-    // Equality (conversationId, username) first, then the `{seq,createdAt}` ORDER BY.
-    // NO trailing `_id`: Cosmos accepts `_id` in a compound spec but won't use the
-    // index to serve an ORDER BY containing `_id`, so the sort must stop at createdAt
-    // (kept in lockstep with messages-repo's listByConversation sort).
-    { conversationId: 1, username: 1, seq: 1, createdAt: 1 },
+    // listByConversation(conversationId, username): owned messages in `seq` order.
+    // Equality (conversationId, username) first, then the single `seq` sort key.
+    // This Cosmos account serves only SINGLE-field ORDER BY — a multi-field sort
+    // ({seq,createdAt} or {seq,createdAt,_id}) 400s even with a matching compound
+    // index — and `seq` is a unique monotonic counter that fully orders messages on
+    // its own, so the sort (and this index) stop at seq. Lockstep with messages-repo.
+    { conversationId: 1, username: 1, seq: 1 },
   ],
   feedback: [
     // listFeedback(): newest-first with no filter — only `_id` is auto-indexed, so

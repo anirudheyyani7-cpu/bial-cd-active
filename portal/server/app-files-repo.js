@@ -151,6 +151,23 @@ export function sniffMagic(contentType, buffer) {
 }
 
 /**
+ * Reverse-sniff the IMAGE media type of stored bytes from their magic number (or null
+ * when not a recognized image). The `/content` proxy serves this SNIFFED type for
+ * images (mirrors attachments.js) so a mistyped upload can't drive a content-type
+ * confusion; non-images are served as octet-stream + attachment regardless.
+ */
+export function sniffImageType(buffer) {
+  if (!buffer || buffer.length === 0) return null
+  for (const [type, magic] of Object.entries(MAGIC)) {
+    if (!type.startsWith('image/')) continue
+    if (buffer.length < magic.length || !magic.every((b, i) => buffer[i] === b)) continue
+    if (type === 'image/webp' && buffer.toString('latin1', 8, 12) !== 'WEBP') continue
+    return type
+  }
+  return null
+}
+
+/**
  * @param {object} collection   - the `app_files` collection handle (or a fake)
  * @param {object} registryRepo - the app-registry repo (for the atomic file-quota counters)
  */

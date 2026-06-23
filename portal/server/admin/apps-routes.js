@@ -178,6 +178,11 @@ export function createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo
       const { appId } = req.params
       const app = await registryRepo.getApp(appId)
       if (!app) return res.status(404).json({ error: { message: 'App not found.' } })
+      // Re-enable is ONLY disabled→approved. The transition machine also permits
+      // pending→approved (that is the approve route's path, which compiles + snapshots
+      // first), so without this guard /enable could promote an un-compiled pending app
+      // straight to approved, bypassing the approval gate. Refuse anything but disabled.
+      if (app.status !== 'disabled') return res.status(409).json({ error: { message: 'Only a disabled app can be re-enabled.' } })
       const moved = await registryRepo.setStatus(appId, 'approved')
       if (!moved.ok) return res.status(409).json({ error: { message: 'Only a disabled app can be re-enabled.' } })
       await auditRepo.record({ appId, username: req.user.sub, action: 'enable' })

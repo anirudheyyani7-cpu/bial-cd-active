@@ -97,17 +97,19 @@ export function createDeployRouter({ registryRepo, conversationsRepo, auditRepo 
       const draft = await registryRepo.ensureDraft(appId, owner)
       if (draft.ownerUsername !== owner) return res.status(403).json({ error: { message: 'This app belongs to another user.' } })
 
-      await registryRepo.setSnapshots(appId, {
-        source: { src: current.source, entry: current.entry || 'PreviewApp', at: new Date().toISOString() },
-      })
-      // Only transition if not already pending (a pending→pending re-submit just
-      // refreshes code.source above and stays pending — not an error).
+      // Transition to pending FIRST, then write code.source. A pending→pending
+      // re-submit is a no-op refresh (not an error). Doing the transition before the
+      // snapshot write means an illegal submit-state (e.g. a disabled app) is refused
+      // with 409 WITHOUT overwriting the persisted source — no staged-code/state drift.
       if (draft.status !== 'pending') {
         const moved = await registryRepo.setStatus(appId, 'pending')
         if (!moved.ok) {
           return res.status(409).json({ error: { message: 'This app cannot be submitted in its current state.' } })
         }
       }
+      await registryRepo.setSnapshots(appId, {
+        source: { src: current.source, entry: current.entry || 'PreviewApp', at: new Date().toISOString() },
+      })
       await auditRepo.record({ appId, username: owner, action: 'submit' })
       res.json({ appId, status: 'pending' })
     }),

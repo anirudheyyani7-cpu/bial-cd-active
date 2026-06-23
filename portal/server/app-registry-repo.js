@@ -149,7 +149,9 @@ export function createAppRegistryRepo(collection) {
     const res = await withThrottleRetry(() =>
       collection.updateOne(
         { _id: appId, status: { $in: allowedFrom } },
-        { $set: { status, ...meta, updatedAt: new Date().toISOString() } },
+        // meta spread BEFORE status so a stray meta.status can never override the
+        // validated transition target (meta only carries approvedBy/at, rejectionNote).
+        { $set: { ...meta, status, updatedAt: new Date().toISOString() } },
       ),
     )
     return { ok: (res?.matchedCount ?? 0) > 0 }

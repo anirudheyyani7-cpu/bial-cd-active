@@ -164,6 +164,15 @@ describe('admin apps — list / patch / disable / enable (U10)', () => {
     expect(registryContainer._get('a1').status).toBe('approved')
     expect([...auditContainer._store.values()].map((e) => e.action).sort()).toEqual(['disable', 'enable'])
   })
+
+  it('enable on a PENDING app → 409 (cannot bypass the approve/compile gate)', async () => {
+    const { app, registryContainer } = harness([pendingApp('p1')])
+    const res = await request(app).post('/api/admin/apps/p1/enable').set('Authorization', `Bearer ${adminTok()}`)
+    expect(res.status).toBe(409)
+    // the only path to 'approved' is the approve route (compile + snapshot) — enable
+    // must NOT promote an un-compiled pending app.
+    expect(registryContainer._get('p1').status).toBe('pending')
+  })
 })
 
 describe('admin apps — two-step clear-data + delete + audit (U10)', () => {

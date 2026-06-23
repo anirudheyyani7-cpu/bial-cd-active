@@ -820,7 +820,7 @@ export default function BuilderPage() {
                 ? { appId: deploy.appId, appKey: deploy.appKey, baseUrl: '/api', loginRequired: Boolean(deploy.loginRequired) }
                 : undefined
             }
-            accessToken={getAccessToken()}
+            accessToken={deploy?.loginRequired ? getAccessToken() : undefined}
           />
         </div>
       </div>

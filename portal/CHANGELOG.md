@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-06-24
+
+### Added
+- **Apps can now keep files, not just records.** A generated app can store an uploaded
+  file or a file it produces (for example a reconciliation report), then list it,
+  download it to your device, or re-open it inside the app later. Files survive a page
+  refresh and are scoped to the app. Supported types: CSV, Excel (xlsx/xls), JSON, text,
+  PDF, and common images (PNG/JPEG/GIF/WebP), up to roughly 18 MB per file.
+- **Admin file visibility and cleanup.** Admins can see each app's file count and storage
+  use, clear an app's files, and recompute the usage counters if they ever drift. Deleting
+  an app also removes its stored files.
+
+### Changed
+- **Builder guidance for files.** The app builder now knows when to keep a file versus keep
+  records, shows the worked reconciliation-report pattern, and warns that an app holding
+  sensitive files must require sign-in and IT security review before go-live.
+- **Runtime download support.** Deployed apps and the live preview can trigger a file
+  download and render stored images inline, without widening what the sandbox can reach.
+
+### Fixed
+- Hardened the two-store file writes so a failed upload or delete no longer leaves an
+  orphaned file or a wrong usage counter; cleanup and counter-recompute are race-safe.
+- File lists now query against a matching database index, avoiding a slow or failing path
+  on the production database.
+- A generated file download over a non-secure URL now safely falls back to the in-app proxy.
+
 ## [1.4.1] - 2026-06-23
 
 ### Added

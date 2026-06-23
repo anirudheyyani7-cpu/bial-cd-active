@@ -12,6 +12,7 @@ import { createMessagesRepo } from '../messages-repo.js'
 import { createAttachmentsRepo } from '../attachments-repo.js'
 import { createAppRegistryRepo } from '../app-registry-repo.js'
 import { createDataRecordsRepo } from '../data-records-repo.js'
+import { createAppFilesRepo } from '../app-files-repo.js'
 import { createAuditRepo } from '../audit-repo.js'
 import { signAccessToken } from '../auth/tokens.js'
 import { hashPassword } from '../auth/password.js'
@@ -24,6 +25,7 @@ import { makeFakeAttachmentUsageContainer } from './fakeAttachmentUsageCosmos.js
 import { makeFakeObjectStore } from './fakeObjectStore.js'
 import { makeFakeAppRegistryContainer } from './fakeAppRegistryCosmos.js'
 import { makeFakeDataRecordsContainer } from './fakeDataRecordsCosmos.js'
+import { makeFakeAppFilesContainer } from './fakeAppFilesCosmos.js'
 import { makeFakeAuditContainer } from './fakeAuditCosmos.js'
 
 /** A fresh in-memory feedback repo for the createApp DI seam. */
@@ -38,15 +40,18 @@ const fakePersistence = () => ({
 
 /**
  * Fresh in-memory app-data-service repos for the createApp DI seam (registry,
- * schemaless record store, audit). `registrySeed` lets a test pre-provision an
- * app so the /api/apps routes serve end-to-end. The data-records repo shares the
- * SAME registry repo so the atomic quota counters reconcile.
+ * schemaless record store, file metadata, audit) + the object store. `registrySeed`
+ * lets a test pre-provision an app so the /api/apps routes serve end-to-end. The
+ * data-records AND files repos share the SAME registry repo so the atomic quota
+ * counters reconcile; the SAME objectStore is threaded to the files router and the
+ * admin router (objectStore is a NEW createApp dependency).
  */
 const fakeAppData = (registrySeed = []) => {
   const registryRepo = createAppRegistryRepo(makeFakeAppRegistryContainer(registrySeed))
   const dataRecordsRepo = createDataRecordsRepo(makeFakeDataRecordsContainer([]), registryRepo)
+  const appFilesRepo = createAppFilesRepo(makeFakeAppFilesContainer([]), registryRepo)
   const auditRepo = createAuditRepo(makeFakeAuditContainer([]))
-  return { registryRepo, dataRecordsRepo, auditRepo }
+  return { registryRepo, dataRecordsRepo, appFilesRepo, auditRepo, objectStore: makeFakeObjectStore() }
 }
 
 const SPA_HTML = '<!doctype html><title>BIAL</title><div id="root"></div>'
@@ -281,6 +286,20 @@ describe('createApp dependency guards', () => {
     const { registryRepo, dataRecordsRepo } = fakeAppData()
     expect(() => createApp({ ...appDataBase(), registryRepo, dataRecordsRepo })).toThrow(/auditRepo is required/)
   })
+
+  it('throws when appFilesRepo is omitted (file routes must not silently 404)', () => {
+    const { registryRepo, dataRecordsRepo, auditRepo } = fakeAppData()
+    expect(() => createApp({ ...appDataBase(), registryRepo, dataRecordsRepo, auditRepo })).toThrow(
+      /appFilesRepo is required/,
+    )
+  })
+
+  it('throws when objectStore is omitted (the NEW createApp dep — files + admin need the byte seam)', () => {
+    const { registryRepo, dataRecordsRepo, auditRepo, appFilesRepo } = fakeAppData()
+    expect(() =>
+      createApp({ ...appDataBase(), registryRepo, dataRecordsRepo, auditRepo, appFilesRepo }),
+    ).toThrow(/objectStore is required/)
+  })
 })
 
 describe('Data Service routes wired through createApp', () => {
@@ -322,6 +341,10 @@ describe('Data Service routes wired through createApp', () => {
     const csp = res.headers['content-security-policy']
     // opaque-origin frame → connect-src must name the portal origin explicitly (not just 'self')
     expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/)
+    // U5: blob: added to img-src for inline render; NOT a bare https: nor the portal origin.
+    expect(csp).toContain("img-src 'self' data: blob:")
+    expect(csp).not.toMatch(/img-src[^;]*https:/)
+    expect(csp).not.toMatch(/img-src[^;]*(127\.0\.0\.1|localhost):\d+/)
   })
 
   it('a null-origin (opaque iframe) preflight to a data route succeeds, while the SPA cors still rejects :3000', async () => {
@@ -338,6 +361,62 @@ describe('Data Service routes wired through createApp', () => {
       .set('Origin', 'http://localhost:3000')
       .send({ messages: [] })
     expect(rejected.headers['access-control-allow-origin']).toBeUndefined()
+  })
+})
+
+describe('File Service routes wired through createApp', () => {
+  const fileApp = () =>
+    fakeAppData([
+      { _id: 'file-app', appKey: 'key-files', status: 'approved', loginRequired: false, fileCount: 0, fileBytes: 0, dataCount: 0, dataBytes: 0 },
+    ])
+  const buildFileServer = (appData) =>
+    createApp({
+      repo: createUsersRepo(makeFakeContainer([])),
+      usageRepo: createUsageRepo(makeFakeUsageContainer([])),
+      feedbackRepo: fakeFeedbackRepo(),
+      ...fakePersistence(),
+      ...appData,
+      claudeClient: makeClaudeClient(),
+      distDir,
+    })
+
+  it('round-trips upload → list → url → content → delete via /api/apps/:appId/files', async () => {
+    const app2 = buildFileServer(fileApp())
+    const created = await request(app2)
+      .post('/api/apps/file-app/files')
+      .set('X-App-Key', 'key-files')
+      .send({ filename: 'r.pdf', contentType: 'application/pdf', base64: Buffer.from('%PDF-1.4 hi').toString('base64') })
+    expect(created.status).toBe(201)
+    const id = created.body.fileId
+
+    const listed = await request(app2).get('/api/apps/file-app/files').set('X-App-Key', 'key-files')
+    expect(listed.body.files.map((f) => f.fileId)).toContain(id)
+
+    const url = await request(app2).get(`/api/apps/file-app/files/${id}/url`).set('X-App-Key', 'key-files')
+    expect(url.status).toBe(200)
+    expect(url.body.url.startsWith('https://')).toBe(true)
+
+    const content = await request(app2).get(`/api/apps/file-app/files/${id}/content`).set('X-App-Key', 'key-files')
+    expect(content.status).toBe(200)
+    expect(content.headers['x-content-type-options']).toBe('nosniff')
+
+    const del = await request(app2).delete(`/api/apps/file-app/files/${id}`).set('X-App-Key', 'key-files')
+    expect(del.status).toBe(200)
+  })
+
+  it('a >256 KB /files upload succeeds while a >256 KB /records POST 413s (mount-order regression)', async () => {
+    const app2 = buildFileServer(fileApp())
+    const up = await request(app2)
+      .post('/api/apps/file-app/files')
+      .set('X-App-Key', 'key-files')
+      .send({ filename: 'big.csv', contentType: 'text/csv', base64: Buffer.from('x'.repeat(300 * 1024)).toString('base64') })
+    expect(up.status).toBe(201) // parsed by the 25 MB /files carve-out
+
+    const rec = await request(app2)
+      .post('/api/apps/file-app/records')
+      .set('X-App-Key', 'key-files')
+      .send({ data: { blob: 'y'.repeat(300 * 1024) } })
+    expect(rec.status).toBe(413) // only the 256 KB parser applies to /records
   })
 })
 

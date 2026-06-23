@@ -17,6 +17,7 @@ import {
   getMessagesCollection,
   getFeedbackCollection,
   getDataRecordsCollection,
+  getAppFilesCollection,
 } from '../server/cosmos.js'
 
 async function main() {
@@ -26,6 +27,7 @@ async function main() {
       messages: await getMessagesCollection(),
       feedback: await getFeedbackCollection(),
       dataRecords: await getDataRecordsCollection(),
+      appFiles: await getAppFilesCollection(),
     })
     console.log(
       `\nensure-indexes:\n  ensured: ${created} index(es)\n  failed:  ${failed}\n\n` +

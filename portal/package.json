@@ -1,7 +1,7 @@
 {
   "name": "bial-citizen-developer-portal",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.4.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,6 +22,7 @@
     "@anthropic-ai/foundry-sdk": "^0.2.4",
     "@anthropic-ai/sdk": "^0.39.0",
     "@aws-sdk/client-s3": "^3.1073.0",
+    "@aws-sdk/s3-request-presigner": "^3.1073.0",
     "@azure/storage-blob": "^12.32.0",
     "@babel/core": "^7.29.7",
     "@babel/preset-react": "^7.29.7",

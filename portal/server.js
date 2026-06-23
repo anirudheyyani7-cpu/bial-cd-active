@@ -36,6 +36,8 @@ import { createAppRegistryRepo } from './server/app-registry-repo.js'
 import { createDataRecordsRepo } from './server/data-records-repo.js'
 import { createAuditRepo } from './server/audit-repo.js'
 import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from './server/app-data.js'
+import { createAppFilesRouter, APP_FILE_MAX_JSON } from './server/app-files.js'
+import { createAppFilesRepo } from './server/app-files-repo.js'
 import { createDeployRouter } from './server/deploy.js'
 import { createAdminAppsRouter } from './server/admin/apps-routes.js'
 import { bialDataClientScript } from './server/bial-data-client.js'
@@ -51,6 +53,7 @@ import {
   getAttachmentUsageCollection,
   getAppRegistryCollection,
   getDataRecordsCollection,
+  getAppFilesCollection,
   getAuditCollection,
 } from './server/cosmos.js'
 import {
@@ -108,10 +111,12 @@ function buildPreviewCsp(origin) {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
     "font-src 'self' data: https://fonts.gstatic.com",
-    // NO bare https: on img-src — the preview injects the access token too, and an
-    // <img> beacon to an arbitrary https host would exfiltrate it past the scoped
-    // connect-src (matches the runner frame, Decision 8).
-    "img-src 'self' data:",
+    // blob: lets the preview render a stored file inline via fetch('/content')→
+    // createObjectURL→<img src=blob:> (an in-frame url, no outward egress). Still NO
+    // bare https: AND NO portal origin — an <img> beacon to an arbitrary https host (or
+    // the portal origin) would exfiltrate the injected token past the scoped connect-src
+    // (matches the runner frame, Decisions 3, 8).
+    "img-src 'self' data: blob:",
     // CDNs load as <script>/<style> (covered above) and are never fetch targets,
     // so connect-src stays scoped to the Data-Service origin — no off-origin XHR
     // egress for the injected access token (matches the runner frame, Decision 8).
@@ -216,7 +221,9 @@ export function createApp({
   attachmentsRepo,
   registryRepo,
   dataRecordsRepo,
+  appFilesRepo,
   auditRepo,
+  objectStore,
   claudeClient,
   distDir = DEFAULT_DIST,
   dailyTokenLimit = Number.parseInt(process.env.DAILY_TOKEN_LIMIT, 10) || DEFAULT_DAILY_TOKEN_LIMIT,
@@ -272,6 +279,12 @@ export function createApp({
   // ~512 KB text part (TEXT_BLOCK_MAX_CHARS), and a builder code snapshot is sizable
   // — both exceed the 100 KB default, so /api/conversations gets a 2 MB cap.
   app.use('/api/conversations', express.json({ limit: '2mb' }))
+  // Per-app FILE uploads carry one base64 file per request (~25 MB to fit an ~18 MB
+  // decoded file). body-parser consumes ONCE at first match, so this /files carve-out
+  // MUST precede the broad 256 KB /api/apps parser below (which also matches /files) —
+  // otherwise every real upload 413s before this parser runs. Mirrors the /api/claude
+  // 35 MB + /api/attachments 6 MB carve-outs above.
+  app.use('/api/apps/:appId/files', express.json({ limit: APP_FILE_MAX_JSON }))
   // Data Service records carry one small JSON record per request; a 256kb cap
   // (over the global 100 KB default) fits a generous record. Registered before
   // the global parser so it consumes the /api/apps body first.
@@ -306,6 +319,13 @@ export function createApp({
   if (!registryRepo) throw new Error('createApp: registryRepo is required')
   if (!dataRecordsRepo) throw new Error('createApp: dataRecordsRepo is required')
   if (!auditRepo) throw new Error('createApp: auditRepo is required')
+  // Per-app file storage: the file-metadata repo + the object store (the BYTES seam).
+  // objectStore is a NEW createApp dependency — it was previously built only inside
+  // start() for the attachments repo; the files router AND the admin router both need
+  // it now. Appended AFTER the existing deps so the prior fail-loud assertions still
+  // match; a missing dep must surface at boot, not as a silent 404 / runtime TypeError.
+  if (!appFilesRepo) throw new Error('createApp: appFilesRepo is required')
+  if (!objectStore) throw new Error('createApp: objectStore is required')
 
   // The standard plan: the injected daily ceiling (env-driven) + the fixed
   // context thresholds. Per-user overrides resolve on top of this.
@@ -335,7 +355,7 @@ export function createApp({
     '/api/admin/apps',
     requireAuth,
     requireAdmin,
-    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo }),
+    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo, appFilesRepo, objectStore }),
   )
   // Admin-only per-user limit management + feedback read. Gated at the mount point.
   app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults }))
@@ -477,6 +497,12 @@ export function createApp({
   // open app admits anonymous writes while a login app reuses the portal token.
   app.use('/api/apps/:appId/records', createAppDataRouter({ registryRepo, dataRecordsRepo, auditRepo }))
 
+  // Per-app FILE storage (proxy upload, SAS download, hardened content proxy). Mounted
+  // BEFORE the /api/apps deploy catch-all so /files is never shadowed (exactly as the
+  // records router is). Owns its own auth chain (requireAppKey → requireLoginIfRequired
+  // → per-app limiter); the bytes ride the injected objectStore.
+  app.use('/api/apps/:appId/files', createAppFilesRouter({ appFilesRepo, auditRepo, registryRepo, objectStore }))
+
   // Deploy lifecycle (owner-facing provision + submit). Mounted at /api/apps AFTER
   // the records router (more specific) so /api/apps/:id/records is never shadowed;
   // each route applies the shared requireAuth itself (so it does NOT gate the
@@ -519,12 +545,17 @@ async function start() {
   // missing env var. Bytes live in the object store, never the metadata DB.
   const conversationsRepo = createConversationsRepo(await getConversationsCollection())
   const messagesRepo = createMessagesRepo(await getMessagesCollection())
-  const attachmentsRepo = createAttachmentsRepo(getObjectStore(), await getAttachmentUsageCollection())
-  // Dynamic app data service: registry, schemaless record store, audit trail.
-  // The data-records repo takes the registry repo for the atomic quota counters.
+  // The object store is now a SHARED dependency: the attachments repo, the files
+  // router, and the admin router all use it. Build it once and thread it through.
+  const objectStore = getObjectStore()
+  const attachmentsRepo = createAttachmentsRepo(objectStore, await getAttachmentUsageCollection())
+  // Dynamic app data service: registry, schemaless record store, file metadata, audit.
+  // The data-records + files repos take the registry repo for the atomic quota counters.
   const registryRepo = createAppRegistryRepo(await getAppRegistryCollection())
   const dataRecordsCollection = await getDataRecordsCollection()
   const dataRecordsRepo = createDataRecordsRepo(dataRecordsCollection, registryRepo)
+  const appFilesCollection = await getAppFilesCollection()
+  const appFilesRepo = createAppFilesRepo(appFilesCollection, registryRepo)
   const auditRepo = createAuditRepo(await getAuditCollection())
   // Cosmos for MongoDB needs composite indexes to serve our filter+sort reads
   // (it 400s otherwise — see ensure-indexes.js). Idempotent + resilient, so it's
@@ -535,6 +566,7 @@ async function start() {
     messages: await getMessagesCollection(),
     feedback: await getFeedbackCollection(),
     dataRecords: dataRecordsCollection,
+    appFiles: appFilesCollection,
   })
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,
@@ -542,7 +574,7 @@ async function start() {
     apiVersion: '2023-06-01',
   })
 
-  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, registryRepo, dataRecordsRepo, auditRepo, claudeClient })
+  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, registryRepo, dataRecordsRepo, appFilesRepo, auditRepo, objectStore, claudeClient })
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => console.log(`✈  BIAL portal (API + SPA) → http://localhost:${PORT}`))
 }

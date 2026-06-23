@@ -165,8 +165,11 @@ export default function LivePreview({ previewCode, generating, generationStage, 
                   title="App Preview"
                   /* allow-forms so the app's <form onSubmit> handlers fire (parity with
                      the deployed runner frame); native form navigation is blocked by the
-                     /preview CSP's form-action 'none', so the injected token can't leak. */
-                  sandbox="allow-scripts allow-forms"
+                     /preview CSP's form-action 'none', so the injected token can't leak.
+                     allow-downloads lets a generated app trigger a file download via an
+                     <a download> SAS navigation (governed by this token, NOT connect-src,
+                     so the blob host never enters the frame CSP). */
+                  sandbox="allow-scripts allow-forms allow-downloads"
                 />
               )}
             </div>

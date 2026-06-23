@@ -1,3 +1,9 @@
+// Coordinates with the SYSTEM_PROMPT "File storage" guidance (useClaudeAPI.js): the
+// prompt tells the model that apps storing sensitive files MUST require login and need
+// IT security review before go-live. The third rule below is the matching client-side
+// gate — a build request naming passenger PII / financial / medical data is flagged for
+// IT Security review. Keep the two in sync: the prompt sets the expectation, this
+// validator enforces it at submit time.
 const RULES = [
   {
     keywords: [

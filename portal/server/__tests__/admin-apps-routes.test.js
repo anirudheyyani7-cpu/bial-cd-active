@@ -6,9 +6,11 @@ import { createAdminAppsRouter } from '../admin/apps-routes.js'
 import { createAppRegistryRepo } from '../app-registry-repo.js'
 import { createAuditRepo } from '../audit-repo.js'
 import { createDataRecordsRepo } from '../data-records-repo.js'
+import { createAppFilesRepo } from '../app-files-repo.js'
 import { makeFakeAppRegistryContainer } from './fakeAppRegistryCosmos.js'
 import { makeFakeAuditContainer } from './fakeAuditCosmos.js'
 import { makeFakeDataRecordsContainer } from './fakeDataRecordsCosmos.js'
+import { makeFakeAppFilesContainer } from './fakeAppFilesCosmos.js'
 import { signAccessToken } from '../auth/tokens.js'
 
 beforeAll(() => {
@@ -29,18 +31,53 @@ const pendingApp = (id, src = VALID_JSX) => ({
   dataBytes: 0,
 })
 
-function harness(registry = [], records = []) {
+function harness(registry = [], records = [], files = []) {
   const registryContainer = makeFakeAppRegistryContainer(registry)
   const registryRepo = createAppRegistryRepo(registryContainer)
   const auditContainer = makeFakeAuditContainer([])
   const auditRepo = createAuditRepo(auditContainer)
   const dataContainer = makeFakeDataRecordsContainer(records)
   const dataRecordsRepo = createDataRecordsRepo(dataContainer, registryRepo)
+  const filesContainer = makeFakeAppFilesContainer(files)
+  const appFilesRepo = createAppFilesRepo(filesContainer, registryRepo)
+  // Spy ObjectStore: each blob delete records the key AND whether the registry doc was
+  // still present at delete time (so a test can prove blob purge precedes registry delete).
+  const store = {
+    calls: { delete: [] },
+    async delete(key) {
+      const appId = String(key).split('/')[1]
+      store.calls.delete.push({ key, registryPresent: registryContainer._get(appId) !== undefined })
+    },
+    async put() {},
+    async get() {},
+    async exists() { return false },
+    async getDownloadUrl() { return 'https://example/sas' },
+  }
   const app = express()
   app.use(express.json())
-  app.use('/api/admin/apps', requireAuth, requireAdmin, createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo }))
-  return { app, registryContainer, auditContainer, dataContainer }
+  app.use(
+    '/api/admin/apps',
+    requireAuth,
+    requireAdmin,
+    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo, appFilesRepo, objectStore: store }),
+  )
+  return { app, registryContainer, auditContainer, dataContainer, filesContainer, store }
 }
+
+const fileDoc = (id, appId, createdInDraft, { status = 'ready', size = 100, createdAt = '2026-01-01T00:00:00.000Z' } = {}) => ({
+  _id: id,
+  appId,
+  collection: 'default',
+  filename: `${id}.csv`,
+  contentType: 'text/csv',
+  size,
+  blobKey: `apps/${appId}/${id}`,
+  status,
+  createdBy: null,
+  createdInDraft,
+  createdAt,
+  updatedAt: createdAt,
+})
 
 const adminTok = () => signAccessToken({ sub: 'admin', username: 'admin', role: 'admin' })
 const userTok = () => signAccessToken({ sub: 'alice', username: 'alice', role: 'user' })
@@ -187,7 +224,7 @@ describe('admin apps — two-step clear-data + delete + audit (U10)', () => {
     expect(token).toBeTypeOf('string')
 
     const cleared = await request(app).post('/api/admin/apps/a1/clear-data').set('Authorization', `Bearer ${adminTok()}`).send({ confirmToken: token })
-    expect(cleared.body).toEqual({ appId: 'a1', removed: 2 })
+    expect(cleared.body).toEqual({ appId: 'a1', removed: 2, filesRemoved: 0 })
     expect(registryContainer._get('a1').dataCount).toBe(0) // counters zeroed
     expect([...auditContainer._store.values()].find((e) => e.action === 'clear-data').count).toBe(2)
 
@@ -238,5 +275,91 @@ describe('admin apps — two-step clear-data + delete + audit (U10)', () => {
     const { app } = harness([approvedApp('a1')])
     expect((await request(app).get('/api/admin/apps').set('Authorization', `Bearer ${userTok()}`)).status).toBe(403)
     expect((await request(app).delete('/api/admin/apps/a1').set('Authorization', `Bearer ${userTok()}`)).status).toBe(403)
+  })
+})
+
+describe('admin apps — file lifecycle (U7: quota visibility, clear-files, purge-on-delete, recompute)', () => {
+  it('createAdminAppsRouter fails loud when appFilesRepo or objectStore is omitted', () => {
+    const reg = createAppRegistryRepo(makeFakeAppRegistryContainer([]))
+    const aud = createAuditRepo(makeFakeAuditContainer([]))
+    const data = createDataRecordsRepo(makeFakeDataRecordsContainer([]), reg)
+    const files = createAppFilesRepo(makeFakeAppFilesContainer([]), reg)
+    expect(() => createAdminAppsRouter({ registryRepo: reg, auditRepo: aud, dataRecordsRepo: data, objectStore: {} })).toThrow(/appFilesRepo is required/)
+    expect(() => createAdminAppsRouter({ registryRepo: reg, auditRepo: aud, dataRecordsRepo: data, appFilesRepo: files })).toThrow(/objectStore is required/)
+  })
+
+  it('projectApp + data-summary surface fileCount/fileBytes alongside the record quota', async () => {
+    const { app } = harness([approvedApp('a1', { dataCount: 2, dataBytes: 20, fileCount: 3, fileBytes: 4096 })])
+    const list = await request(app).get('/api/admin/apps?status=approved').set('Authorization', `Bearer ${adminTok()}`)
+    expect(list.body.apps[0]).toMatchObject({ fileCount: 3, fileBytes: 4096 })
+    const summary = await request(app).get('/api/admin/apps/a1/data-summary').set('Authorization', `Bearer ${adminTok()}`)
+    expect(summary.body).toMatchObject({ dataCount: 2, dataBytes: 20, fileCount: 3, fileBytes: 4096 })
+  })
+
+  it('clear-data purges file METADATA and DELETEs each blob, adjusts counters, and audits file:clear', async () => {
+    const { app, registryContainer, filesContainer, auditContainer, store } = harness(
+      [approvedApp('a1', { dataCount: 0, dataBytes: 0, fileCount: 2, fileBytes: 200 })],
+      [],
+      [fileDoc('f1', 'a1', true), fileDoc('f2', 'a1', false)],
+    )
+    const token = (await request(app).get('/api/admin/apps/a1/data-summary').set('Authorization', `Bearer ${adminTok()}`)).body.confirmToken
+    const res = await request(app).post('/api/admin/apps/a1/clear-data').set('Authorization', `Bearer ${adminTok()}`).send({ confirmToken: token })
+    expect(res.body).toEqual({ appId: 'a1', removed: 0, filesRemoved: 2 })
+    expect(filesContainer._store.size).toBe(0) // metadata gone
+    expect(store.calls.delete.map((d) => d.key).sort()).toEqual(['apps/a1/f1', 'apps/a1/f2']) // both blobs deleted
+    expect(registryContainer._get('a1').fileCount).toBe(0) // counters zeroed (full purge)
+    expect([...auditContainer._store.values()].find((e) => e.action === 'file:clear').count).toBe(2)
+  })
+
+  it('clear-data createdInDraftOnly purges only build-time files (keeps post-approval files)', async () => {
+    const { app, filesContainer, store } = harness(
+      [approvedApp('a1', { fileCount: 3, fileBytes: 300 })],
+      [],
+      [fileDoc('d1', 'a1', true), fileDoc('d2', 'a1', true), fileDoc('live', 'a1', false)],
+    )
+    const token = (await request(app).get('/api/admin/apps/a1/data-summary').set('Authorization', `Bearer ${adminTok()}`)).body.confirmToken
+    const res = await request(app).post('/api/admin/apps/a1/clear-data').set('Authorization', `Bearer ${adminTok()}`).send({ confirmToken: token, createdInDraftOnly: true })
+    expect(res.body.filesRemoved).toBe(2)
+    expect([...filesContainer._store.keys()]).toEqual(['live']) // only the post-approval file remains
+    expect(store.calls.delete.map((d) => d.key).sort()).toEqual(['apps/a1/d1', 'apps/a1/d2'])
+  })
+
+  it('DELETE purges file blobs BEFORE the registry doc is gone, then removes the doc', async () => {
+    const { app, registryContainer, filesContainer, store } = harness(
+      [approvedApp('a1', { fileCount: 1, fileBytes: 100 })],
+      [],
+      [fileDoc('f1', 'a1', false)],
+    )
+    const res = await request(app).delete('/api/admin/apps/a1').set('Authorization', `Bearer ${adminTok()}`)
+    expect(res.body).toEqual({ ok: true })
+    expect(registryContainer._get('a1')).toBeUndefined() // registry doc gone
+    expect(filesContainer._store.size).toBe(0) // file metadata purged
+    expect(store.calls.delete.map((d) => d.key)).toEqual(['apps/a1/f1'])
+    expect(store.calls.delete[0].registryPresent).toBe(true) // blob purge PRECEDED the registry delete
+  })
+
+  it('recompute-files rebuilds counters from ready metadata, sweeps stale pending, and audits file:gc', async () => {
+    const stale = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() // 2h old → past the 1h stale window
+    const { app, registryContainer, filesContainer, auditContainer, store } = harness(
+      [approvedApp('a1', { fileCount: 9, fileBytes: 9999 })], // drifted counters
+      [],
+      [
+        fileDoc('r1', 'a1', false, { status: 'ready', size: 100 }),
+        fileDoc('r2', 'a1', false, { status: 'ready', size: 200 }),
+        fileDoc('stuck', 'a1', true, { status: 'pending', size: 50, createdAt: stale }),
+      ],
+    )
+    const res = await request(app).post('/api/admin/apps/a1/recompute-files').set('Authorization', `Bearer ${adminTok()}`)
+    expect(res.body).toMatchObject({ appId: 'a1', fileCount: 2, fileBytes: 300, sweptPending: 1 })
+    expect(registryContainer._get('a1').fileCount).toBe(2) // drift corrected
+    expect(registryContainer._get('a1').fileBytes).toBe(300)
+    expect(filesContainer._store.has('stuck')).toBe(false) // stale pending swept
+    expect(store.calls.delete.map((d) => d.key)).toEqual(['apps/a1/stuck']) // its (maybe-written) blob best-effort dropped
+    expect([...auditContainer._store.values()].find((e) => e.action === 'file:gc').count).toBe(1)
+  })
+
+  it('a non-admin cannot reach recompute-files (403)', async () => {
+    const { app } = harness([approvedApp('a1')])
+    expect((await request(app).post('/api/admin/apps/a1/recompute-files').set('Authorization', `Bearer ${userTok()}`)).status).toBe(403)
   })
 })

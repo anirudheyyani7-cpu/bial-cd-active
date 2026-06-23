@@ -68,7 +68,11 @@ function buildFrameCsp(origin) {
     "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
     "font-src 'self' data: https://fonts.gstatic.com",
-    "img-src 'self' data:", // NO bare https: — a token-bearing frame must have no off-origin GET egress (e.g. an <img> beacon) that could leak window.__BIAL_TOKEN past the scoped connect-src
+    // blob: lets the app render a stored file inline via fetch('/content')→createObjectURL→<img src=blob:>
+    // (an IN-FRAME url with no outward egress). Still NO bare https: AND NO portal origin here — a
+    // portal-origin <img> would be an uncontrolled no-CORS token-beacon, and a bare <img> can't carry
+    // X-App-Key anyway. The blob host is in NO directive; inline render rides the existing connect-src.
+    "img-src 'self' data: blob:",
     `connect-src 'self' ${origin}`,
     "frame-ancestors 'self'", // only the same-origin shell may frame it
     // Apps handle their own forms in JS (onSubmit → preventDefault → BIALData.fetch),
@@ -127,10 +131,12 @@ function renderShell({ appId, config }) {
     frame = document.createElement('iframe');
     // allow-forms so a generated app's <form onSubmit> handler actually fires (without
     // it the sandbox blocks submission before React's preventDefault runs, so saves
-    // silently no-op). The sandbox still withholds same-origin access, so the frame
-    // can't read the portal session; native form navigation is blocked by the frame
-    // CSP's form-action 'none'.
-    frame.setAttribute('sandbox','allow-scripts allow-forms');
+    // silently no-op). allow-downloads lets the app trigger a file download via an
+    // <a download> SAS navigation — that navigation is governed by THIS sandbox token,
+    // not connect-src, so the blob host never has to enter the frame CSP (Decisions 2,3).
+    // The sandbox still withholds same-origin access, so the frame can't read the portal
+    // session; native form navigation is blocked by the frame CSP's form-action 'none'.
+    frame.setAttribute('sandbox','allow-scripts allow-forms allow-downloads');
     frame.src = ${frameSrc};
     frame.title = 'App';
     frame.style.cssText = 'width:100%;height:100vh;border:0;display:block;';

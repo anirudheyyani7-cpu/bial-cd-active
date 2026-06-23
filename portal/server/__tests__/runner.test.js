@@ -28,10 +28,11 @@ describe('runner — shell (/apps/:appId)', () => {
   it('serves a same-origin shell that embeds a sandboxed (no allow-same-origin) app frame', async () => {
     const res = await request(harness()).get('/apps/app-open')
     expect(res.status).toBe(200)
-    // allow-forms lets a generated app's <form onSubmit> handler fire (native form
-    // navigation is blocked by the frame CSP's form-action 'none'); still NO
-    // allow-same-origin, so the frame can't read the portal session.
-    expect(res.text).toContain("setAttribute('sandbox','allow-scripts allow-forms')")
+    // allow-forms lets a generated app's <form onSubmit> handler fire; allow-downloads
+    // lets it trigger a SAS <a download> navigation (native form navigation is blocked
+    // by the frame CSP's form-action 'none'); still NO allow-same-origin, so the frame
+    // can't read the portal session.
+    expect(res.text).toContain("setAttribute('sandbox','allow-scripts allow-forms allow-downloads')")
     expect(res.text).not.toContain('allow-same-origin') // can't read the portal session
     expect(res.text).toContain('/apps/app-open/frame') // embeds the frame route
     expect(res.text).toContain('"loginRequired":false')
@@ -39,6 +40,9 @@ describe('runner — shell (/apps/:appId)', () => {
     // works without its own login form). The exact payload shape below also proves the
     // refresh token is NOT among what's posted to the frame.
     expect(res.text).toContain('postMessage({ config: CONFIG, accessToken: accessToken, user: currentUser }')
+    // Regression guard: posting into an opaque-origin (null) frame is inherently '*' —
+    // U5 must NOT tighten/loosen this while editing the shell.
+    expect(res.text).toContain("user: currentUser }, '*')")
   })
 
   it('a login app carries loginRequired:true and renders the login box markup', async () => {
@@ -72,10 +76,13 @@ describe('runner — frame (/apps/:appId/frame)', () => {
     const csp = res.headers['content-security-policy']
     expect(csp).not.toContain('unsafe-eval') // pre-compiled → no eval needed
     expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/) // scoped to the portal origin
-    // the token-bearing frame must have NO bare https: img egress (an <img> beacon
-    // would exfiltrate window.__BIAL_TOKEN past the scoped connect-src)
-    expect(csp).toContain("img-src 'self' data:")
+    // connect-src must NOT have been widened with a blob host (inline render rides fetch).
+    expect(csp).not.toMatch(/connect-src[^;]*blob:/)
+    // blob: is added to img-src (for fetch('/content')→createObjectURL→<img src=blob:>),
+    // but NOT a bare https: NOR the portal origin (either would be a token-beacon egress).
+    expect(csp).toContain("img-src 'self' data: blob:")
     expect(csp).not.toMatch(/img-src[^;]*https:/)
+    expect(csp).not.toMatch(/img-src[^;]*(127\.0\.0\.1|localhost):\d+/) // no portal origin in img-src
     // allow-forms is enabled on the frame, so a native form navigation must be blocked
     // outright — a token-bearing <form> can't POST window.__BIAL_TOKEN off-origin.
     expect(csp).toContain("form-action 'none'")

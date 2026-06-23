@@ -26,6 +26,11 @@
  */
 import { randomUUID } from 'node:crypto'
 import { withThrottleRetry } from './mongo-retry.js'
+import { sanitizeCollection } from './app-validators.js'
+
+// Re-export so existing consumers/tests that import sanitizeCollection from this repo
+// keep working; the definition now lives in app-validators.js (shared with app-files).
+export { sanitizeCollection }
 
 // Reserved record fields the SERVER owns; stripped from any client `data` payload
 // so a record body can never spoof the tenant scope, identity, or quota bytes.
@@ -54,8 +59,6 @@ const MAX_PAGE_SIZE = 100
 const MAX_SEARCH_BLOB = 8192
 // Top-level (server-owned) fields a client may sort by; anything else is `data.<key>`.
 const SORTABLE_TOP = new Set(['createdAt', 'updatedAt'])
-
-const COLLECTION_RE = /^[A-Za-z0-9_-]{1,64}$/
 
 /** Thrown when an insert/update would exceed the per-app quota; the route maps it to 4xx. */
 export class RecordQuotaError extends Error {
@@ -101,19 +104,6 @@ export function sanitizeData(data) {
     if (!RESERVED_KEYS.has(k)) value[k] = v // reserved keys server-owned → ignored if sent
   }
   return { ok: true, value }
-}
-
-/**
- * Validate the app-chosen logical `collection` label. Absent → 'default' (the POC
- * single-collection default, Decision 1). PURE; shared with the route.
- * @returns {{ok:true, value:string} | {ok:false, error:string}}
- */
-export function sanitizeCollection(name) {
-  if (name === undefined || name === null) return { ok: true, value: 'default' }
-  if (typeof name !== 'string' || !COLLECTION_RE.test(name)) {
-    return { ok: false, error: 'collection must match ^[A-Za-z0-9_-]{1,64}$' }
-  }
-  return { ok: true, value: name }
 }
 
 /** UTF-8 byte size of a record's data (the quota unit). */

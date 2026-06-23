@@ -65,6 +65,17 @@ const INDEX_SPECS = {
     // search(appId, collection, sort=updatedAt).
     { appId: 1, collection: 1, updatedAt: -1 },
   ],
+  appFiles: [
+    // app-files-repo list(appId)/recompute: every read filters `status:'ready'`
+    // (and recompute also filters `status:'pending'`) and sorts `createdAt:-1`, so
+    // `status` must sit in the EQUALITY prefix BEFORE the `createdAt` sort. ready
+    // files newest-first across ALL collections for one tenant — `collection` is NOT
+    // part of this query, so it is omitted (mirrors dataRecords' dedicated 3-field).
+    { appId: 1, status: 1, createdAt: -1 },
+    // list(appId, collection): ready files in one logical collection, newest-first —
+    // `status` again in the equality prefix, then `collection`, then the sort key.
+    { appId: 1, collection: 1, status: 1, createdAt: -1 },
+  ],
 }
 
 /**

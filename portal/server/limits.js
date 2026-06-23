@@ -31,6 +31,10 @@ export const DEFAULT_CONTEXT_HARD_LIMIT = 200_000
 // The only fields an admin can override per user.
 export const LIMIT_FIELDS = ['dailyTokenLimit', 'contextSoftLimit', 'contextHardLimit']
 
+// Strict positive-INTEGER guard for the limits read-path. Deliberately NOT the
+// string-parsing util-validate.posIntOr: a user-document limit field stored as a
+// STRING is suspect data, so it must fall back to the default rather than be coerced
+// (see the resolveUserLimits '9000'→default test). Kept local for that distinction.
 function posIntOr(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback
 }

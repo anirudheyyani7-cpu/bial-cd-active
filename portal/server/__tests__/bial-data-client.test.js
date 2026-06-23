@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createBIALData, bialDataClientScript } from '../bial-data-client.js'
 
 const CONFIG = { appId: 'app-1', appKey: 'key-1', baseUrl: '/api', loginRequired: false }
@@ -216,6 +216,184 @@ describe('BIALData — platform-injected session (Layer 2: deployed apps never b
     const src = bialDataClientScript()
     expect(src).toContain('window.__BIAL_USER')
     expect(src).toContain('getUser')
+    expect(src).not.toContain('localStorage')
+  })
+})
+
+describe('BIALData — file methods (/api/apps/:appId/files; proxy upload, SAS download, content proxy)', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // A fake `document` so the in-frame `<a download>` primitive is observable.
+  function stubAnchorDom() {
+    const anchors = []
+    const body = {
+      appendChild: (a) => {
+        a.parentNode = body
+      },
+      removeChild: (a) => {
+        a.parentNode = null
+      },
+    }
+    const fakeDoc = {
+      body,
+      createElement: (tag) => {
+        const a = { tag, href: '', download: '', parentNode: null, clicked: 0, click() { this.clicked++ } }
+        anchors.push(a)
+        return a
+      },
+    }
+    vi.stubGlobal('document', fakeDoc)
+    return { anchors }
+  }
+
+  // A byte (Blob) response for the /content proxy path.
+  const blobRes = (status, blob) => ({ ok: status >= 200 && status < 300, status, blob: async () => blob })
+
+  it('uploadFile reads a File to base64 and POSTs { filename, contentType, base64 } with X-App-Key + Bearer', async () => {
+    const bytes = Uint8Array.from([72, 105, 33]) // "Hi!"
+    const file = new File([bytes], 'report.csv', { type: 'text/csv' })
+    const { client, calls } = makeClient({ handler: () => jsonRes(201, { fileId: 'f1', filename: 'report.csv', size: 3 }) })
+    const meta = await client.uploadFile(file, { collection: 'reports' })
+    expect(meta).toEqual({ fileId: 'f1', filename: 'report.csv', size: 3 })
+    expect(calls[0].url).toBe('/api/apps/app-1/files')
+    expect(calls[0].opts.method).toBe('POST')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+    expect(calls[0].opts.headers['Authorization']).toBe('Bearer TOK')
+    const body = JSON.parse(calls[0].opts.body)
+    expect(body).toEqual({ filename: 'report.csv', contentType: 'text/csv', base64: Buffer.from(bytes).toString('base64'), collection: 'reports' })
+  })
+
+  it('uploadFile accepts a plain { filename, contentType, base64 } object too (no collection ⇒ default)', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(201, { fileId: 'f2' }) })
+    await client.uploadFile({ filename: 'a.json', contentType: 'application/json', base64: 'eyJhIjoxfQ==' })
+    const body = JSON.parse(calls[0].opts.body)
+    expect(body).toEqual({ filename: 'a.json', contentType: 'application/json', base64: 'eyJhIjoxfQ==' })
+    expect('collection' in body).toBe(false)
+  })
+
+  it('listFiles is collection-first like list, GETs ?collection=&limit= and unwraps { files }', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, { files: [{ fileId: 'f1' }] }) })
+    expect(await client.listFiles('reports', { limit: 5 })).toEqual([{ fileId: 'f1' }])
+    expect(calls[0].url).toBe('/api/apps/app-1/files?collection=reports&limit=5')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+  })
+
+  it('getFile / getDownloadUrl / removeFile hit the right endpoints and unwrap their responses', async () => {
+    const handler = (url, opts) => {
+      if (opts.method === 'DELETE') return jsonRes(200, { ok: true })
+      if (url.endsWith('/url')) return jsonRes(200, { url: 'https://blob/x?sig=1', expiresAt: 'soon' })
+      return jsonRes(200, { file: { fileId: 'f1', filename: 'r.csv' } })
+    }
+    const { client, calls } = makeClient({ handler })
+    expect(await client.getFile('f1')).toEqual({ fileId: 'f1', filename: 'r.csv' })
+    expect(calls[0].url).toBe('/api/apps/app-1/files/f1')
+    expect(await client.getDownloadUrl('f1')).toEqual({ url: 'https://blob/x?sig=1', expiresAt: 'soon' })
+    expect(calls[1].url).toBe('/api/apps/app-1/files/f1/url')
+    expect(await client.removeFile('f1')).toEqual({ ok: true })
+    expect(calls[2].url).toBe('/api/apps/app-1/files/f1')
+    expect(calls[2].opts.method).toBe('DELETE')
+  })
+
+  it('downloadFile mints a SAS and assigns the https SAS URL to an <a download> (no /content fetch)', async () => {
+    const sas = 'https://acct.blob.core.windows.net/c/apps/app-1/f1?sp=r&sig=abc&rscd=attachment'
+    const { anchors } = stubAnchorDom()
+    let contentHit = false
+    const handler = (url) => {
+      if (url.endsWith('/content')) { contentHit = true; return blobRes(200, new Blob([Uint8Array.from([1])])) }
+      if (url.endsWith('/url')) return jsonRes(200, { url: sas, expiresAt: 'soon' })
+      return jsonRes(200, {})
+    }
+    const { client, calls } = makeClient({ handler })
+    const out = await client.downloadFile('f1', 'report.csv')
+    expect(out).toEqual({ downloaded: true, via: 'sas' })
+    expect(calls[0].url).toBe('/api/apps/app-1/files/f1/url')
+    expect(contentHit).toBe(false) // SAS path bypasses the proxy
+    expect(anchors).toHaveLength(1)
+    expect(anchors[0].href).toBe(sas)
+    expect(anchors[0].download).toBe('report.csv')
+    expect(anchors[0].clicked).toBe(1)
+  })
+
+  it('downloadFile falls back to /content (blob: URL) on a 501 from /url, never assigning a non-https href', async () => {
+    const { anchors } = stubAnchorDom()
+    let contentHit = false
+    const handler = (url) => {
+      if (url.endsWith('/url')) return jsonRes(501, { error: { message: 'no signer' } })
+      if (url.endsWith('/content')) { contentHit = true; return blobRes(200, new Blob([Uint8Array.from([9, 9])], { type: 'text/csv' })) }
+      return jsonRes(200, {})
+    }
+    const { client } = makeClient({ handler })
+    const out = await client.downloadFile('f1', 'report.csv')
+    expect(out).toEqual({ downloaded: true, via: 'content' })
+    expect(contentHit).toBe(true)
+    expect(anchors[0].href.startsWith('blob:')).toBe(true)
+    expect(anchors[0].href.startsWith('https://')).toBe(false)
+  })
+
+  it('downloadFile refuses a tampered (javascript:) /url response and falls back to /content', async () => {
+    const { anchors } = stubAnchorDom()
+    const handler = (url) => {
+      if (url.endsWith('/url')) return jsonRes(200, { url: 'javascript:alert(document.cookie)' })
+      if (url.endsWith('/content')) return blobRes(200, new Blob([Uint8Array.from([1])]))
+      return jsonRes(200, {})
+    }
+    const { client } = makeClient({ handler })
+    const out = await client.downloadFile('f1')
+    expect(out.via).toBe('content')
+    expect(anchors[0].href.startsWith('blob:')).toBe(true)
+    expect(anchors[0].href).not.toContain('javascript:') // the tampered value never reached the anchor
+  })
+
+  it('downloadFile refuses a non-https (http://attacker) /url response and falls back to /content', async () => {
+    const { anchors } = stubAnchorDom()
+    let contentHit = false
+    const handler = (url) => {
+      // a syntactically-valid but NON-https URL pointing off-origin — the https-scheme
+      // guard must reject it (not just javascript:/data:) and use the /content proxy.
+      if (url.endsWith('/url')) return jsonRes(200, { url: 'http://attacker.example/file', expiresAt: 'soon' })
+      if (url.endsWith('/content')) { contentHit = true; return blobRes(200, new Blob([Uint8Array.from([1])])) }
+      return jsonRes(200, {})
+    }
+    const { client } = makeClient({ handler })
+    const out = await client.downloadFile('f1', 'report.csv')
+    expect(out.via).toBe('content') // not 'sas' — the http URL was refused
+    expect(contentHit).toBe(true)
+    expect(anchors[0].href.startsWith('blob:')).toBe(true)
+    expect(anchors[0].href).not.toContain('attacker.example') // the http URL never reached the anchor
+  })
+
+  it('a server error surfaces its `code` on the thrown Error (e.g. FILE_QUOTA_EXCEEDED) so app code can branch', async () => {
+    const handler = () => jsonRes(413, { error: { message: 'over quota', code: 'FILE_QUOTA_EXCEEDED' } })
+    const { client } = makeClient({ handler })
+    await expect(
+      client.uploadFile({ filename: 'a.csv', contentType: 'text/csv', base64: 'AQ==' }),
+    ).rejects.toMatchObject({ message: 'over quota', code: 'FILE_QUOTA_EXCEEDED' })
+  })
+
+  it('fileObjectUrl fetches /content WITH headers and returns a blob: URL (never a portal-origin string)', async () => {
+    const handler = (url) => {
+      if (url.endsWith('/content')) return blobRes(200, new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' }))
+      return jsonRes(200, {})
+    }
+    const { client, calls } = makeClient({ handler })
+    const objUrl = await client.fileObjectUrl('f1')
+    expect(objUrl.startsWith('blob:')).toBe(true)
+    expect(calls[0].url).toBe('/api/apps/app-1/files/f1/content')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+    expect(calls[0].opts.headers['Authorization']).toBe('Bearer TOK')
+    URL.revokeObjectURL(objUrl)
+  })
+
+  it('a login app with no token surfaces a clear "sign in" error on upload (uses the injected token, never localStorage)', async () => {
+    const { client } = makeClient({ token: null, handler: () => jsonRes(401, { error: { message: 'nope' } }) })
+    await expect(client.uploadFile({ filename: 'a.csv', contentType: 'text/csv', base64: 'AQ==' })).rejects.toThrow(/sign in/i)
+  })
+
+  it('the injected browser bootstrap exposes the file methods through window.BIALData with no localStorage', () => {
+    const src = bialDataClientScript()
+    for (const m of ['uploadFile', 'listFiles', 'getFile', 'getDownloadUrl', 'downloadFile', 'fileObjectUrl', 'removeFile']) {
+      expect(src).toContain(m)
+    }
     expect(src).not.toContain('localStorage')
   })
 })

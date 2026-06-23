@@ -75,6 +75,53 @@ describe('buildSystemPrompt — no fabricated data, real Data Service wiring (U1
     expect(prompt).toContain('GEN-1')
   })
 
+  it('documents the File storage section + all BIALData file method names (collection-first listFiles)', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).toContain('File storage')
+    for (const m of ['BIALData.uploadFile', 'BIALData.listFiles', 'BIALData.getFile', 'BIALData.downloadFile', 'BIALData.fileObjectUrl', 'BIALData.removeFile']) {
+      expect(prompt).toContain(m)
+    }
+    // listFiles is documented collection-first, mirroring list
+    expect(prompt).toMatch(/listFiles\(collection/)
+    expect(prompt).toMatch(/COLLECTION-FIRST/i)
+    // the wiring question now covers files too, but keeps the "refresh or be shared" discriminator
+    expect(prompt).toMatch(/files.*survive a page refresh or be shared/i)
+    // no fabricated-data phrasing slips in via the new section
+    expect(prompt).not.toMatch(/placeholder data|dummy data|mock data/i)
+  })
+
+  it('makes the downloadFile (save-to-disk) vs fileObjectUrl (render/re-parse) intent distinction selectable', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).toMatch(/downloadFile.*SAVE the file to the user/i) // save-to-disk
+    expect(prompt).toMatch(/fileObjectUrl.*render or re-parse|render or re-parse the file/i) // in-app render/re-parse
+    expect(prompt).toMatch(/<img src>/) // the render path is concrete
+    expect(prompt).toMatch(/Choose by INTENT/i)
+  })
+
+  it('teaches combining files + records with the reconciliation worked example (report file + records; source sheets opt-in)', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).toMatch(/Combining files \+ records/i)
+    expect(prompt).toMatch(/reconciliation/i)
+    expect(prompt).toMatch(/persist the generated report as a file/i) // report → file by default
+    expect(prompt).toMatch(/reportFileId/) // link the record to the file by id
+    expect(prompt).toMatch(/data minimization/i) // source sheets default off
+    expect(prompt).toMatch(/opt-in/i) // source sheets are an explicit opt-in
+    expect(prompt).toMatch(/sensitive files MUST require login|MUST require login/i) // sensitive-file login
+  })
+
+  it('keeps the pure view-only archetype client-side (no file/backend calls when nothing is kept)', () => {
+    const prompt = buildSystemPrompt()
+    // wiring 1 still mandates client-side state with no backend/login for parse-and-discard apps
+    expect(prompt).toMatch(/view-only.*keeps nothing[\s\S]*NO backend, NO login/i)
+  })
+
+  it('the uploadedFiles augmentation offers persisting the ORIGINAL file when it must be kept (with sensitive-file login)', () => {
+    const prompt = buildSystemPrompt({ uploadedFiles: [{ name: 'sheet.csv', content: 'a\n1' }] })
+    expect(prompt).toMatch(/ORIGINAL file kept or re-downloadable/i)
+    expect(prompt).toContain('BIALData.uploadFile')
+    expect(prompt).toMatch(/require login if it may hold sensitive data/i)
+  })
+
   it('a pinned dataSchema injects the exact collection + field names with a do-not-rename rule; absent → omitted', () => {
     const pinned = buildSystemPrompt({ dataSchema: { collection: 'inspections', fields: ['gate', 'status'] } })
     expect(pinned).toMatch(/reuse these EXACT collection and field names/i)

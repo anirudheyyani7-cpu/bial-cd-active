@@ -10,6 +10,9 @@ import { createFeedbackRepo } from '../feedback-repo.js'
 import { createConversationsRepo } from '../conversations-repo.js'
 import { createMessagesRepo } from '../messages-repo.js'
 import { createAttachmentsRepo } from '../attachments-repo.js'
+import { createAppRegistryRepo } from '../app-registry-repo.js'
+import { createDataRecordsRepo } from '../data-records-repo.js'
+import { createAuditRepo } from '../audit-repo.js'
 import { signAccessToken } from '../auth/tokens.js'
 import { hashPassword } from '../auth/password.js'
 import { makeFakeContainer } from './fakeCosmos.js'
@@ -19,6 +22,9 @@ import { makeFakeConversationsContainer } from './fakeConversationsCosmos.js'
 import { makeFakeMessagesContainer } from './fakeMessagesCosmos.js'
 import { makeFakeAttachmentUsageContainer } from './fakeAttachmentUsageCosmos.js'
 import { makeFakeObjectStore } from './fakeObjectStore.js'
+import { makeFakeAppRegistryContainer } from './fakeAppRegistryCosmos.js'
+import { makeFakeDataRecordsContainer } from './fakeDataRecordsCosmos.js'
+import { makeFakeAuditContainer } from './fakeAuditCosmos.js'
 
 /** A fresh in-memory feedback repo for the createApp DI seam. */
 const fakeFeedbackRepo = () => createFeedbackRepo(makeFakeFeedbackContainer([]))
@@ -29,6 +35,19 @@ const fakePersistence = () => ({
   messagesRepo: createMessagesRepo(makeFakeMessagesContainer([])),
   attachmentsRepo: createAttachmentsRepo(makeFakeObjectStore(), makeFakeAttachmentUsageContainer([])),
 })
+
+/**
+ * Fresh in-memory app-data-service repos for the createApp DI seam (registry,
+ * schemaless record store, audit). `registrySeed` lets a test pre-provision an
+ * app so the /api/apps routes serve end-to-end. The data-records repo shares the
+ * SAME registry repo so the atomic quota counters reconcile.
+ */
+const fakeAppData = (registrySeed = []) => {
+  const registryRepo = createAppRegistryRepo(makeFakeAppRegistryContainer(registrySeed))
+  const dataRecordsRepo = createDataRecordsRepo(makeFakeDataRecordsContainer([]), registryRepo)
+  const auditRepo = createAuditRepo(makeFakeAuditContainer([]))
+  return { registryRepo, dataRecordsRepo, auditRepo }
+}
 
 const SPA_HTML = '<!doctype html><title>BIAL</title><div id="root"></div>'
 let distDir
@@ -83,7 +102,7 @@ function makeServer({ usageRepo, streamOpts, dailyTokenLimit } = {}) {
   const container = makeFakeContainer([])
   const repo = createUsersRepo(container)
   const resolvedUsageRepo = usageRepo ?? createUsageRepo(makeFakeUsageContainer([]))
-  return createApp({ repo, usageRepo: resolvedUsageRepo, feedbackRepo: fakeFeedbackRepo(), ...fakePersistence(), claudeClient: makeClaudeClient(streamOpts), distDir, dailyTokenLimit })
+  return createApp({ repo, usageRepo: resolvedUsageRepo, feedbackRepo: fakeFeedbackRepo(), ...fakePersistence(), ...fakeAppData(), claudeClient: makeClaudeClient(streamOpts), distDir, dailyTokenLimit })
 }
 
 const validToken = () => signAccessToken({ sub: 'alice', username: 'alice', role: 'user' })
@@ -172,6 +191,7 @@ describe('server integration', () => {
       usageRepo: createUsageRepo(makeFakeUsageContainer([])),
       feedbackRepo: fakeFeedbackRepo(),
       ...fakePersistence(),
+      ...fakeAppData(),
       claudeClient: makeClaudeClient(),
       distDir,
     })
@@ -235,6 +255,80 @@ describe('createApp dependency guards', () => {
       /conversationsRepo is required/,
     )
   })
+
+  // App-data-service deps fail loud too (the /api/apps routes must not silently
+  // 404). The guards fire in declaration order (registry → dataRecords → audit),
+  // so each test supplies the prior deps and asserts the next missing one.
+  const appDataBase = () => ({
+    repo: createUsersRepo(makeFakeContainer([])),
+    usageRepo: createUsageRepo(makeFakeUsageContainer([])),
+    feedbackRepo: fakeFeedbackRepo(),
+    ...fakePersistence(),
+    claudeClient: makeClaudeClient(),
+    distDir,
+  })
+
+  it('throws when registryRepo is omitted (data routes must not silently 404)', () => {
+    expect(() => createApp({ ...appDataBase() })).toThrow(/registryRepo is required/)
+  })
+
+  it('throws when dataRecordsRepo is omitted', () => {
+    const { registryRepo } = fakeAppData()
+    expect(() => createApp({ ...appDataBase(), registryRepo })).toThrow(/dataRecordsRepo is required/)
+  })
+
+  it('throws when auditRepo is omitted', () => {
+    const { registryRepo, dataRecordsRepo } = fakeAppData()
+    expect(() => createApp({ ...appDataBase(), registryRepo, dataRecordsRepo })).toThrow(/auditRepo is required/)
+  })
+})
+
+describe('Data Service routes wired through createApp', () => {
+  it('a provisioned app round-trips create → list via /api/apps/:appId/records', async () => {
+    const appData = fakeAppData([
+      { _id: 'demo-app', appKey: 'key-demo', status: 'approved', loginRequired: false, dataCount: 0, dataBytes: 0 },
+    ])
+    const app2 = createApp({
+      repo: createUsersRepo(makeFakeContainer([])),
+      usageRepo: createUsageRepo(makeFakeUsageContainer([])),
+      feedbackRepo: fakeFeedbackRepo(),
+      ...fakePersistence(),
+      ...appData,
+      claudeClient: makeClaudeClient(),
+      distDir,
+    })
+
+    const created = await request(app2)
+      .post('/api/apps/demo-app/records')
+      .set('X-App-Key', 'key-demo')
+      .send({ data: { title: 'wired e2e' } })
+    expect(created.status).toBe(201)
+    expect(created.body.data).toEqual({ title: 'wired e2e' })
+
+    const listed = await request(app2).get('/api/apps/demo-app/records').set('X-App-Key', 'key-demo')
+    expect(listed.status).toBe(200)
+    expect(listed.body.records).toHaveLength(1)
+
+    // an unknown app key → 401 (not a silent SPA-fallback 200)
+    const bad = await request(app2).post('/api/apps/demo-app/records').set('X-App-Key', 'nope').send({ data: {} })
+    expect(bad.status).toBe(401)
+  })
+
+  it('a null-origin (opaque iframe) preflight to a data route succeeds, while the SPA cors still rejects :3000', async () => {
+    const app2 = makeServer()
+    const preflight = await request(app2)
+      .options('/api/apps/demo-app/records')
+      .set('Origin', 'null')
+      .set('Access-Control-Request-Method', 'POST')
+    expect(preflight.headers['access-control-allow-origin']).toBe('null')
+
+    // the global SPA cors is untouched: a non-allowlisted origin on /api/claude is still not reflected
+    const rejected = await request(app2)
+      .post('/api/claude')
+      .set('Origin', 'http://localhost:3000')
+      .send({ messages: [] })
+    expect(rejected.headers['access-control-allow-origin']).toBeUndefined()
+  })
 })
 
 describe('POST /api/feedback wired through createApp', () => {
@@ -245,6 +339,7 @@ describe('POST /api/feedback wired through createApp', () => {
       usageRepo: createUsageRepo(makeFakeUsageContainer([])),
       feedbackRepo: createFeedbackRepo(feedbackContainer),
       ...fakePersistence(),
+      ...fakeAppData(),
       claudeClient: makeClaudeClient(),
       distDir,
     })
@@ -404,7 +499,7 @@ describe('per-user daily limit', () => {
       getUsage: vi.fn(async () => ({ inputTokens: used, outputTokens: 0 })),
       addUsage: vi.fn(async () => {}),
     }
-    return createApp({ repo, usageRepo, feedbackRepo: fakeFeedbackRepo(), ...fakePersistence(), claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
+    return createApp({ repo, usageRepo, feedbackRepo: fakeFeedbackRepo(), ...fakePersistence(), ...fakeAppData(), claudeClient: makeClaudeClient(), distDir, dailyTokenLimit: 1000 })
   }
 
   it('blocks a default user where an override user passes (used=1500)', async () => {

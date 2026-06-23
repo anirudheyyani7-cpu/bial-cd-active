@@ -31,6 +31,10 @@ import { createMessagesRepo } from './server/messages-repo.js'
 import { createAttachmentsRepo } from './server/attachments-repo.js'
 import { createConversationsRouter } from './server/conversations.js'
 import { createAttachmentsRouter } from './server/attachments.js'
+import { createAppRegistryRepo } from './server/app-registry-repo.js'
+import { createDataRecordsRepo } from './server/data-records-repo.js'
+import { createAuditRepo } from './server/audit-repo.js'
+import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from './server/app-data.js'
 import { validateAttachments } from './server/message-content.js'
 import { getObjectStore } from './server/object-store.js'
 import {
@@ -40,6 +44,9 @@ import {
   getConversationsCollection,
   getMessagesCollection,
   getAttachmentUsageCollection,
+  getAppRegistryCollection,
+  getDataRecordsCollection,
+  getAuditCollection,
 } from './server/cosmos.js'
 import {
   DEFAULT_DAILY_TOKEN_LIMIT,
@@ -176,6 +183,9 @@ export function createApp({
   conversationsRepo,
   messagesRepo,
   attachmentsRepo,
+  registryRepo,
+  dataRecordsRepo,
+  auditRepo,
   claudeClient,
   distDir = DEFAULT_DIST,
   dailyTokenLimit = Number.parseInt(process.env.DAILY_TOKEN_LIMIT, 10) || DEFAULT_DAILY_TOKEN_LIMIT,
@@ -212,6 +222,11 @@ export function createApp({
     }),
   )
 
+  // Scoped CORS for the Data Service, registered BEFORE the global SPA cors so the
+  // sandboxed opaque-origin iframe (Origin: null) preflight is answered with the
+  // right headers (the global allowlist cors would otherwise short-circuit the
+  // OPTIONS with no ACAO). Header-auth only, no cookies → no ambient authority.
+  app.use('/api/apps', makeDataServiceCors())
   // Dev convenience only: the Vite origin. Single-origin prod needs no CORS.
   app.use(cors({ origin: ['http://localhost:5173'] }))
   // /api/claude carries base64 attachment blocks, so it needs a large body limit;
@@ -226,6 +241,10 @@ export function createApp({
   // ~512 KB text part (TEXT_BLOCK_MAX_CHARS), and a builder code snapshot is sizable
   // — both exceed the 100 KB default, so /api/conversations gets a 2 MB cap.
   app.use('/api/conversations', express.json({ limit: '2mb' }))
+  // Data Service records carry one small JSON record per request; a 256kb cap
+  // (over the global 100 KB default) fits a generous record. Registered before
+  // the global parser so it consumes the /api/apps body first.
+  app.use('/api/apps', express.json({ limit: APP_DATA_BODY_LIMIT }))
   app.use(express.json())
 
   // --- API routes (registered BEFORE the SPA fallback) -------------------
@@ -247,6 +266,15 @@ export function createApp({
   if (!conversationsRepo) throw new Error('createApp: conversationsRepo is required')
   if (!messagesRepo) throw new Error('createApp: messagesRepo is required')
   if (!attachmentsRepo) throw new Error('createApp: attachmentsRepo is required')
+  // Dynamic app data service: the registry, the schemaless record store, and the
+  // audit trail back /api/apps/* (and the deploy/admin/runner surfaces). Same
+  // fail-loud stance — a missing dep would make the data routes silently 404
+  // (the SPA fallback would answer index.html and the client's res.json() would
+  // throw), so surface it at boot. Appended AFTER the existing deps so the prior
+  // fail-loud assertions still match. start() always wires real collections.
+  if (!registryRepo) throw new Error('createApp: registryRepo is required')
+  if (!dataRecordsRepo) throw new Error('createApp: dataRecordsRepo is required')
+  if (!auditRepo) throw new Error('createApp: auditRepo is required')
 
   // The standard plan: the injected daily ceiling (env-driven) + the fixed
   // context thresholds. Per-user overrides resolve on top of this.
@@ -403,6 +431,12 @@ export function createApp({
   app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
   app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo }))
 
+  // Dynamic app data service: the shared, schemaless per-app record store every
+  // generated CRUD app calls. NO global requireAuth here — the router owns its own
+  // auth chain (requireAppKey → requireLoginIfRequired → per-app limiter), so an
+  // open app admits anonymous writes while a login app reuses the portal token.
+  app.use('/api/apps/:appId/records', createAppDataRouter({ registryRepo, dataRecordsRepo, auditRepo }))
+
   // Isolated builder-preview renderer. The generated app runs inside a sandboxed
   // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the
   // main app's policy stays strict. Code is delivered via postMessage, never here.
@@ -435,13 +469,18 @@ async function start() {
   const conversationsRepo = createConversationsRepo(await getConversationsCollection())
   const messagesRepo = createMessagesRepo(await getMessagesCollection())
   const attachmentsRepo = createAttachmentsRepo(getObjectStore(), await getAttachmentUsageCollection())
+  // Dynamic app data service: registry, schemaless record store, audit trail.
+  // The data-records repo takes the registry repo for the atomic quota counters.
+  const registryRepo = createAppRegistryRepo(await getAppRegistryCollection())
+  const dataRecordsRepo = createDataRecordsRepo(await getDataRecordsCollection(), registryRepo)
+  const auditRepo = createAuditRepo(await getAuditCollection())
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,
     baseURL: `https://${process.env.AZURE_FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/anthropic`,
     apiVersion: '2023-06-01',
   })
 
-  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, claudeClient })
+  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, registryRepo, dataRecordsRepo, auditRepo, claudeClient })
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => console.log(`✈  BIAL portal (API + SPA) → http://localhost:${PORT}`))
 }

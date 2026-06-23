@@ -38,6 +38,7 @@ import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from '.
 import { createDeployRouter } from './server/deploy.js'
 import { createAdminAppsRouter } from './server/admin/apps-routes.js'
 import { bialDataClientScript } from './server/bial-data-client.js'
+import { createRunnerRouter } from './server/runner.js'
 import { validateAttachments } from './server/message-content.js'
 import { getObjectStore } from './server/object-store.js'
 import {
@@ -479,6 +480,11 @@ export function createApp({
     res.setHeader('X-Frame-Options', 'SAMEORIGIN')
     res.type('html').send(PREVIEW_SHELL)
   })
+
+  // Hosted-app runner: the deployed app at /apps/:appId (same-origin shell) + its
+  // sandboxed opaque-origin frame at /apps/:appId/frame. Mounted BEFORE the SPA
+  // static + history fallback so /apps/* serves the runner, not index.html.
+  app.use('/apps', createRunnerRouter({ registryRepo }))
 
   // --- Static SPA + history fallback (AFTER all /api routes) -------------
   app.use(express.static(distDir))

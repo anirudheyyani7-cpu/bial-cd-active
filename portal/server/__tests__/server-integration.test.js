@@ -314,6 +314,16 @@ describe('Data Service routes wired through createApp', () => {
     expect(bad.status).toBe(401)
   })
 
+  it('GET /preview injects the BIALData client and scopes the iframe CSP connect-src to the portal origin', async () => {
+    const res = await request(makeServer()).get('/preview')
+    expect(res.status).toBe(200)
+    expect(res.text).toContain('window.BIALData') // the data client is injected
+    expect(res.text).toContain('createBIALData')
+    const csp = res.headers['content-security-policy']
+    // opaque-origin frame → connect-src must name the portal origin explicitly (not just 'self')
+    expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/)
+  })
+
   it('a null-origin (opaque iframe) preflight to a data route succeeds, while the SPA cors still rejects :3000', async () => {
     const app2 = makeServer()
     const preflight = await request(app2)

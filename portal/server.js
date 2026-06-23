@@ -37,6 +37,7 @@ import { createAuditRepo } from './server/audit-repo.js'
 import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from './server/app-data.js'
 import { createDeployRouter } from './server/deploy.js'
 import { createAdminAppsRouter } from './server/admin/apps-routes.js'
+import { bialDataClientScript } from './server/bial-data-client.js'
 import { validateAttachments } from './server/message-content.js'
 import { getObjectStore } from './server/object-store.js'
 import {
@@ -87,19 +88,29 @@ function validateDailyTokenLimit() {
   }
 }
 
+/** The absolute origin this request was served from (for the sandboxed-frame CSPs). */
+function originOf(req) {
+  return `${req.protocol}://${req.get('host')}`
+}
+
 // Relaxed CSP for the ISOLATED builder-preview iframe only (served at /preview).
 // The generated app needs CDN React/Babel/Tailwind + inline eval (Babel compiles
-// JSX at runtime). Scoping this to its own route keeps the main app's CSP strict —
-// the preview runs in a sandboxed, same-origin frame, never touching the SPA policy.
-const PREVIEW_CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
-  "font-src 'self' data: https://fonts.gstatic.com",
-  "img-src 'self' data: https:",
-  "connect-src 'self' https://unpkg.com https://cdn.tailwindcss.com",
-  "frame-ancestors 'self'", // so the same-origin SPA can frame this renderer
-].join('; ')
+// JSX at runtime). Scoping this to its own route keeps the main app's CSP strict.
+// The preview runs sandboxed WITHOUT allow-same-origin → OPAQUE origin, so its
+// data fetch to the portal is cross-origin: `connect-src` must list the portal
+// ORIGIN explicitly ('self' = the opaque origin, which matches nothing), scoped
+// to exactly the Data-Service origin (no wildcard egress) per Decision 8.
+function buildPreviewCsp(origin) {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    `connect-src 'self' ${origin} https://unpkg.com https://cdn.tailwindcss.com`,
+    "frame-ancestors 'self'", // so the same-origin SPA can frame this renderer
+  ].join('; ')
+}
 
 // Static renderer shell for the builder preview. Receives the generated JSX via
 // postMessage (never stored server-side, never in the URL) and renders it,
@@ -120,6 +131,7 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
 <style>body{margin:0;font-family:'Manrope',sans-serif;background:#fff;}</style>
 </head><body>
 <div id="root"></div>
+<script>${bialDataClientScript()}</script>
 <script>
   var root = ReactDOM.createRoot(document.getElementById('root'));
   function renderPreview(code){
@@ -148,7 +160,12 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
     }
   }
   window.addEventListener('message', function (e) {
-    if (e.data && typeof e.data.previewCode === 'string') renderPreview(e.data.previewCode);
+    if (!e.data) return;
+    // Data wiring + token are injected via postMessage (this frame is opaque-origin
+    // and cannot read the portal's localStorage). BIALData reads these globals.
+    if (e.data.config) window.__BIAL_CONFIG = e.data.config;
+    if ('accessToken' in e.data) window.__BIAL_TOKEN = e.data.accessToken || null;
+    if (typeof e.data.previewCode === 'string') renderPreview(e.data.previewCode);
   });
   if (window.parent) window.parent.postMessage({ previewReady: true }, '*');
 </script>
@@ -457,8 +474,8 @@ export function createApp({
   // Isolated builder-preview renderer. The generated app runs inside a sandboxed
   // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the
   // main app's policy stays strict. Code is delivered via postMessage, never here.
-  app.get('/preview', (_req, res) => {
-    res.setHeader('Content-Security-Policy', PREVIEW_CSP)
+  app.get('/preview', (req, res) => {
+    res.setHeader('Content-Security-Policy', buildPreviewCsp(originOf(req)))
     res.setHeader('X-Frame-Options', 'SAMEORIGIN')
     res.type('html').send(PREVIEW_SHELL)
   })

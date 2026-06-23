@@ -107,3 +107,27 @@ describe('deploy — submit', () => {
     expect((await request(app).post('/api/apps/owned/submit').set('Authorization', `Bearer ${token('mallory')}`)).status).toBe(404)
   })
 })
+
+describe('deploy — owner status read (no provision)', () => {
+  it('returns status:null for an un-provisioned build (and does NOT create a draft)', async () => {
+    const { app, registryContainer } = harness({ conversations: [builderHeader('app-1', 'alice', 'function PreviewApp(){}')] })
+    const res = await request(app).get('/api/apps/app-1/status').set('Authorization', `Bearer ${token('alice')}`)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ appId: 'app-1', status: null })
+    expect(registryContainer._store.size).toBe(0) // read-only — no draft created (no sprawl)
+  })
+
+  it('returns the live status + appKey + rejectionNote for a provisioned build', async () => {
+    const { app } = harness({
+      conversations: [builderHeader('app-2', 'alice', 'function PreviewApp(){}')],
+      registry: [{ _id: 'app-2', appKey: 'k2', ownerUsername: 'alice', status: 'rejected', loginRequired: true, rejectionNote: 'fix it', dataCount: 0, dataBytes: 0 }],
+    })
+    const res = await request(app).get('/api/apps/app-2/status').set('Authorization', `Bearer ${token('alice')}`)
+    expect(res.body).toMatchObject({ appId: 'app-2', status: 'rejected', appKey: 'k2', loginRequired: true, rejectionNote: 'fix it' })
+  })
+
+  it('a non-owner cannot read another build’s status → 404', async () => {
+    const { app } = harness({ conversations: [builderHeader('app-1', 'alice', 'function PreviewApp(){}')] })
+    expect((await request(app).get('/api/apps/app-1/status').set('Authorization', `Bearer ${token('mallory')}`)).status).toBe(404)
+  })
+})

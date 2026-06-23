@@ -92,3 +92,8 @@ export async function provisionApp(appId, deps = {}) {
 export async function submitApp(appId, deps = {}) {
   return asJson(await authFetch(`/api/apps/${encodeURIComponent(appId)}/submit`, jsonOpts('POST'), deps), 'Failed to submit app')
 }
+
+/** Owner read of the deploy status (no provision); { status:null } if not provisioned yet. */
+export async function getAppStatus(appId, deps = {}) {
+  return asJson(await authFetch(`/api/apps/${encodeURIComponent(appId)}/status`, {}, deps), 'Failed to read status')
+}

@@ -38,6 +38,29 @@ export function createDeployRouter({ registryRepo, conversationsRepo, auditRepo 
   // Resolve the owned build header, or null (not found / not the owner).
   const ownedBuild = (appId, username) => conversationsRepo.getHeader(appId, username)
 
+  // Owner status read (no provision — never creates a draft, so it can't cause
+  // abandoned-app sprawl). Returns the live status so the builder can show the
+  // deploy state on resume/focus. `status:null` means not provisioned/submitted yet.
+  router.get(
+    '/:appId/status',
+    requireAuth,
+    safe(async (req, res) => {
+      const owner = req.user.sub
+      const { appId } = req.params
+      const build = await ownedBuild(appId, owner)
+      if (!build) return res.status(404).json({ error: { message: 'Build not found.' } })
+      const app = await registryRepo.getApp(appId)
+      if (!app || app.ownerUsername !== owner) return res.json({ appId, status: null })
+      res.json({
+        appId,
+        status: app.status,
+        appKey: app.appKey,
+        loginRequired: Boolean(app.loginRequired),
+        rejectionNote: app.rejectionNote || null,
+      })
+    }),
+  )
+
   // Provision (idempotent): mint the draft + appKey on first call. Ownership is
   // the conversation's — a non-owner 404s and never sees the appKey.
   router.post(

@@ -1,0 +1,237 @@
+import { describe, it, expect } from 'vitest'
+import { createBIALData, bialDataClientScript } from '../bial-data-client.js'
+
+const CONFIG = { appId: 'app-1', appKey: 'key-1', baseUrl: '/api', loginRequired: false }
+
+const jsonRes = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+})
+
+/** A fetch double that records calls and answers via `handler(url, opts)`. */
+function mockFetch(handler) {
+  const calls = []
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, opts })
+    return handler(url, opts)
+  }
+  return { fetchImpl, calls }
+}
+
+function makeClient({ handler, token = 'TOK', config = CONFIG } = {}) {
+  const { fetchImpl, calls } = mockFetch(handler ?? (() => jsonRes(200, {})))
+  let stored = token
+  const client = createBIALData({
+    getConfig: () => config,
+    getToken: () => stored,
+    setToken: (t) => {
+      stored = t
+    },
+    fetchImpl,
+  })
+  return { client, calls, getStored: () => stored }
+}
+
+describe('BIALData — CRUD hits /api/apps/:appId/records with X-App-Key (+ Bearer)', () => {
+  it('save POSTs { collection, data } with the app key and bearer token', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(201, { id: 'r1', data: { a: 1 } }) })
+    const rec = await client.save('default', { a: 1 })
+    expect(rec).toEqual({ id: 'r1', data: { a: 1 } })
+    expect(calls[0].url).toBe('/api/apps/app-1/records')
+    expect(calls[0].opts.method).toBe('POST')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+    expect(calls[0].opts.headers['Authorization']).toBe('Bearer TOK')
+    expect(JSON.parse(calls[0].opts.body)).toEqual({ collection: 'default', data: { a: 1 } })
+  })
+
+  it('list/get/update/remove hit the right URLs and unwrap the response', async () => {
+    const handler = (url, opts) => {
+      if (opts.method === 'GET' && url.includes('/records?')) return jsonRes(200, { records: [{ id: 'r1' }] })
+      if (opts.method === 'GET') return jsonRes(200, { record: { id: 'r1', data: { a: 1 } } })
+      if (opts.method === 'PATCH') return jsonRes(200, { record: { id: 'r1', data: { a: 2 } } })
+      if (opts.method === 'DELETE') return jsonRes(200, { ok: true })
+      return jsonRes(200, {})
+    }
+    const { client, calls } = makeClient({ handler })
+    expect(await client.list('inspections', { limit: 10 })).toEqual([{ id: 'r1' }])
+    expect(calls[0].url).toBe('/api/apps/app-1/records?collection=inspections&limit=10')
+    expect((await client.get('inspections', 'r1')).data).toEqual({ a: 1 })
+    expect(calls[1].url).toBe('/api/apps/app-1/records/r1')
+    expect((await client.update('inspections', 'r1', { a: 2 })).data).toEqual({ a: 2 })
+    expect(calls[2].opts.method).toBe('PATCH')
+    expect(await client.remove('inspections', 'r1')).toEqual({ ok: true })
+    expect(calls[3].opts.method).toBe('DELETE')
+  })
+
+  it('omits the Authorization header when there is no token (open app)', async () => {
+    const { client, calls } = makeClient({ token: null, handler: () => jsonRes(201, { id: 'r1' }) })
+    await client.save('default', { a: 1 })
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+    expect(calls[0].opts.headers['Authorization']).toBeUndefined()
+  })
+
+  it('a 401 surfaces a clear "please sign in" error', async () => {
+    const { client } = makeClient({ token: null, handler: () => jsonRes(401, { error: { message: 'nope' } }) })
+    await expect(client.list('default')).rejects.toThrow(/sign in/i)
+  })
+
+  it('a non-2xx surfaces the server’s uniform error message', async () => {
+    const { client } = makeClient({ handler: () => jsonRes(413, { error: { message: 'quota full' } }) })
+    await expect(client.save('default', { a: 1 })).rejects.toThrow(/quota full/)
+  })
+})
+
+describe('BIALData — query + distinct (search / pagination / filter)', () => {
+  it('query builds /records/search with all params and returns the paged envelope', async () => {
+    const envelope = { items: [{ id: 'r1', data: { gate: 'A2' } }], total: 1, page: 2, pageSize: 25, totalPages: 1 }
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, envelope) })
+    const out = await client.query('inspections', { q: 'sensor', page: 2, pageSize: 25, sort: 'gate', order: 'asc', filter: { status: 'Fail' } })
+    expect(out).toEqual(envelope)
+    const url = calls[0].url
+    expect(url.startsWith('/api/apps/app-1/records/search?')).toBe(true)
+    expect(url).toContain('collection=inspections')
+    expect(url).toContain('q=sensor')
+    expect(url).toContain('page=2')
+    expect(url).toContain('pageSize=25')
+    expect(url).toContain('sort=gate')
+    expect(url).toContain('order=asc')
+    expect(url).toContain('filter=' + encodeURIComponent(JSON.stringify({ status: 'Fail' })))
+    expect(calls[0].opts.method).toBe('GET')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+  })
+
+  it('query with no opts still hits /records/search and defaults the envelope on an empty body', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, null) })
+    const out = await client.query('inspections')
+    expect(calls[0].url).toBe('/api/apps/app-1/records/search?collection=inspections')
+    expect(out).toEqual({ items: [], total: 0, page: 1, pageSize: 25, totalPages: 0 })
+  })
+
+  it('distinct hits /records/distinct?collection=&field= and unwraps values', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, { values: ['Pass', 'Fail'] }) })
+    expect(await client.distinct('inspections', 'status')).toEqual(['Pass', 'Fail'])
+    expect(calls[0].url).toBe('/api/apps/app-1/records/distinct?collection=inspections&field=status')
+  })
+})
+
+describe('BIALData — seedFromUpload idempotency', () => {
+  it('seeds rows once; a second run does not duplicate them', async () => {
+    const store = []
+    const handler = (url, opts) => {
+      if (opts.method === 'GET') return jsonRes(200, { records: store.map((d, i) => ({ id: 'r' + i, data: d })) })
+      if (opts.method === 'POST') {
+        const body = JSON.parse(opts.body)
+        store.push(body.data)
+        return jsonRes(201, { id: 'r' + (store.length - 1), data: body.data })
+      }
+      return jsonRes(200, {})
+    }
+    const { client } = makeClient({ handler })
+    const rows = [{ tag: 'GEN-1' }, { tag: 'GEN-2' }]
+    const first = await client.seedFromUpload('equipment', rows)
+    expect(first).toEqual({ seeded: 2, skipped: false })
+    expect(store).toHaveLength(2)
+    const second = await client.seedFromUpload('equipment', rows)
+    expect(second.skipped).toBe(true) // collection already has rows → skip
+    expect(store).toHaveLength(2) // no duplication
+  })
+
+  it('with a dedupeKey, only previously-unseen rows are added', async () => {
+    const store = [{ tag: 'GEN-1' }]
+    const handler = (url, opts) => {
+      if (opts.method === 'GET') return jsonRes(200, { records: store.map((d, i) => ({ id: 'r' + i, data: d })) })
+      if (opts.method === 'POST') {
+        store.push(JSON.parse(opts.body).data)
+        return jsonRes(201, { id: 'x' })
+      }
+      return jsonRes(200, {})
+    }
+    const { client } = makeClient({ handler })
+    const res = await client.seedFromUpload('equipment', [{ tag: 'GEN-1' }, { tag: 'GEN-2' }], { dedupeKey: 'tag' })
+    expect(res.seeded).toBe(1) // GEN-1 already present, only GEN-2 added
+    expect(store.map((d) => d.tag)).toEqual(['GEN-1', 'GEN-2'])
+  })
+})
+
+describe('BIALData — login (shared portal login, in-memory token)', () => {
+  it('login stores the access token in memory and returns the user; currentUser reflects it', async () => {
+    const handler = (url, opts) => {
+      if (url.endsWith('/auth/login')) return jsonRes(200, { accessToken: 'NEWTOK', refreshToken: 'SHOULD_BE_IGNORED', user: { username: 'alice' } })
+      return jsonRes(200, {})
+    }
+    const { client, getStored } = makeClient({ token: null, handler })
+    const out = await client.login('alice', 'pw')
+    expect(out.user).toEqual({ username: 'alice' })
+    expect(client.currentUser()).toEqual({ username: 'alice' })
+    expect(getStored()).toBe('NEWTOK') // token set in memory (never localStorage)
+  })
+
+  it('a failed login throws a generic error', async () => {
+    const { client } = makeClient({ token: null, handler: () => jsonRes(401, {}) })
+    await expect(client.login('alice', 'bad')).rejects.toThrow(/username or password/i)
+  })
+})
+
+describe('BIALData — platform-injected session (Layer 2: deployed apps never build a login form)', () => {
+  it('currentUser() returns the platform-injected user without any in-app login', () => {
+    const client = createBIALData({
+      getConfig: () => CONFIG,
+      getToken: () => 'TOK',
+      setToken: () => {},
+      getUser: () => ({ username: 'anant' }),
+      fetchImpl: async () => jsonRes(200, {}),
+    })
+    expect(client.currentUser()).toEqual({ username: 'anant' })
+  })
+
+  it('login() reuses the injected session WITHOUT a network call (no credentials forwarded)', async () => {
+    const { fetchImpl, calls } = mockFetch(() => jsonRes(200, {}))
+    const client = createBIALData({
+      getConfig: () => CONFIG,
+      getToken: () => 'TOK',
+      setToken: () => {},
+      getUser: () => ({ username: 'anant' }),
+      fetchImpl,
+    })
+    const out = await client.login('ignored', 'ignored')
+    expect(out.user).toEqual({ username: 'anant' }) // the shell already signed them in
+    expect(calls).toHaveLength(0) // never hits /auth/login — no creds leave the sandbox
+  })
+
+  it('login() surfaces a clear "sign in from the portal" message when the sandboxed frame cannot reach the endpoint', async () => {
+    const client = createBIALData({
+      getConfig: () => CONFIG,
+      getToken: () => null,
+      setToken: () => {},
+      // no injected user + a fetch that REJECTS the way a blocked cross-origin call does
+      fetchImpl: async () => {
+        throw new TypeError('Failed to fetch')
+      },
+    })
+    await expect(client.login('a', 'b')).rejects.toThrow(/sign in from the BIAL portal/i)
+  })
+
+  it('the browser bootstrap wires the injected user (window.__BIAL_USER + getUser), still no localStorage', () => {
+    const src = bialDataClientScript()
+    expect(src).toContain('window.__BIAL_USER')
+    expect(src).toContain('getUser')
+    expect(src).not.toContain('localStorage')
+  })
+})
+
+describe('BIALData — archetype separation + injection hygiene', () => {
+  it('creating the client makes no network calls (an upload-only app stays offline)', async () => {
+    const { calls } = makeClient()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('the injected browser bootstrap reads window globals and NEVER touches localStorage', () => {
+    const src = bialDataClientScript()
+    expect(src).toContain('createBIALData')
+    expect(src).toContain('window.BIALData')
+    expect(src).toContain('window.__BIAL_CONFIG')
+    expect(src).toContain('window.__BIAL_TOKEN')
+    expect(src).not.toContain('localStorage') // opaque-origin frame can't read it anyway, and must not try
+  })
+})

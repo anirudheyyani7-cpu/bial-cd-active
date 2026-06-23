@@ -21,6 +21,9 @@ let feedbackCollection = null
 let conversationsCollection = null
 let messagesCollection = null
 let attachmentUsageCollection = null
+let appRegistryCollection = null
+let dataRecordsCollection = null
+let auditCollection = null
 
 function requireEnv(name) {
   const value = process.env[name]
@@ -148,6 +151,55 @@ export async function getAttachmentUsageCollection() {
   return attachmentUsageCollection
 }
 
+/**
+ * Resolve the pre-created `app_registry` collection (cached after first call).
+ * One doc per generated app (`_id` = the builder conversation uuid) holding the
+ * app key, `loginRequired` flag, deploy `status`, code snapshots, the pinned
+ * `dataSchema`, and the per-app quota counters. Provisioned out-of-band — this
+ * only connects and returns the handle. Maps 1:1 to a Postgres `app_registry`
+ * table.
+ */
+export async function getAppRegistryCollection() {
+  if (appRegistryCollection) return appRegistryCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_APP_REGISTRY_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  appRegistryCollection = db.collection(collectionId)
+  return appRegistryCollection
+}
+
+/**
+ * Resolve the pre-created `data_records` collection (cached after first call).
+ * The generic, schemaless per-app record store: one doc per record, partitioned
+ * by `/appId`, carrying an arbitrary `data` object under an app-chosen
+ * `collection` label. Provisioned out-of-band; this only connects. Maps to a
+ * Postgres `data_records` table with a `data JSONB` column.
+ */
+export async function getDataRecordsCollection() {
+  if (dataRecordsCollection) return dataRecordsCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_DATA_RECORDS_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  dataRecordsCollection = db.collection(collectionId)
+  return dataRecordsCollection
+}
+
+/**
+ * Resolve the pre-created `audit_logs` collection (cached after first call). One
+ * append-only event per data mutation AND per admin registry action (who did
+ * what, especially deletes); record contents are never stored. Keyed by a
+ * server-minted random `_id`. Provisioned out-of-band; this only connects. Maps
+ * 1:1 to a Postgres `audit_logs` table.
+ */
+export async function getAuditCollection() {
+  if (auditCollection) return auditCollection
+  const databaseId = requireEnv('MONGODB_DATABASE')
+  const collectionId = requireEnv('MONGODB_AUDIT_COLLECTION')
+  const db = (await getMongoClient()).db(databaseId)
+  auditCollection = db.collection(collectionId)
+  return auditCollection
+}
+
 /** Test hook: drop cached handles so a fresh client/collection is built. */
 export function _resetMongo() {
   clientPromise = null
@@ -157,4 +209,7 @@ export function _resetMongo() {
   conversationsCollection = null
   messagesCollection = null
   attachmentUsageCollection = null
+  appRegistryCollection = null
+  dataRecordsCollection = null
+  auditCollection = null
 }

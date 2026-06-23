@@ -4,6 +4,50 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-23
+
+### Added
+- **Build real, data-backed apps and deploy them to a shareable link.** The App
+  Builder now generates working tools (like a Gate Inspection Log) that save records
+  to a shared, per-app data store instead of holding everything in the browser.
+  Start from a prompt or seed from an uploaded CSV, then **Submit for deployment**;
+  once an admin approves, the app is served at its own `/apps/:id` URL. Apps can
+  require your BIAL portal sign-in, and what you save persists and is shared with
+  other signed-in users.
+- **Search, filter, and page through your records.** Generated apps now include a
+  search box that matches across every field, per-field filters (e.g. show only
+  Status = Fail), and page-number pagination with a live total count. These are
+  powered by a shared data API and the App Builder wires them in automatically, so
+  apps stay fast even as the record count grows — no more loading every row into the
+  browser to search or sort.
+- **Admin App Registry.** Admins can review and approve or reject submitted apps,
+  turn each app's sign-in requirement on or off, disable or delete an app, clear its
+  data, and read a full audit trail of who created, changed, or deleted records.
+
+### Security
+- **Strict per-app data isolation.** Every record read and write is scoped to its
+  own app, so one app can never see or change another app's data — even if someone
+  guesses a record ID. Per-app storage quotas and request rate limits are enforced.
+- **Hardened app sandbox.** Deployed apps and the live preview run in an
+  opaque-origin sandboxed frame that cannot read your portal session. A scoped
+  content-security-policy blocks any off-origin leak of the short-lived access token,
+  native form submissions can't smuggle it out, and the long-lived refresh token is
+  never handed to an app.
+
+### Fixed
+- **Record search and lists work on the deployed (Azure Cosmos DB) database, not
+  just locally.** Record search now sorts on a single field, and the per-app
+  list/search reads ship the tenant-scoped composite indexes Cosmos requires — it
+  rejects a multi-field sort, or a filtered-and-sorted read with no matching index,
+  with a 400 (the same constraint that broke chat history in 1.3.1–1.3.3). The
+  indexes are created automatically on server start and can be applied to a running
+  deployment with `node scripts/ensure-indexes.js`.
+- **Sign-in works in deployed data-backed apps.** The app page now signs you in with
+  the shared BIAL login and hands the running app a ready session (your identity is
+  available to the app, never your password), so apps no longer try — and fail — to
+  log in from inside their sandbox. The App Builder also stops generating a redundant
+  in-app login form, and any older app that still has one now skips it automatically.
+
 ## [1.3.3] - 2026-06-23
 
 ### Fixed

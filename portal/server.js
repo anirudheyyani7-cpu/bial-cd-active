@@ -32,6 +32,14 @@ import { ensureIndexes } from './server/ensure-indexes.js'
 import { createAttachmentsRepo } from './server/attachments-repo.js'
 import { createConversationsRouter } from './server/conversations.js'
 import { createAttachmentsRouter } from './server/attachments.js'
+import { createAppRegistryRepo } from './server/app-registry-repo.js'
+import { createDataRecordsRepo } from './server/data-records-repo.js'
+import { createAuditRepo } from './server/audit-repo.js'
+import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from './server/app-data.js'
+import { createDeployRouter } from './server/deploy.js'
+import { createAdminAppsRouter } from './server/admin/apps-routes.js'
+import { bialDataClientScript } from './server/bial-data-client.js'
+import { createRunnerRouter } from './server/runner.js'
 import { validateAttachments } from './server/message-content.js'
 import { getObjectStore } from './server/object-store.js'
 import {
@@ -41,6 +49,9 @@ import {
   getConversationsCollection,
   getMessagesCollection,
   getAttachmentUsageCollection,
+  getAppRegistryCollection,
+  getDataRecordsCollection,
+  getAuditCollection,
 } from './server/cosmos.js'
 import {
   DEFAULT_DAILY_TOKEN_LIMIT,
@@ -79,19 +90,38 @@ function validateDailyTokenLimit() {
   }
 }
 
+/** The absolute origin this request was served from (for the sandboxed-frame CSPs). */
+function originOf(req) {
+  return `${req.protocol}://${req.get('host')}`
+}
+
 // Relaxed CSP for the ISOLATED builder-preview iframe only (served at /preview).
 // The generated app needs CDN React/Babel/Tailwind + inline eval (Babel compiles
-// JSX at runtime). Scoping this to its own route keeps the main app's CSP strict —
-// the preview runs in a sandboxed, same-origin frame, never touching the SPA policy.
-const PREVIEW_CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
-  "font-src 'self' data: https://fonts.gstatic.com",
-  "img-src 'self' data: https:",
-  "connect-src 'self' https://unpkg.com https://cdn.tailwindcss.com",
-  "frame-ancestors 'self'", // so the same-origin SPA can frame this renderer
-].join('; ')
+// JSX at runtime). Scoping this to its own route keeps the main app's CSP strict.
+// The preview runs sandboxed WITHOUT allow-same-origin → OPAQUE origin, so its
+// data fetch to the portal is cross-origin: `connect-src` must list the portal
+// ORIGIN explicitly ('self' = the opaque origin, which matches nothing), scoped
+// to exactly the Data-Service origin (no wildcard egress) per Decision 8.
+function buildPreviewCsp(origin) {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.tailwindcss.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    // NO bare https: on img-src — the preview injects the access token too, and an
+    // <img> beacon to an arbitrary https host would exfiltrate it past the scoped
+    // connect-src (matches the runner frame, Decision 8).
+    "img-src 'self' data:",
+    // CDNs load as <script>/<style> (covered above) and are never fetch targets,
+    // so connect-src stays scoped to the Data-Service origin — no off-origin XHR
+    // egress for the injected access token (matches the runner frame, Decision 8).
+    `connect-src 'self' ${origin}`,
+    "frame-ancestors 'self'", // so the same-origin SPA can frame this renderer
+    // allow-forms (preview iframe) lets the app's onSubmit handlers fire; native form
+    // navigation is blocked here so the injected token can't be POSTed off-origin.
+    "form-action 'none'",
+  ].join('; ')
+}
 
 // Static renderer shell for the builder preview. Receives the generated JSX via
 // postMessage (never stored server-side, never in the URL) and renders it,
@@ -112,6 +142,7 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
 <style>body{margin:0;font-family:'Manrope',sans-serif;background:#fff;}</style>
 </head><body>
 <div id="root"></div>
+<script>${bialDataClientScript()}</script>
 <script>
   var root = ReactDOM.createRoot(document.getElementById('root'));
   function renderPreview(code){
@@ -140,7 +171,13 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
     }
   }
   window.addEventListener('message', function (e) {
-    if (e.data && typeof e.data.previewCode === 'string') renderPreview(e.data.previewCode);
+    if (!e.data) return;
+    // Data wiring + token are injected via postMessage (this frame is opaque-origin
+    // and cannot read the portal's localStorage). BIALData reads these globals.
+    if (e.data.config) window.__BIAL_CONFIG = e.data.config;
+    if ('accessToken' in e.data) window.__BIAL_TOKEN = e.data.accessToken || null;
+    if ('user' in e.data) window.__BIAL_USER = e.data.user || null; // so currentUser() works in preview too
+    if (typeof e.data.previewCode === 'string') renderPreview(e.data.previewCode);
   });
   if (window.parent) window.parent.postMessage({ previewReady: true }, '*');
 </script>
@@ -177,6 +214,9 @@ export function createApp({
   conversationsRepo,
   messagesRepo,
   attachmentsRepo,
+  registryRepo,
+  dataRecordsRepo,
+  auditRepo,
   claudeClient,
   distDir = DEFAULT_DIST,
   dailyTokenLimit = Number.parseInt(process.env.DAILY_TOKEN_LIMIT, 10) || DEFAULT_DAILY_TOKEN_LIMIT,
@@ -213,6 +253,11 @@ export function createApp({
     }),
   )
 
+  // Scoped CORS for the Data Service, registered BEFORE the global SPA cors so the
+  // sandboxed opaque-origin iframe (Origin: null) preflight is answered with the
+  // right headers (the global allowlist cors would otherwise short-circuit the
+  // OPTIONS with no ACAO). Header-auth only, no cookies → no ambient authority.
+  app.use('/api/apps', makeDataServiceCors())
   // Dev convenience only: the Vite origin. Single-origin prod needs no CORS.
   app.use(cors({ origin: ['http://localhost:5173'] }))
   // /api/claude carries base64 attachment blocks, so it needs a large body limit;
@@ -227,6 +272,10 @@ export function createApp({
   // ~512 KB text part (TEXT_BLOCK_MAX_CHARS), and a builder code snapshot is sizable
   // — both exceed the 100 KB default, so /api/conversations gets a 2 MB cap.
   app.use('/api/conversations', express.json({ limit: '2mb' }))
+  // Data Service records carry one small JSON record per request; a 256kb cap
+  // (over the global 100 KB default) fits a generous record. Registered before
+  // the global parser so it consumes the /api/apps body first.
+  app.use('/api/apps', express.json({ limit: APP_DATA_BODY_LIMIT }))
   app.use(express.json())
 
   // --- API routes (registered BEFORE the SPA fallback) -------------------
@@ -248,6 +297,15 @@ export function createApp({
   if (!conversationsRepo) throw new Error('createApp: conversationsRepo is required')
   if (!messagesRepo) throw new Error('createApp: messagesRepo is required')
   if (!attachmentsRepo) throw new Error('createApp: attachmentsRepo is required')
+  // Dynamic app data service: the registry, the schemaless record store, and the
+  // audit trail back /api/apps/* (and the deploy/admin/runner surfaces). Same
+  // fail-loud stance — a missing dep would make the data routes silently 404
+  // (the SPA fallback would answer index.html and the client's res.json() would
+  // throw), so surface it at boot. Appended AFTER the existing deps so the prior
+  // fail-loud assertions still match. start() always wires real collections.
+  if (!registryRepo) throw new Error('createApp: registryRepo is required')
+  if (!dataRecordsRepo) throw new Error('createApp: dataRecordsRepo is required')
+  if (!auditRepo) throw new Error('createApp: auditRepo is required')
 
   // The standard plan: the injected daily ceiling (env-driven) + the fixed
   // context thresholds. Per-user overrides resolve on top of this.
@@ -270,6 +328,15 @@ export function createApp({
   }
 
   app.use('/api/auth', createAuthRouter({ repo, defaults }))
+  // Admin-only App Registry: approve/reject (U8) + list/toggle/disable/clear-data/
+  // delete/audit (U10). Mounted BEFORE the broader /api/admin so its specific
+  // prefix matches first (no double-auth). Gated at the mount; handlers assume admin.
+  app.use(
+    '/api/admin/apps',
+    requireAuth,
+    requireAdmin,
+    createAdminAppsRouter({ registryRepo, auditRepo, dataRecordsRepo }),
+  )
   // Admin-only per-user limit management + feedback read. Gated at the mount point.
   app.use('/api/admin', requireAuth, requireAdmin, createAdminRouter({ repo, feedbackRepo, defaults }))
 
@@ -404,14 +471,31 @@ export function createApp({
   app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
   app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo }))
 
+  // Dynamic app data service: the shared, schemaless per-app record store every
+  // generated CRUD app calls. NO global requireAuth here — the router owns its own
+  // auth chain (requireAppKey → requireLoginIfRequired → per-app limiter), so an
+  // open app admits anonymous writes while a login app reuses the portal token.
+  app.use('/api/apps/:appId/records', createAppDataRouter({ registryRepo, dataRecordsRepo, auditRepo }))
+
+  // Deploy lifecycle (owner-facing provision + submit). Mounted at /api/apps AFTER
+  // the records router (more specific) so /api/apps/:id/records is never shadowed;
+  // each route applies the shared requireAuth itself (so it does NOT gate the
+  // anonymous-friendly records router). Ownership is the build conversation's.
+  app.use('/api/apps', createDeployRouter({ registryRepo, conversationsRepo, auditRepo }))
+
   // Isolated builder-preview renderer. The generated app runs inside a sandboxed
   // iframe pointed here; this route ships its OWN relaxed CSP (PREVIEW_CSP) so the
   // main app's policy stays strict. Code is delivered via postMessage, never here.
-  app.get('/preview', (_req, res) => {
-    res.setHeader('Content-Security-Policy', PREVIEW_CSP)
+  app.get('/preview', (req, res) => {
+    res.setHeader('Content-Security-Policy', buildPreviewCsp(originOf(req)))
     res.setHeader('X-Frame-Options', 'SAMEORIGIN')
     res.type('html').send(PREVIEW_SHELL)
   })
+
+  // Hosted-app runner: the deployed app at /apps/:appId (same-origin shell) + its
+  // sandboxed opaque-origin frame at /apps/:appId/frame. Mounted BEFORE the SPA
+  // static + history fallback so /apps/* serves the runner, not index.html.
+  app.use('/apps', createRunnerRouter({ registryRepo }))
 
   // --- Static SPA + history fallback (AFTER all /api routes) -------------
   app.use(express.static(distDir))
@@ -436,6 +520,12 @@ async function start() {
   const conversationsRepo = createConversationsRepo(await getConversationsCollection())
   const messagesRepo = createMessagesRepo(await getMessagesCollection())
   const attachmentsRepo = createAttachmentsRepo(getObjectStore(), await getAttachmentUsageCollection())
+  // Dynamic app data service: registry, schemaless record store, audit trail.
+  // The data-records repo takes the registry repo for the atomic quota counters.
+  const registryRepo = createAppRegistryRepo(await getAppRegistryCollection())
+  const dataRecordsCollection = await getDataRecordsCollection()
+  const dataRecordsRepo = createDataRecordsRepo(dataRecordsCollection, registryRepo)
+  const auditRepo = createAuditRepo(await getAuditCollection())
   // Cosmos for MongoDB needs composite indexes to serve our filter+sort reads
   // (it 400s otherwise — see ensure-indexes.js). Idempotent + resilient, so it's
   // safe on every boot; the getters return the same cached handles. Awaited so the
@@ -444,6 +534,7 @@ async function start() {
     conversations: await getConversationsCollection(),
     messages: await getMessagesCollection(),
     feedback: await getFeedbackCollection(),
+    dataRecords: dataRecordsCollection,
   })
   const claudeClient = new AnthropicFoundry({
     apiKey: process.env.ANTHROPIC_FOUNDRY_API_KEY,
@@ -451,7 +542,7 @@ async function start() {
     apiVersion: '2023-06-01',
   })
 
-  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, claudeClient })
+  const app = createApp({ repo, usageRepo, feedbackRepo, conversationsRepo, messagesRepo, attachmentsRepo, registryRepo, dataRecordsRepo, auditRepo, claudeClient })
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => console.log(`✈  BIAL portal (API + SPA) → http://localhost:${PORT}`))
 }

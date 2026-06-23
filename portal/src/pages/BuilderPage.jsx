@@ -6,9 +6,12 @@ import {
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
+import DeployBar from '../components/DeployBar'
 import AttachmentChips from '../components/AttachmentChips'
 import AttachmentLightbox from '../components/AttachmentLightbox'
 import { useClaudeAPI, buildSystemPrompt, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
+import { getAccessToken, getStoredUser } from '../utils/auth'
+import { provisionApp, submitApp, getAppStatus } from '../utils/appRegistryApi'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
@@ -45,6 +48,22 @@ export function extractPreviewCode(text) {
   if (!text) return null
   const match = text.match(/```jsx:preview\s*([\s\S]*?)```/)
   return match ? match[1].trim() : null
+}
+
+/** True when the generated code wires to the shared Data Service (a persist/share app). */
+export function usesDataService(code) {
+  return typeof code === 'string' && /\bBIALData\b/.test(code)
+}
+
+/**
+ * Lightweight single-collection pin (Decision 11): the first collection name the
+ * generated code reads/writes. Pinned across regenerations so the model can't
+ * rename it and orphan previously-saved records. Returns `{ collection }` or null.
+ */
+export function extractDataSchema(code) {
+  if (typeof code !== 'string') return null
+  const m = code.match(/BIALData\.\w+\(\s*['"]([A-Za-z0-9_-]{1,64})['"]/)
+  return m ? { collection: m[1] } : null
 }
 
 // Expects a STRING. Callers derive it with partsToText first so a parts[] message
@@ -131,6 +150,10 @@ export default function BuilderPage() {
   const [builds, setBuilds] = useState([])
   const [showBuilds, setShowBuilds] = useState(false)
   const [viewer, setViewer] = useState(null) // { name, src } for the pending-attachment lightbox
+  // Deploy state for the active build: { status, appId, appKey?, loginRequired, rejectionNote? } | null.
+  // Set when a data app is provisioned, when the build is submitted, or on resume.
+  const [deploy, setDeploy] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
 
   const { pendingAttachments, handleFileSelect, removePending, clearPending, attachToast, showAttachToast } =
     usePendingAttachments()
@@ -141,6 +164,7 @@ export default function BuilderPage() {
   const timerRefs = useRef([])
   const toastTimer = useRef(null)
   const buildIdRef = useRef(null) // the active build being persisted
+  const deployRef = useRef(null) // mirrors `deploy` for async callbacks (provision-on-data)
   const initFiredRef = useRef(false) // fire-once guard for the initial-create effect
   const seqRef = useRef(0) // next message sort key for the active build's persisted turns
   const deletedRef = useRef(new Set()) // builds deleted mid-run: their in-flight persist must no-op (no resurrection)
@@ -203,6 +227,15 @@ export default function BuilderPage() {
         setGenerating(false)
         setGenerationStage(0)
         setToast({ stage: 0, done: false, visible: false })
+        // Reflect this build's live deploy status (read-only; never provisions).
+        getAppStatus(saved.id)
+          .then((s) => {
+            if (!alive || buildIdRef.current !== saved.id) return
+            const d = s.status ? s : null
+            deployRef.current = d
+            setDeploy(d)
+          })
+          .catch(() => {})
       })
       .catch(() => {
         if (alive) navigate('/workspace/builder', { replace: true })
@@ -341,11 +374,40 @@ export default function BuilderPage() {
       }
     }
 
+    // Provision the shared data backend the FIRST time a build wires to BIALData
+    // (Decision 7: stable appId from build time through deploy). Idempotent; the
+    // data written while building persists into the deployed app unchanged. Runs
+    // for the build that generated the code regardless of a later switch, but the
+    // UI state is only adopted if this build is still in view.
+    if (activeBuildId && usesDataService(finalCode) && deployRef.current?.appId !== activeBuildId) {
+      try {
+        const reg = await provisionApp(activeBuildId)
+        if (buildIdRef.current === activeBuildId) applyDeploy(reg)
+      } catch (e) {
+        if (buildIdRef.current === activeBuildId) showAttachToast(`Could not enable data for this app: ${e.message}`)
+      }
+    }
+
     // If the user switched to a different build while this one was generating,
     // don't clobber the now-displayed build with this run's preview/stages/toast.
     if (buildIdRef.current !== activeBuildId) return
 
     if (finalCode) setPreviewCode(finalCode)
+
+    // Pin the chosen data collection across regenerations (Decision 11) and warn
+    // when a regeneration renames it (previously-saved records would not appear).
+    if (finalCode) {
+      const schema = extractDataSchema(finalCode)
+      if (schema) {
+        const prev = contextRef.current.dataSchema
+        if (prev?.collection && prev.collection !== schema.collection) {
+          showAttachToast(
+            `Heads up: the data collection changed from “${prev.collection}” to “${schema.collection}”. Previously saved records won't appear under the new name — ask an admin to clear test data if needed.`,
+          )
+        }
+        contextRef.current.dataSchema = schema
+      }
+    }
 
     setGenerationStage(5)
     addStage(4)
@@ -420,6 +482,52 @@ export default function BuilderPage() {
     await generate(updated, byteMap)
   }
 
+  // Keep the deploy ref in sync with state so async callbacks read the latest.
+  const applyDeploy = (d) => {
+    deployRef.current = d
+    setDeploy(d)
+  }
+
+  // Submit the current build for admin review (idempotent ensure-draft server-side).
+  // A failure surfaces a toast — never a silent drop.
+  const handleSubmit = async () => {
+    const id = buildIdRef.current
+    if (!id || submitting) return
+    setSubmitting(true)
+    try {
+      const res = await submitApp(id)
+      applyDeploy({ ...(deployRef.current || {}), appId: id, status: res.status, rejectionNote: null })
+      showAttachToast('Submitted for deployment — pending admin review.')
+    } catch (e) {
+      showAttachToast(e.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Re-read the live deploy status (admin may have approved/rejected/disabled).
+  // Read-only — never provisions, so polling can't create abandoned drafts.
+  const refreshDeployStatus = useCallback(async () => {
+    const id = buildIdRef.current
+    if (!id) return
+    try {
+      const s = await getAppStatus(id)
+      if (buildIdRef.current === id) applyDeploy(s.status ? s : null)
+    } catch {
+      // transient — keep the current status; the next focus/refresh recovers
+    }
+  }, [])
+
+  // Refresh the deploy status when the window regains focus (cheap, read-only) so
+  // an admin approval/rejection shows up without a manual reload.
+  useEffect(() => {
+    const onFocus = () => {
+      if (deployRef.current) refreshDeployStatus()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshDeployStatus])
+
   const handleSelectBuild = (id) => {
     setShowBuilds(false)
     if (id === buildIdRef.current) return
@@ -438,6 +546,8 @@ export default function BuilderPage() {
     setPreviewCode(null)
     setGenerating(false)
     setGenerationStage(0)
+    deployRef.current = null
+    setDeploy(null)
   }
 
   const handleDeleteBuild = async (e, id) => {
@@ -690,11 +800,28 @@ export default function BuilderPage() {
 
         {/* Preview */}
         <div className="flex-1 flex flex-col overflow-hidden">
+          {previewCode && buildIdRef.current && (
+            <DeployBar
+              status={deploy?.status}
+              appId={buildIdRef.current}
+              rejectionNote={deploy?.rejectionNote}
+              busy={submitting}
+              onSubmit={handleSubmit}
+              onRefresh={deploy ? refreshDeployStatus : null}
+            />
+          )}
           <LivePreview
             previewCode={previewCode}
             generating={generating}
             generationStage={generationStage}
             prompt={initialPrompt}
+            config={
+              deploy?.appKey
+                ? { appId: deploy.appId, appKey: deploy.appKey, baseUrl: '/api', loginRequired: Boolean(deploy.loginRequired) }
+                : undefined
+            }
+            accessToken={deploy?.loginRequired ? getAccessToken() : undefined}
+            user={deploy?.loginRequired ? getStoredUser() : undefined}
           />
         </div>
       </div>

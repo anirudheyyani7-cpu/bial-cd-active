@@ -14,21 +14,35 @@ const STAGE_TEXT = [
   'Ready',
 ]
 
-export default function LivePreview({ previewCode, generating, generationStage }) {
+export default function LivePreview({ previewCode, generating, generationStage, config, accessToken, user }) {
   const [viewport, setViewport] = useState('Desktop')
   const [showCode, setShowCode] = useState(false)
   const iframeRef = useRef(null)
   const previewCodeRef = useRef(previewCode)
   previewCodeRef.current = previewCode
+  // Refs so the (mount-once) previewReady handler always reads the CURRENT data
+  // wiring + token without re-subscribing on every config/token change.
+  const configRef = useRef(config)
+  configRef.current = config
+  const tokenRef = useRef(accessToken)
+  tokenRef.current = accessToken
+  const userRef = useRef(user)
+  userRef.current = user
 
   // The preview renders inside an isolated, same-origin /preview iframe that has
-  // its OWN relaxed CSP (the main app's CSP stays strict). The generated code is
-  // sent in via postMessage — once when the shell signals it's ready (covers the
-  // first load and any remount) and again on every refinement.
+  // its OWN relaxed CSP (the main app's CSP stays strict). It runs as a sandboxed
+  // OPAQUE-ORIGIN frame, so it cannot read the portal's localStorage — the data
+  // wiring `config` ({ appId, appKey, baseUrl, loginRequired }) and the short-lived
+  // `accessToken` (login apps only) are handed in via postMessage alongside the
+  // generated code, exactly as the deployed runner does. The code is sent once
+  // when the shell signals ready (first load + any remount) and on every refinement.
   useEffect(() => {
     const onMsg = (e) => {
-      if (e.data?.previewReady && previewCodeRef.current && iframeRef.current?.contentWindow) {
-        iframeRef.current.contentWindow.postMessage({ previewCode: previewCodeRef.current }, '*')
+      if (e.data?.previewReady && iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage(
+          { previewCode: previewCodeRef.current, config: configRef.current, accessToken: tokenRef.current, user: userRef.current },
+          '*',
+        )
       }
     }
     window.addEventListener('message', onMsg)
@@ -37,9 +51,20 @@ export default function LivePreview({ previewCode, generating, generationStage }
 
   useEffect(() => {
     if (previewCode && iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage({ previewCode }, '*')
+      iframeRef.current.contentWindow.postMessage(
+        { previewCode, config: configRef.current, accessToken: tokenRef.current, user: userRef.current },
+        '*',
+      )
     }
   }, [previewCode])
+
+  // Re-push the data wiring/token when they change on their own (e.g. provision
+  // completes, or the token is (re)issued) without a code regeneration.
+  useEffect(() => {
+    if ((config || accessToken || user) && iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage({ config, accessToken, user }, '*')
+    }
+  }, [config, accessToken, user])
 
   const progress = STAGE_PROGRESS[generationStage] ?? 0
   const stageText = STAGE_TEXT[generationStage] ?? ''
@@ -138,7 +163,10 @@ export default function LivePreview({ previewCode, generating, generationStage }
                   src="/preview"
                   className="w-full h-full border-0"
                   title="App Preview"
-                  sandbox="allow-scripts"
+                  /* allow-forms so the app's <form onSubmit> handlers fire (parity with
+                     the deployed runner frame); native form navigation is blocked by the
+                     /preview CSP's form-action 'none', so the injected token can't leak. */
+                  sandbox="allow-scripts allow-forms"
                 />
               )}
             </div>

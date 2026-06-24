@@ -391,10 +391,57 @@ describe('BIALData — file methods (/api/apps/:appId/files; proxy upload, SAS d
 
   it('the injected browser bootstrap exposes the file methods through window.BIALData with no localStorage', () => {
     const src = bialDataClientScript()
-    for (const m of ['uploadFile', 'listFiles', 'getFile', 'getDownloadUrl', 'downloadFile', 'fileObjectUrl', 'removeFile']) {
+    for (const m of ['uploadFile', 'listFiles', 'getFile', 'getDownloadUrl', 'downloadFile', 'fileObjectUrl', 'removeFile', 'parseFile']) {
       expect(src).toContain(m)
     }
     expect(src).not.toContain('localStorage')
+  })
+})
+
+describe('BIALData — parseFile (/api/apps/:appId/parse)', () => {
+  it('reads a File to base64 and POSTs { filename, contentType, base64 } (+ optional sheet)', async () => {
+    const bytes = Uint8Array.from([80, 75, 3, 4]) // "PK\x03\x04"
+    const file = new File([bytes], 'flights.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, { kind: 'spreadsheet', sheets: ['A', 'B'], sheet: 'B', columns: ['x'], rows: [{ x: 1 }] }) })
+    const out = await client.parseFile(file, { sheet: 'B' })
+    expect(out.kind).toBe('spreadsheet')
+    expect(out.sheet).toBe('B')
+    expect(calls[0].url).toBe('/api/apps/app-1/parse')
+    expect(calls[0].opts.method).toBe('POST')
+    expect(calls[0].opts.headers['X-App-Key']).toBe('key-1')
+    expect(calls[0].opts.headers['Authorization']).toBe('Bearer TOK')
+    const body = JSON.parse(calls[0].opts.body)
+    expect(body).toEqual({
+      filename: 'flights.xlsx',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      base64: Buffer.from(bytes).toString('base64'),
+      sheet: 'B',
+    })
+  })
+
+  it('accepts a stored fileId string and POSTs { fileId }', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, { kind: 'spreadsheet', sheets: ['S'], sheet: 'S', columns: [], rows: [] }) })
+    await client.parseFile('file-123')
+    expect(JSON.parse(calls[0].opts.body)).toEqual({ fileId: 'file-123' })
+  })
+
+  it('accepts a plain { filename, contentType, base64 } object and a { fileId } object', async () => {
+    const { client, calls } = makeClient({ handler: () => jsonRes(200, {}) })
+    await client.parseFile({ filename: 'd.csv', contentType: 'text/csv', base64: 'YSxiCjEsMg==' })
+    expect(JSON.parse(calls[0].opts.body)).toEqual({ filename: 'd.csv', contentType: 'text/csv', base64: 'YSxiCjEsMg==' })
+    await client.parseFile({ fileId: 'f9' }, { sheet: 'Sheet2' })
+    expect(JSON.parse(calls[1].opts.body)).toEqual({ fileId: 'f9', sheet: 'Sheet2' })
+  })
+
+  it('rejects an invalid input shape before any network call', async () => {
+    const { client, calls } = makeClient()
+    await expect(client.parseFile(42)).rejects.toThrow(/parseFile needs/)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('surfaces a server parse error message + code', async () => {
+    const { client } = makeClient({ handler: () => jsonRes(415, { error: { message: 'cannot parse', code: 'UNSUPPORTED_TYPE' } }) })
+    await expect(client.parseFile('f1')).rejects.toMatchObject({ message: 'cannot parse', code: 'UNSUPPORTED_TYPE' })
   })
 })
 

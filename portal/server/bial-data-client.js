@@ -45,6 +45,11 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     return baseUrl + '/apps/' + appId + '/files' + (suffix || '')
   }
 
+  function parseUrl(suffix) {
+    const { baseUrl, appId } = getConfig()
+    return baseUrl + '/apps/' + appId + '/parse' + (suffix || '')
+  }
+
   /** The X-App-Key (+ Bearer) headers every data/file request carries. The Content-Type
    *  branch is request-shaped and stays in `call`; the byte-proxy fetch reuses these. */
   function baseHeaders() {
@@ -321,6 +326,42 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
   }
 
   /**
+   * PARSE a file into structured data on the SERVER (the sanctioned parser — the app
+   * must NOT hand-roll one or assume a global like `XLSX`). Accepts a DOM `File`/`Blob`
+   * (fresh — nothing is stored, for a view-only dashboard), a STORED file id string
+   * (re-parse a file from `listFiles`/`uploadFile` without re-uploading), or a plain
+   * `{ fileId }` / `{ filename, contentType, base64 }`. `opts.sheet` selects a worksheet
+   * (spreadsheets; default = the first). Returns the structured result:
+   *   - spreadsheet/CSV → `{ kind:'spreadsheet', sheets:[names], sheet, columns, rows,
+   *     rowCount, totalRows, truncated, truncationNote }` (rows are objects keyed by column)
+   *   - Word (.docx)    → `{ kind:'document', format:'word', text, truncated, truncationNote }`
+   * Supported: Excel (.xlsx/.xls), CSV, Word (.docx). PDF is not parsed.
+   */
+  async function parseFile(input, opts) {
+    opts = opts || {}
+    const body = {}
+    if (input && typeof input.arrayBuffer === 'function') {
+      const buf = await input.arrayBuffer()
+      body.base64 = bytesToBase64(new Uint8Array(buf))
+      body.filename = input.name || 'upload'
+      body.contentType = input.type || 'application/octet-stream'
+    } else if (typeof input === 'string') {
+      body.fileId = input
+    } else if (input && typeof input === 'object') {
+      if (input.fileId) body.fileId = input.fileId
+      else {
+        body.filename = input.filename
+        body.contentType = input.contentType
+        body.base64 = input.base64
+      }
+    } else {
+      throw new Error('parseFile needs a File/Blob, a stored fileId string, or { fileId } / { filename, contentType, base64 }.')
+    }
+    if (opts.sheet) body.sheet = opts.sheet
+    return call(parseUrl(), 'POST', body)
+  }
+
+  /**
    * Sign in. In the DEPLOYED app the platform has already signed the user in (the
    * shared BIAL login on the app page) and injected the session, so this reuses that
    * session and never collects/forwards credentials — apps should not build a login
@@ -383,6 +424,7 @@ export function createBIALData({ getConfig, getToken, setToken, fetchImpl, getUs
     downloadFile: downloadFile,
     fileObjectUrl: fileObjectUrl,
     removeFile: removeFile,
+    parseFile: parseFile,
     login: login,
     currentUser: currentUser,
   }

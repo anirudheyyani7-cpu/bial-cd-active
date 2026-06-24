@@ -22,6 +22,14 @@ export const SIGNOUT_REASONS = {
   LOGGED_OUT: 'logged_out',
 }
 
+// Backoff for the fail-open refresh path (see refreshOrAdopt): after a transient
+// (non-401/403) refresh failure we suppress further network refreshes for a short
+// window, so rapid navigation can't keep spinning a rate-limited /refresh and
+// sustain the 429s under shared egress. Reset whenever a good session is written
+// (setSession) or the session is cleared.
+const REFRESH_BACKOFF_MS = 5_000
+let lastTransientFailAt = 0
+
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_KEY)
 }
@@ -44,6 +52,7 @@ export function setSession({ accessToken, refreshToken, user } = {}) {
   if (accessToken) localStorage.setItem(ACCESS_KEY, accessToken)
   if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken)
   if (user) localStorage.setItem(USER_KEY, JSON.stringify(user))
+  lastTransientFailAt = 0 // a fresh/rotated session clears any fail-open backoff
 }
 
 /**
@@ -58,6 +67,7 @@ export function clearSession(reason) {
   localStorage.removeItem(REFRESH_KEY)
   localStorage.removeItem(USER_KEY)
   if (reason) localStorage.setItem(SIGNOUT_REASON_KEY, reason)
+  lastTransientFailAt = 0 // session gone — drop any fail-open backoff state
 }
 
 /** Read and clear the one-time signout reason (for the login screen banner). */
@@ -165,6 +175,14 @@ async function refreshOrAdopt(staleToken) {
     return null
   }
 
+  // Backoff: if a transient refresh just failed, don't fire another network
+  // refresh yet — the session is already preserved; return null and let the
+  // caller retry after the window. Stops rapid navigation/chat-sends from
+  // spinning a rate-limited /refresh and sustaining the 429s under shared egress.
+  if (Date.now() - lastTransientFailAt < REFRESH_BACKOFF_MS) {
+    return null
+  }
+
   try {
     // Bound the refresh: a hung server must not hold the Web Lock (and thereby
     // block every other in-tab refresh) indefinitely. The timeout surfaces as an
@@ -178,12 +196,26 @@ async function refreshOrAdopt(staleToken) {
       signal: timeoutSignal,
     })
     if (!res.ok) {
-      clearSession(SIGNOUT_REASONS.EXPIRED)
+      // Only a genuine auth rejection (401/403) means the refresh token is dead
+      // and the user must sign in again.
+      if (res.status === 401 || res.status === 403) {
+        clearSession(SIGNOUT_REASONS.EXPIRED)
+        return null
+      }
+      // A 429 (refresh rate-limited — pilot users share one egress IP) or a 5xx
+      // (transient server/Cosmos blip) is recoverable: fail OPEN (keep the
+      // session) and remember the failure so the backoff above throttles the
+      // next attempt, instead of bouncing a still-valid session to /login.
+      lastTransientFailAt = Date.now()
+      console.warn('[auth] refresh failed transiently — keeping session', { status: res.status })
       return null
     }
     const data = await res.json().catch(() => null)
     if (!data?.accessToken) {
-      clearSession(SIGNOUT_REASONS.EXPIRED)
+      // 2xx but no access token is a malformed/proxy response, not an auth
+      // rejection — fail open rather than logging the user out on an oddity.
+      lastTransientFailAt = Date.now()
+      console.warn('[auth] refresh returned 2xx without an access token — keeping session')
       return null
     }
     const session = { accessToken: data.accessToken, refreshToken: data.refreshToken, user: data.user }
@@ -193,10 +225,12 @@ async function refreshOrAdopt(staleToken) {
   } catch {
     // Network/abort error (fetch threw, or the 10s AbortSignal fired) — fail
     // OPEN: the refresh token is likely still valid, so leave the session
-    // intact and return null. The caller retries on the next navigation/API
-    // call once connectivity returns, instead of being logged out on a blip.
-    // A genuine auth rejection takes the !res.ok / missing-accessToken paths
-    // above, which DO clear the session.
+    // intact and return null. Remember the failure so the backoff throttles
+    // retries; the caller retries on the next navigation/API call once
+    // connectivity returns, instead of being logged out on a blip. A genuine
+    // auth rejection takes the 401/403 path above, which DOES clear the session.
+    lastTransientFailAt = Date.now()
+    console.warn('[auth] refresh network/timeout error — keeping session')
     return null
   }
 }

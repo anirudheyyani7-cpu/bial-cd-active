@@ -185,6 +185,10 @@ export function estimateConversationTokens(messages, systemText = '') {
     for (const p of m?.parts || []) {
       if (p?.type === 'text') {
         tokens += Math.ceil((p.text || '').length / CHARS_PER_TOKEN)
+      } else if (p?.type === 'file' && p.kind === 'office') {
+        // Office extracted text is sticky (re-sent every turn), so it counts on
+        // EVERY turn by its real length — not the nominal one-turn binary cost.
+        tokens += Math.ceil((p.text || '').length / CHARS_PER_TOKEN)
       } else if (p?.type === 'file' && i === lastIdx) {
         tokens += NOMINAL_FILE_TOKENS
       }

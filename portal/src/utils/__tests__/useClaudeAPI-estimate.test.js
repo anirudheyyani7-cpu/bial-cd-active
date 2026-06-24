@@ -99,6 +99,17 @@ describe('estimateConversationTokens', () => {
     expect(est).toBe(Math.ceil((200 * 1024) / 4)) // 51,200 — counted though it's not the newest turn
   })
 
+  it('counts an office file part by its extracted-text length on EVERY turn (sticky, not a flat 1600)', () => {
+    const md = 'm'.repeat(80 * 1024) // ~20,480 tokens of extracted Markdown
+    const officePart = { type: 'file', kind: 'office', format: 'excel', attachmentId: 'o', mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', text: md }
+    const messages = [
+      { role: 'user', parts: [officePart] }, // old turn — still counted (sticky text)
+      { role: 'assistant', parts: [textPart('')] },
+      { role: 'user', parts: [textPart('')] }, // newest, no attachments
+    ]
+    expect(estimateConversationTokens(messages, '')).toBe(Math.ceil((80 * 1024) / 4)) // 20,480, not 1600
+  })
+
   it('still counts an image/PDF file part as a flat nominal on the newest turn only', () => {
     // File part on the newest turn → one flat nominal (1600), NOT size-based.
     expect(estimateConversationTokens([{ role: 'user', parts: [filePart('i')] }], '')).toBe(1600)

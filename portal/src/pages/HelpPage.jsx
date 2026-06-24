@@ -69,6 +69,10 @@ const FAQS = [
     a: 'Apps work with the data you provide — upload an Excel or CSV file to view and analyze it, or let the app capture and store records through the built-in data service. The portal does not connect to external airport systems during this pilot.',
   },
   {
+    q: 'What files can I attach in chat?',
+    a: 'Images (PNG, JPEG, GIF, WebP), PDFs, text files (CSV, TXT), and Word (.docx) and Excel (.xlsx) documents — up to 4 MB each. Word and Excel files are read by extracting their text and tables, so the assistant sees the content, not the original layout: Word headers/footers, tracked changes, comments, charts, and embedded images are not extracted, and Excel formulas are read as their last-saved values. Very large files are summarised (the first 200 rows of each sheet, and up to ~100 KB of extracted text per file) — the original file is always kept and can be re-downloaded from its chip. Legacy .doc files are not supported; save them as .docx or PDF first.',
+  },
+  {
     q: 'Is there a limit to how many apps I can build?',
     a: 'There is no hard limit during the current phase. Build as many prototypes as you need.',
   },

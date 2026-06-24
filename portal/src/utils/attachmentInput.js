@@ -5,18 +5,37 @@
  * the server (media-type allowlist + magic-byte check); these checks are UX.
  */
 
-// Native Anthropic image/document types PLUS inline text files (CSV/plain-text).
-// Text files aren't native documents — they travel as fenced inline text parts
-// (see attachmentStore.buildUserParts), but they share this allowlist so the
-// validator and OS file picker accept them.
-export const ALLOWED_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/csv', 'text/plain']
+// The two OOXML (Office) media types. Word/Excel are uploaded like image/PDF
+// binaries, but the SERVER extracts them to Markdown and the model only ever sees
+// that text (sticky) — the original bytes are stored for re-download, never sent
+// to Claude. See attachmentStore (office part) and server/office-extract.js.
+export const WORD_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+export const EXCEL_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+export const OFFICE_MEDIA_TYPES = new Set([WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE])
+
+// Native Anthropic image/document types, inline text files (CSV/plain-text), and
+// Office docs (docx/xlsx — server-extracted to text). Text files aren't native
+// documents — they travel as fenced inline text parts (see
+// attachmentStore.buildUserParts), but they share this allowlist so the validator
+// and OS file picker accept them.
+export const ALLOWED_MEDIA_TYPES = [
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
+  'text/csv', 'text/plain', WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE,
+]
 // Text media types are special-cased everywhere binary attachments are: inlined
 // as text blocks (sticky across turns), sized by bytes in the context estimate,
 // and previewed as a labelled icon (no thumbnail).
 export const TEXT_MEDIA_TYPES = new Set(['text/csv', 'text/plain'])
-// Extension tokens let the OS picker show .csv/.txt even when the OS reports an
-// inconsistent or empty MIME for them (see resolveMediaType).
-export const ACCEPT_ATTR = [...ALLOWED_MEDIA_TYPES, '.csv', '.txt'].join(',')
+// Extension tokens let the OS picker show .csv/.txt/.docx/.xlsx even when the OS
+// reports an inconsistent or empty MIME for them (see resolveMediaType).
+export const ACCEPT_ATTR = [...ALLOWED_MEDIA_TYPES, '.csv', '.txt', '.docx', '.xlsx'].join(',')
+
+/** `'word' | 'excel' | null` for a media type — drives the Office chip icon. */
+export function officeFormat(mediaType) {
+  if (mediaType === WORD_MEDIA_TYPE) return 'word'
+  if (mediaType === EXCEL_MEDIA_TYPE) return 'excel'
+  return null
+}
 
 export const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4 MB on the original File.size (image/PDF)
 // Text files are inlined verbatim into the prompt, so they're capped far lower
@@ -30,27 +49,25 @@ export const MAX_FILES_PER_MESSAGE = 5
 // server-side); checked at send time where the full conversation is visible.
 export const MAX_ATTACHMENTS_PER_CONVERSATION = 20
 
-export const WORD_REJECT_MSG = "Word docs aren't supported — please save as PDF and re-upload."
-
-function isWordFile(file) {
-  return (
-    /\.docx?$/i.test(file.name || '') ||
-    file.type === 'application/msword' ||
-    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  )
-}
+// Legacy `.doc` (binary Word 97-2003) is NOT supported — mammoth only reads the
+// OOXML `.docx`. Surface a clear, honest message rather than a confusing parse
+// failure server-side.
+export const LEGACY_DOC_REJECT_MSG = 'Legacy .doc files aren\'t supported — please save as .docx (or PDF) and re-upload.'
 
 /**
  * Canonicalize a file's media type by extension first. Browsers/OSes report
- * `.csv` inconsistently (`text/csv`, `application/vnd.ms-excel`, or empty), so
- * resolving `.csv → text/csv` and `.txt → text/plain` by extension (mirroring
- * isWordFile's name check) is the reliable signal. All allowlist + size-cap +
- * stored-ref decisions run against this resolved type, never raw `file.type`.
+ * Office and text types inconsistently (`.csv` as `text/csv`,
+ * `application/vnd.ms-excel`, or empty; `.docx`/`.xlsx` often with an empty or
+ * generic MIME), so resolving by extension is the reliable signal. All allowlist
+ * + size-cap + stored-ref decisions run against this resolved type, never raw
+ * `file.type`.
  */
 export function resolveMediaType(file) {
   const name = file.name || ''
   if (/\.csv$/i.test(name)) return 'text/csv'
   if (/\.txt$/i.test(name)) return 'text/plain'
+  if (/\.docx$/i.test(name)) return WORD_MEDIA_TYPE
+  if (/\.xlsx$/i.test(name)) return EXCEL_MEDIA_TYPE
   return file.type
 }
 
@@ -73,10 +90,16 @@ export function validateAttachmentFiles(incoming, currentCount = 0, existingText
   }
   let textBytes = existingTextBytes
   for (const file of incoming) {
-    if (isWordFile(file)) return { error: WORD_REJECT_MSG }
+    // Legacy binary Word (.doc) — not the OOXML .docx mammoth reads. Reject clearly.
+    // The extension is authoritative: a real .docx/.xlsx that the OS mislabels with
+    // the legacy `application/msword` MIME must NOT be rejected (extension wins).
+    const name = file.name || ''
+    if (/\.doc$/i.test(name) || (file.type === 'application/msword' && !/\.(docx|xlsx)$/i.test(name))) {
+      return { error: LEGACY_DOC_REJECT_MSG }
+    }
     const mediaType = resolveMediaType(file)
     if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) {
-      return { error: `"${file.name}" isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, or a text file (CSV, TXT).` }
+      return { error: `"${file.name}" isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, a Word (.docx) or Excel (.xlsx) file, or a text file (CSV, TXT).` }
     }
     const isTextFile = TEXT_MEDIA_TYPES.has(mediaType)
     if (isTextFile) {

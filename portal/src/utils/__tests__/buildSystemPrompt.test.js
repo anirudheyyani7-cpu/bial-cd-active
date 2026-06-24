@@ -109,10 +109,33 @@ describe('buildSystemPrompt — no fabricated data, real Data Service wiring (U1
     expect(prompt).toMatch(/sensitive files MUST require login|MUST require login/i) // sensitive-file login
   })
 
-  it('keeps the pure view-only archetype client-side (no file/backend calls when nothing is kept)', () => {
+  it('keeps the pure view-only archetype parse-and-discard (parseFile, nothing stored, no login)', () => {
     const prompt = buildSystemPrompt()
-    // wiring 1 still mandates client-side state with no backend/login for parse-and-discard apps
-    expect(prompt).toMatch(/view-only.*keeps nothing[\s\S]*NO backend, NO login/i)
+    // wiring 1 now parses via BIALData.parseFile (server-side, stores nothing) and still
+    // persists nothing and requires no login for parse-and-discard apps.
+    expect(prompt).toMatch(/view-only[\s\S]*keeps nothing[\s\S]*parseFile[\s\S]*NO file storage, NO login/i)
+  })
+
+  it('teaches parsing via BIALData.parseFile (server-side, multi-sheet, no hand-rolled XLSX) (R7)', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).toContain('BIALData.parseFile')
+    expect(prompt).toMatch(/Parsing uploaded files/i)
+    expect(prompt).toMatch(/do NOT hand-roll a parser/i)
+    expect(prompt).toMatch(/assume a global like .?XLSX/i)
+    expect(prompt).toMatch(/result\.sheets/) // multi-sheet awareness (R4)
+    expect(prompt).toMatch(/sheet picker|re-call .?parseFile/i)
+    expect(prompt).toMatch(/Excel \(\.xlsx\/\.xls\), CSV, Word/i) // supported types
+    expect(prompt).toMatch(/PDF is NOT parsed/i)
+  })
+
+  it('teaches charts via the sanctioned Recharts global, not hand-rolled SVG (R6/R7)', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).toMatch(/Charts & visualizations/i)
+    expect(prompt).toContain('Recharts')
+    expect(prompt).toMatch(/do NOT hand-roll SVG charts/i)
+    expect(prompt).toContain('ResponsiveContainer')
+    // rule 5 lists Recharts among the globals while still forbidding other libs
+    expect(prompt).toMatch(/no .?XLSX.?\/.?Papa/i)
   })
 
   it('the uploadedFiles augmentation offers persisting the ORIGINAL file when it must be kept (with sensitive-file login)', () => {

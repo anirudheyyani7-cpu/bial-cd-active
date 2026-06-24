@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-06-24
+
+### Added
+- **Generated apps can turn an uploaded spreadsheet into a dashboard.** A deployed or
+  preview app can now hand an uploaded Excel (`.xlsx`/`.xls`), CSV, or Word (`.docx`) file
+  to the platform to be parsed — spreadsheets come back as structured rows, with the list
+  of worksheet names so the app can offer a sheet picker; Word comes back as text — and
+  render KPI cards, charts, and sortable tables from it. A view-only app parses for the
+  session and keeps nothing; nothing is stored unless the app explicitly saves it. Reached
+  through the injected `BIALData.parseFile(...)` client (a fresh file, or a previously
+  uploaded one by id). PDF parsing is a planned fast-follow.
+- **Real charts in generated apps.** The sanctioned Recharts charting library is now
+  available inside every app sandbox, so dashboards render proper bar / line / grouped /
+  stacked charts instead of hand-drawn SVG.
+
+### Changed
+- **Builder guidance for parsing and charts.** The app builder now knows to parse files via
+  `BIALData.parseFile` (never a hand-rolled or CDN parser, and never assuming a global like
+  `XLSX`), to offer worksheet and column selection where useful, and to draw charts with
+  the Recharts global.
+
+### Security
+- **Untrusted uploaded files are parsed under strict server-side limits.** Parsing runs in
+  an isolated worker thread with a hard wall-clock time budget and a memory ceiling, behind
+  file-size, decompressed-size (zip-bomb), and row/column caps — an oversized or malicious
+  file is rejected or truncated cleanly rather than exhausting the server, and a bomb can't
+  slip through by being relabelled. The chart library is served through the sandbox's
+  existing script allowlist with no change to the network/image rules that keep an app's
+  session token from leaking.
+
 ## [1.4.4] - 2026-06-24
 
 ### Added

@@ -23,7 +23,7 @@ no(){ printf '  \033[31m✗\033[0m %s — %s\n' "$1" "$2"; fail=$((fail+1)); }
 
 # ---- byte-exact, magic-valid fixtures -------------------------------------
 python3 - "$FX" <<'PY'
-import sys,os
+import sys,os,zipfile
 d=sys.argv[1]; w=lambda n,b: open(os.path.join(d,n),'wb').write(b)
 w('png',  b'\x89PNG\r\n\x1a\n'+b'\x00'*64)                       # 89 50 4E 47
 w('jpg',  b'\xff\xd8\xff\xe0'+b'\x00'*64)                        # FF D8
@@ -32,10 +32,26 @@ w('webp', b'RIFF'+(80).to_bytes(4,'little')+b'WEBP'+b'VP8 '+b'\x00'*64)  # RIFF.
 w('pdf',  b'%PDF-1.4\n1 0 obj<<>>endobj\n%%EOF\n')              # %PDF
 w('svg',  b'<svg xmlns="http://www.w3.org/2000/svg"/>')         # unsupported
 w('bmp',  b'BM'+b'\x00'*64)                                      # unsupported
-w('zip',  b'PK\x03\x04'+b'\x00'*64)                             # unsupported
+w('zip',  b'PK\x03\x04'+b'\x00'*64)                             # ZIP magic, no OPC part (bad office)
 w('wave', b'RIFF'+(80).to_bytes(4,'little')+b'WAVE'+b'\x00'*64) # RIFF but not WEBP
 w('big',  b'\x89PNG\r\n\x1a\n'+b'\x00'*4500000)                 # ~4.3MB > 4MB cap, b64 < 6MB body
 w('huge', b'\x89PNG\r\n\x1a\n'+b'\x00'*5200000)                 # b64 > 6MB body cap
+# Real OOXML fixtures (zipfile = stdlib) — parseable by mammoth / SheetJS.
+def zw(name, files):
+    with zipfile.ZipFile(os.path.join(d,name),'w',zipfile.ZIP_DEFLATED) as z:
+        for n,c in files.items(): z.writestr(n,c)
+zw('docx', {
+ '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+ '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+ 'word/document.xml':'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>QA Heading</w:t></w:r></w:p><w:p><w:r><w:t>QA body line.</w:t></w:r></w:p></w:body></w:document>',
+})
+zw('xlsx', {
+ '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+ '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+ 'xl/workbook.xml':'<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="QA" sheetId="1" r:id="rId1"/></sheets></workbook>',
+ 'xl/_rels/workbook.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+ 'xl/worksheets/sheet1.xml':'<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Region</t></is></c><c r="B1" t="inlineStr"><is><t>Sales</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>North</t></is></c><c r="B2"><v>100</v></c></row></sheetData></worksheet>',
+})
 PY
 
 login(){ curl -s -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
@@ -80,6 +96,26 @@ for f in png jpg gif webp pdf; do
   else no "$f upload" "code=$CODE msg=$(msg)"; fi
 done
 
+echo; echo "── Office (.docx/.xlsx): upload (201) → kind=office, format, extracted text → download round-trip ──"
+WORD_MT=application/vnd.openxmlformats-officedocument.wordprocessingml.document
+XLSX_MT=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+ofield(){ python3 -c 'import sys,json;print(json.load(open("'"$BODY"'"))["attachment"].get("'"$1"'",""))' 2>/dev/null; }
+for f in docx xlsx; do
+  case $f in
+    docx) mt=$WORD_MT;  fmt=word;  want='# QA Heading';;
+    xlsx) mt=$XLSX_MT;  fmt=excel; want='## Sheet: QA';;
+  esac
+  aid=$(uuid); mkbody "$aid" "$mt" "$f"; UP "$UT"
+  if [ "$CODE" = 201 ]; then
+    k=$(ofield kind); ff=$(ofield format); txt=$(ofield text)
+    [ "$k" = office ] && [ "$ff" = "$fmt" ] && ok "$f upload 201, kind=office, format=$ff" || no "$f office descriptor" "kind=$k format=$ff (want office/$fmt)"
+    echo "$txt" | grep -qF "$want" && ok "$f extracted text contains \"$want\"" || no "$f extracted text" "missing \"$want\" in: $txt"
+    CREATED+=("$aid")
+    g=$(GET "$aid" /tmp/qa_dl); src=$(shasum -a256 "$FX/$f"|cut -d' ' -f1); dl=$(shasum -a256 /tmp/qa_dl|cut -d' ' -f1)
+    [ "$g" = 200 ] && [ "$src" = "$dl" ] && ok "$f download 200, ORIGINAL bytes match" || no "$f download" "code=$g sha_match=$([ "$src" = "$dl" ]&&echo y||echo n)"
+  else no "$f upload" "code=$CODE msg=$(msg)"; fi
+done
+
 echo; echo "── Rejections: correct status + message ──"
 chk(){ # name expected_code expected_substr
   if [ "$CODE" = "$2" ] && echo "$(msg)" | grep -qF "$3"; then ok "$1 → $2 \"$(msg)\""
@@ -88,6 +124,8 @@ aid=$(uuid); mkbody "$aid" "text/plain" png;        UP "$UT"; chk "text/plain re
 aid=$(uuid); mkbody "$aid" "image/svg+xml" svg;     UP "$UT"; chk "image/svg+xml unsupported" 400 "Unsupported attachment type: image/svg+xml"
 aid=$(uuid); mkbody "$aid" "image/bmp" bmp;         UP "$UT"; chk "image/bmp unsupported"     400 "Unsupported attachment type: image/bmp"
 aid=$(uuid); mkbody "$aid" "application/zip" zip;   UP "$UT"; chk "application/zip unsupported" 400 "Unsupported attachment type: application/zip"
+aid=$(uuid); mkbody "$aid" "$WORD_MT" zip;          UP "$UT"; chk "zip mislabelled as .docx"   400 "Not a valid Word"
+aid=$(uuid); mkbody "$aid" "$XLSX_MT" png;          UP "$UT"; chk "png mislabelled as .xlsx"   400 "Not a valid Office file"
 aid=$(uuid); mkbody "$aid" "image/png" gif;         UP "$UT"; chk "magic mismatch (png≠gif)"  400 "do not match the declared type image/png"
 aid=$(uuid); mkbody "$aid" "image/webp" wave;       UP "$UT"; chk "webp RIFF but not WEBP"     400 "do not match the declared type image/webp"
 aid=$(uuid); mkbody "$aid" "image/png" "";          UP "$UT"; chk "empty bytes"               400 "missing bytes"

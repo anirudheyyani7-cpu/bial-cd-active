@@ -9,7 +9,8 @@
  */
 import { Router } from 'express'
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
-import { validateAttachmentBytes, sniffMediaType, ATTACHMENT_MAX_BYTES } from './message-content.js'
+import { validateAttachmentBytes, validateOfficeBytes, sniffMediaType, ATTACHMENT_MAX_BYTES } from './message-content.js'
+import { OFFICE_MEDIA_TYPES, extractOffice, OfficeExtractError } from './office-extract.js'
 import { AttachmentCapError } from './attachments-repo.js'
 import { isNotFound } from './object-store.js'
 
@@ -63,6 +64,51 @@ export function createAttachmentsRouter({ attachmentsRepo }, { limiter = makeAtt
       if (mediaType.startsWith('text/')) {
         return res.status(400).json({ error: { message: 'Text attachments are sent inline, not uploaded.' } })
       }
+
+      // Office (.docx/.xlsx): store the original bytes (re-downloadable from the
+      // chip) AND extract to Markdown server-side — the original is NEVER sent to
+      // the model, only the extracted text is (sticky, by the content assembler).
+      if (OFFICE_MEDIA_TYPES.has(mediaType)) {
+        if (typeof base64 !== 'string' || base64.length === 0) {
+          return res.status(400).json({ error: { message: 'Invalid attachment: missing bytes.' } })
+        }
+        const buffer = Buffer.from(base64, 'base64')
+        if (buffer.length > ATTACHMENT_MAX_BYTES) {
+          return res.status(413).json({ error: { message: 'Attachment is too large (max 4 MB).' } })
+        }
+        const verr = validateOfficeBytes({ mediaType, buffer })
+        if (verr) return res.status(400).json({ error: { message: verr } })
+
+        // Extract BEFORE storing so a corrupt/unparseable file is rejected without
+        // orphaning an object (extraction is the final structural validator).
+        let extracted
+        try {
+          extracted = await extractOffice({ buffer, mediaType, name: typeof name === 'string' ? name : '' })
+        } catch (e) {
+          if (e instanceof OfficeExtractError) return res.status(400).json({ error: { message: e.message } })
+          throw e
+        }
+
+        try {
+          const ref = await attachmentsRepo.putBytes({
+            attachmentId,
+            username,
+            mediaType,
+            size: buffer.length,
+            name: typeof name === 'string' ? name : '',
+            buffer,
+          })
+          return res.status(201).json({
+            attachment: { ...ref, kind: 'office', format: extracted.format, text: extracted.text, truncated: extracted.truncated, truncationNote: extracted.truncationNote },
+          })
+        } catch (e) {
+          if (e instanceof AttachmentCapError) {
+            return res.status(413).json({ error: { message: e.message, code: e.code } })
+          }
+          throw e
+        }
+      }
+
       const err = validateAttachmentBytes({ mediaType, base64 })
       if (err) return res.status(400).json({ error: { message: err } })
 

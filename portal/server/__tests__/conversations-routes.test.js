@@ -58,6 +58,24 @@ describe('POST /api/conversations/:id/messages', () => {
     expect(res.body.messages[0].parts[0]).toEqual(filePart)
   })
 
+  it('round-trips an office file-ref part (kind=office carries extracted text)', async () => {
+    const { app } = makeApp()
+    const officePart = { type: 'file', kind: 'office', format: 'word', attachmentId: 'att-w', key: 'att/alice@bial.test/att-w', mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name: 'plan.docx', size: 99, text: '# Plan\n\nbody', truncated: false }
+    const res = await post(app, 'conv-o', { message: { _id: 'm0', role: 'user', seq: 0, parts: [officePart, { type: 'text', text: 'review this' }] }, header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(201)
+    const get = await request(app).get('/api/conversations/conv-o').set('Authorization', `Bearer ${token('alice@bial.test')}`)
+    expect(get.body.messages[0].parts[0]).toEqual(officePart)
+  })
+
+  it('rejects an office part with missing or oversized extracted text (400)', async () => {
+    const { app } = makeApp()
+    const base = { type: 'file', kind: 'office', format: 'excel', attachmentId: 'att-x', mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', name: 'q.xlsx', size: 5 }
+    const noText = await post(app, 'c', { message: { _id: 'm', role: 'user', seq: 0, parts: [base] }, header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(noText.status).toBe(400)
+    const huge = await post(app, 'c', { message: { _id: 'm', role: 'user', seq: 0, parts: [{ ...base, text: 'x'.repeat(512 * 1024 + 1) }] }, header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(huge.status).toBe(400)
+  })
+
   it('a POST to an _id owned by another user does not overwrite it (write-IDOR → 409)', async () => {
     const { app, convContainer } = makeApp()
     await post(app, 'shared', { message: textMsg('m0', 0, 'alice'), header: { kind: 'planning', title: 'alice owns' } }, 'alice@bial.test')

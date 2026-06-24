@@ -84,6 +84,15 @@ export function parseKindFor(contentType, filename) {
   return null
 }
 
+/** ZIP local-file-header signature ("PK\x03\x04"). Every OOXML file (and any zip) starts here. */
+const ZIP_LOCAL_SIG = [0x50, 0x4b, 0x03, 0x04]
+
+/** True when the bytes ARE a zip container — independent of the declared type. SheetJS/
+ *  mammoth dispatch on these magic bytes, so a file mislabelled csv/xls can still be a zip. */
+export function looksLikeZip(buffer) {
+  return Buffer.isBuffer(buffer) && buffer.length >= 4 && ZIP_LOCAL_SIG.every((b, i) => buffer[i] === b)
+}
+
 /**
  * Zip-bomb / decompressed-size guard (R8). Parses the ZIP End-Of-Central-Directory
  * + central-directory headers (dependency-free) and sums each entry's declared
@@ -141,8 +150,28 @@ export function assertZipNotBomb(buffer, maxUncompressed = MAX_DECOMPRESSED_BYTE
 }
 
 /**
+ * Resolve the effective header row, skipping leading rows that are a single FULL-WIDTH
+ * horizontal merge — a title banner (e.g. A1:E1 = "Q3 Flight Operations"). Without this,
+ * the banner's value (expanded across the merge) would become every column name and the
+ * REAL header would be demoted to a data row — silent, unflagged garbage for a dashboard
+ * keyed by column name. Conservative: only a merge spanning the entire used column width
+ * counts as a banner, so a partial merge (a real merged header cell) is left intact.
+ */
+function effectiveHeaderRow(ws, range) {
+  const merges = ws['!merges'] || []
+  let headerR = range.s.r
+  // Bounded by the row count; advances past stacked banners.
+  for (let guard = 0; headerR < range.e.r && guard <= range.e.r - range.s.r; guard += 1) {
+    const banner = merges.find((m) => m.s.r === headerR && m.s.c <= range.s.c && m.e.c >= range.e.c)
+    if (!banner) break
+    headerR = banner.e.r + 1
+  }
+  return headerR
+}
+
+/**
  * One worksheet → `{ columns, rows, rowCount, totalRows, totalCols, shownCols,
- * truncated }`. The first row is the header. The iterated box is CLAMPED to
+ * truncated }`. The first non-banner row is the header. The iterated box is CLAMPED to
  * MAX_PARSE_ROWS × MAX_PARSE_COLS so parse work is bounded regardless of the
  * sheet's declared `!ref` (a tiny file can claim a 1M×16k grid). Merged cells are
  * expanded to their anchor value (mirrors office-extract). Values keep their JS
@@ -153,8 +182,8 @@ export function sheetToRows(ws) {
   const empty = { columns: [], rows: [], rowCount: 0, totalRows: 0, totalCols: 0, shownCols: 0, truncated: false }
   if (!ws || !ws['!ref']) return empty
   const range = XLSX.utils.decode_range(ws['!ref'])
-  const startR = range.s.r
   const startC = range.s.c
+  const startR = effectiveHeaderRow(ws, range) // skip leading full-width merged title banners
   const totalCols = range.e.c - startC + 1
   const totalRows = Math.max(0, range.e.r - startR) // data rows (after the header)
   const endC = Math.min(range.e.c, startC + MAX_PARSE_COLS - 1)
@@ -223,7 +252,15 @@ function buildParseTruncationNote({ sheet, rowCount, totalRows, totalCols, shown
   return parts.join(' ').slice(0, 800)
 }
 
-/** Read a workbook (xlsx/xls/csv all go through XLSX.read) into the structured shape. */
+/**
+ * Read a workbook (xlsx/xls/csv all go through XLSX.read) into the structured shape.
+ *
+ * Accepted limitation: SheetJS TYPE-INFERS CSV cells, so identifier-like columns with a
+ * leading zero or '+' (ZIP/PIN/phone/SKU) are coerced to numbers and lose them ('007'→7).
+ * Numeric coercion is intended — counts/amounts must stay numeric to feed charts/KPIs —
+ * and an .xlsx keeps the original text when the column is text-formatted. This mirrors the
+ * SheetJS cached-cell-value limitation already accepted for the chat extraction path.
+ */
 function parseSpreadsheet(buffer, requestedSheet) {
   let wb
   try {
@@ -298,7 +335,13 @@ export async function parseFile({ buffer, contentType, filename, sheet } = {}) {
     return parseSpreadsheet(buffer, sheet)
   }
   if (kind === 'xls' || kind === 'csv') {
-    return parseSpreadsheet(buffer, sheet) // OLE2 / plain text — no zip layer; size-capped upstream
+    // A file mislabelled csv/xls can still be a ZIP container, and XLSX.read dispatches on
+    // MAGIC BYTES (not the declared type) — so a PK-signatured bomb reaches the zip parser
+    // regardless of the routed kind. Run the decompressed-size guard whenever the bytes are
+    // actually a zip, so the guard can't be skipped by relabelling. (The worker memory
+    // ceiling in file-parse-runner.js is the backstop for a guard-evading bomb.)
+    if (looksLikeZip(buffer)) assertZipNotBomb(buffer)
+    return parseSpreadsheet(buffer, sheet) // OLE2 / plain text otherwise — size-capped upstream
   }
   // word
   assertOfficeStructure(buffer, 'word')

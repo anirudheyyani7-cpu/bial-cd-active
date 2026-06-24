@@ -96,6 +96,39 @@ describe('spreadsheet → rows (xlsx)', () => {
     expect(out.rows[0]).toEqual({ Name: 'a', 'Name (2)': 'b', 'Column 3': 'c' })
   })
 
+  it('skips a full-width merged title banner and uses the real header row', async () => {
+    const buffer = makeXlsx([
+      {
+        name: 'Report',
+        aoa: [
+          ['Q3 2024 Flight Operations', null, null], // row 1: merged title banner
+          ['Destination', 'Passengers', 'Gate'], // row 2: the REAL header
+          ['DEL', 220, 'A1'],
+          ['BOM', 180, 'B2'],
+        ],
+        merges: [{ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }], // A1:C1 banner spans the full width
+      },
+    ])
+    const out = await parseFile({ buffer, contentType: EXCEL_TYPE, filename: 'r.xlsx' })
+    expect(out.columns).toEqual(['Destination', 'Passengers', 'Gate']) // not the banner text
+    expect(out.rows).toEqual([
+      { Destination: 'DEL', Passengers: 220, Gate: 'A1' },
+      { Destination: 'BOM', Passengers: 180, Gate: 'B2' },
+    ])
+    expect(out.rowCount).toBe(2)
+  })
+
+  it('leaves a PARTIAL merged header cell intact (only a full-width banner is skipped)', () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Span', null, 'Solo'], // A1:B1 merged, C1 its own — NOT a full-width banner
+      ['x', 'y', 'z'],
+    ])
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]
+    const out = sheetToRows(ws)
+    expect(out.columns).toEqual(['Span', 'Span (2)', 'Solo']) // row 1 still the header
+    expect(out.rows).toEqual([{ Span: 'x', 'Span (2)': 'y', Solo: 'z' }])
+  })
+
   it('represents empty cells as null so every row has the same keys', () => {
     const ws = XLSX.utils.aoa_to_sheet([
       ['x', 'y'],
@@ -178,6 +211,17 @@ describe('zip-bomb / decompressed-size guard', () => {
 
   it('rejects a non-archive with a malformed-archive error', () => {
     expect(() => assertZipNotBomb(Buffer.from('this is plainly not a zip archive at all'))).toThrow(/Malformed archive/)
+  })
+
+  it('engages on a PK-signatured buffer even when mislabelled csv/xls (no relabel bypass)', async () => {
+    // A buffer that starts with the ZIP signature but is not a valid archive. XLSX.read
+    // would still byte-sniff PK→read_zip, so the guard MUST run on the csv/xls branch too;
+    // proven by the guard's own "Malformed archive" rejection rather than a SheetJS error.
+    const pkNoEocd = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(40)])
+    await expect(parseFile({ buffer: pkNoEocd, contentType: 'text/csv', filename: 'evil.csv' })).rejects.toThrow(/Malformed archive/)
+    await expect(parseFile({ buffer: pkNoEocd, contentType: 'application/vnd.ms-excel', filename: 'evil.bin' })).rejects.toThrow(
+      /Malformed archive/,
+    )
   })
 })
 

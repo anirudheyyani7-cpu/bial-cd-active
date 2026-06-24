@@ -9,3 +9,12 @@
  * restore all entry points — that one-line change is the whole "un-hide".
  */
 export const CHAT_ENABLED = false
+
+/**
+ * DEPLOY_ENABLED hides the app deployment workflow — the App Builder "Submit for
+ * deployment" bar (DeployBar) and the Admin → App Registry review/approve tab.
+ * Suppression, NOT removal: the deploy/admin API routes stay live and the builder
+ * still provisions a data store for the live preview. Flip back to `true` to
+ * restore both entry points — that one-line change is the whole "un-hide".
+ */
+export const DEPLOY_ENABLED = false

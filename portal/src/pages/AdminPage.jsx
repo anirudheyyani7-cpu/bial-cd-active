@@ -5,9 +5,10 @@ import UsersLimitsPanel from '../components/admin/UsersLimitsPanel'
 import FeedbackPanel from '../components/admin/FeedbackPanel'
 import AppRegistryPanel from '../components/admin/AppRegistryPanel'
 import { Info, Lock } from 'lucide-react'
+import { DEPLOY_ENABLED } from '../config/features'
 
 const TABS = [
-  { id: 'apps', label: 'App Registry' },
+  ...(DEPLOY_ENABLED ? [{ id: 'apps', label: 'App Registry' }] : []),
   { id: 'users', label: 'Users & Limits' },
   { id: 'feedback', label: 'Feedback' },
 ]
@@ -22,7 +23,7 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('bial_user') || '{}')
 
-  const [activeTab, setActiveTab] = useState('apps')
+  const [activeTab, setActiveTab] = useState(TABS[0].id)
   const [toast, setToast] = useState(null)
   const toastTimer = useRef(null)
 
@@ -85,7 +86,7 @@ export default function AdminPage() {
           </div>
 
           <div className="p-4">
-            {activeTab === 'apps' && <AppRegistryPanel onToast={showToast} />}
+            {DEPLOY_ENABLED && activeTab === 'apps' && <AppRegistryPanel onToast={showToast} />}
             {activeTab === 'users' && <UsersLimitsPanel onToast={showToast} />}
             {activeTab === 'feedback' && <FeedbackPanel />}
           </div>

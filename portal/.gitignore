@@ -8,3 +8,6 @@ dist-ssr
 
 # Local-only dev DB (run locally with Docker; not committed)
 docker-compose.yml
+
+# Exported Cosmos logs (contain conversation content / PII; never committed)
+exports/

@@ -59,6 +59,21 @@ describe('users-repo', () => {
     expect(container._get('alice').name).toBe('Second')
   })
 
+  it('updateName changes only the display name (password hash untouched) and stamps updatedAt', async () => {
+    const container = makeFakeContainer([makeUser({ name: 'Old Name', passwordHash: '$argon2id$KEEP' })])
+    const repo = createUsersRepo(container)
+    await repo.updateName('alice', 'New Name')
+    const stored = container._get('alice')
+    expect(stored.name).toBe('New Name')
+    expect(stored.passwordHash).toBe('$argon2id$KEEP') // never touched
+    expect(stored.updatedAt).not.toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('updateName on a missing user rejects (matched 0)', async () => {
+    const repo = createUsersRepo(makeFakeContainer([]))
+    await expect(repo.updateName('ghost', 'X')).rejects.toThrow()
+  })
+
   it('setRefreshHash also stamps updatedAt', async () => {
     const container = makeFakeContainer([makeUser()])
     const repo = createUsersRepo(container)

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { seedUsers, derivePassword } from '../../scripts/seed-users.js'
-import { BIAL_USERS, bialPasswords, dryRun } from '../../scripts/seed-bial-users.js'
+import { BIAL_USERS, bialPasswords, dryRun, seedSafe } from '../../scripts/seed-bial-users.js'
 import { createUsersRepo } from '../users-repo.js'
 import { verifyPassword } from '../auth/password.js'
 import { makeFakeContainer } from './fakeCosmos.js'
@@ -113,6 +113,80 @@ describe('seed-bial (create + update)', () => {
     expect(stored.createdAt).toBe(createdAt)
     expect(stored.refreshTokenHash).toBe('LIVEHASH')
     expect(stored.limits.dailyTokenLimit).toBe(12345)
+  })
+})
+
+describe('seed-bial safe default (seedSafe)', () => {
+  it('creates only the missing users and never resets an existing password', async () => {
+    const existing = BIAL_USERS[1] // Jacxine Fernandez — pre-seeded with a non-derived password
+    const { container, repo } = freshRepo()
+    await seedUsers(repo, { users: [existing], passwords: { [existing.username]: 'old-temp-password' } })
+    const oldHash = container._get(existing.username).passwordHash
+
+    const results = await seedSafe(repo)
+
+    // every roster user now exists exactly once
+    expect(container._store.size).toBe(BIAL_USERS.length)
+    // pre-existing user untouched: same hash, still verifies the original password
+    expect(container._get(existing.username).passwordHash).toBe(oldHash)
+    await expect(verifyPassword('old-temp-password', oldHash)).resolves.toBe(true)
+    expect(results.find((r) => r.username === existing.username).status).toBe('unchanged')
+
+    // the brand-new user (Imran Khan) was created with its derived password
+    const imran = BIAL_USERS.find((u) => u.username === 'imran.khan@bialairport.com')
+    const imranRow = results.find((r) => r.username === imran.username)
+    expect(imranRow.status).toBe('created')
+    expect(imranRow.password).toBe(derivePassword(imran.name)) // KhanBIAL@123
+    await expect(
+      verifyPassword(derivePassword(imran.name), container._get(imran.username).passwordHash),
+    ).resolves.toBe(true)
+  })
+
+  it('reconciles a drifted display name WITHOUT changing the password', async () => {
+    const u = BIAL_USERS.find((x) => x.username === 'kranthi.b@bialairport.com')
+    const { container, repo } = freshRepo()
+    // Simulate the already-created account: OLD name + a known distributed password.
+    await seedUsers(repo, {
+      users: [{ ...u, name: 'Kranthi Kumar' }],
+      passwords: { [u.username]: 'KumarBIAL@123' },
+    })
+    const oldHash = container._get(u.username).passwordHash
+
+    const results = await seedSafe(repo)
+
+    const stored = container._get(u.username)
+    expect(stored.name).toBe('Kranthi Kumar Bugga') // roster name applied
+    expect(stored.passwordHash).toBe(oldHash) // password hash untouched
+    await expect(verifyPassword('KumarBIAL@123', stored.passwordHash)).resolves.toBe(true)
+    const row = results.find((r) => r.username === u.username)
+    expect(row.status).toBe('name-updated')
+    expect(row.password).toBeNull()
+  })
+
+  it('is idempotent — a second run reports everyone unchanged and rewrites no password', async () => {
+    const { container, repo } = freshRepo()
+    await seedSafe(repo) // first run creates all roster users
+    const sizeAfterFirst = container._store.size
+    const hashes = new Map([...container._store.keys()].map((k) => [k, container._get(k).passwordHash]))
+
+    const results = await seedSafe(repo)
+
+    expect(container._store.size).toBe(sizeAfterFirst)
+    expect(results.every((r) => r.status === 'unchanged')).toBe(true)
+    for (const [k, h] of hashes) expect(container._get(k).passwordHash).toBe(h)
+  })
+
+  it('--rotate path (explicit passwords) DOES reset an existing password', async () => {
+    const u = BIAL_USERS[3] // Vijay Kumar
+    const { container, repo } = freshRepo()
+    await seedUsers(repo, { users: [u], passwords: { [u.username]: 'old-temp-password' } })
+
+    // This is exactly what main() runs for `--rotate`.
+    await seedUsers(repo, { users: BIAL_USERS, passwords: bialPasswords(), rotate: true })
+
+    const stored = container._get(u.username)
+    await expect(verifyPassword(derivePassword(u.name), stored.passwordHash)).resolves.toBe(true)
+    await expect(verifyPassword('old-temp-password', stored.passwordHash)).resolves.toBe(false)
   })
 })
 

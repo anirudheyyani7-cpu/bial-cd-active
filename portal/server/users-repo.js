@@ -48,6 +48,18 @@ export function createUsersRepo(collection) {
   }
 
   /**
+   * Update ONLY the display name (partial `$set`) — deliberately never touches
+   * `passwordHash`, the refresh-token pair, or limits, so reconciling a drifted
+   * roster name can never reset an already-distributed password. Throws if no
+   * user matched so a typo'd username surfaces as an error, not a silent no-op.
+   */
+  async function updateName(username, name) {
+    const $set = { name, updatedAt: new Date().toISOString() }
+    const { matchedCount } = await withThrottleRetry(() => collection.updateOne({ _id: username }, { $set }))
+    if (matchedCount === 0) throw new Error(`updateName matched no user: ${username}`)
+  }
+
+  /**
    * List all users for the admin console. Projects OUT every secret/session
    * field (passwordHash + the refresh-token pair) so they can never leak to a
    * client — the admin UI only needs identity + limits. The user set is tiny
@@ -79,5 +91,5 @@ export function createUsersRepo(collection) {
     if (matchedCount === 0) throw new Error(`updateLimits matched no user: ${username}`)
   }
 
-  return { findByUsername, setRefreshHash, clearRefreshHash, upsertUser, listUsers, updateLimits }
+  return { findByUsername, setRefreshHash, clearRefreshHash, upsertUser, updateName, listUsers, updateLimits }
 }

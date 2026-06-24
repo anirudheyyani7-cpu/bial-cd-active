@@ -12,6 +12,7 @@ import AttachmentLightbox from '../components/AttachmentLightbox'
 import { useClaudeAPI, buildSystemPrompt, getContextLimits, estimateConversationTokens } from '../hooks/useClaudeAPI'
 import { getAccessToken, getStoredUser } from '../utils/auth'
 import { provisionApp, submitApp, getAppStatus } from '../utils/appRegistryApi'
+import { DEPLOY_ENABLED } from '../config/features'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments } from '../utils/attachmentStore'
 import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
@@ -797,7 +798,7 @@ export default function BuilderPage() {
 
         {/* Preview */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {previewCode && buildIdRef.current && (
+          {DEPLOY_ENABLED && previewCode && buildIdRef.current && (
             <DeployBar
               status={deploy?.status}
               appId={buildIdRef.current}

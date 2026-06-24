@@ -338,6 +338,10 @@ describe('Data Service routes wired through createApp', () => {
     expect(res.status).toBe(200)
     expect(res.text).toContain('window.BIALData') // the data client is injected
     expect(res.text).toContain('createBIALData')
+    // Sanctioned chart library (R6): Recharts + prop-types injected as globals after React.
+    expect(res.text).toContain('recharts@2.15.4/umd/Recharts.js')
+    expect(res.text.indexOf('react.development.js')).toBeLessThan(res.text.indexOf('prop-types@15.8.1'))
+    expect(res.text.indexOf('prop-types@15.8.1')).toBeLessThan(res.text.indexOf('recharts@2.15.4'))
     const csp = res.headers['content-security-policy']
     // opaque-origin frame → connect-src must name the portal origin explicitly (not just 'self')
     expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/)

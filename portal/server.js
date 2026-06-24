@@ -141,6 +141,11 @@ const PREVIEW_SHELL = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<!-- Sanctioned chart library (R6): Recharts as a global. Its UMD externalises React
+     + PropTypes, so prop-types loads first. Both ride the existing unpkg script-src
+     allowlist (no CSP change); Recharts renders SVG in-DOM, so img-src stays locked. -->
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.15.4/umd/Recharts.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{primary:'#00818A',secondary:'#D9A036',tertiary:'#1A2B34'},fontFamily:{manrope:['Manrope','sans-serif']}}}}</script>

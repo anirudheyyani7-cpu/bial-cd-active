@@ -37,6 +37,7 @@ import { createDataRecordsRepo } from './server/data-records-repo.js'
 import { createAuditRepo } from './server/audit-repo.js'
 import { createAppDataRouter, makeDataServiceCors, APP_DATA_BODY_LIMIT } from './server/app-data.js'
 import { createAppFilesRouter, APP_FILE_MAX_JSON } from './server/app-files.js'
+import { createAppParseRouter } from './server/app-parse.js'
 import { createAppFilesRepo } from './server/app-files-repo.js'
 import { createDeployRouter } from './server/deploy.js'
 import { createAdminAppsRouter } from './server/admin/apps-routes.js'
@@ -285,6 +286,10 @@ export function createApp({
   // otherwise every real upload 413s before this parser runs. Mirrors the /api/claude
   // 35 MB + /api/attachments 6 MB carve-outs above.
   app.use('/api/apps/:appId/files', express.json({ limit: APP_FILE_MAX_JSON }))
+  // Per-app PARSE carries one base64 file per request (inline view-only parse), so it
+  // needs the same ~25 MB carve-out as /files and MUST also precede the broad 256 KB
+  // /api/apps parser below (body-parser consumes once at first match).
+  app.use('/api/apps/:appId/parse', express.json({ limit: APP_FILE_MAX_JSON }))
   // Data Service records carry one small JSON record per request; a 256kb cap
   // (over the global 100 KB default) fits a generous record. Registered before
   // the global parser so it consumes the /api/apps body first.
@@ -502,6 +507,11 @@ export function createApp({
   // records router is). Owns its own auth chain (requireAppKey → requireLoginIfRequired
   // → per-app limiter); the bytes ride the injected objectStore.
   app.use('/api/apps/:appId/files', createAppFilesRouter({ appFilesRepo, auditRepo, registryRepo, objectStore }))
+
+  // Per-app file PARSING (Excel/CSV→rows, Word→text) for generated-app dashboards.
+  // Mounted BEFORE the /api/apps deploy catch-all (like /records and /files) so it is
+  // never shadowed; owns the same auth chain and runs the parse in a time-bounded worker.
+  app.use('/api/apps/:appId/parse', createAppParseRouter({ appFilesRepo, registryRepo, objectStore }))
 
   // Deploy lifecycle (owner-facing provision + submit). Mounted at /api/apps AFTER
   // the records router (more specific) so /api/apps/:id/records is never shadowed;

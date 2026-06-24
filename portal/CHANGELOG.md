@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-06-24
+
+### Added
+- **Attach Word and Excel files in chat.** You can now drop a `.docx` or `.xlsx` into any of
+  the three chat surfaces (App Plan, Build, and BIAL Chat) alongside images, PDFs, and
+  CSV/TXT. The document's text and the spreadsheet's sheets are read so the AI can answer
+  questions about them, build from them, or summarise them. The original file stays attached
+  as a chip you can click to download, byte-for-byte. Up to 4 MB per file. Legacy `.doc`
+  files are politely declined with a "save as .docx" message.
+
+### Changed
+- **Large spreadsheets are handled gracefully.** Each sheet now sends up to 1,000 rows to the
+  AI (raised from 200), so real rosters and schedules come through whole. If a sheet is still
+  larger, the attachment is marked "truncated" and hovering the chip tells you exactly what
+  was shortened — for example "first 1,000 of 2,300 rows" — while the file you download stays
+  complete.
+
 ## [1.4.3] - 2026-06-24
 
 ### Fixed

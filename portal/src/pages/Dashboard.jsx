@@ -33,7 +33,7 @@ export default function Dashboard() {
           <div>
             <p className="text-sm font-semibold text-tertiary">Pilot (POC)</p>
             <p className="text-xs text-neutral leading-relaxed">
-              This is an early proof-of-concept of the Citizen Developer Portal. Apps and data are for demonstration only and may change or reset.
+              This is an early proof-of-concept of the Citizen Developer Portal.
             </p>
           </div>
         </div>

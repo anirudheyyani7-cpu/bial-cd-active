@@ -381,9 +381,6 @@ export default function BialChatPage() {
           <Send size={15} />
         </button>
       </div>
-      <p className="text-[10px] text-center text-neutral/40 uppercase tracking-wider mt-2">
-        Press Enter to send · Shift+Enter for new line · Images, PDFs & text files supported
-      </p>
     </div>
   )
 

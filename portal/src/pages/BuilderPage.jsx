@@ -792,7 +792,6 @@ export default function BuilderPage() {
                 <Send size={13} />
               </button>
             </div>
-            <p className="text-[9px] text-center text-neutral/40 uppercase tracking-wider">Press Enter to send · Images, PDFs & text files supported</p>
           </div>
         </div>
 

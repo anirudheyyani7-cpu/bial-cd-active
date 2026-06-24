@@ -120,14 +120,48 @@ describe('refreshAccessToken', () => {
     expect(fetchMock).not.toHaveBeenCalled() // adopted the peer's token; no network refresh
   })
 
-  it('clears the session and records session_expired when refresh fails', async () => {
-    setSession({ accessToken: validJwt('old'), refreshToken: 'rt', user: { username: 'alice' } })
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })))
+  it('clears the session and records session_expired on a genuine auth rejection (401/403)', async () => {
+    for (const status of [401, 403]) {
+      localStorage.clear()
+      setSession({ accessToken: validJwt('old'), refreshToken: 'rt', user: { username: 'alice' } })
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, json: async () => ({}) })))
+
+      const result = await refreshAccessToken()
+      expect(result).toBeNull()
+      expect(getAccessToken()).toBeNull()
+      expect(consumeSignoutReason()).toBe('session_expired')
+    }
+  })
+
+  it('fails OPEN on a transient refresh failure (429 rate-limit / 5xx): returns null but PRESERVES the session', async () => {
+    // A 429 (refresh rate-limited — pilot users share one egress IP) or a 5xx
+    // (transient server/Cosmos blip) is as recoverable as a network error and
+    // must NOT log the user out: only a genuine 401/403 clears the session.
+    for (const status of [429, 500, 503]) {
+      localStorage.clear()
+      setSession({ accessToken: expiredJwt('alice'), refreshToken: 'rt', user: { username: 'alice' } })
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, json: async () => ({}) })))
+
+      const result = await refreshAccessToken()
+      expect(result).toBeNull()
+      expect(getRefreshToken()).toBe('rt')
+      expect(getStoredUser()).toMatchObject({ username: 'alice' })
+      expect(consumeSignoutReason()).toBeNull() // not marked expired — no logout
+    }
+  })
+
+  it('fails OPEN on a malformed 2xx refresh (200 without an accessToken): returns null but PRESERVES the session', async () => {
+    // A 2xx whose body lacks accessToken is a proxy/CDN/malformed response, not
+    // an auth rejection — it must not log the user out (the server only ever
+    // emits 200 with a full token body).
+    setSession({ accessToken: expiredJwt('alice'), refreshToken: 'rt', user: { username: 'alice' } })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })))
 
     const result = await refreshAccessToken()
     expect(result).toBeNull()
-    expect(getAccessToken()).toBeNull()
-    expect(consumeSignoutReason()).toBe('session_expired')
+    expect(getRefreshToken()).toBe('rt')
+    expect(getStoredUser()).toMatchObject({ username: 'alice' })
+    expect(consumeSignoutReason()).toBeNull() // not marked expired — no logout
   })
 
   it('fails OPEN on a network/abort error: returns null but PRESERVES the session (no logout on a blip)', async () => {
@@ -142,6 +176,23 @@ describe('refreshAccessToken', () => {
     expect(getRefreshToken()).toBe('rt')
     expect(getStoredUser()).toMatchObject({ username: 'alice' })
     expect(consumeSignoutReason()).toBeNull() // not marked expired — no logout
+  })
+
+  it('backs off: a second refresh within the cooldown after a transient failure skips the network call', async () => {
+    // Prevents rapid navigation from spinning a rate-limited /refresh and
+    // sustaining the 429s under shared egress.
+    setSession({ accessToken: expiredJwt('alice'), refreshToken: 'rt', user: { username: 'alice' } })
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const first = await refreshAccessToken()
+    const second = await refreshAccessToken() // within the cooldown window → skipped
+
+    expect(first).toBeNull()
+    expect(second).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1) // second attempt throttled by backoff
+    expect(getRefreshToken()).toBe('rt') // session preserved throughout
+    expect(consumeSignoutReason()).toBeNull()
   })
 
   it('returns null and clears when no refresh token is present', async () => {

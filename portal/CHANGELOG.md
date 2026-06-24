@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-06-24
+
+### Fixed
+- **No more surprise sign-outs on a brief hiccup.** When the app refreshed your session
+  in the background, a momentary network blip, a rate-limit, or a transient server error
+  could wrongly sign you out and bounce you to the login screen with "session expired" —
+  even though your session was still valid. The app now signs you out only on a real
+  authentication failure; transient errors keep you signed in and retry quietly.
+
+### Changed
+- **Steadier background session refresh.** After a transient refresh failure the app now
+  waits briefly before trying again instead of retrying on every click — which, when many
+  pilot users share one network, was making the rate-limiting worse. Each fail-open event
+  is now logged to the browser console so session issues are easier to diagnose.
+
 ## [1.4.2] - 2026-06-24
 
 ### Added

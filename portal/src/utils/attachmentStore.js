@@ -13,13 +13,43 @@
  *   - { type:'file', attachmentId, key, kind:'image'|'document', name, mediaType, size }
  *                                                        — image/PDF bytes in the
  *                                                          object store
+ *   - { type:'file', kind:'office', format:'word'|'excel', attachmentId, key,
+ *       name, mediaType, size, text, truncated }
+ *                                                        — a HYBRID: the original
+ *                                                          .docx/.xlsx bytes live
+ *                                                          in the object store (chip
+ *                                                          re-downloads them) but are
+ *                                                          NEVER sent to the model;
+ *                                                          the server-extracted
+ *                                                          Markdown (`text`) is sent
+ *                                                          as a sticky text block.
  *
  * The send path is download-free for binaries: only the NEWEST turn's image/PDF
  * bytes are inflated (from the in-memory composer via `getNewestBinaryBase64`);
- * historical binaries are dropped; text attachments are inline (no fetch ever).
+ * historical binaries are dropped; text + office attachments are sticky text
+ * (no fetch ever).
  */
-import { TEXT_MEDIA_TYPES } from './attachmentInput.js'
+import { TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES } from './attachmentInput.js'
 import { uploadAttachment as defaultUpload } from './attachmentApi.js'
+
+/** Strip characters from a filename that could break out of the `name="..."`
+ * attribute (quotes, angle brackets, newlines). Mirrors server `sanitizeFenceName`. */
+function sanitizeFenceName(name) {
+  return String(name || '').replace(/[\r\n"<>]/g, ' ').slice(0, 200)
+}
+
+/** Neutralise any literal `</attachment>` inside fenced DATA so attacker-controlled
+ * content (filename or file body) can't close the fence early and have the rest
+ * read as instructions. Mirrors server `neutralizeFence`. */
+function neutralizeFence(text) {
+  return String(text || '').replace(/<\/(attachment)/gi, '<\\/$1')
+}
+
+/** The model-facing fence for an office part's extracted text (Decision 3) —
+ * MUST match the server's `officeFence` so client/server assembly agree. */
+function officeFence(part) {
+  return `<attachment name="${sanitizeFenceName(part.name)}" type="${part.format}">\n${neutralizeFence(part.text)}\n</attachment>`
+}
 
 /**
  * Decode stored base64 bytes back to text via Uint8Array → TextDecoder (UTF-8)
@@ -51,7 +81,13 @@ export function attachmentsFromParts(parts) {
   const out = []
   for (const p of parts) {
     if (p?.type === 'file') {
-      out.push({ attachmentId: p.attachmentId, kind: p.kind, name: p.name, mediaType: p.mediaType })
+      const d = { attachmentId: p.attachmentId, kind: p.kind, name: p.name, mediaType: p.mediaType }
+      if (p.kind === 'office') {
+        d.format = p.format // drives the Word/Excel chip icon
+        d.truncated = p.truncated // chip shows a "truncated" note when set
+        if (p.truncationNote) d.truncationNote = p.truncationNote // human-readable detail for the tooltip
+      }
+      out.push(d)
     } else if (p?.type === 'text' && p.attachment) {
       out.push({ attachmentId: p.attachment.attachmentId, kind: 'text', name: p.attachment.name, mediaType: p.attachment.mediaType })
     }
@@ -79,15 +115,21 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
     if (p?.type === 'text') {
       if (p.attachment) {
         // Inline text attachment: STICKY (re-sent every turn), fenced as DATA so
-        // the model never reads it as instructions.
+        // the model never reads it as instructions. Sanitise the name + content
+        // so neither can break out of the fence (same guard as office).
         blocks.push({
           type: 'text',
-          text: `<attachment name="${p.attachment.name}" type="text">\n${p.text}\n</attachment>`,
+          text: `<attachment name="${sanitizeFenceName(p.attachment.name)}" type="text">\n${neutralizeFence(p.text)}\n</attachment>`,
         })
       } else if (typeof p.text === 'string') {
         prose.push(p.text)
       }
     } else if (p?.type === 'file') {
+      if (p.kind === 'office') {
+        // STICKY extracted text, every turn; the original bytes are never inlined.
+        blocks.push({ type: 'text', text: officeFence(p) })
+        continue
+      }
       if (!isNewest) continue // historical binary dropped — the model already saw it
       const data = getNewestBinaryBase64(p.attachmentId)
       if (!data) continue // bytes unavailable → skip rather than a null-data block
@@ -137,6 +179,24 @@ export async function buildUserParts(text, pendingAttachments = [], upload = def
         type: 'text',
         text: decodeBase64Text(a.base64),
         attachment: { attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size },
+      })
+    } else if (OFFICE_MEDIA_TYPES.has(a.mediaType)) {
+      // The server stores the original AND returns the extracted Markdown (`text`);
+      // the office part carries that text (→ model, sticky) plus the stored ref
+      // (→ chip / re-download). The original bytes are never sent to the model.
+      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })
+      parts.push({
+        type: 'file',
+        kind: 'office',
+        format: ref.format,
+        attachmentId: ref.attachmentId,
+        key: ref.key,
+        name: ref.name,
+        mediaType: ref.mediaType,
+        size: ref.size,
+        text: ref.text,
+        truncated: ref.truncated,
+        truncationNote: ref.truncationNote,
       })
     } else {
       const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })

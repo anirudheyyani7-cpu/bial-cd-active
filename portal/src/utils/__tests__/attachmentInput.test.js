@@ -3,11 +3,14 @@ import {
   validateAttachmentFiles,
   validateConversationAttachmentCap,
   resolveMediaType,
+  officeFormat,
   textAttachmentBytes,
   fileToBase64,
   toAttachmentRef,
   ACCEPT_ATTR,
-  WORD_REJECT_MSG,
+  LEGACY_DOC_REJECT_MSG,
+  WORD_MEDIA_TYPE,
+  EXCEL_MEDIA_TYPE,
   MAX_FILE_SIZE,
   MAX_TEXT_FILE_SIZE,
   MAX_TEXT_BYTES_PER_CONVERSATION,
@@ -20,9 +23,25 @@ import {
 const file = (name, type, size = 1024) => ({ name, type, size })
 
 describe('validateAttachmentFiles', () => {
-  it('rejects a .docx with the "save as PDF" message (even with an empty MIME type)', () => {
-    expect(validateAttachmentFiles([file('plan.docx', '')], 0)).toEqual({ error: WORD_REJECT_MSG })
-    expect(validateAttachmentFiles([file('legacy.doc', 'application/msword')], 0)).toEqual({ error: WORD_REJECT_MSG })
+  it('accepts a .docx and .xlsx (even with an empty/generic MIME) via the resolved Office type', () => {
+    expect(validateAttachmentFiles([file('plan.docx', '')], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('data.xlsx', 'application/octet-stream')], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('report.docx', WORD_MEDIA_TYPE)], 0)).toEqual({ ok: true })
+  })
+
+  it('still rejects a legacy .doc with a clear "save as .docx" message', () => {
+    expect(validateAttachmentFiles([file('legacy.doc', 'application/msword')], 0)).toEqual({ error: LEGACY_DOC_REJECT_MSG })
+    expect(validateAttachmentFiles([file('old.doc', '')], 0)).toEqual({ error: LEGACY_DOC_REJECT_MSG })
+  })
+
+  it('accepts a real .docx even when the OS mislabels it as application/msword (extension wins)', () => {
+    expect(validateAttachmentFiles([file('plan.docx', 'application/msword')], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('data.xlsx', 'application/msword')], 0)).toEqual({ ok: true })
+  })
+
+  it('rejects a .docx/.xlsx over the 4 MB binary cap', () => {
+    expect(validateAttachmentFiles([file('big.docx', WORD_MEDIA_TYPE, MAX_FILE_SIZE + 1)], 0).error).toMatch(/4 MB/)
+    expect(validateAttachmentFiles([file('big.xlsx', '', MAX_FILE_SIZE + 1)], 0).error).toMatch(/4 MB/)
   })
 
   it('rejects a genuinely unsupported type with a generic message', () => {
@@ -107,18 +126,36 @@ describe('resolveMediaType', () => {
     expect(resolveMediaType(file('notes.txt', ''))).toBe('text/plain')
   })
 
+  it('canonicalizes .docx/.xlsx by extension when the browser MIME is blank/generic', () => {
+    expect(resolveMediaType(file('plan.docx', ''))).toBe(WORD_MEDIA_TYPE)
+    expect(resolveMediaType(file('Q1.XLSX', 'application/octet-stream'))).toBe(EXCEL_MEDIA_TYPE)
+  })
+
   it('falls through to file.type for non-text extensions', () => {
     expect(resolveMediaType(file('a.png', 'image/png'))).toBe('image/png')
     expect(resolveMediaType(file('c.pdf', 'application/pdf'))).toBe('application/pdf')
   })
 })
 
+describe('officeFormat', () => {
+  it('maps the Office media types to word/excel and nothing else', () => {
+    expect(officeFormat(WORD_MEDIA_TYPE)).toBe('word')
+    expect(officeFormat(EXCEL_MEDIA_TYPE)).toBe('excel')
+    expect(officeFormat('application/pdf')).toBeNull()
+    expect(officeFormat('text/csv')).toBeNull()
+  })
+})
+
 describe('ACCEPT_ATTR', () => {
-  it('carries the text MIME types AND .csv/.txt extension tokens for the OS picker', () => {
+  it('carries the text + Office MIME types AND .csv/.txt/.docx/.xlsx extension tokens for the OS picker', () => {
     expect(ACCEPT_ATTR).toContain('text/csv')
     expect(ACCEPT_ATTR).toContain('text/plain')
     expect(ACCEPT_ATTR).toContain('.csv')
     expect(ACCEPT_ATTR).toContain('.txt')
+    expect(ACCEPT_ATTR).toContain(WORD_MEDIA_TYPE)
+    expect(ACCEPT_ATTR).toContain(EXCEL_MEDIA_TYPE)
+    expect(ACCEPT_ATTR).toContain('.docx')
+    expect(ACCEPT_ATTR).toContain('.xlsx')
   })
 })
 

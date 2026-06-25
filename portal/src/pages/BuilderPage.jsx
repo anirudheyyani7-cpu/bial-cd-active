@@ -15,7 +15,7 @@ import { provisionApp, submitApp, getAppStatus } from '../utils/appRegistryApi'
 import { DEPLOY_ENABLED } from '../config/features'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
 import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild, patchBuildCode, deriveTitle } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
@@ -732,6 +732,10 @@ export default function BuilderPage() {
                       <span className="flex-shrink-0 text-primary" title={a.name}>
                         {a.mediaType === 'text/csv' ? <FileSpreadsheet size={11} /> : <FileText size={11} />}
                       </span>
+                    ) : OFFICE_MEDIA_TYPES.has(a.mediaType) ? (
+                      <span className="flex-shrink-0 text-primary" title={a.name}>
+                        {officeFormat(a.mediaType) === 'excel' ? <FileSpreadsheet size={11} /> : <FileText size={11} />}
+                      </span>
                     ) : a.mediaType === 'application/pdf' ? (
                       <button
                         type="button"
@@ -771,7 +775,7 @@ export default function BuilderPage() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={generating}
-                title="Attach images, PDFs, or text files (CSV, TXT)"
+                title="Attach images, PDFs, Word, Excel, or text files (CSV, TXT)"
                 className="flex-shrink-0 w-9 h-9 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
               >
                 <Paperclip size={13} />

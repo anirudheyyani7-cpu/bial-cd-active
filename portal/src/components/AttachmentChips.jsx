@@ -1,19 +1,22 @@
 import { useState, useEffect } from 'react'
 import { FileText, FileSpreadsheet, ImageOff } from 'lucide-react'
 import { fetchAttachmentObjectUrl } from '../utils/attachmentApi'
-import { openUrlInNewTab } from '../utils/attachmentViewer'
+import { openUrlInNewTab, downloadObjectUrl } from '../utils/attachmentViewer'
 import AttachmentLightbox from './AttachmentLightbox'
 
 /**
  * Render one persisted attachment descriptor `{ attachmentId, kind, name,
- * mediaType }` (derived from a message's parts). Images fetch their bytes from
- * the server object store as an object URL and show an inline thumbnail that
- * opens a lightbox; PDFs open in a new tab on click; text/CSV show a labelled
- * file-icon chip (no byte read — the content travelled inline in the prompt); an
- * image whose bytes are gone/forbidden shows an "unavailable" placeholder.
+ * mediaType, format?, truncated? }` (derived from a message's parts). Images
+ * fetch their bytes from the server object store as an object URL and show an
+ * inline thumbnail that opens a lightbox; PDFs open in a new tab on click;
+ * text/CSV show a labelled file-icon chip (no byte read — the content travelled
+ * inline in the prompt); Word/Excel show a labelled chip that re-downloads the
+ * ORIGINAL file (the model only ever saw extracted text); an image whose bytes
+ * are gone/forbidden shows an "unavailable" placeholder.
  */
 function AttachmentChip({ att }) {
   const isText = att.kind === 'text'
+  const isOffice = att.kind === 'office'
   const isPdf = att.kind === 'document' || att.mediaType === 'application/pdf'
   const [src, setSrc] = useState(null)
   const [missing, setMissing] = useState(false)
@@ -21,7 +24,7 @@ function AttachmentChip({ att }) {
 
   useEffect(() => {
     // Only images preview from bytes.
-    if (isPdf || isText) return undefined
+    if (isPdf || isText || isOffice) return undefined
     let active = true
     fetchAttachmentObjectUrl(att.attachmentId).then((url) => {
       if (!active) return
@@ -31,7 +34,7 @@ function AttachmentChip({ att }) {
     return () => {
       active = false
     }
-  }, [att.attachmentId, isPdf, isText])
+  }, [att.attachmentId, isPdf, isText, isOffice])
 
   if (isText) {
     const Icon = att.mediaType === 'text/csv' ? FileSpreadsheet : FileText
@@ -43,6 +46,32 @@ function AttachmentChip({ att }) {
         <Icon size={12} className="flex-shrink-0" />
         <span className="truncate">{att.name}</span>
       </span>
+    )
+  }
+
+  if (isOffice) {
+    const Icon = att.format === 'excel' ? FileSpreadsheet : FileText
+    // When the AI received a shortened version, spell out what was dropped on hover
+    // (with the real row counts when available); fall back for older parts.
+    const truncMsg = att.truncated
+      ? att.truncationNote || 'This file was shortened for the AI. Download the original for the full content.'
+      : ''
+    return (
+      <button
+        type="button"
+        onClick={async () => {
+          const url = await fetchAttachmentObjectUrl(att.attachmentId)
+          if (url) downloadObjectUrl(url, att.name)
+        }}
+        title={truncMsg ? `${truncMsg} (Click to download the original.)` : `Download ${att.name}`}
+        className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg px-2 py-1 text-[11px] max-w-[14rem] cursor-pointer transition"
+      >
+        <Icon size={12} className="flex-shrink-0" />
+        <span className="truncate">{att.name}</span>
+        {att.truncated && (
+          <span title={truncMsg} className="flex-shrink-0 opacity-70">· truncated</span>
+        )}
+      </button>
     )
   }
 

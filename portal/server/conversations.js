@@ -27,8 +27,19 @@ function validateParts(parts) {
       if (Buffer.byteLength(p.text, 'utf8') > TEXT_BLOCK_MAX_CHARS) return 'a text part is too large'
     } else if (p.type === 'file') {
       if (typeof p.attachmentId !== 'string' || !ID_RE.test(p.attachmentId)) return 'a file part has an invalid attachmentId'
-      if (p.kind !== 'image' && p.kind !== 'document') return 'a file part has an invalid kind'
+      if (p.kind !== 'image' && p.kind !== 'document' && p.kind !== 'office') return 'a file part has an invalid kind'
       if (typeof p.mediaType !== 'string') return 'a file part has an invalid mediaType'
+      // Office parts persist their extracted Markdown (re-sent to the model every
+      // turn). Bound it like a text part so a tampered/oversized payload can't
+      // bloat every future turn of the conversation.
+      if (p.kind === 'office') {
+        if (typeof p.text !== 'string') return 'an office file part must carry extracted text'
+        if (Buffer.byteLength(p.text, 'utf8') > TEXT_BLOCK_MAX_CHARS) return 'an office file part text is too large'
+        // Optional human-readable truncation summary (drives the chip tooltip); bound it.
+        if (p.truncationNote !== undefined && (typeof p.truncationNote !== 'string' || p.truncationNote.length > 1000)) {
+          return 'an office file part has an invalid truncation note'
+        }
+      }
     } else {
       return `unsupported part type: ${p.type}`
     }

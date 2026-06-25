@@ -73,6 +73,12 @@ describe('runner — frame (/apps/:appId/frame)', () => {
     expect(res.text).toContain('PreviewApp') // the pre-compiled app code is inlined
     expect(res.text).toContain('window.BIALData') // BIALData client mounted
     expect(res.text).not.toContain('@babel/standalone') // no runtime Babel
+    // Sanctioned chart library (R6): Recharts + its prop-types peer are injected as
+    // globals AFTER React, so generated apps render real charts (no hand-rolled SVG).
+    expect(res.text).toContain('recharts@2.15.4/umd/Recharts.js')
+    expect(res.text).toContain('prop-types@15.8.1/prop-types.min.js')
+    expect(res.text.indexOf('react.development.js')).toBeLessThan(res.text.indexOf('prop-types@15.8.1'))
+    expect(res.text.indexOf('prop-types@15.8.1')).toBeLessThan(res.text.indexOf('recharts@2.15.4'))
     const csp = res.headers['content-security-policy']
     expect(csp).not.toContain('unsafe-eval') // pre-compiled → no eval needed
     expect(csp).toMatch(/connect-src[^;]*(127\.0\.0\.1|localhost):\d+/) // scoped to the portal origin

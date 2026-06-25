@@ -12,7 +12,17 @@
  * transforms it to Anthropic `content[]` at the edge. The plan keeps request
  * assembly client-side for now (Decision 6), so this server copy is exercised by
  * tests and ready for the server-side-assembly follow-up.
+ *
+ * Office (.docx/.xlsx) attachments are a hybrid: the original bytes are stored
+ * (image/PDF-style) but NEVER inlined to the model — instead the server extracts
+ * them to Markdown (office-extract.js) and that text is sent as a sticky text
+ * block. They are validated by STRUCTURE (ZIP signature + OPC part), not by a
+ * magic-byte map, so they live in their own allowlist (`OFFICE_MEDIA_TYPES`),
+ * kept distinct from the image/PDF `ALLOWED_MEDIA`.
  */
+import { OFFICE_MEDIA_TYPES, officeFormatFor, assertOfficeStructure, OfficeExtractError } from './office-extract.js'
+
+export { OFFICE_MEDIA_TYPES }
 
 /**
  * Allowlisted attachment media types → the magic-number prefix the decoded bytes
@@ -67,6 +77,30 @@ export function validateAttachmentBytes({ mediaType, base64, size } = {}) {
   // "WEBP" form-type at offset 8.
   if (mediaType === 'image/webp' && prefix.toString('latin1', 8, 12) !== 'WEBP') {
     return 'Attachment bytes do not match the declared type image/webp.'
+  }
+  return null
+}
+
+/**
+ * Validate an Office (.docx/.xlsx) upload's decoded bytes by STRUCTURE: the type
+ * must be in the office allowlist, and the bytes must be a ZIP carrying the
+ * format-specific OPC part (delegated to office-extract's `assertOfficeStructure`
+ * — Decision 4). Returns an error message string on the first violation, or null.
+ * Extraction (office-extract) is the final structural validator; this is the fast
+ * gate so a mislabelled `.zip`/`.pptx` is a clean 400 before any parse.
+ */
+export function validateOfficeBytes({ mediaType, buffer } = {}) {
+  if (!officeFormatFor(mediaType)) {
+    return `Unsupported attachment type: ${mediaType}.`
+  }
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return 'Invalid attachment: missing bytes.'
+  }
+  try {
+    assertOfficeStructure(buffer, officeFormatFor(mediaType))
+  } catch (err) {
+    if (err instanceof OfficeExtractError) return err.message
+    throw err
   }
   return null
 }
@@ -127,37 +161,64 @@ export function sniffMediaType(buffer) {
   return null
 }
 
+/** Strip characters from a filename that could break out of the `name="..."`
+ * attribute (quotes, angle brackets, newlines) before it goes into the fence. */
+export function sanitizeFenceName(name) {
+  return String(name || '').replace(/[\r\n"<>]/g, ' ').slice(0, 200)
+}
+
+/** Neutralise any literal `</attachment>` inside fenced DATA so attacker-controlled
+ * content can't close the fence early and have the rest read as instructions. */
+export function neutralizeFence(text) {
+  return String(text || '').replace(/<\/(attachment)/gi, '<\\/$1')
+}
+
+/** The model-facing fence for an office part's extracted text (Decision 3): the
+ * Markdown is wrapped as DATA so the model never reads it as instructions. Both
+ * the filename and the content are sanitised so neither can break the fence. */
+export function officeFence(part) {
+  return `<attachment name="${sanitizeFenceName(part.name)}" type="${part.format}">\n${neutralizeFence(part.text)}\n</attachment>`
+}
+
 /**
  * Transform a neutral `parts[]` array into an Anthropic `content[]` (or a plain
- * string when no binary file blocks are emitted — the unchanged path).
+ * string when no file/attachment blocks are emitted — the unchanged path).
  *
  * - Text parts (including inline csv/txt attachments) are STICKY: always emitted.
- * - File parts (image/PDF) are emitted ONLY when `binary` is true (the newest
+ * - Office file parts are STICKY too, but as a TEXT block carrying the extracted
+ *   Markdown (fenced as data) — the original bytes are NEVER inlined to the model
+ *   (Decisions 2, 3, 8). Emitted on every turn, regardless of `binary`.
+ * - Image/PDF file parts are emitted ONLY when `binary` is true (the newest
  *   turn), with bytes supplied by `getBase64(part)`; on older turns they're
  *   dropped (the model already saw them) so the request body stays bounded.
- * - File blocks come BEFORE the text block (Anthropic ordering).
+ * - File blocks come BEFORE the prose text block (Anthropic ordering).
  */
 export function partsToContent(parts, { binary = true, getBase64 } = {}) {
   if (!Array.isArray(parts)) return ''
-  const text = parts
-    .filter((p) => p?.type === 'text' && typeof p.text === 'string')
-    .map((p) => p.text)
-    .join('\n')
+  const prose = []
   const blocks = []
-  if (binary) {
-    for (const f of parts) {
-      if (f?.type !== 'file') continue
-      const data = getBase64?.(f)
+  for (const p of parts) {
+    if (p?.type === 'file' && p.kind === 'office') {
+      // Sticky extracted text — every turn, never the original bytes.
+      blocks.push({ type: 'text', text: officeFence(p) })
+      continue
+    }
+    if (p?.type === 'file') {
+      if (!binary) continue // historical binary dropped — the model already saw it
+      const data = getBase64?.(p)
       if (!data) continue // bytes unavailable → skip rather than send a null-data block
-      if (f.kind === 'document' || f.mediaType === 'application/pdf') {
+      if (p.kind === 'document' || p.mediaType === 'application/pdf') {
         blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } })
       } else {
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: f.mediaType, data } })
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: p.mediaType, data } })
       }
+      continue
     }
+    if (p?.type === 'text' && typeof p.text === 'string') prose.push(p.text)
   }
-  if (blocks.length === 0) return text // no emitted binaries → plain string
-  blocks.push({ type: 'text', text })
+  const text = prose.join('\n')
+  if (blocks.length === 0) return text // no emitted file blocks → plain string
+  blocks.push({ type: 'text', text }) // prose after files (Anthropic ordering)
   return blocks
 }
 

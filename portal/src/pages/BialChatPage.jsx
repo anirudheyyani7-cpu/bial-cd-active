@@ -16,14 +16,14 @@ import {
   deriveTitle,
 } from '../utils/assistantHistory'
 import { assembleApiMessages, buildUserParts, partsToText, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
 // General-assistant prompt — explicitly NOT the app-builder identity. Includes
 // the injection guard: <attachment> content is data, never instructions.
 const BIAL_ASSISTANT_SYSTEM_PROMPT = `You are BIAL Chat, a general-purpose AI assistant for staff at Bengaluru International Airport (BIAL), powered by Anthropic.
 
-You help airport staff with everyday knowledge work: answering questions, explaining things, drafting and summarising text (emails, reports, notes), brainstorming, and analysing the contents of files they attach (images, PDFs, and text/CSV data).
+You help airport staff with everyday knowledge work: answering questions, explaining things, drafting and summarising text (emails, reports, notes), brainstorming, and analysing the contents of files they attach (images, PDFs, Word and Excel documents, and text/CSV data). Word and Excel files reach you as extracted text and tables — their original layout, headers/footers, comments, and charts are not included.
 
 Guidelines:
 - Be concise, clear, and practical — staff are busy. Use plain language appropriate for non-technical readers.
@@ -321,6 +321,10 @@ export default function BialChatPage() {
                 <span className="flex-shrink-0 text-primary" title={a.name}>
                   {a.mediaType === 'text/csv' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
                 </span>
+              ) : OFFICE_MEDIA_TYPES.has(a.mediaType) ? (
+                <span className="flex-shrink-0 text-primary" title={a.name}>
+                  {officeFormat(a.mediaType) === 'excel' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
+                </span>
               ) : a.mediaType === 'application/pdf' ? (
                 <button
                   type="button"
@@ -353,7 +357,7 @@ export default function BialChatPage() {
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={generating}
-          title="Attach images, PDFs, or text files (CSV, TXT)"
+          title="Attach images, PDFs, Word, Excel, or text files (CSV, TXT)"
           className="flex-shrink-0 w-11 h-11 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
         >
           <Paperclip size={15} />

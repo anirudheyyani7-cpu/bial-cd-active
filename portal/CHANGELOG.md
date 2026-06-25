@@ -4,6 +4,63 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.6] - 2026-06-25
+
+### Added
+- **Generated apps can now store Word (`.docx`) files, not just Excel/CSV.** Word documents
+  are accepted by the per-app file store (`BIALData.uploadFile`), so an app can keep an
+  uploaded `.docx` in object storage alongside its record data and re-open it later to read
+  its text — the same store-and-reparse flow that already worked for spreadsheets. Word is
+  parsed by mammoth inside the sandboxed parse worker, served back with `nosniff` + a
+  locked content CSP, exactly like the existing `.xlsx` path.
+
+## [1.4.5] - 2026-06-24
+
+### Added
+- **Generated apps can turn an uploaded spreadsheet into a dashboard.** A deployed or
+  preview app can now hand an uploaded Excel (`.xlsx`/`.xls`), CSV, or Word (`.docx`) file
+  to the platform to be parsed — spreadsheets come back as structured rows, with the list
+  of worksheet names so the app can offer a sheet picker; Word comes back as text — and
+  render KPI cards, charts, and sortable tables from it. A view-only app parses for the
+  session and keeps nothing; nothing is stored unless the app explicitly saves it. Reached
+  through the injected `BIALData.parseFile(...)` client (a fresh file, or a previously
+  uploaded one by id). PDF parsing is a planned fast-follow.
+- **Real charts in generated apps.** The sanctioned Recharts charting library is now
+  available inside every app sandbox, so dashboards render proper bar / line / grouped /
+  stacked charts instead of hand-drawn SVG.
+
+### Changed
+- **Builder guidance for parsing and charts.** The app builder now knows to parse files via
+  `BIALData.parseFile` (never a hand-rolled or CDN parser, and never assuming a global like
+  `XLSX`), to offer worksheet and column selection where useful, and to draw charts with
+  the Recharts global.
+
+### Security
+- **Untrusted uploaded files are parsed under strict server-side limits.** Parsing runs in
+  an isolated worker thread with a hard wall-clock time budget and a memory ceiling, behind
+  file-size, decompressed-size (zip-bomb), and row/column caps — an oversized or malicious
+  file is rejected or truncated cleanly rather than exhausting the server, and a bomb can't
+  slip through by being relabelled. The chart library is served through the sandbox's
+  existing script allowlist with no change to the network/image rules that keep an app's
+  session token from leaking.
+
+## [1.4.4] - 2026-06-24
+
+### Added
+- **Attach Word and Excel files in chat.** You can now drop a `.docx` or `.xlsx` into any of
+  the three chat surfaces (App Plan, Build, and BIAL Chat) alongside images, PDFs, and
+  CSV/TXT. The document's text and the spreadsheet's sheets are read so the AI can answer
+  questions about them, build from them, or summarise them. The original file stays attached
+  as a chip you can click to download, byte-for-byte. Up to 4 MB per file. Legacy `.doc`
+  files are politely declined with a "save as .docx" message.
+
+### Changed
+- **Large spreadsheets are handled gracefully.** Each sheet now sends up to 1,000 rows to the
+  AI (raised from 200), so real rosters and schedules come through whole. If a sheet is still
+  larger, the attachment is marked "truncated" and hovering the chip tells you exactly what
+  was shortened — for example "first 1,000 of 2,300 rows" — while the file you download stays
+  complete.
+
 ## [1.4.3] - 2026-06-24
 
 ### Fixed

@@ -7,6 +7,7 @@ import { createAttachmentsRepo, ATTACHMENT_TOTAL_CAP } from '../attachments-repo
 import { makeFakeObjectStore } from './fakeObjectStore.js'
 import { makeFakeAttachmentUsageContainer } from './fakeAttachmentUsageCosmos.js'
 import { signAccessToken } from '../auth/tokens.js'
+import { WORD_TYPE, EXCEL_TYPE, makeDocx, makeXlsx, makeZip, heading, para, tableXml } from './officeFixtures.js'
 
 beforeAll(() => {
   process.env.JWT_SECRET = 'test-secret-test-secret-test-secret-test-secret-test-secret-1234'
@@ -82,6 +83,62 @@ describe('POST /api/attachments', () => {
     const huge = 'a'.repeat(6.3 * 1024 * 1024)
     const res = await upload(app, { attachmentId: 'att-1', mediaType: 'image/png', base64: huge })
     expect(res.status).toBe(413)
+  })
+})
+
+describe('POST /api/attachments — Office (.docx/.xlsx)', () => {
+  it('stores a valid docx → 201 with kind=office, format=word, non-empty extracted text', async () => {
+    const { app, objectStore } = makeApp()
+    const docx = await makeDocx(heading(1, 'Plan') + para('Build the thing.') + tableXml)
+    const res = await upload(app, { attachmentId: 'w-1', name: 'plan.docx', mediaType: WORD_TYPE, base64: docx.toString('base64') })
+    expect(res.status).toBe(201)
+    expect(res.body.attachment).toMatchObject({ attachmentId: 'w-1', key: 'att/alice@bial.test/w-1', kind: 'office', format: 'word' })
+    expect(res.body.attachment.text).toContain('# Plan')
+    expect(res.body.attachment.text).toContain('| Region | Sales |')
+    expect(objectStore._store.size).toBe(1) // original bytes stored
+  })
+
+  it('stores a valid xlsx → 201 with format=excel and a "## Sheet:" section', async () => {
+    const { app } = makeApp()
+    const xlsx = makeXlsx([{ name: 'Q1', aoa: [['Region', 'Sales'], ['North', 100]] }])
+    const res = await upload(app, { attachmentId: 'x-1', name: 'data.xlsx', mediaType: EXCEL_TYPE, base64: xlsx.toString('base64') })
+    expect(res.status).toBe(201)
+    expect(res.body.attachment.format).toBe('excel')
+    expect(res.body.attachment.text).toContain('## Sheet: Q1')
+  })
+
+  it('downloads an Office original byte-identical (client supplies the filename)', async () => {
+    const { app } = makeApp()
+    const xlsx = makeXlsx([{ name: 'S', aoa: [['a', 'b']] }])
+    await upload(app, { attachmentId: 'x-2', name: 's.xlsx', mediaType: EXCEL_TYPE, base64: xlsx.toString('base64') })
+    const get = await request(app).get('/api/attachments/x-2').set('Authorization', `Bearer ${token()}`).buffer(true).parse(binaryParser)
+    expect(get.status).toBe(200)
+    expect(Buffer.compare(get.body, xlsx)).toBe(0)
+  })
+
+  it('rejects a .zip mislabelled as docx → 400, stores nothing', async () => {
+    const { app, objectStore } = makeApp()
+    const zip = await makeZip({ 'hello.txt': 'hi' })
+    const res = await upload(app, { attachmentId: 'bad', name: 'fake.docx', mediaType: WORD_TYPE, base64: zip.toString('base64') })
+    expect(res.status).toBe(400)
+    expect(objectStore._store.size).toBe(0)
+  })
+
+  it('rejects an over-4MB Office file → 413, stores nothing', async () => {
+    const { app, objectStore } = makeApp()
+    // A structurally valid docx padded past 4 MB with a giant paragraph.
+    const docx = await makeDocx(para('A'.repeat(4.2 * 1024 * 1024)))
+    const res = await upload(app, { attachmentId: 'big', name: 'big.docx', mediaType: WORD_TYPE, base64: docx.toString('base64') })
+    expect(res.status).toBe(413)
+    expect(objectStore._store.size).toBe(0)
+  })
+
+  it('honours the per-user 50 MB cap for Office uploads → 413 ATTACHMENT_STORE_FULL', async () => {
+    const { app } = makeApp({ initialUsage: [{ _id: 'alice@bial.test', total: ATTACHMENT_TOTAL_CAP - 10 }] })
+    const xlsx = makeXlsx([{ name: 'S', aoa: [['a', 'b', 'c']] }])
+    const res = await upload(app, { attachmentId: 'x-3', name: 's.xlsx', mediaType: EXCEL_TYPE, base64: xlsx.toString('base64') })
+    expect(res.status).toBe(413)
+    expect(res.body.error.code).toBe('ATTACHMENT_STORE_FULL')
   })
 })
 

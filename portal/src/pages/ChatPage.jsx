@@ -16,7 +16,7 @@ import {
   deriveTitle,
 } from '../utils/chatHistory'
 import { assembleApiMessages, buildUserParts, partsToText, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES } from '../utils/attachmentInput'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
 const PLANNING_SYSTEM_PROMPT = `You are Citizen Developer AI, a planning assistant for the Bengaluru International Airport (BIAL) Citizen Developer Portal, powered by Anthropic Claude.
@@ -28,7 +28,7 @@ Guidelines:
 - Help them articulate what their app should do, who will use it, and what data it needs
 - Suggest features based on airport operations context (flight tracking, staff rostering, baggage, gate management, etc.)
 - Keep responses concise and practical — staff are busy
-- If the user attaches images (screenshots, mockups, photos) or PDFs (specs, sample data), examine them and use what they actually show to inform the plan — you can see attachments, so refer to their real content
+- If the user attaches images (screenshots, mockups, photos), PDFs (specs, sample data), or Word/Excel documents (requirements, sample datasets — provided to you as extracted text and tables), examine them and use what they actually show to inform the plan — you can see attachments, so refer to their real content
 - When you feel the requirements are well-defined, summarise the plan and suggest moving to the builder
 - For general questions unrelated to app planning, answer them helpfully and concisely, then gently guide the conversation back to planning if appropriate
 
@@ -550,6 +550,10 @@ export default function ChatPage() {
                         <span className="flex-shrink-0 text-primary" title={a.name}>
                           {a.mediaType === 'text/csv' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
                         </span>
+                      ) : OFFICE_MEDIA_TYPES.has(a.mediaType) ? (
+                        <span className="flex-shrink-0 text-primary" title={a.name}>
+                          {officeFormat(a.mediaType) === 'excel' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
+                        </span>
                       ) : a.mediaType === 'application/pdf' ? (
                         <button
                           type="button"
@@ -593,7 +597,7 @@ export default function ChatPage() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={generating}
-                  title="Attach images, PDFs, or text files (CSV, TXT)"
+                  title="Attach images, PDFs, Word, Excel, or text files (CSV, TXT)"
                   className="flex-shrink-0 w-11 h-11 bg-bial-bg hover:bg-surface-muted disabled:opacity-40 text-neutral hover:text-primary border border-bial-border rounded-xl flex items-center justify-center transition"
                 >
                   <Paperclip size={15} />

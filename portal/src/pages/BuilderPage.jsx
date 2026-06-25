@@ -393,6 +393,24 @@ export default function BuilderPage() {
 
     if (finalCode) setPreviewCode(finalCode)
 
+    // Surface the assistant's actual reply in the transcript right away — no page
+    // refresh needed. MessageContent strips the jsx:preview fence, so a code reply
+    // shows only its prose (the preview pane renders the app) while a
+    // clarifying-questions reply (no code) shows in full. Skip a pure-code reply
+    // (empty prose) so it doesn't leave a blank bubble.
+    if (filterCodeFromContent(result)) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-${activeBuildId}-${assistantSeq}`,
+          role: 'assistant',
+          parts: [{ type: 'text', text: result }],
+          seq: assistantSeq,
+          createdAt: new Date().toISOString(),
+        },
+      ])
+    }
+
     // Pin the chosen data collection across regenerations (Decision 11) and warn
     // when a regeneration renames it (previously-saved records would not appear).
     if (finalCode) {
@@ -409,11 +427,18 @@ export default function BuilderPage() {
     }
 
     setGenerationStage(5)
-    addStage(4)
-    setToast({ stage: 0, done: true, visible: true })
+    // Only celebrate a real build. When the model replied with questions / prose
+    // and produced no app (no finalCode), its reply is already shown above — don't
+    // add the "Your app is ready" bubble + refinement chips or pop the success
+    // toast over an empty preview.
+    if (finalCode) {
+      addStage(4)
+      setToast({ stage: 0, done: true, visible: true })
+      toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 6000)
+    } else {
+      setToast({ stage: 0, done: false, visible: false })
+    }
     setGenerating(false)
-
-    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 6000)
   }
 
   const handleSend = async () => {

@@ -54,6 +54,7 @@ const DEFAULT_ALLOWED_TYPES = [
   'text/csv',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
   'application/vnd.ms-excel', // xls
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx (PK zip; parsed by mammoth in a worker, like xlsx)
   'application/json',
   'text/plain',
   'application/pdf',
@@ -77,6 +78,7 @@ const MAGIC = {
   'image/webp': [0x52, 0x49, 0x46, 0x46], // RIFF (+ WEBP@8)
   'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': [0x50, 0x4b, 0x03, 0x04], // PK\x03\x04 (zip)
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [0x50, 0x4b, 0x03, 0x04], // docx is also a PK zip; office-extract validates the real structure at parse time
 }
 
 /** Thrown when an insert would exceed the per-app file quota; the route maps it to 413. */

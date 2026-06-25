@@ -250,6 +250,14 @@ describe('app-files-repo — file-type validator (self-contained; SVG excluded)'
     expect(assertContentType('image/svg+xml').ok).toBe(false) // SVG intentionally excluded
   })
 
+  it('allows .docx so generated apps can STORE Word files (parsed by mammoth in a worker, like .xlsx)', () => {
+    const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    const docxBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]) // PK zip, same as xlsx
+    expect(assertContentType(DOCX).ok).toBe(true)
+    expect(sniffMagic(DOCX, docxBytes).ok).toBe(true)
+    expect(sniffMagic(DOCX, Buffer.from('not a zip')).ok).toBe(false) // declared docx, non-zip bytes rejected
+  })
+
   it('sniffMagic checks reliable magic and treats xls/csv/txt/json as declared-type-only', () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
     const xlsx = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])

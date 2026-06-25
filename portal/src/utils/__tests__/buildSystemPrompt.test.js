@@ -128,6 +128,19 @@ describe('buildSystemPrompt — no fabricated data, real Data Service wiring (U1
     expect(prompt).toMatch(/PDF is NOT parsed/i)
   })
 
+  it('keeps generated file pickers honest: uploadFile allows docx and accept must match what the app handles (Word-upload consistency)', () => {
+    const prompt = buildSystemPrompt()
+    // uploadFile's documented allowlist must include docx, matching the server allowlist
+    // (app-files-repo.js DEFAULT_ALLOWED_TYPES) — otherwise the model omits Word from storage.
+    expect(prompt).toMatch(/Allowed types:.*\bdocx\b/i)
+    // the picker `accept` must match what the app actually handles, and on-screen
+    // "supported types"/rejection text must not advertise a type the picker excludes.
+    expect(prompt).toMatch(/Match the picker to what your app actually handles/i)
+    expect(prompt).toContain('<input accept>')
+    expect(prompt).toMatch(/do not advertise a type your picker excludes/i)
+    expect(prompt).toMatch(/ONLY where the app shows document text/i)
+  })
+
   it('teaches charts via the sanctioned Recharts global, not hand-rolled SVG (R6/R7)', () => {
     const prompt = buildSystemPrompt()
     expect(prompt).toMatch(/Charts & visualizations/i)

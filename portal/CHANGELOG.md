@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.8] - 2026-06-25
+
+### Fixed
+- **Generated apps no longer advertise Word support their file picker won't accept.** A spreadsheet
+  dashboard could show "Word (.docx) supported" in its upload error while its picker only took
+  Excel/CSV — confusing when you tried to add a Word file. App-generation guidance now keeps each
+  app's file-picker `accept` and its on-screen "supported types"/rejection message in sync with
+  what the app actually handles, and documents that Word files can be stored (`docx` was already
+  accepted server-side). Word parsing and storage themselves were never broken.
+
+### Removed
+- The "Empowering airport staff…" tagline on the login page.
+- The "Featured Demo / RideLink BLR" sample card on the Sandbox start screen.
+
 ## [1.4.7] - 2026-06-25
 
 ### Fixed

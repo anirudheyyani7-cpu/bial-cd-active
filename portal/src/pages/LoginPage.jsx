@@ -93,9 +93,6 @@ export default function LoginPage() {
           <h1 className="text-5xl font-extrabold text-white leading-tight">
             Citizen<br />Developer
           </h1>
-          <p className="text-teal-100 text-base leading-relaxed max-w-xs">
-            Empowering airport staff to build operational tools and digital solutions for Terminal 2.
-          </p>
         </div>
 
         <div className="relative z-10 flex gap-6">

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.7] - 2026-06-25
+
+### Fixed
+- **App Builder now shows the AI's reply right away — no page refresh needed.** When a build
+  prompt was answered with clarifying questions instead of an app (no code generated), the
+  reply was saved but never rendered, so the chat looked empty until you reloaded the page.
+  The Builder now appends the assistant's reply to the conversation as soon as generation
+  finishes (the live preview still renders any generated app; the code block is stripped from
+  the chat bubble as before). It also no longer claims "Your app is ready" over an empty
+  preview when the model only asked questions.
+
 ## [1.4.6] - 2026-06-25
 
 ### Added

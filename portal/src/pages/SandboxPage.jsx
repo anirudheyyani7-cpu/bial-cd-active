@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, BarChart3, Palette, Sparkles, LayoutGrid, Car, ChevronDown, ShieldAlert, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
+import { Users, BarChart3, Palette, Sparkles, LayoutGrid, ChevronDown, ShieldAlert, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import Navbar from '../components/layout/Navbar'
 import { validatePrompt } from '../utils/promptGuardrails'
@@ -11,12 +11,6 @@ const THEMES = [
   { id: 'dashboard', name: 'Dashboard / Analytics', subtitle: 'Data-dense layout with charts and metrics' },
   { id: 'kiosk', name: 'Kiosk / Public Display', subtitle: 'Large text, high contrast, touch-friendly' },
 ]
-
-const DEMO_PROMPT = `Build a Staff Cab and Carpool Sharing App for Bangalore Airport ground staff. The app should be called "RideLink BLR".
-
-Core Flow 1 – Request a Ride: A staff member selects their shift end time and home zone, then posts a ride request. The app matches them with other staff ending their shift within a 30-minute window heading to the same zone. Show matched riders in a card list with name, department, and pickup point (Terminal 2 Gate 4 or Terminal 1 Main Exit).
-
-Core Flow 2 – Offer a Carpool: A staff member with their own vehicle can post an available carpool slot specifying their departure time, home zone, and number of seats (1-3). Other staff in the same zone and time window see the offer and can tap to join. Show a real-time seat counter that updates as people join.`
 
 const EXAMPLES = [
   {
@@ -310,24 +304,6 @@ export default function SandboxPage() {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Featured demo card */}
-        <div className="w-full max-w-2xl mt-6">
-          <button
-            onClick={() => fillPrompt(DEMO_PROMPT)}
-            className="w-full bg-white border-2 border-secondary/40 rounded-xl p-4 text-left hover:border-secondary hover:shadow-md transition group flex items-center gap-4"
-          >
-            <div className="w-10 h-10 rounded-xl bg-secondary/10 flex items-center justify-center flex-shrink-0">
-              <Car size={18} className="text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-secondary block mb-0.5">Featured Demo</span>
-              <h3 className="text-sm font-bold text-tertiary group-hover:text-secondary transition">Staff Cab and Carpool App</h3>
-              <p className="text-xs text-neutral truncate">RideLink BLR — ride matching for ground ops, security, and logistics staff</p>
-            </div>
-            <ChevronDown size={14} className="text-neutral -rotate-90 group-hover:text-secondary transition flex-shrink-0" />
-          </button>
         </div>
 
         {/* Suggestion cards */}

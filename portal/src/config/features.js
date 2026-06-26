@@ -29,4 +29,4 @@ export const DEPLOY_ENABLED = false
  * cleanly when off. Enabling the feature means flipping BOTH this flag and the
  * server env — that pair is the whole "turn it on".
  */
-export const DECK_ATTACHMENTS_ENABLED = false
+export const DECK_ATTACHMENTS_ENABLED = true

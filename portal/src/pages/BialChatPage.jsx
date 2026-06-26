@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Bot, User, Send, Plus, MessageSquare, Trash2, Paperclip, X, FileText, FileSpreadsheet, ArrowRight } from 'lucide-react'
+import { Bot, User, Send, Plus, MessageSquare, Trash2, Paperclip, X, FileText, FileSpreadsheet, Presentation, ArrowRight } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import MessageContent from '../components/chat/MessageContent'
 import AttachmentLightbox from '../components/AttachmentLightbox'
@@ -15,8 +15,8 @@ import {
   relativeTime,
   deriveTitle,
 } from '../utils/assistantHistory'
-import { assembleApiMessages, buildUserParts, partsToText, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
+import { assembleApiMessages, buildUserParts, partsToText, countAttachments, releaseUploadedAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, DECK_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 
 // General-assistant prompt — explicitly NOT the app-builder identity. Includes
@@ -179,6 +179,9 @@ export default function BialChatPage() {
         isFirstTurn ? { title: deriveTitle(partsToText(parts)) } : {},
       )
     } catch {
+      // The uploads succeeded but the turn never landed — release them so the
+      // deck's Files-API PDF + stored bytes don't orphan (best-effort, non-masking).
+      releaseUploadedAttachments(parts)
       setMessages((prev) => prev.filter((m) => m.id !== userMsg.id))
       setGenerating(false)
       showAttachToast('Could not save your message. Check your connection and try again.')
@@ -324,6 +327,10 @@ export default function BialChatPage() {
               ) : OFFICE_MEDIA_TYPES.has(a.mediaType) ? (
                 <span className="flex-shrink-0 text-primary" title={a.name}>
                   {officeFormat(a.mediaType) === 'excel' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
+                </span>
+              ) : DECK_MEDIA_TYPES.has(a.mediaType) ? (
+                <span className="flex-shrink-0 text-primary" title={a.name}>
+                  <Presentation size={13} />
                 </span>
               ) : a.mediaType === 'application/pdf' ? (
                 <button

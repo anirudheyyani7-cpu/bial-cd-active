@@ -5,6 +5,7 @@ import {
   countAttachments,
   assembleApiMessages,
   buildUserParts,
+  releaseUploadedAttachments,
   decodeBase64Text,
 } from '../attachmentStore.js'
 
@@ -172,6 +173,19 @@ describe('deck parts (.pptx → sticky vision document block; PDF invisible)', (
     expect(out[0]).toEqual({ role: 'user', content: 'q' }) // no blocks → plain string
   })
 
+  it('keeps cache_control on ONLY the last deck block with 5 decks (≤4 breakpoints/request)', () => {
+    // 5 separate turns, each carrying a deck → 5 sticky document blocks. Anthropic
+    // allows ≤4 cache_control markers per request, so only the LAST may keep one.
+    const messages = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      parts: [deckPart({ attachmentId: `d${i}`, pdfFileId: `file_${i}` }), { type: 'text', text: `turn ${i}` }],
+    }))
+    const out = assembleApiMessages(messages)
+    const marked = out.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.cache_control)
+    expect(marked).toHaveLength(1)
+    expect(marked[0].source.file_id).toBe('file_4') // the last deck block only
+  })
+
   it('countAttachments counts a deck part toward the per-conversation cap', () => {
     expect(countAttachments([{ role: 'user', parts: [deckPart(), { type: 'text', text: 'hi' }] }])).toBe(1)
   })
@@ -261,5 +275,34 @@ describe('buildUserParts', () => {
       throw new Error('cap hit')
     })
     await expect(buildUserParts('x', [{ id: 'i', name: 'p.png', mediaType: 'image/png', size: 1, base64: 'AA' }], upload)).rejects.toThrow('cap hit')
+  })
+})
+
+describe('releaseUploadedAttachments', () => {
+  it('deletes every file part (passing pdfFileId only for decks) and ignores non-file parts', () => {
+    const del = vi.fn(async () => {})
+    const parts = [
+      deckPart({ attachmentId: 'd1', pdfFileId: 'file_d1' }),
+      imagePart('img1'),
+      { type: 'text', text: 'prose' },
+      textAttachmentPart('r.csv', 'a,b'),
+    ]
+    releaseUploadedAttachments(parts, del)
+    expect(del).toHaveBeenCalledTimes(2) // deck + image; text parts skipped
+    expect(del).toHaveBeenCalledWith('d1', { pdfFileId: 'file_d1' })
+    expect(del).toHaveBeenCalledWith('img1', { pdfFileId: undefined })
+  })
+
+  it('swallows a delete rejection (best-effort, never throws into the send path)', () => {
+    const del = vi.fn(async () => {
+      throw new Error('gone')
+    })
+    expect(() => releaseUploadedAttachments([imagePart('x')], del)).not.toThrow()
+  })
+
+  it('is a no-op for a non-array', () => {
+    const del = vi.fn()
+    releaseUploadedAttachments(null, del)
+    expect(del).not.toHaveBeenCalled()
   })
 })

@@ -161,8 +161,11 @@ describe('ACCEPT_ATTR', () => {
   })
 })
 
-// These hold regardless of the deck feature flag (the real flag is OFF here).
-describe('deck (.pptx) — flag-independent behavior + disabled state', () => {
+// These hold regardless of the deck feature flag. The shipped default now has
+// DECK_ATTACHMENTS_ENABLED ON, so the off-state offering is covered separately in
+// attachmentInput-deck-disabled.test.js (which mocks the flag off) rather than
+// asserted against the real flag here.
+describe('deck (.pptx) — flag-independent behavior', () => {
   it('resolveMediaType canonicalizes .pptx by extension even with empty/generic MIME', () => {
     expect(resolveMediaType(file('q3.pptx', ''))).toBe(PPTX_MEDIA_TYPE)
     expect(resolveMediaType(file('DECK.PPTX', 'application/octet-stream'))).toBe(PPTX_MEDIA_TYPE)
@@ -177,17 +180,11 @@ describe('deck (.pptx) — flag-independent behavior + disabled state', () => {
     expect(LEGACY_PPT_REJECT_MSG).not.toMatch(/pdf/i) // invisible conversion
   })
 
-  it('accepts a real .pptx the OS mislabels as application/vnd.ms-powerpoint (extension wins)', () => {
-    // When disabled, the allowlist still rejects it — but NOT as a legacy .ppt.
+  it('treats a real .pptx the OS mislabels as application/vnd.ms-powerpoint by extension (never as legacy .ppt)', () => {
+    // Extension wins over the ms-powerpoint mislabel, so it is NEVER the legacy
+    // .ppt rejection — independent of whether the deck feature is on or off.
     const res = validateAttachmentFiles([file('real.pptx', 'application/vnd.ms-powerpoint')], 0)
     expect(res.error || '').not.toBe(LEGACY_PPT_REJECT_MSG)
-  })
-
-  it('does NOT offer .pptx when the feature is disabled (picker + allowlist)', () => {
-    expect(ACCEPT_ATTR).not.toContain('.pptx')
-    const res = validateAttachmentFiles([file('q3.pptx', PPTX_MEDIA_TYPE)], 0)
-    expect(res.error).toMatch(/isn't supported/)
-    expect(res.error).not.toMatch(/powerpoint/i) // copy doesn't advertise it when off
   })
 })
 

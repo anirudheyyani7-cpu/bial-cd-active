@@ -44,7 +44,7 @@
  * (no fetch ever).
  */
 import { TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, DECK_MEDIA_TYPES } from './attachmentInput.js'
-import { uploadAttachment as defaultUpload } from './attachmentApi.js'
+import { uploadAttachment as defaultUpload, deleteAttachment as defaultDelete } from './attachmentApi.js'
 
 /** Strip characters from a filename that could break out of the `name="..."`
  * attribute (quotes, angle brackets, newlines). Mirrors server `sanitizeFenceName`. */
@@ -177,6 +177,27 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
 }
 
 /**
+ * Anthropic permits at most 4 `cache_control` breakpoints PER REQUEST. Each deck
+ * emits a sticky `document` block that would otherwise carry its own marker, so a
+ * conversation with 5+ decks would exceed the cap and every send would 400. A
+ * single trailing breakpoint caches the whole prefix anyway, so keep
+ * `cache_control` on ONLY the last deck block across the assembled request and
+ * strip it from every earlier one. Mutates the blocks in place (they were just
+ * built here, so this is safe) and returns the same array.
+ */
+function capDeckCacheBreakpoints(apiMessages) {
+  const deckBlocks = []
+  for (const m of apiMessages) {
+    if (!Array.isArray(m.content)) continue
+    for (const b of m.content) {
+      if (b?.type === 'document' && b.source?.type === 'file' && b.cache_control) deckBlocks.push(b)
+    }
+  }
+  for (let i = 0; i < deckBlocks.length - 1; i += 1) delete deckBlocks[i].cache_control
+  return apiMessages
+}
+
+/**
  * Map a conversation's `parts[]` messages to the API `{ role, content }` shape.
  * SYNCHRONOUS and download-free: the newest turn's image/PDF bytes come from
  * `getNewestBinaryBase64(attachmentId)` (the in-memory composer), historical
@@ -184,10 +205,12 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
  */
 export function assembleApiMessages(messages, getNewestBinaryBase64 = () => undefined) {
   const lastIdx = messages.length - 1
-  return messages.map((m, i) => ({
-    role: m.role,
-    content: buildContent(m.parts, i === lastIdx, getNewestBinaryBase64),
-  }))
+  return capDeckCacheBreakpoints(
+    messages.map((m, i) => ({
+      role: m.role,
+      content: buildContent(m.parts, i === lastIdx, getNewestBinaryBase64),
+    })),
+  )
 }
 
 /**
@@ -252,4 +275,20 @@ export async function buildUserParts(text, pendingAttachments = [], upload = def
   }
   parts.push({ type: 'text', text })
   return parts
+}
+
+/**
+ * Best-effort release of the attachments `buildUserParts` already uploaded for a
+ * turn that then FAILED to persist/send. Without this, a deck's Files-API PDF +
+ * stored `.pptx` (and any image/PDF object) would orphan server-side. Each delete
+ * is fire-and-forget and swallows its own error, so cleanup can never throw into —
+ * or mask — the original send failure. Decks forward `pdfFileId` so the route also
+ * releases the internal converted PDF.
+ */
+export function releaseUploadedAttachments(parts, del = defaultDelete) {
+  if (!Array.isArray(parts)) return
+  for (const p of parts) {
+    if (p?.type !== 'file' || typeof p.attachmentId !== 'string') continue
+    Promise.resolve(del(p.attachmentId, { pdfFileId: p.kind === 'deck' ? p.pdfFileId : undefined })).catch(() => {})
+  }
 }

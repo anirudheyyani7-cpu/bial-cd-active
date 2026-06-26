@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { FileText, FileSpreadsheet, ImageOff } from 'lucide-react'
+import { FileText, FileSpreadsheet, ImageOff, Presentation } from 'lucide-react'
 import { fetchAttachmentObjectUrl } from '../utils/attachmentApi'
 import { openUrlInNewTab, downloadObjectUrl } from '../utils/attachmentViewer'
 import AttachmentLightbox from './AttachmentLightbox'
@@ -11,12 +11,15 @@ import AttachmentLightbox from './AttachmentLightbox'
  * inline thumbnail that opens a lightbox; PDFs open in a new tab on click;
  * text/CSV show a labelled file-icon chip (no byte read — the content travelled
  * inline in the prompt); Word/Excel show a labelled chip that re-downloads the
- * ORIGINAL file (the model only ever saw extracted text); an image whose bytes
- * are gone/forbidden shows an "unavailable" placeholder.
+ * ORIGINAL file (the model only ever saw extracted text); a PowerPoint deck
+ * shows a labelled chip that re-downloads the ORIGINAL .pptx (the conversion is
+ * internal — the chip never reveals it); an image whose bytes are gone/forbidden
+ * shows an "unavailable" placeholder.
  */
 function AttachmentChip({ att }) {
   const isText = att.kind === 'text'
   const isOffice = att.kind === 'office'
+  const isDeck = att.kind === 'deck'
   const isPdf = att.kind === 'document' || att.mediaType === 'application/pdf'
   const [src, setSrc] = useState(null)
   const [missing, setMissing] = useState(false)
@@ -24,7 +27,7 @@ function AttachmentChip({ att }) {
 
   useEffect(() => {
     // Only images preview from bytes.
-    if (isPdf || isText || isOffice) return undefined
+    if (isPdf || isText || isOffice || isDeck) return undefined
     let active = true
     fetchAttachmentObjectUrl(att.attachmentId).then((url) => {
       if (!active) return
@@ -34,7 +37,7 @@ function AttachmentChip({ att }) {
     return () => {
       active = false
     }
-  }, [att.attachmentId, isPdf, isText, isOffice])
+  }, [att.attachmentId, isPdf, isText, isOffice, isDeck])
 
   if (isText) {
     const Icon = att.mediaType === 'text/csv' ? FileSpreadsheet : FileText
@@ -71,6 +74,26 @@ function AttachmentChip({ att }) {
         {att.truncated && (
           <span title={truncMsg} className="flex-shrink-0 opacity-70">· truncated</span>
         )}
+      </button>
+    )
+  }
+
+  if (isDeck) {
+    // A deck re-downloads the ORIGINAL .pptx (exactly like office). The chip shows
+    // only the .pptx name + a Presentation icon and the tooltip never mentions PDF
+    // — the conversion is internal (invisible-conversion user story).
+    return (
+      <button
+        type="button"
+        onClick={async () => {
+          const url = await fetchAttachmentObjectUrl(att.attachmentId)
+          if (url) downloadObjectUrl(url, att.name)
+        }}
+        title={`Download ${att.name}`}
+        className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg px-2 py-1 text-[11px] max-w-[14rem] cursor-pointer transition"
+      >
+        <Presentation size={12} className="flex-shrink-0" />
+        <span className="truncate">{att.name}</span>
       </button>
     )
   }

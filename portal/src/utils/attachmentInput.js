@@ -13,6 +13,14 @@ export const WORD_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.wo
 export const EXCEL_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 export const OFFICE_MEDIA_TYPES = new Set([WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE])
 
+// PowerPoint (.pptx). A deck is a VISUAL medium, so unlike Word/Excel it is NOT
+// text-extracted: the server renders it to a PDF and the model reads that with
+// vision. The original .pptx is the ONLY user-facing artifact (stored for
+// re-download); the conversion is invisible to the user. See attachmentStore
+// (deck part), server/deck-convert.js, and the plan's "invisible" user story.
+export const PPTX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+export const DECK_MEDIA_TYPES = new Set([PPTX_MEDIA_TYPE])
+
 // Native Anthropic image/document types, inline text files (CSV/plain-text), and
 // Office docs (docx/xlsx — server-extracted to text). Text files aren't native
 // documents — they travel as fenced inline text parts (see

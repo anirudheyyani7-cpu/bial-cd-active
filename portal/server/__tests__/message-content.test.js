@@ -186,3 +186,53 @@ describe('partsToText', () => {
     expect(partsToText('legacy string')).toBe('legacy string')
   })
 })
+
+// The canonical deck block. The CLIENT assembler (attachmentStore.buildContent)
+// must produce this identical shape — its test asserts the same literal (parity,
+// mirroring the office-fence parity).
+const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+export const EXPECTED_DECK_BLOCK = {
+  type: 'document',
+  source: { type: 'file', file_id: 'file_d1' },
+  cache_control: { type: 'ephemeral' },
+}
+
+describe('partsToContent — deck parts (sticky vision document block; PDF internal)', () => {
+  const deckPart = (extra = {}) => ({
+    type: 'file',
+    kind: 'deck',
+    mediaType: PPTX_TYPE,
+    attachmentId: 'd1',
+    key: 'att/u/d1',
+    name: 'q3.pptx',
+    size: 1234,
+    pdfFileId: 'file_d1',
+    pageCount: 12,
+    ...extra,
+  })
+
+  it('emits a file-source document block + cache_control (newest turn), never base64', () => {
+    let called = 0
+    const content = partsToContent([deckPart(), { type: 'text', text: 'summarize the deck' }], {
+      binary: true,
+      getBase64: () => {
+        called += 1
+        return 'X'
+      },
+    })
+    expect(Array.isArray(content)).toBe(true)
+    expect(content[0]).toEqual(EXPECTED_DECK_BLOCK)
+    expect(content[1]).toEqual({ type: 'text', text: 'summarize the deck' })
+    expect(called).toBe(0) // deck is a file_id reference — never fetches bytes
+  })
+
+  it('keeps the deck block STICKY on an older turn (binary=false)', () => {
+    const content = partsToContent([deckPart(), { type: 'text', text: 'older turn' }], { binary: false })
+    expect(content[0]).toEqual(EXPECTED_DECK_BLOCK) // present even when binaries are dropped
+  })
+
+  it('omits the block (no broken document) when pdfFileId is missing', () => {
+    const content = partsToContent([deckPart({ pdfFileId: undefined }), { type: 'text', text: 'q' }])
+    expect(content).toBe('q') // no blocks emitted → plain string
+  })
+})

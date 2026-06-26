@@ -198,6 +198,9 @@ export function officeFence(part) {
  * - Office file parts are STICKY too, but as a TEXT block carrying the extracted
  *   Markdown (fenced as data) — the original bytes are NEVER inlined to the model
  *   (Decisions 2, 3, 8). Emitted on every turn, regardless of `binary`.
+ * - Deck (.pptx) file parts are STICKY as a vision `document` block referencing the
+ *   internal Files-API PDF by `file_id` (+ `cache_control`); emitted every turn,
+ *   regardless of `binary`. No base64; the user-facing artifact is the .pptx.
  * - Image/PDF file parts are emitted ONLY when `binary` is true (the newest
  *   turn), with bytes supplied by `getBase64(part)`; on older turns they're
  *   dropped (the model already saw them) so the request body stays bounded.
@@ -211,6 +214,20 @@ export function partsToContent(parts, { binary = true, getBase64 } = {}) {
     if (p?.type === 'file' && p.kind === 'office') {
       // Sticky extracted text — every turn, never the original bytes.
       blocks.push({ type: 'text', text: officeFence(p) })
+      continue
+    }
+    if (p?.type === 'file' && p.kind === 'deck') {
+      // STICKY vision document block referencing the INTERNAL Files-API PDF by
+      // file_id (cheap to re-send every turn, cheap to re-read under the cache;
+      // cache_control makes follow-ups ~0.1x). No base64 ever touches this path,
+      // and the user-facing artifact stays the original .pptx.
+      if (p.pdfFileId) {
+        blocks.push({
+          type: 'document',
+          source: { type: 'file', file_id: p.pdfFileId },
+          cache_control: { type: 'ephemeral' },
+        })
+      }
       continue
     }
     if (p?.type === 'file') {

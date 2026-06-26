@@ -23,13 +23,27 @@
  *                                                          the server-extracted
  *                                                          Markdown (`text`) is sent
  *                                                          as a sticky text block.
+ *   - { type:'file', kind:'deck', attachmentId, key, name, mediaType, size,
+ *       pdfFileId, pageCount }
+ *                                                        — a .pptx: the original
+ *                                                          bytes live in the object
+ *                                                          store (chip re-downloads
+ *                                                          them); the model sees a
+ *                                                          sticky vision `document`
+ *                                                          block referencing the
+ *                                                          INTERNAL converted PDF by
+ *                                                          `pdfFileId` (never the
+ *                                                          .pptx, never base64). The
+ *                                                          PDF is invisible to the
+ *                                                          user — only the .pptx is
+ *                                                          ever surfaced.
  *
  * The send path is download-free for binaries: only the NEWEST turn's image/PDF
  * bytes are inflated (from the in-memory composer via `getNewestBinaryBase64`);
  * historical binaries are dropped; text + office attachments are sticky text
  * (no fetch ever).
  */
-import { TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES } from './attachmentInput.js'
+import { TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, DECK_MEDIA_TYPES } from './attachmentInput.js'
 import { uploadAttachment as defaultUpload } from './attachmentApi.js'
 
 /** Strip characters from a filename that could break out of the `name="..."`
@@ -87,6 +101,9 @@ export function attachmentsFromParts(parts) {
         d.truncated = p.truncated // chip shows a "truncated" note when set
         if (p.truncationNote) d.truncationNote = p.truncationNote // human-readable detail for the tooltip
       }
+      // Deck: surface ONLY name/kind/mediaType (the .pptx). pdfFileId/pageCount are
+      // internal plumbing and must never reach a user-visible field (invisible
+      // conversion), so they're deliberately omitted from the chip descriptor.
       out.push(d)
     } else if (p?.type === 'text' && p.attachment) {
       out.push({ attachmentId: p.attachment.attachmentId, kind: 'text', name: p.attachment.name, mediaType: p.attachment.mediaType })
@@ -128,6 +145,19 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
       if (p.kind === 'office') {
         // STICKY extracted text, every turn; the original bytes are never inlined.
         blocks.push({ type: 'text', text: officeFence(p) })
+        continue
+      }
+      if (p.kind === 'deck') {
+        // STICKY vision document block referencing the INTERNAL Files-API PDF by
+        // file_id (cheap to re-send every turn, cheap to re-read under the cache;
+        // cache_control makes follow-ups ~0.1x). No base64; the user only sees .pptx.
+        if (p.pdfFileId) {
+          blocks.push({
+            type: 'document',
+            source: { type: 'file', file_id: p.pdfFileId },
+            cache_control: { type: 'ephemeral' },
+          })
+        }
         continue
       }
       if (!isNewest) continue // historical binary dropped — the model already saw it
@@ -197,6 +227,23 @@ export async function buildUserParts(text, pendingAttachments = [], upload = def
         text: ref.text,
         truncated: ref.truncated,
         truncationNote: ref.truncationNote,
+      })
+    } else if (DECK_MEDIA_TYPES.has(a.mediaType)) {
+      // The server converts the deck to a PDF, uploads it to the Files API, and
+      // returns the original-bytes ref PLUS the internal pdfFileId/pageCount. The
+      // deck part carries pdfFileId (→ model, sticky vision block) and the .pptx
+      // ref (→ chip / re-download). No base64 ever reaches the deck send path.
+      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })
+      parts.push({
+        type: 'file',
+        kind: 'deck',
+        attachmentId: ref.attachmentId,
+        key: ref.key,
+        name: ref.name,
+        mediaType: ref.mediaType,
+        size: ref.size,
+        pdfFileId: ref.pdfFileId,
+        pageCount: ref.pageCount,
       })
     } else {
       const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })

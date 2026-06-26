@@ -116,6 +116,67 @@ describe('office parts (hybrid: text → model, ref → chip)', () => {
   })
 })
 
+const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+const deckPart = (extra = {}) => ({
+  type: 'file', kind: 'deck', mediaType: PPTX_TYPE, attachmentId: 'd1', key: 'att/u/d1',
+  name: 'q3.pptx', size: 1234, pdfFileId: 'file_d1', pageCount: 12, ...extra,
+})
+// Must match server message-content.test.js EXPECTED_DECK_BLOCK exactly (parity).
+const EXPECTED_DECK_BLOCK = {
+  type: 'document', source: { type: 'file', file_id: 'file_d1' }, cache_control: { type: 'ephemeral' },
+}
+
+describe('deck parts (.pptx → sticky vision document block; PDF invisible)', () => {
+  it('attachmentsFromParts surfaces ONLY the .pptx (name/kind/mediaType), never pdfFileId/pageCount', () => {
+    const [chip] = attachmentsFromParts([deckPart(), { type: 'text', text: 'caption' }])
+    expect(chip).toEqual({ attachmentId: 'd1', kind: 'deck', name: 'q3.pptx', mediaType: PPTX_TYPE })
+    expect(chip).not.toHaveProperty('pdfFileId')
+    expect(chip).not.toHaveProperty('pageCount')
+  })
+
+  it('assembles a STICKY document block (file source + cache_control) on EVERY turn, never base64', () => {
+    const messages = [
+      { role: 'user', parts: [deckPart(), { type: 'text', text: 'turn 1' }] },
+      { role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', parts: [{ type: 'text', text: 'turn 2 about the same deck' }] },
+    ]
+    const lookups = []
+    const out = assembleApiMessages(messages, (id) => {
+      lookups.push(id)
+      return 'BYTES'
+    })
+    // Turn 1 is NOT the newest, yet the deck block is present (sticky), file-source.
+    expect(out[0].content[0]).toEqual(EXPECTED_DECK_BLOCK)
+    expect(out[0].content[1]).toEqual({ type: 'text', text: 'turn 1' })
+    expect(lookups).toEqual([]) // download-free: no byte lookup for a deck (unlike image/PDF)
+  })
+
+  it('buildUserParts builds a deck part carrying pdfFileId/pageCount (no base64), prose last', async () => {
+    const upload = vi.fn(async (a) => ({
+      attachmentId: a.attachmentId, key: `att/u/${a.attachmentId}`, kind: 'deck',
+      name: a.name, mediaType: a.mediaType, size: a.size, pdfFileId: 'file_new', pageCount: 7,
+    }))
+    const pending = [{ id: 'p1', name: 'deck.pptx', mediaType: PPTX_TYPE, size: 2048, base64: 'UEsDBA==' }]
+    const parts = await buildUserParts('summarize', pending, upload)
+    expect(parts[0]).toEqual({
+      type: 'file', kind: 'deck', attachmentId: 'p1', key: 'att/u/p1',
+      name: 'deck.pptx', mediaType: PPTX_TYPE, size: 2048, pdfFileId: 'file_new', pageCount: 7,
+    })
+    expect(parts[0]).not.toHaveProperty('base64')
+    expect(parts[1]).toEqual({ type: 'text', text: 'summarize' })
+    expect(upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('omits the block (no broken document) when a deck part has no pdfFileId', () => {
+    const out = assembleApiMessages([{ role: 'user', parts: [deckPart({ pdfFileId: undefined }), { type: 'text', text: 'q' }] }])
+    expect(out[0]).toEqual({ role: 'user', content: 'q' }) // no blocks → plain string
+  })
+
+  it('countAttachments counts a deck part toward the per-conversation cap', () => {
+    expect(countAttachments([{ role: 'user', parts: [deckPart(), { type: 'text', text: 'hi' }] }])).toBe(1)
+  })
+})
+
 describe('countAttachments', () => {
   it('sums file + inline-text attachment parts across turns', () => {
     const messages = [

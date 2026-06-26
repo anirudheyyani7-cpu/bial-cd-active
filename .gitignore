@@ -13,6 +13,9 @@ node_modules/
 
 # Test & tooling artifacts
 .playwright-mcp/
+# Local QA screenshots and scratch spreadsheets (manual e2e output; never committed)
+e2e-*.png
+*.xlsx
 
 # OS
 .DS_Store

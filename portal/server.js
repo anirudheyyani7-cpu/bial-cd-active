@@ -499,11 +499,12 @@ export function createApp({
 
   // Per-user persistence: conversations + messages (chats/builder) and attachment
   // bytes. Gated at the mount point; every handler scopes by req.user.sub.
-  app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
   // Deck (.pptx) ingest uploads the derived PDF to the Anthropic Files API through
-  // the same Foundry client used for the chat relay. createAnthropicFiles(null)
-  // degrades gracefully (503 when called) if the client isn't configured.
+  // the same Foundry client used for the chat relay; conversation-delete releases
+  // those PDFs. createAnthropicFiles(null) degrades gracefully (503 when called)
+  // if the client isn't configured.
   const anthropicFiles = createAnthropicFiles(claudeClient)
+  app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo, anthropicFiles }))
   app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo, anthropicFiles }))
 
   // Dynamic app data service: the shared, schemaless per-app record store every

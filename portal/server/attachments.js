@@ -232,6 +232,11 @@ export function createAttachmentsRouter(
   // Delete one attachment object from the caller's namespace. Size is unknown
   // here, so the counter decrement is skipped (bounded drift; the conversation-
   // delete path decrements precisely from the file-part sizes).
+  //
+  // For a deck, the bare route can't know the internal Files-API file_id, so it
+  // accepts the same bounded drift — UNLESS the client passes `?pdfFileId=...`
+  // (the composer has it when removing a still-pending deck), in which case we
+  // best-effort release it too. The conversation-delete path is the precise sweep.
   router.delete(
     '/:id',
     limiter,
@@ -239,6 +244,14 @@ export function createAttachmentsRouter(
       const { id } = req.params
       if (!ID_RE.test(id)) return res.status(400).json({ error: { message: 'Invalid attachment id.' } })
       await attachmentsRepo.deleteBytes(id, req.user.sub)
+      const pdfFileId = req.query?.pdfFileId || req.body?.pdfFileId
+      if (typeof pdfFileId === 'string' && pdfFileId && pdfFileId.length <= 256) {
+        try {
+          await anthropicFiles.deleteFile(pdfFileId)
+        } catch (e) {
+          console.error('deck Files-API cleanup failed:', e.message)
+        }
+      }
       res.json({ ok: true })
     }),
   )

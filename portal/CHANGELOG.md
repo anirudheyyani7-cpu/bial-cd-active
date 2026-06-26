@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.9] - 2026-06-26
+
+### Added
+- **You can now attach PowerPoint decks (`.pptx`) to a chat.** Plan, App Builder, and
+  the general assistant accept a `.pptx` alongside images, PDF, Word, and Excel, and the
+  assistant reads the deck as a visual document — slides, layout, and charts and all — so
+  you can ask it to summarize, critique, or build an app from a presentation. You can also
+  attach a deck at the "Generate App" step so the very first build turn can reason over it.
+  The original `.pptx` is what's stored and re-downloaded, and decks count toward the same
+  per-conversation attachment cap as other files. (Available when the deck feature is
+  enabled on the server with a reachable conversion sidecar; when it's off, `.pptx` simply
+  isn't offered, with a clear message.)
+
+### Changed
+- **The "Generate App" file picker now accepts the same files as chat.** It previously took
+  only spreadsheets (`.xlsx`/`.xls`/`.csv`/`.tsv`); it now accepts images, PDF, Word, Excel,
+  and (when enabled) PowerPoint, and the files you pick feed the first generation turn
+  directly instead of being flattened into pasted text.
+
+### Fixed
+- **App Builder's live preview no longer fails its data calls in local development.** The dev
+  server was answering the preview's cross-origin preflight itself and blocking the request;
+  it now lets the app server handle it, matching how production already behaves.
+
 ## [1.4.8] - 2026-06-25
 
 ### Fixed

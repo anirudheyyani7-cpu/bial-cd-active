@@ -236,3 +236,41 @@ describe('DELETE /api/conversations/:id — deck Files-API cleanup', () => {
     expect(deleteFile).not.toHaveBeenCalled()
   })
 })
+
+describe('POST /api/conversations/:id/messages — deck part validation', () => {
+  // A structurally valid deck part; each case overrides ONE field with a bad value.
+  const deckMsg = (deckExtra) => ({
+    _id: 'm0',
+    role: 'user',
+    seq: 0,
+    parts: [{ type: 'file', kind: 'deck', attachmentId: 'd1', mediaType: PPTX_TYPE, pdfFileId: 'file_x', pageCount: 3, ...deckExtra }],
+  })
+
+  it('rejects an empty pdfFileId (400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pdfFileId: '' }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pdfFileId/)
+  })
+
+  it('rejects an over-length pdfFileId (257 chars → 400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pdfFileId: 'a'.repeat(257) }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pdfFileId/)
+  })
+
+  it('rejects a negative pageCount (400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pageCount: -1 }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pageCount/)
+  })
+
+  it('rejects a non-integer pageCount (400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pageCount: 'three' }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pageCount/)
+  })
+})

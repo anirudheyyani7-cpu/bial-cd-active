@@ -40,13 +40,18 @@ export function looksLikeZip(buffer) {
 }
 
 /**
- * Zip-bomb / decompressed-size guard (R8). Parses the ZIP End-Of-Central-Directory
- * + central-directory headers (dependency-free) and sums each entry's declared
- * UNCOMPRESSED size, rejecting once the running total exceeds `maxUncompressed` —
- * BEFORE SheetJS/mammoth/LibreOffice ever inflate the archive. ZIP64 (sizes/counts
- * at their 0xFFFF.. sentinels) is rejected outright: a legitimate Office file under
- * the upload cap never needs it, and a bomb that does is exactly what we refuse.
- * Throws FileParseError(status 413) on an over-cap or malformed archive.
+ * Fast decompressed-size PRE-FILTER (R8) — NOT a hard zip-bomb guarantee. Parses the
+ * ZIP End-Of-Central-Directory + central-directory headers (dependency-free) and
+ * sums each entry's *self-declared* UNCOMPRESSED size, rejecting once the running
+ * total exceeds `maxUncompressed` BEFORE SheetJS/mammoth/LibreOffice ever inflate
+ * the archive. Because the declared sizes are attacker-controlled (a crafted entry
+ * can under-report and still inflate huge), this only cheaply rejects the obvious
+ * bombs; the REAL safety boundary is the parser/renderer process's own memory + time
+ * limits (for decks, the Gotenberg/LibreOffice container's resource caps — see
+ * ops/gotenberg/README.md). ZIP64 (sizes/counts at their 0xFFFF.. sentinels) is
+ * rejected outright: a legitimate Office file under the upload cap never needs it,
+ * and a bomb that does is exactly what we refuse. Throws FileParseError(status 413)
+ * on an over-cap or malformed archive.
  */
 export function assertZipNotBomb(buffer, maxUncompressed = MAX_DECOMPRESSED_BYTES) {
   const EOCD_SIG = 0x06054b50

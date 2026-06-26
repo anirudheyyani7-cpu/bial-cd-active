@@ -46,6 +46,11 @@ export const OFFICE_FORMATS = {
 /** The office media-type allowlist (the upload route's branch key). */
 export const OFFICE_MEDIA_TYPES = new Set(Object.keys(OFFICE_FORMATS))
 
+/** Format tag for the `.pptx` structural gate (the OPC_PART key). Exported so
+ * the deck converter (deck-convert.js) references it by name instead of coupling
+ * to a bare 'powerpoint' string. The underlying value is unchanged. */
+export const POWERPOINT_FORMAT = 'powerpoint'
+
 /** Format-specific OPC part that MUST be present in a valid file of that format.
  * `.docx`/`.xlsx`/`.pptx`/`.zip` all share the ZIP signature, so the signature
  * alone can't tell them apart — the OPC part is the discriminator (Decision 4). */
@@ -54,8 +59,8 @@ const OPC_PART = {
   excel: 'xl/workbook.xml',
   // PowerPoint is NOT in OFFICE_FORMATS — decks take a separate render-to-PDF
   // pipeline (deck-convert.js), not text extraction. This entry exists only so
-  // `assertOfficeStructure(buffer, 'powerpoint')` can gate a .pptx upload.
-  powerpoint: 'ppt/presentation.xml',
+  // `assertOfficeStructure(buffer, POWERPOINT_FORMAT)` can gate a .pptx upload.
+  [POWERPOINT_FORMAT]: 'ppt/presentation.xml',
 }
 
 /** ZIP local-file-header signature ("PK\x03\x04"). Every OOXML file starts here. */

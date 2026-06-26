@@ -4,6 +4,7 @@ import request from 'supertest'
 import { requireAuth } from '../auth/middleware.js'
 import { createAttachmentsRouter } from '../attachments.js'
 import { createAttachmentsRepo, ATTACHMENT_TOTAL_CAP } from '../attachments-repo.js'
+import { ATTACHMENT_MAX_BYTES } from '../message-content.js'
 import { makeFakeObjectStore } from './fakeObjectStore.js'
 import { makeFakeAttachmentUsageContainer } from './fakeAttachmentUsageCosmos.js'
 import { signAccessToken } from '../auth/tokens.js'
@@ -163,5 +164,63 @@ describe('POST /api/attachments — deck (.pptx)', () => {
       .set('Authorization', `Bearer ${token()}`)
       .send({ attachmentId: 'deck-x', name: 'd.pptx', mediaType: PPTX_TYPE, base64: '' })
     expect(res.status).toBe(400)
+  })
+
+  it('rejects a decoded buffer over ATTACHMENT_MAX_BYTES with 413 (before convert/upload)', async () => {
+    const { app, convert, files, objectStore } = makeApp()
+    const tooBig = Buffer.alloc(ATTACHMENT_MAX_BYTES + 1).toString('base64')
+    const res = await request(app)
+      .post('/api/attachments')
+      .set('Authorization', `Bearer ${token()}`)
+      .send({ attachmentId: 'deck-big', name: 'big.pptx', mediaType: PPTX_TYPE, base64: tooBig })
+    expect(res.status).toBe(413)
+    expect(convert).not.toHaveBeenCalled()
+    expect(files.uploadPdf).not.toHaveBeenCalled()
+    expect(objectStore._store.size).toBe(0)
+  })
+})
+
+describe('DELETE /api/attachments/:id — deck Files-API cleanup', () => {
+  it('releases the Files-API PDF when ?pdfFileId is passed and returns 200', async () => {
+    const { app, files } = makeApp()
+    await uploadDeck(app) // stores deck-1
+    const res = await request(app)
+      .delete('/api/attachments/deck-1?pdfFileId=file_x')
+      .set('Authorization', `Bearer ${token()}`)
+    expect(res.status).toBe(200)
+    expect(files.deleteFile).toHaveBeenCalledWith('file_x')
+  })
+
+  it('still returns 200 when deleteFile throws (best-effort cleanup)', async () => {
+    const anthropicFiles = {
+      uploadPdf: vi.fn(async () => ({ fileId: 'file_deck_1' })),
+      deleteFile: vi.fn(async () => {
+        throw new Error('already gone')
+      }),
+    }
+    const { app } = makeApp({ anthropicFiles })
+    await uploadDeck(app)
+    const res = await request(app)
+      .delete('/api/attachments/deck-1?pdfFileId=file_x')
+      .set('Authorization', `Bearer ${token()}`)
+    expect(res.status).toBe(200)
+  })
+
+  it('does NOT call deleteFile when no pdfFileId is given', async () => {
+    const { app, files } = makeApp()
+    await uploadDeck(app)
+    const res = await request(app).delete('/api/attachments/deck-1').set('Authorization', `Bearer ${token()}`)
+    expect(res.status).toBe(200)
+    expect(files.deleteFile).not.toHaveBeenCalled()
+  })
+
+  it('skips deleteFile for an over-length pdfFileId (length guard) but still returns 200', async () => {
+    const { app, files } = makeApp()
+    await uploadDeck(app)
+    const res = await request(app)
+      .delete(`/api/attachments/deck-1?pdfFileId=${'a'.repeat(257)}`)
+      .set('Authorization', `Bearer ${token()}`)
+    expect(res.status).toBe(200)
+    expect(files.deleteFile).not.toHaveBeenCalled()
   })
 })

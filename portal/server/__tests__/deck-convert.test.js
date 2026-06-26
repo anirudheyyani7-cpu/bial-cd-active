@@ -111,6 +111,33 @@ describe('convertDeckToPdf — resource guards', () => {
       convertDeckToPdf(pptx, { url: URL, fetchImpl, maxPages: 2 }),
     ).rejects.toMatchObject({ status: 413, code: 'TOO_MANY_PAGES' })
   })
+
+  it('rejects an over-size rendered body (materialized length over the cap) as 413', async () => {
+    const pptx = await makePptx({ slides: 1 })
+    const big = Buffer.from(`%PDF-1.5\n${'x'.repeat(64)}`)
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => toArrayBuffer(big) }))
+    await expect(
+      convertDeckToPdf(pptx, { url: URL, fetchImpl, maxPdfBytes: 16 }),
+    ).rejects.toMatchObject({ name: 'DeckConvertError', status: 413, code: 'RENDERER_OUTPUT_TOO_LARGE' })
+  })
+
+  it('rejects via the declared Content-Length BEFORE buffering the body', async () => {
+    const pptx = await makePptx({ slides: 1 })
+    let bodyRead = false
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k) => (String(k).toLowerCase() === 'content-length' ? String(8) : null) },
+      arrayBuffer: async () => {
+        bodyRead = true
+        return toArrayBuffer(Buffer.from('%PDF'))
+      },
+    }))
+    await expect(
+      convertDeckToPdf(pptx, { url: URL, fetchImpl, maxPdfBytes: 4 }),
+    ).rejects.toMatchObject({ status: 413, code: 'RENDERER_OUTPUT_TOO_LARGE' })
+    expect(bodyRead).toBe(false) // never materialized the over-size body
+  })
 })
 
 describe('convertDeckToPdf — renderer failures', () => {

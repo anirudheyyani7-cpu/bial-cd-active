@@ -21,6 +21,7 @@ The `.pptx` path is OFF unless **both** are set on the portal server:
 | `DECK_ATTACHMENTS_ENABLED=true` | Master switch (literal string `true`). |
 | `GOTENBERG_URL` | Base URL of a reachable sidecar (no trailing slash needed). |
 | `MAX_DECK_PAGES` | Optional page cap (default `100`). Over-cap = clean `413`. |
+| `DECK_CONVERT_TIMEOUT_MS` | Optional conversion wall-clock budget in ms (default `60000`). Over-budget = clean `504`. |
 
 With either of the first two missing, uploads are rejected with a clear message
 (never a 500), and the composer hides `.pptx` behind the client flag

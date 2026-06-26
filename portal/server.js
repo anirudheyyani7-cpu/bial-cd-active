@@ -32,7 +32,7 @@ import { ensureIndexes } from './server/ensure-indexes.js'
 import { createAttachmentsRepo } from './server/attachments-repo.js'
 import { createConversationsRouter } from './server/conversations.js'
 import { createAttachmentsRouter } from './server/attachments.js'
-import { createAnthropicFiles } from './server/anthropic-files.js'
+import { createAnthropicFiles, FILES_API_BETA } from './server/anthropic-files.js'
 import { createAppRegistryRepo } from './server/app-registry-repo.js'
 import { createDataRecordsRepo } from './server/data-records-repo.js'
 import { createAuditRepo } from './server/audit-repo.js'
@@ -443,7 +443,7 @@ export function createApp({
           system,
           messages,
         },
-        usesFilesApi ? { headers: { 'anthropic-beta': 'files-api-2025-04-14' } } : undefined,
+        usesFilesApi ? { headers: { 'anthropic-beta': FILES_API_BETA } } : undefined,
       )
 
       for await (const event of stream) {

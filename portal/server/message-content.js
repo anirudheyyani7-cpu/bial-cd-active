@@ -21,18 +21,8 @@
  * kept distinct from the image/PDF `ALLOWED_MEDIA`.
  */
 import { OFFICE_MEDIA_TYPES, officeFormatFor, assertOfficeStructure, OfficeExtractError } from './office-extract.js'
-import { PPTX_MEDIA_TYPE } from './deck-config.js'
 
 export { OFFICE_MEDIA_TYPES }
-
-/**
- * Deck (.pptx) media types. Kept DISTINCT from `OFFICE_MEDIA_TYPES` (the office
- * text-extraction allowlist) and from `ALLOWED_MEDIA` (the image/PDF magic-byte
- * allowlist): a deck is rendered to a PDF and sent to the model as a vision
- * `document` block referencing a Files-API `file_id` — a different pipeline from
- * both. The original `.pptx` is the only user-facing artifact.
- */
-export const DECK_MEDIA_TYPES = new Set([PPTX_MEDIA_TYPE])
 
 /**
  * Allowlisted attachment media types → the magic-number prefix the decoded bytes
@@ -260,6 +250,12 @@ export function partsToContent(parts, { binary = true, getBase64 } = {}) {
     }
     if (p?.type === 'text' && typeof p.text === 'string') prose.push(p.text)
   }
+  // Anthropic permits at most 4 `cache_control` breakpoints per request, and each
+  // deck block would carry its own. Keep the marker on ONLY the last deck block (a
+  // single trailing breakpoint caches the whole prefix) so many decks in a turn
+  // can't blow the limit. The cross-turn budget is owned by the request assembler.
+  const deckBlocks = blocks.filter((b) => b.type === 'document' && b.source?.type === 'file' && b.cache_control)
+  for (let i = 0; i < deckBlocks.length - 1; i += 1) delete deckBlocks[i].cache_control
   const text = prose.join('\n')
   if (blocks.length === 0) return text // no emitted file blocks → plain string
   blocks.push({ type: 'text', text }) // prose after files (Anthropic ordering)

@@ -240,6 +240,18 @@ describe('partsToContent — deck parts (sticky vision document block; PDF inter
     const content = partsToContent([deckPart(), { type: 'text', text: 'q' }])
     expect(validateAttachments([{ role: 'user', content }])).toBeNull()
   })
+
+  it('keeps cache_control on ONLY the last deck block when a turn carries 5 decks', () => {
+    // Anthropic allows ≤4 cache_control markers per request; 5 deck blocks in one
+    // turn would otherwise emit 5. Only the last may keep its breakpoint.
+    const parts = Array.from({ length: 5 }, (_, i) => deckPart({ pdfFileId: `file_${i}`, attachmentId: `d${i}` }))
+    parts.push({ type: 'text', text: 'summarize all' })
+    const content = partsToContent(parts)
+    const marked = content.filter((b) => b.cache_control)
+    expect(marked).toHaveLength(1)
+    expect(marked[0].source.file_id).toBe('file_4') // last deck block only
+    expect(validateAttachments([{ role: 'user', content }])).toBeNull()
+  })
 })
 
 describe('validateAttachments — deck file-source document blocks', () => {

@@ -104,7 +104,7 @@ export async function convertDeckToPdf(
   }
 
   if (!url) {
-    throw new DeckConvertError('Deck conversion is not configured.', {
+    throw new DeckConvertError("PowerPoint attachments aren't available right now.", {
       status: 503,
       code: 'RENDERER_UNCONFIGURED',
     })
@@ -125,12 +125,12 @@ export async function convertDeckToPdf(
     })
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      throw new DeckConvertError('Deck conversion timed out. Try a smaller deck.', {
+      throw new DeckConvertError('This deck took too long to process. Try a smaller deck.', {
         status: 504,
         code: 'RENDERER_TIMEOUT',
       })
     }
-    throw new DeckConvertError('Deck conversion service is unavailable.', {
+    throw new DeckConvertError("Couldn't process the deck right now. Please try again.", {
       status: 502,
       code: 'RENDERER_UNAVAILABLE',
     })
@@ -139,7 +139,7 @@ export async function convertDeckToPdf(
   }
 
   if (!res.ok) {
-    throw new DeckConvertError(`Deck conversion failed (renderer responded ${res.status}).`, {
+    throw new DeckConvertError("Couldn't process the deck. Please try again.", {
       status: 502,
       code: 'RENDERER_UNAVAILABLE',
     })
@@ -149,7 +149,7 @@ export async function convertDeckToPdf(
 
   // 4. Sanity + page-count cap.
   if (pdf.length < 4 || !pdf.subarray(0, 4).equals(PDF_MAGIC)) {
-    throw new DeckConvertError('Deck conversion produced an invalid PDF.', {
+    throw new DeckConvertError("We couldn't process this deck. Please try re-saving it as a .pptx.", {
       status: 502,
       code: 'RENDERER_BAD_OUTPUT',
     })

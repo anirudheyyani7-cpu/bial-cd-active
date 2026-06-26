@@ -177,6 +177,33 @@ describe('convertDeckToPdf — renderer failures', () => {
   })
 })
 
+describe('invisible conversion — no user-facing message mentions PDF', () => {
+  const pptxP = makePptx({ slides: 1 })
+
+  async function messageFrom(opts) {
+    try {
+      await convertDeckToPdf(await pptxP, { url: URL, ...opts })
+      return ''
+    } catch (e) {
+      return e.message
+    }
+  }
+
+  it('the bad-output / timeout / unavailable / over-cap messages never say "PDF" or "convert"', async () => {
+    const badOutput = await messageFrom({
+      fetchImpl: vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => toArrayBuffer(Buffer.from('NOPE')) })),
+    })
+    const unavailable = await messageFrom({ fetchImpl: vi.fn(async () => ({ ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) })) })
+    const overCap = await messageFrom({ maxPages: 1, fetchImpl: okFetch(5) })
+
+    for (const msg of [badOutput, unavailable, overCap]) {
+      expect(msg).not.toMatch(/pdf/i)
+      expect(msg).not.toMatch(/convert/i)
+    }
+    expect(badOutput).toMatch(/\.pptx/) // it guides the user back to .pptx, not PDF
+  })
+})
+
 describe('zip-safety back-compat', () => {
   it('assertZipNotBomb is still re-exported from file-parse.js', () => {
     expect(typeof assertZipNotBomb).toBe('function')

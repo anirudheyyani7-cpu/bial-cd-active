@@ -30,7 +30,7 @@ export function createAnthropicFiles(client) {
   function filesResource() {
     const files = client?.beta?.files
     if (!files) {
-      throw new AnthropicFilesError('Files API is not configured.', {
+      throw new AnthropicFilesError("PowerPoint attachments aren't available right now.", {
         status: 503,
         code: 'FILES_API_UNCONFIGURED',
       })
@@ -54,13 +54,13 @@ export function createAnthropicFiles(client) {
     } catch (err) {
       // Pass an upstream 4xx through (e.g. 413); map 5xx / unknown to 502.
       const status = err?.status >= 400 && err?.status < 500 ? err.status : 502
-      throw new AnthropicFilesError(
-        `Could not upload the converted deck (${err?.message || 'Files API error'}).`,
-        { status, code: 'FILES_UPLOAD_FAILED' },
-      )
+      throw new AnthropicFilesError("Couldn't process the deck. Please try again.", {
+        status,
+        code: 'FILES_UPLOAD_FAILED',
+      })
     }
     if (!res?.id) {
-      throw new AnthropicFilesError('Files API did not return a file id.', {
+      throw new AnthropicFilesError("Couldn't process the deck. Please try again.", {
         status: 502,
         code: 'FILES_UPLOAD_FAILED',
       })

@@ -32,6 +32,7 @@ import { ensureIndexes } from './server/ensure-indexes.js'
 import { createAttachmentsRepo } from './server/attachments-repo.js'
 import { createConversationsRouter } from './server/conversations.js'
 import { createAttachmentsRouter } from './server/attachments.js'
+import { createAnthropicFiles } from './server/anthropic-files.js'
 import { createAppRegistryRepo } from './server/app-registry-repo.js'
 import { createDataRecordsRepo } from './server/data-records-repo.js'
 import { createAuditRepo } from './server/audit-repo.js'
@@ -499,7 +500,11 @@ export function createApp({
   // Per-user persistence: conversations + messages (chats/builder) and attachment
   // bytes. Gated at the mount point; every handler scopes by req.user.sub.
   app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
-  app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo }))
+  // Deck (.pptx) ingest uploads the derived PDF to the Anthropic Files API through
+  // the same Foundry client used for the chat relay. createAnthropicFiles(null)
+  // degrades gracefully (503 when called) if the client isn't configured.
+  const anthropicFiles = createAnthropicFiles(claudeClient)
+  app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo, anthropicFiles }))
 
   // Dynamic app data service: the shared, schemaless per-app record store every
   // generated CRUD app calls. NO global requireAuth here — the router owns its own

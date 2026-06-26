@@ -21,8 +21,18 @@
  * kept distinct from the image/PDF `ALLOWED_MEDIA`.
  */
 import { OFFICE_MEDIA_TYPES, officeFormatFor, assertOfficeStructure, OfficeExtractError } from './office-extract.js'
+import { PPTX_MEDIA_TYPE } from './deck-config.js'
 
 export { OFFICE_MEDIA_TYPES }
+
+/**
+ * Deck (.pptx) media types. Kept DISTINCT from `OFFICE_MEDIA_TYPES` (the office
+ * text-extraction allowlist) and from `ALLOWED_MEDIA` (the image/PDF magic-byte
+ * allowlist): a deck is rendered to a PDF and sent to the model as a vision
+ * `document` block referencing a Files-API `file_id` — a different pipeline from
+ * both. The original `.pptx` is the only user-facing artifact.
+ */
+export const DECK_MEDIA_TYPES = new Set([PPTX_MEDIA_TYPE])
 
 /**
  * Allowlisted attachment media types → the magic-number prefix the decoded bytes

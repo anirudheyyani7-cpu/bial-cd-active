@@ -49,7 +49,14 @@ export const OFFICE_MEDIA_TYPES = new Set(Object.keys(OFFICE_FORMATS))
 /** Format-specific OPC part that MUST be present in a valid file of that format.
  * `.docx`/`.xlsx`/`.pptx`/`.zip` all share the ZIP signature, so the signature
  * alone can't tell them apart — the OPC part is the discriminator (Decision 4). */
-const OPC_PART = { word: 'word/document.xml', excel: 'xl/workbook.xml' }
+const OPC_PART = {
+  word: 'word/document.xml',
+  excel: 'xl/workbook.xml',
+  // PowerPoint is NOT in OFFICE_FORMATS — decks take a separate render-to-PDF
+  // pipeline (deck-convert.js), not text extraction. This entry exists only so
+  // `assertOfficeStructure(buffer, 'powerpoint')` can gate a .pptx upload.
+  powerpoint: 'ppt/presentation.xml',
+}
 
 /** ZIP local-file-header signature ("PK\x03\x04"). Every OOXML file starts here. */
 const ZIP_SIG = Buffer.from([0x50, 0x4b, 0x03, 0x04])
@@ -80,11 +87,9 @@ export function assertOfficeStructure(buffer, format) {
   }
   const part = OPC_PART[format]
   if (!part || !buffer.includes(Buffer.from(part, 'latin1'))) {
-    throw new OfficeExtractError(
-      format === 'excel'
-        ? 'Not a valid Excel (.xlsx) file.'
-        : 'Not a valid Word (.docx) file.',
-    )
+    const label =
+      { word: 'Word (.docx)', excel: 'Excel (.xlsx)', powerpoint: 'PowerPoint (.pptx)' }[format] || 'Office'
+    throw new OfficeExtractError(`Not a valid ${label} file.`)
   }
 }
 

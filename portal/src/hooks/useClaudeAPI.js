@@ -130,6 +130,13 @@ const CHARS_PER_TOKEN = 4
 // counted server-side; this only keeps the client-side history estimate from
 // either crashing on an array or under-counting a multi-MB file as ~2 tokens.
 const NOMINAL_FILE_TOKENS = 1_600
+// A deck (.pptx) is sent as a vision PDF: roughly per-page (text + image) tokens.
+// Heuristic only, to drive the warn/block UI — never to gate the API call. The
+// deck is STICKY and prompt-cached, so the FIRST turn pays the full (cache-write)
+// cost and each sticky follow-up re-reads at ~0.1x; the estimate reflects that
+// rather than billing the full deck on every turn (which would over-warn badly).
+const DECK_TOKENS_PER_PAGE = 3_000
+const DECK_CACHED_FACTOR = 0.1
 
 // content is `string | ContentBlock[]`. Never call `.length` on a non-string:
 // for an array, sum the text blocks and add a flat per-file nominal (NOT the
@@ -197,6 +204,7 @@ export function estimateConversationTokens(messages, systemText = '') {
   if (!Array.isArray(messages)) return 0
   const systemTokens = Math.ceil((systemText?.length || 0) / CHARS_PER_TOKEN)
   const lastIdx = messages.length - 1
+  const seenDecks = new Set() // first occurrence pays full; later (sticky) ~0.1x
   let tokens = 0
   messages.forEach((m, i) => {
     for (const p of m?.parts || []) {
@@ -206,6 +214,18 @@ export function estimateConversationTokens(messages, systemText = '') {
         // Office extracted text is sticky (re-sent every turn), so it counts on
         // EVERY turn by its real length — not the nominal one-turn binary cost.
         tokens += Math.ceil((p.text || '').length / CHARS_PER_TOKEN)
+      } else if (p?.type === 'file' && p.kind === 'deck') {
+        // Deck = a sticky, cached vision PDF: full per-page cost on its first turn
+        // (cache write), ~0.1x on each later turn (cache read). De-dup by file_id.
+        const pages = Number.isInteger(p.pageCount) && p.pageCount > 0 ? p.pageCount : 1
+        const full = pages * DECK_TOKENS_PER_PAGE
+        const key = p.pdfFileId || p.attachmentId
+        if (seenDecks.has(key)) {
+          tokens += Math.ceil(full * DECK_CACHED_FACTOR)
+        } else {
+          seenDecks.add(key)
+          tokens += full
+        }
       } else if (p?.type === 'file' && i === lastIdx) {
         tokens += NOMINAL_FILE_TOKENS
       }

@@ -137,6 +137,23 @@ export function validateAttachments(messages) {
       }
       if (block?.type !== 'image' && block?.type !== 'document') continue
       const src = block.source
+      // Deck: a `document` block referencing a Files-API `file_id` (the internal
+      // converted PDF). There are no bytes to magic-check — validate the reference
+      // shape and an optional ephemeral cache_control, then accept.
+      if (block.type === 'document' && src?.type === 'file') {
+        if (typeof src.file_id !== 'string' || src.file_id.length === 0 || src.file_id.length > 256) {
+          return 'Invalid attachment: malformed document file reference.'
+        }
+        if (
+          block.cache_control !== undefined &&
+          (block.cache_control === null ||
+            typeof block.cache_control !== 'object' ||
+            block.cache_control.type !== 'ephemeral')
+        ) {
+          return 'Invalid attachment: malformed cache control.'
+        }
+        continue
+      }
       if (!src || src.type !== 'base64' || typeof src.data !== 'string') {
         return 'Invalid attachment: malformed source.'
       }

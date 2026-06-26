@@ -235,4 +235,48 @@ describe('partsToContent — deck parts (sticky vision document block; PDF inter
     const content = partsToContent([deckPart({ pdfFileId: undefined }), { type: 'text', text: 'q' }])
     expect(content).toBe('q') // no blocks emitted → plain string
   })
+
+  it('the assembled deck block passes relay validateAttachments', () => {
+    const content = partsToContent([deckPart(), { type: 'text', text: 'q' }])
+    expect(validateAttachments([{ role: 'user', content }])).toBeNull()
+  })
+})
+
+describe('validateAttachments — deck file-source document blocks', () => {
+  const deckBlock = (extra = {}) => ({
+    type: 'document',
+    source: { type: 'file', file_id: 'file_d1' },
+    cache_control: { type: 'ephemeral' },
+    ...extra,
+  })
+
+  it('accepts a file-source document block with an ephemeral cache_control', () => {
+    expect(validateAttachments([{ role: 'user', content: [deckBlock(), { type: 'text', text: 'q' }] }])).toBeNull()
+  })
+
+  it('accepts a file-source document block without cache_control', () => {
+    const content = [{ type: 'document', source: { type: 'file', file_id: 'f1' } }, { type: 'text', text: 'q' }]
+    expect(validateAttachments([{ role: 'user', content }])).toBeNull()
+  })
+
+  it('rejects a file-source document block with a missing/empty file_id', () => {
+    expect(validateAttachments([{ role: 'user', content: [{ type: 'document', source: { type: 'file' } }] }])).toMatch(
+      /file reference/,
+    )
+    expect(
+      validateAttachments([{ role: 'user', content: [{ type: 'document', source: { type: 'file', file_id: '' } }] }]),
+    ).toMatch(/file reference/)
+  })
+
+  it('rejects a malformed cache_control on a file-source document block', () => {
+    expect(validateAttachments([{ role: 'user', content: [deckBlock({ cache_control: { type: 'permanent' } })] }])).toMatch(
+      /cache control/,
+    )
+    expect(validateAttachments([{ role: 'user', content: [deckBlock({ cache_control: null })] }])).toMatch(/cache control/)
+  })
+
+  it('still rejects a base64 document that is not a PDF (unchanged path)', () => {
+    const content = [{ type: 'document', source: { type: 'base64', media_type: 'image/png', data: PNG } }]
+    expect(validateAttachments([{ role: 'user', content }])).toMatch(/must be a PDF/)
+  })
 })

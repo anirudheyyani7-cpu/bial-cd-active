@@ -429,12 +429,22 @@ export function createApp({
       res.setHeader('Cache-Control', 'no-cache')
       res.setHeader('Connection', 'keep-alive')
 
-      stream = await claudeClient.messages.stream({
-        model: model || 'claude-opus-4-7',
-        max_tokens: Math.min(Math.max(1, Number(max_tokens) || MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS),
-        system,
-        messages,
-      })
+      // A deck attachment rides as a `document` block with a Files-API `file_id`
+      // source. Those require the Files-API beta header on the relay too; add it
+      // ONLY when such a block is present so non-deck requests are unchanged.
+      const usesFilesApi =
+        Array.isArray(messages) &&
+        messages.some((m) => Array.isArray(m?.content) && m.content.some((b) => b?.source?.type === 'file'))
+
+      stream = await claudeClient.messages.stream(
+        {
+          model: model || 'claude-opus-4-7',
+          max_tokens: Math.min(Math.max(1, Number(max_tokens) || MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS),
+          system,
+          messages,
+        },
+        usesFilesApi ? { headers: { 'anthropic-beta': 'files-api-2025-04-14' } } : undefined,
+      )
 
       for await (const event of stream) {
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {

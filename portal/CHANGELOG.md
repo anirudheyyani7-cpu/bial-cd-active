@@ -16,6 +16,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   per-conversation attachment cap as other files. (Available when the deck feature is
   enabled on the server with a reachable conversion sidecar; when it's off, `.pptx` simply
   isn't offered, with a clear message.)
+- **The deck renderer now ships in one container for single-slot hosts.** The portal API/SPA
+  and the Gotenberg/LibreOffice renderer build into a single image (`Dockerfile.appservice`)
+  that run together on loopback with only the portal port exposed, so the deck feature can
+  deploy to one-container platforms (Azure App Service for Containers) without a separate
+  sidecar. The packaging is proven by the repo's first committed Playwright e2e suite, which
+  drives a real browser through attach `.pptx` → assistant reads it → download the original,
+  against both the dev stack and the built container (`npm run e2e` / `npm run e2e:container`).
 
 ### Changed
 - **The "Generate App" file picker now accepts the same files as chat.** It previously took

@@ -4,6 +4,8 @@ dist
 dist-ssr
 .env
 .env.local
+# Real e2e secrets — must never enter the build context/image.
+.env.e2e
 *.local
 .git
 .gitignore
@@ -15,6 +17,12 @@ npm-debug.log*
 # Tests and local-only material — not needed to build or run the app.
 **/__tests__
 *.test.js
+# Host-only e2e harness (runs against the container, never inside it).
+e2e
+playwright.config.ts
+playwright
+playwright-report
+test-results
 .mythos
 docs
 vercel.json

@@ -37,24 +37,21 @@ cd portal && docker compose up -d gotenberg
 # .env: DECK_ATTACHMENTS_ENABLED=true  GOTENBERG_URL=http://localhost:3000
 ```
 
-## Production deploy (Azure Container Apps / App Service sidecar)
+## Production deploy (single-container image)
 
-Run Gotenberg as an in-tenant sidecar reachable only from the portal API over the
-internal network. Point `GOTENBERG_URL` at its internal address (e.g.
-`http://gotenberg`); do **not** expose it publicly.
+The deck renderer ships **inside** the portal image: `portal/Dockerfile.appservice`
+builds Gotenberg + LibreOffice and the portal into one container, with Gotenberg on
+loopback (`GOTENBERG_URL=http://localhost:3000`) and only the portal port published,
+so the renderer is never exposed publicly. That image pre-installs the MS-metric
+fonts (Carlito↔Calibri, Caladea↔Cambria + fallbacks) so decks don't reflow. (A
+standalone in-tenant sidecar — Gotenberg reachable only from the portal API, with
+`GOTENBERG_URL` pointed at its internal address — is also viable, but the current
+deploy target is the single-container image.)
 
-### Image
-
-Build the hardened image in this directory (pre-installs MS-metric fonts so decks
-don't reflow) and push it to your in-tenant registry:
-
-```sh
-docker build -t <registry>/bial-gotenberg:<tag> ops/gotenberg
-```
-
-**Pin a tag whose bundled LibreOffice meets the security floor** (≥ 24.8.5 /
-25.2.1) for CVE-2024-12425, CVE-2024-12426, CVE-2025-1080 — the input bytes are
-untrusted uploads. Verify: `docker run --rm <image> libreoffice --version`.
+**Pin the Gotenberg base by digest to a release whose bundled LibreOffice meets the
+security floor** (≥ 24.8.5 / 25.2.1) for CVE-2024-12425, CVE-2024-12426,
+CVE-2025-1080 — the input bytes are untrusted uploads. Verify:
+`docker run --rm <image> libreoffice --version`.
 
 ### Hardening checklist (mandatory, not optional)
 

@@ -44,7 +44,8 @@ FROM gotenberg/gotenberg:8
 USER root
 
 # MS-metric-compatible fonts so decks don't reflow when their fonts are absent
-# (mirrors ops/gotenberg/Dockerfile — Carlito↔Calibri, Caladea↔Cambria + fallbacks).
+# (Carlito↔Calibri, Caladea↔Cambria + Liberation/DejaVu/Noto fallbacks; renderer
+# hardening rationale in ops/gotenberg/README.md).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       fonts-crosextra-carlito fonts-crosextra-caladea \

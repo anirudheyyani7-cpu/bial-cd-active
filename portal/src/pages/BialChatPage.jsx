@@ -360,7 +360,7 @@ export default function BialChatPage() {
       )}
 
       <div className="flex gap-3 items-end">
-        <input ref={fileInputRef} type="file" accept={ACCEPT_ATTR} multiple onChange={handleFileSelect} className="hidden" />
+        <input ref={fileInputRef} type="file" accept={ACCEPT_ATTR} multiple onChange={handleFileSelect} className="hidden" data-testid="chat-file-input" />
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={generating}
@@ -386,6 +386,7 @@ export default function BialChatPage() {
         />
         <button
           onClick={handleSend}
+          data-testid="chat-send"
           disabled={(!input.trim() && pendingAttachments.length === 0) || generating || ctxLevel === 'full'}
           className="flex-shrink-0 w-11 h-11 bg-primary hover:bg-primary-dark disabled:opacity-40 text-white rounded-xl flex items-center justify-center transition shadow-sm"
         >
@@ -526,7 +527,9 @@ export default function BialChatPage() {
                         ? <Bot size={10} className="text-tertiary" />
                         : <User size={10} className="text-secondary" />}
                     </div>
-                    <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                    <div
+                      data-testid={msg.role === 'assistant' ? 'assistant-message' : 'user-message'}
+                      className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                       msg.role === 'user'
                         ? 'bg-tertiary text-white rounded-tr-sm'
                         : 'bg-white border border-bial-border text-tertiary rounded-tl-sm'
@@ -540,7 +543,7 @@ export default function BialChatPage() {
                 ))}
 
                 {generating && (
-                  <div className="flex gap-2.5 items-center">
+                  <div className="flex gap-2.5 items-center" data-testid="assistant-typing">
                     <div className="w-6 h-6 rounded-full bg-tertiary/10 flex items-center justify-center">
                       <Bot size={10} className="text-tertiary" />
                     </div>

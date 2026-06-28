@@ -85,6 +85,7 @@ function AttachmentChip({ att }) {
     return (
       <button
         type="button"
+        data-testid="deck-download-chip"
         onClick={async () => {
           const url = await fetchAttachmentObjectUrl(att.attachmentId)
           if (url) downloadObjectUrl(url, att.name)

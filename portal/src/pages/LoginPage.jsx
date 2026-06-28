@@ -151,6 +151,7 @@ export default function LoginPage() {
                 <input
                   type="email"
                   autoComplete="email"
+                  data-testid="login-email"
                   placeholder="name@bialairport.com"
                   value={username}
                   onChange={onField(setUsername)}
@@ -169,6 +170,7 @@ export default function LoginPage() {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
+                  data-testid="login-password"
                   placeholder="••••••••"
                   value={password}
                   onChange={onField(setPassword)}
@@ -187,6 +189,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
+              data-testid="login-submit"
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-600 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition shadow-md shadow-primary/20"
             >

@@ -1,0 +1,9 @@
+# Line-ending policy. Shell scripts and Dockerfiles run inside Linux containers,
+# so they MUST be LF — a Windows checkout (core.autocrlf=true) would otherwise
+# ship CRLF, and a `#!/bin/sh\r` shebang makes the kernel exec `/bin/sh\r`
+# -> "exec ...: no such file or directory" at container start.
+*.sh        text eol=lf
+Dockerfile* text eol=lf
+
+# Binary fixtures must never be line-ending-normalized.
+*.pptx      binary

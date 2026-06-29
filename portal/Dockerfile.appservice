@@ -69,7 +69,13 @@ COPY server.js ./
 COPY server ./server
 COPY scripts ./scripts
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Strip any CR before chmod: a Windows checkout (core.autocrlf) can ship the
+# script with CRLF, and a `#!/bin/sh\r` shebang makes the kernel exec `/bin/sh\r`
+# -> "no such file or directory" at container start. LF is also enforced via
+# .gitattributes; this is belt-and-suspenders since the image is often built on a
+# Windows VM via `az acr build`.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+ && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Run as the base image's non-root 'gotenberg' user (it owns the renderer's
 # writable scratch/profile dirs). The app only READS its files, so root-owned

@@ -33,6 +33,11 @@ import {
   getUsageCollection,
 } from '../server/cosmos.js'
 
+// The ESM build of xlsx (xlsx.mjs) does not auto-bind Node's fs the way the CJS
+// build does, so XLSX.writeFile() throws "cannot save file <path>" until fs is
+// wired in explicitly. Bind it once at load.
+XLSX.set_fs(fs)
+
 const IST_OFFSET = '+05:30' // Asia/Kolkata has no DST, so a fixed offset is exact.
 const MS = { h: 3_600_000, d: 86_400_000, w: 604_800_000 }
 const MAX_MESSAGES_PER_CONVERSATION = 5000

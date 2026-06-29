@@ -1,4 +1,8 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, it, expect } from 'vitest'
+import * as XLSX from 'xlsx'
 import {
   parseLast,
   istDay,
@@ -95,5 +99,21 @@ describe('resolveWindow', () => {
   it('rejects an inverted range and malformed dates', () => {
     expect(() => resolveWindow({ from: '2026-06-10', to: '2026-06-01' }, NOW)).toThrow()
     expect(() => resolveWindow({ from: 'June 1' }, NOW)).toThrow()
+  })
+})
+
+describe('xlsx file write', () => {
+  // Importing export-cosmos-logs.js (above) must bind Node fs into the ESM xlsx
+  // build via XLSX.set_fs(fs); without it XLSX.writeFile throws "cannot save file".
+  it('writes a workbook to disk once the exporter module is loaded', () => {
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['a', 'b'], [1, 2]]), 'S')
+    const out = path.join(os.tmpdir(), `export-cosmos-logs.write-probe.${process.pid}.xlsx`)
+    try {
+      XLSX.writeFile(wb, out)
+      expect(fs.statSync(out).size).toBeGreaterThan(0)
+    } finally {
+      fs.rmSync(out, { force: true })
+    }
   })
 })

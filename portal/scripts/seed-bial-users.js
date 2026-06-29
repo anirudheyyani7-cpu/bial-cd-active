@@ -32,7 +32,7 @@ import { createUsersRepo } from '../server/users-repo.js'
 import { getUsersCollection } from '../server/cosmos.js'
 import { seedUsers, assertValidUsername, derivePassword } from './seed-users.js'
 
-// One admin + the nine pilot users. Emails normalized to lowercase for login.
+// One admin + the BIAL pilot users. Emails normalized to lowercase for login.
 // Change the admin line below if you want a different admin identity.
 export const BIAL_USERS = [
   { username: 'admin@bialairport.com',          email: 'admin@bialairport.com',          name: 'BIAL Admin',            role: 'admin' },
@@ -46,6 +46,14 @@ export const BIAL_USERS = [
   { username: 'jaison@bialairport.com',         email: 'jaison@bialairport.com',         name: 'Jaison',                role: 'user' },
   { username: 'adiseshu@bialairport.com',       email: 'adiseshu@bialairport.com',       name: 'Adi',                   role: 'user' },
   { username: 'imran.khan@bialairport.com',     email: 'imran.khan@bialairport.com',     name: 'Imran Khan',            role: 'user' },
+  { username: 'jonathan.b@bialairport.com',     email: 'jonathan.b@bialairport.com',     name: 'Jonathan Varun Benjamin', role: 'user' },
+  { username: 'sidhant.g@bialairport.com',      email: 'sidhant.g@bialairport.com',      name: 'Sidhant Goel',           role: 'user' },
+  { username: 'pravind.kumar@bialairport.com',  email: 'pravind.kumar@bialairport.com',  name: 'Pravind Kumar',          role: 'user' },
+  { username: 'ravichandran.p@bialairport.com', email: 'ravichandran.p@bialairport.com', name: 'Ravichandran P',         role: 'user' },
+  { username: 'venkateswaran@bialairport.com',  email: 'venkateswaran@bialairport.com',  name: 'Dr. Venkat',             role: 'user' },
+  { username: 'vikas.pruthi@bialairport.com',   email: 'vikas.pruthi@bialairport.com',   name: 'Vikas Pruthi',           role: 'user' },
+  { username: 'prithvi@bialairport.com',        email: 'prithvi@bialairport.com',        name: 'Prithvi Ponnappa',       role: 'user' },
+  { username: 'schaudhari@bialairport.com',     email: 'schaudhari@bialairport.com',     name: 'Sandeep Chaudhari',      role: 'user' },
 ]
 
 /** The seed map this script ships: every pilot user → its derived password. */

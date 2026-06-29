@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, CheckCircle, XCircle } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
+import { DECK_ATTACHMENTS_ENABLED } from '../config/features'
 
 const EXAMPLE_PROMPTS = [
   {
@@ -70,7 +71,9 @@ const FAQS = [
   },
   {
     q: 'What files can I attach in chat?',
-    a: 'Images (PNG, JPEG, GIF, WebP), PDFs, text files (CSV, TXT), and Word (.docx) and Excel (.xlsx) documents — up to 4 MB each. Word and Excel files are read by extracting their text and tables, so the assistant sees the content, not the original layout: Word headers/footers, tracked changes, comments, charts, and embedded images are not extracted, and Excel formulas are read as their last-saved values. Very large files are summarised (the first 200 rows of each sheet, and up to ~100 KB of extracted text per file) — the original file is always kept and can be re-downloaded from its chip. Legacy .doc files are not supported; save them as .docx or PDF first.',
+    a: DECK_ATTACHMENTS_ENABLED
+      ? 'Images (PNG, JPEG, GIF, WebP), PDFs, text files (CSV, TXT), Word (.docx) and Excel (.xlsx) documents, and PowerPoint (.pptx) presentations — up to 4 MB each. Word and Excel files are read by extracting their text and tables, so the assistant sees the content, not the original layout: Word headers/footers, tracked changes, comments, charts, and embedded images are not extracted, and Excel formulas are read as their last-saved values. PowerPoint presentations are read differently — the assistant looks at each slide visually, so it understands diagrams, charts, and layout, not just the text. Fonts may be substituted and complex SmartArt can shift, the assistant sees each slide\'s final static look (animations and transitions aren\'t shown), and a slide limit applies to very large decks. Very large Word and Excel files are summarised (the first 200 rows of each sheet, and up to ~100 KB of extracted text per file) — the original file is always kept and can be re-downloaded from its chip. Legacy .doc and .ppt files are not supported; save them as .docx, .xlsx, or .pptx first.'
+      : 'Images (PNG, JPEG, GIF, WebP), PDFs, text files (CSV, TXT), and Word (.docx) and Excel (.xlsx) documents — up to 4 MB each. Word and Excel files are read by extracting their text and tables, so the assistant sees the content, not the original layout: Word headers/footers, tracked changes, comments, charts, and embedded images are not extracted, and Excel formulas are read as their last-saved values. Very large files are summarised (the first 200 rows of each sheet, and up to ~100 KB of extracted text per file) — the original file is always kept and can be re-downloaded from its chip. Legacy .doc files are not supported; save them as .docx or PDF first.',
   },
   {
     q: 'Is there a limit to how many apps I can build?',

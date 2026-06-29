@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import {
   Send, ArrowLeft, Sparkles, User, Brain, LayoutTemplate, Code2, Monitor, CheckCircle, X, Paperclip, FileText,
-  FileSpreadsheet, History, Trash2,
+  FileSpreadsheet, Presentation, History, Trash2,
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import LivePreview from '../components/LivePreview'
@@ -14,8 +14,8 @@ import { getAccessToken, getStoredUser } from '../utils/auth'
 import { provisionApp, submitApp, getAppStatus } from '../utils/appRegistryApi'
 import { DEPLOY_ENABLED } from '../config/features'
 import { usePendingAttachments } from '../hooks/usePendingAttachments'
-import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments } from '../utils/attachmentStore'
-import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
+import { assembleApiMessages, buildUserParts, partsToText, attachmentsFromParts, countAttachments, releaseUploadedAttachments } from '../utils/attachmentStore'
+import { ACCEPT_ATTR, validateConversationAttachmentCap, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, DECK_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
 import { openPdf } from '../utils/attachmentViewer'
 import { loadBuilds, newBuild, appendBuilderMessage, getBuild, deleteBuild, patchBuildCode, deriveTitle } from '../utils/builderHistory'
 import { relativeTime } from '../utils/chatHistory'
@@ -255,16 +255,30 @@ export default function BuilderPage() {
       const id = newBuild() // sync UUID; header created on the first append
       buildIdRef.current = id
       seqRef.current = 0
-      const parts = [{ type: 'text', text: initialPrompt }]
       const userSeq = seqRef.current
       seqRef.current += 1
-      const userMsg = { id: 'initial-user', role: 'user', parts, seq: userSeq, createdAt: new Date().toISOString() }
-      setMessages([userMsg])
+      // Files picked at the Generate-App step arrive as pending attachments. Show
+      // the prompt immediately; the attachment parts (office text / deck vision /
+      // image refs) fill in once buildUserParts uploads them — same pipeline as the
+      // refine composer, so the first generation turn can reason over a deck/doc.
+      const pending = location.state?.pendingAttachments || []
+      const provisional = { id: 'initial-user', role: 'user', parts: [{ type: 'text', text: initialPrompt }], seq: userSeq, createdAt: new Date().toISOString() }
+      setMessages([provisional])
       navigate(`/workspace/builder/${id}`, { replace: true })
-      // Persist the seed user turn (creates the header with title + context), then
-      // generate. Generation is the value here, so a persist blip surfaces a toast
-      // but doesn't abort — the assistant turn re-creates the header idempotently.
+      // Build the seed user turn (uploading any attachments), persist it (creates
+      // the header with title + context), then generate. Generation is the value
+      // here, so a persist blip surfaces a toast but doesn't abort; an upload
+      // failure falls back to the prompt text so generation still proceeds.
       ;(async () => {
+        let parts
+        try {
+          parts = await buildUserParts(initialPrompt, pending)
+        } catch (err) {
+          showAttachToast(err?.message || 'Could not attach your file — generating from your description only.')
+          parts = [{ type: 'text', text: initialPrompt }]
+        }
+        const userMsg = { ...provisional, parts }
+        setMessages([userMsg])
         try {
           await appendBuilderMessage(
             id,
@@ -275,7 +289,8 @@ export default function BuilderPage() {
         } catch {
           showAttachToast('Could not save this build. Check your connection.')
         }
-        generate([userMsg])
+        const byteMap = new Map(pending.map((a) => [a.id, a.base64]))
+        generate([userMsg], byteMap)
       })()
     } else {
       setMessages([welcomeMessage()])
@@ -495,6 +510,9 @@ export default function BuilderPage() {
         userSeq === 0 ? { title: deriveTitle(partsToText(parts)), context: contextRef.current } : {},
       )
     } catch {
+      // The uploads succeeded but the turn never landed — release them so the
+      // deck's Files-API PDF + stored bytes don't orphan (best-effort, non-masking).
+      releaseUploadedAttachments(parts)
       showAttachToast('Could not save your message. Check your connection and try again.')
       setMessages(messages)
       seqRef.current = userSeq
@@ -760,6 +778,10 @@ export default function BuilderPage() {
                     ) : OFFICE_MEDIA_TYPES.has(a.mediaType) ? (
                       <span className="flex-shrink-0 text-primary" title={a.name}>
                         {officeFormat(a.mediaType) === 'excel' ? <FileSpreadsheet size={11} /> : <FileText size={11} />}
+                      </span>
+                    ) : DECK_MEDIA_TYPES.has(a.mediaType) ? (
+                      <span className="flex-shrink-0 text-primary" title={a.name}>
+                        <Presentation size={11} />
                       </span>
                     ) : a.mediaType === 'application/pdf' ? (
                       <button

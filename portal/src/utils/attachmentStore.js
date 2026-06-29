@@ -23,14 +23,28 @@
  *                                                          the server-extracted
  *                                                          Markdown (`text`) is sent
  *                                                          as a sticky text block.
+ *   - { type:'file', kind:'deck', attachmentId, key, name, mediaType, size,
+ *       pdfFileId, pageCount }
+ *                                                        — a .pptx: the original
+ *                                                          bytes live in the object
+ *                                                          store (chip re-downloads
+ *                                                          them); the model sees a
+ *                                                          sticky vision `document`
+ *                                                          block referencing the
+ *                                                          INTERNAL converted PDF by
+ *                                                          `pdfFileId` (never the
+ *                                                          .pptx, never base64). The
+ *                                                          PDF is invisible to the
+ *                                                          user — only the .pptx is
+ *                                                          ever surfaced.
  *
  * The send path is download-free for binaries: only the NEWEST turn's image/PDF
  * bytes are inflated (from the in-memory composer via `getNewestBinaryBase64`);
  * historical binaries are dropped; text + office attachments are sticky text
  * (no fetch ever).
  */
-import { TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES } from './attachmentInput.js'
-import { uploadAttachment as defaultUpload } from './attachmentApi.js'
+import { TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, DECK_MEDIA_TYPES } from './attachmentInput.js'
+import { uploadAttachment as defaultUpload, deleteAttachment as defaultDelete } from './attachmentApi.js'
 
 /** Strip characters from a filename that could break out of the `name="..."`
  * attribute (quotes, angle brackets, newlines). Mirrors server `sanitizeFenceName`. */
@@ -87,6 +101,9 @@ export function attachmentsFromParts(parts) {
         d.truncated = p.truncated // chip shows a "truncated" note when set
         if (p.truncationNote) d.truncationNote = p.truncationNote // human-readable detail for the tooltip
       }
+      // Deck: surface ONLY name/kind/mediaType (the .pptx). pdfFileId/pageCount are
+      // internal plumbing and must never reach a user-visible field (invisible
+      // conversion), so they're deliberately omitted from the chip descriptor.
       out.push(d)
     } else if (p?.type === 'text' && p.attachment) {
       out.push({ attachmentId: p.attachment.attachmentId, kind: 'text', name: p.attachment.name, mediaType: p.attachment.mediaType })
@@ -130,6 +147,19 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
         blocks.push({ type: 'text', text: officeFence(p) })
         continue
       }
+      if (p.kind === 'deck') {
+        // STICKY vision document block referencing the INTERNAL Files-API PDF by
+        // file_id (cheap to re-send every turn, cheap to re-read under the cache;
+        // cache_control makes follow-ups ~0.1x). No base64; the user only sees .pptx.
+        if (p.pdfFileId) {
+          blocks.push({
+            type: 'document',
+            source: { type: 'file', file_id: p.pdfFileId },
+            cache_control: { type: 'ephemeral' },
+          })
+        }
+        continue
+      }
       if (!isNewest) continue // historical binary dropped — the model already saw it
       const data = getNewestBinaryBase64(p.attachmentId)
       if (!data) continue // bytes unavailable → skip rather than a null-data block
@@ -147,6 +177,27 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
 }
 
 /**
+ * Anthropic permits at most 4 `cache_control` breakpoints PER REQUEST. Each deck
+ * emits a sticky `document` block that would otherwise carry its own marker, so a
+ * conversation with 5+ decks would exceed the cap and every send would 400. A
+ * single trailing breakpoint caches the whole prefix anyway, so keep
+ * `cache_control` on ONLY the last deck block across the assembled request and
+ * strip it from every earlier one. Mutates the blocks in place (they were just
+ * built here, so this is safe) and returns the same array.
+ */
+function capDeckCacheBreakpoints(apiMessages) {
+  const deckBlocks = []
+  for (const m of apiMessages) {
+    if (!Array.isArray(m.content)) continue
+    for (const b of m.content) {
+      if (b?.type === 'document' && b.source?.type === 'file' && b.cache_control) deckBlocks.push(b)
+    }
+  }
+  for (let i = 0; i < deckBlocks.length - 1; i += 1) delete deckBlocks[i].cache_control
+  return apiMessages
+}
+
+/**
  * Map a conversation's `parts[]` messages to the API `{ role, content }` shape.
  * SYNCHRONOUS and download-free: the newest turn's image/PDF bytes come from
  * `getNewestBinaryBase64(attachmentId)` (the in-memory composer), historical
@@ -154,10 +205,12 @@ function buildContent(parts, isNewest, getNewestBinaryBase64) {
  */
 export function assembleApiMessages(messages, getNewestBinaryBase64 = () => undefined) {
   const lastIdx = messages.length - 1
-  return messages.map((m, i) => ({
-    role: m.role,
-    content: buildContent(m.parts, i === lastIdx, getNewestBinaryBase64),
-  }))
+  return capDeckCacheBreakpoints(
+    messages.map((m, i) => ({
+      role: m.role,
+      content: buildContent(m.parts, i === lastIdx, getNewestBinaryBase64),
+    })),
+  )
 }
 
 /**
@@ -198,6 +251,23 @@ export async function buildUserParts(text, pendingAttachments = [], upload = def
         truncated: ref.truncated,
         truncationNote: ref.truncationNote,
       })
+    } else if (DECK_MEDIA_TYPES.has(a.mediaType)) {
+      // The server converts the deck to a PDF, uploads it to the Files API, and
+      // returns the original-bytes ref PLUS the internal pdfFileId/pageCount. The
+      // deck part carries pdfFileId (→ model, sticky vision block) and the .pptx
+      // ref (→ chip / re-download). No base64 ever reaches the deck send path.
+      const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })
+      parts.push({
+        type: 'file',
+        kind: 'deck',
+        attachmentId: ref.attachmentId,
+        key: ref.key,
+        name: ref.name,
+        mediaType: ref.mediaType,
+        size: ref.size,
+        pdfFileId: ref.pdfFileId,
+        pageCount: ref.pageCount,
+      })
     } else {
       const ref = await upload({ attachmentId: a.id, name: a.name, mediaType: a.mediaType, size: a.size, base64: a.base64 })
       parts.push({ type: 'file', attachmentId: ref.attachmentId, key: ref.key, kind: ref.kind, name: ref.name, mediaType: ref.mediaType, size: ref.size })
@@ -205,4 +275,20 @@ export async function buildUserParts(text, pendingAttachments = [], upload = def
   }
   parts.push({ type: 'text', text })
   return parts
+}
+
+/**
+ * Best-effort release of the attachments `buildUserParts` already uploaded for a
+ * turn that then FAILED to persist/send. Without this, a deck's Files-API PDF +
+ * stored `.pptx` (and any image/PDF object) would orphan server-side. Each delete
+ * is fire-and-forget and swallows its own error, so cleanup can never throw into —
+ * or mask — the original send failure. Decks forward `pdfFileId` so the route also
+ * releases the internal converted PDF.
+ */
+export function releaseUploadedAttachments(parts, del = defaultDelete) {
+  if (!Array.isArray(parts)) return
+  for (const p of parts) {
+    if (p?.type !== 'file' || typeof p.attachmentId !== 'string') continue
+    Promise.resolve(del(p.attachmentId, { pdfFileId: p.kind === 'deck' ? p.pdfFileId : undefined })).catch(() => {})
+  }
 }

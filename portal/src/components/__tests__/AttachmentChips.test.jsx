@@ -66,3 +66,31 @@ describe('AttachmentChips — descriptor branches', () => {
     expect(html).toContain('(Click to download the original.)') // tooltip also points at the full download
   })
 })
+
+describe('AttachmentChips — deck (.pptx) chip', () => {
+  const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  const deck = { attachmentId: 'd1', kind: 'deck', name: 'q3.pptx', mediaType: PPTX_TYPE }
+
+  it('renders a clickable chip with the .pptx filename and the Presentation icon (no <img>)', () => {
+    const html = renderToStaticMarkup(<AttachmentChips attachments={[deck]} />)
+    expect(html).toContain('q3.pptx')
+    expect(html).toContain('<button')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('lucide-presentation') // not file-text / file-spreadsheet
+    expect(html).not.toContain('lucide-file-spreadsheet')
+    expect(html).not.toContain('lucide-file-text')
+  })
+
+  it('never reveals the PDF conversion in the chip (invisible conversion)', () => {
+    const html = renderToStaticMarkup(<AttachmentChips attachments={[deck]} />)
+    expect(html.toLowerCase()).not.toContain('pdf')
+    expect(html).toContain('Download q3.pptx') // the tooltip is about the .pptx
+  })
+
+  it('office (word/excel) chips are unchanged — they do NOT use the Presentation icon', () => {
+    const html = renderToStaticMarkup(
+      <AttachmentChips attachments={[{ attachmentId: 'w1', kind: 'office', format: 'word', name: 'plan.docx', mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }]} />,
+    )
+    expect(html).not.toContain('lucide-presentation')
+  })
+})

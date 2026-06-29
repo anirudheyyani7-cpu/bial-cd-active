@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, BarChart3, Palette, Sparkles, LayoutGrid, ChevronDown, ShieldAlert, X, FileUp, MessageSquare, Hammer } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { Users, BarChart3, Palette, Sparkles, LayoutGrid, ChevronDown, ShieldAlert, X, Paperclip, FileText, FileSpreadsheet, Presentation, MessageSquare, Hammer } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import { validatePrompt } from '../utils/promptGuardrails'
+import { usePendingAttachments } from '../hooks/usePendingAttachments'
+import { ACCEPT_ATTR, TEXT_MEDIA_TYPES, OFFICE_MEDIA_TYPES, DECK_MEDIA_TYPES, officeFormat } from '../utils/attachmentInput'
 
 const THEMES = [
   { id: 'bial', name: 'Bangalore Airport Theme', subtitle: 'Official BIAL brand colors and typography' },
@@ -87,9 +88,13 @@ export default function SandboxPage() {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
   const [theme, setTheme] = useState('bial')
-  const [uploadedFiles, setUploadedFiles] = useState([])
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
+  // Shared chat-attachment composer — same allowlist + validation as Plan/Builder
+  // chat, so the Generate-App step accepts images, PDF, Word, Excel, and (flag on)
+  // PowerPoint, not just spreadsheets. The picked files ride to the builder as
+  // pending attachments and feed the FIRST generation turn via buildUserParts.
+  const { pendingAttachments, handleFileSelect, removePending, attachToast } = usePendingAttachments()
 
   const [mode, setMode] = useState('build')
   const [guardRailModal, setGuardRailModal] = useState(null)
@@ -100,54 +105,6 @@ export default function SandboxPage() {
     setTimeout(() => setSandboxToast(null), 3000)
   }
 
-  const handleFileSelect = (e) => {
-    const incoming = Array.from(e.target.files || [])
-    e.target.value = ''
-
-    const ALLOWED_EXTS = ['xlsx', 'xls', 'csv', 'tsv']
-    const MAX_SIZE = 10 * 1024 * 1024
-    const MAX_FILES = 5
-    const MAX_CONTENT_CHARS = 8000
-
-    for (const file of incoming) {
-      const ext = file.name.split('.').pop().toLowerCase()
-      if (!ALLOWED_EXTS.includes(ext)) {
-        showSandboxToast(`"${file.name}" is not supported. Upload .xlsx, .xls, .csv, or .tsv files.`)
-        return
-      }
-      if (file.size > MAX_SIZE) {
-        showSandboxToast(`"${file.name}" exceeds the 10 MB limit.`)
-        return
-      }
-    }
-
-    setUploadedFiles((prev) => {
-      if (prev.length + incoming.length > MAX_FILES) {
-        showSandboxToast(`You can upload at most ${MAX_FILES} files.`)
-        return prev
-      }
-      incoming.forEach((file) => {
-        const reader = new FileReader()
-        reader.onload = (ev) => {
-          const data = new Uint8Array(ev.target.result)
-          const workbook = XLSX.read(data, { type: 'array' })
-          const sheet = workbook.Sheets[workbook.SheetNames[0]]
-          let content = XLSX.utils.sheet_to_csv(sheet)
-          if (content.length > MAX_CONTENT_CHARS) {
-            content = content.slice(0, MAX_CONTENT_CHARS) + '\n[... truncated]'
-          }
-          setUploadedFiles((cur) => [...cur, { name: file.name, content }])
-        }
-        reader.readAsArrayBuffer(file)
-      })
-      return prev
-    })
-  }
-
-  const handleRemoveFile = (index) => {
-    setUploadedFiles((prev) => prev.filter((_, i) => i !== index))
-  }
-
   const handleGenerate = () => {
     if (!prompt.trim()) return
     const guardResult = validatePrompt(prompt)
@@ -155,7 +112,9 @@ export default function SandboxPage() {
       setGuardRailModal(guardResult)
       return
     }
-    navigate('/workspace/builder', { state: { prompt, theme, uploadedFiles } })
+    // Carry the picked files (in-memory base64) to the builder via router state;
+    // the first generation turn uploads + sends them through buildUserParts.
+    navigate('/workspace/builder', { state: { prompt, theme, pendingAttachments } })
   }
 
   const handleChat = () => {
@@ -252,20 +211,20 @@ export default function SandboxPage() {
                   type="file"
                   className="hidden"
                   multiple
-                  accept=".xlsx,.xls,.csv,.tsv"
+                  accept={ACCEPT_ATTR}
                   onChange={handleFileSelect}
                 />
 
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className={`flex items-center gap-1.5 text-xs font-worksans font-medium border rounded-lg px-3 py-2 transition whitespace-nowrap flex-shrink-0 ${
-                    uploadedFiles.length > 0
+                    pendingAttachments.length > 0
                       ? 'bg-primary/5 border-primary text-primary'
                       : 'bg-white border-bial-border text-neutral hover:border-primary hover:text-primary'
                   }`}
                 >
-                  <FileUp size={12} />
-                  {uploadedFiles.length > 0 ? `${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}` : 'Upload File'}
+                  <Paperclip size={12} />
+                  {pendingAttachments.length > 0 ? `${pendingAttachments.length} file${pendingAttachments.length > 1 ? 's' : ''}` : 'Upload File'}
                 </button>
 
                 <button
@@ -290,13 +249,21 @@ export default function SandboxPage() {
               </div>
             )}
 
-            {mode === 'build' && uploadedFiles.length > 0 && (
+            {mode === 'build' && pendingAttachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {uploadedFiles.map((f, i) => (
-                  <span key={i} className="flex items-center gap-1 text-[10px] font-medium bg-primary/5 text-primary border border-primary/30 rounded-md px-2 py-1">
-                    <FileUp size={9} />
-                    <span className="max-w-[160px] truncate">{f.name}</span>
-                    <button onClick={() => handleRemoveFile(i)} className="ml-0.5 hover:text-danger transition">
+                {pendingAttachments.map((a) => (
+                  <span key={a.id} className="flex items-center gap-1 text-[10px] font-medium bg-primary/5 text-primary border border-primary/30 rounded-md px-2 py-1">
+                    {TEXT_MEDIA_TYPES.has(a.mediaType) ? (
+                      a.mediaType === 'text/csv' ? <FileSpreadsheet size={9} /> : <FileText size={9} />
+                    ) : OFFICE_MEDIA_TYPES.has(a.mediaType) ? (
+                      officeFormat(a.mediaType) === 'excel' ? <FileSpreadsheet size={9} /> : <FileText size={9} />
+                    ) : DECK_MEDIA_TYPES.has(a.mediaType) ? (
+                      <Presentation size={9} />
+                    ) : (
+                      <FileText size={9} />
+                    )}
+                    <span className="max-w-[160px] truncate">{a.name}</span>
+                    <button onClick={() => removePending(a.id)} className="ml-0.5 hover:text-danger transition">
                       <X size={9} />
                     </button>
                   </span>
@@ -375,10 +342,10 @@ export default function SandboxPage() {
         </div>
       )}
 
-      {/* Sandbox toast */}
-      {sandboxToast && (
+      {/* Sandbox toast (guardrail / save errors) + attachment validation toast */}
+      {(attachToast || sandboxToast) && (
         <div className="fixed bottom-6 right-6 bg-tertiary text-white text-xs font-semibold px-4 py-3 rounded-xl shadow-xl z-50 max-w-xs">
-          {sandboxToast}
+          {attachToast || sandboxToast}
         </div>
       )}
     </div>

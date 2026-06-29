@@ -13,6 +13,7 @@
  */
 import { Router } from 'express'
 import { TEXT_BLOCK_MAX_CHARS } from './message-content.js'
+import { createAnthropicFiles } from './anthropic-files.js'
 
 const KINDS = new Set(['planning', 'assistant', 'builder'])
 // Client-minted ids are crypto.randomUUID(); bound the shape defensively.
@@ -27,7 +28,9 @@ function validateParts(parts) {
       if (Buffer.byteLength(p.text, 'utf8') > TEXT_BLOCK_MAX_CHARS) return 'a text part is too large'
     } else if (p.type === 'file') {
       if (typeof p.attachmentId !== 'string' || !ID_RE.test(p.attachmentId)) return 'a file part has an invalid attachmentId'
-      if (p.kind !== 'image' && p.kind !== 'document' && p.kind !== 'office') return 'a file part has an invalid kind'
+      if (p.kind !== 'image' && p.kind !== 'document' && p.kind !== 'office' && p.kind !== 'deck') {
+        return 'a file part has an invalid kind'
+      }
       if (typeof p.mediaType !== 'string') return 'a file part has an invalid mediaType'
       // Office parts persist their extracted Markdown (re-sent to the model every
       // turn). Bound it like a text part so a tampered/oversized payload can't
@@ -38,6 +41,17 @@ function validateParts(parts) {
         // Optional human-readable truncation summary (drives the chip tooltip); bound it.
         if (p.truncationNote !== undefined && (typeof p.truncationNote !== 'string' || p.truncationNote.length > 1000)) {
           return 'an office file part has an invalid truncation note'
+        }
+      }
+      // Deck parts carry an INTERNAL Files-API file_id (the converted PDF) + page
+      // count; they emit a vision document block, never text. The .pptx original is
+      // the only user-facing artifact. Bound the file_id defensively.
+      if (p.kind === 'deck') {
+        if (typeof p.pdfFileId !== 'string' || p.pdfFileId.length === 0 || p.pdfFileId.length > 256) {
+          return 'a deck file part has an invalid pdfFileId'
+        }
+        if (p.pageCount !== undefined && (!Number.isInteger(p.pageCount) || p.pageCount < 0)) {
+          return 'a deck file part has an invalid pageCount'
         }
       }
     } else {
@@ -73,7 +87,12 @@ const safe = (fn) => async (req, res) => {
   }
 }
 
-export function createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }) {
+export function createConversationsRouter({
+  conversationsRepo,
+  messagesRepo,
+  attachmentsRepo,
+  anthropicFiles = createAnthropicFiles(null),
+}) {
   const router = Router()
 
   // List the caller's conversation headers, optionally filtered by kind.
@@ -188,12 +207,23 @@ export function createConversationsRouter({ conversationsRepo, messagesRepo, att
       if (!header) return res.status(404).json({ error: { message: 'Conversation not found.' } })
 
       const messages = await messagesRepo.listByConversation(id, username)
-      const fileRefs = messages.flatMap((m) =>
-        (m.parts || [])
-          .filter((p) => p?.type === 'file')
-          .map((p) => ({ attachmentId: p.attachmentId, size: p.size })),
+      const parts = messages.flatMap((m) => (m.parts || []).filter((p) => p?.type === 'file'))
+      const fileRefs = parts.map((p) => ({ attachmentId: p.attachmentId, size: p.size }))
+      // Deck parts also hold an internal Files-API PDF (file_id) that must be
+      // released, or the org-scoped object leaks (files persist until deleted).
+      const deckFileIds = new Set(
+        parts.filter((p) => p.kind === 'deck' && typeof p.pdfFileId === 'string').map((p) => p.pdfFileId),
       )
+
       await attachmentsRepo.deleteByConversation(fileRefs, username)
+      // Best-effort: a failure (e.g. already gone) logs but never blocks the delete.
+      for (const fileId of deckFileIds) {
+        try {
+          await anthropicFiles.deleteFile(fileId)
+        } catch (err) {
+          console.error('deck Files-API cleanup failed:', err.message)
+        }
+      }
       await messagesRepo.deleteByConversation(id, username)
       await conversationsRepo.deleteHeader(id, username)
       res.json({ ok: true })

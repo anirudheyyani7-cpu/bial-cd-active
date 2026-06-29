@@ -5,6 +5,7 @@ import {
   countAttachments,
   assembleApiMessages,
   buildUserParts,
+  releaseUploadedAttachments,
   decodeBase64Text,
 } from '../attachmentStore.js'
 
@@ -116,6 +117,80 @@ describe('office parts (hybrid: text → model, ref → chip)', () => {
   })
 })
 
+const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+const deckPart = (extra = {}) => ({
+  type: 'file', kind: 'deck', mediaType: PPTX_TYPE, attachmentId: 'd1', key: 'att/u/d1',
+  name: 'q3.pptx', size: 1234, pdfFileId: 'file_d1', pageCount: 12, ...extra,
+})
+// Must match server message-content.test.js EXPECTED_DECK_BLOCK exactly (parity).
+const EXPECTED_DECK_BLOCK = {
+  type: 'document', source: { type: 'file', file_id: 'file_d1' }, cache_control: { type: 'ephemeral' },
+}
+
+describe('deck parts (.pptx → sticky vision document block; PDF invisible)', () => {
+  it('attachmentsFromParts surfaces ONLY the .pptx (name/kind/mediaType), never pdfFileId/pageCount', () => {
+    const [chip] = attachmentsFromParts([deckPart(), { type: 'text', text: 'caption' }])
+    expect(chip).toEqual({ attachmentId: 'd1', kind: 'deck', name: 'q3.pptx', mediaType: PPTX_TYPE })
+    expect(chip).not.toHaveProperty('pdfFileId')
+    expect(chip).not.toHaveProperty('pageCount')
+  })
+
+  it('assembles a STICKY document block (file source + cache_control) on EVERY turn, never base64', () => {
+    const messages = [
+      { role: 'user', parts: [deckPart(), { type: 'text', text: 'turn 1' }] },
+      { role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', parts: [{ type: 'text', text: 'turn 2 about the same deck' }] },
+    ]
+    const lookups = []
+    const out = assembleApiMessages(messages, (id) => {
+      lookups.push(id)
+      return 'BYTES'
+    })
+    // Turn 1 is NOT the newest, yet the deck block is present (sticky), file-source.
+    expect(out[0].content[0]).toEqual(EXPECTED_DECK_BLOCK)
+    expect(out[0].content[1]).toEqual({ type: 'text', text: 'turn 1' })
+    expect(lookups).toEqual([]) // download-free: no byte lookup for a deck (unlike image/PDF)
+  })
+
+  it('buildUserParts builds a deck part carrying pdfFileId/pageCount (no base64), prose last', async () => {
+    const upload = vi.fn(async (a) => ({
+      attachmentId: a.attachmentId, key: `att/u/${a.attachmentId}`, kind: 'deck',
+      name: a.name, mediaType: a.mediaType, size: a.size, pdfFileId: 'file_new', pageCount: 7,
+    }))
+    const pending = [{ id: 'p1', name: 'deck.pptx', mediaType: PPTX_TYPE, size: 2048, base64: 'UEsDBA==' }]
+    const parts = await buildUserParts('summarize', pending, upload)
+    expect(parts[0]).toEqual({
+      type: 'file', kind: 'deck', attachmentId: 'p1', key: 'att/u/p1',
+      name: 'deck.pptx', mediaType: PPTX_TYPE, size: 2048, pdfFileId: 'file_new', pageCount: 7,
+    })
+    expect(parts[0]).not.toHaveProperty('base64')
+    expect(parts[1]).toEqual({ type: 'text', text: 'summarize' })
+    expect(upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('omits the block (no broken document) when a deck part has no pdfFileId', () => {
+    const out = assembleApiMessages([{ role: 'user', parts: [deckPart({ pdfFileId: undefined }), { type: 'text', text: 'q' }] }])
+    expect(out[0]).toEqual({ role: 'user', content: 'q' }) // no blocks → plain string
+  })
+
+  it('keeps cache_control on ONLY the last deck block with 5 decks (≤4 breakpoints/request)', () => {
+    // 5 separate turns, each carrying a deck → 5 sticky document blocks. Anthropic
+    // allows ≤4 cache_control markers per request, so only the LAST may keep one.
+    const messages = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user',
+      parts: [deckPart({ attachmentId: `d${i}`, pdfFileId: `file_${i}` }), { type: 'text', text: `turn ${i}` }],
+    }))
+    const out = assembleApiMessages(messages)
+    const marked = out.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.cache_control)
+    expect(marked).toHaveLength(1)
+    expect(marked[0].source.file_id).toBe('file_4') // the last deck block only
+  })
+
+  it('countAttachments counts a deck part toward the per-conversation cap', () => {
+    expect(countAttachments([{ role: 'user', parts: [deckPart(), { type: 'text', text: 'hi' }] }])).toBe(1)
+  })
+})
+
 describe('countAttachments', () => {
   it('sums file + inline-text attachment parts across turns', () => {
     const messages = [
@@ -200,5 +275,34 @@ describe('buildUserParts', () => {
       throw new Error('cap hit')
     })
     await expect(buildUserParts('x', [{ id: 'i', name: 'p.png', mediaType: 'image/png', size: 1, base64: 'AA' }], upload)).rejects.toThrow('cap hit')
+  })
+})
+
+describe('releaseUploadedAttachments', () => {
+  it('deletes every file part (passing pdfFileId only for decks) and ignores non-file parts', () => {
+    const del = vi.fn(async () => {})
+    const parts = [
+      deckPart({ attachmentId: 'd1', pdfFileId: 'file_d1' }),
+      imagePart('img1'),
+      { type: 'text', text: 'prose' },
+      textAttachmentPart('r.csv', 'a,b'),
+    ]
+    releaseUploadedAttachments(parts, del)
+    expect(del).toHaveBeenCalledTimes(2) // deck + image; text parts skipped
+    expect(del).toHaveBeenCalledWith('d1', { pdfFileId: 'file_d1' })
+    expect(del).toHaveBeenCalledWith('img1', { pdfFileId: undefined })
+  })
+
+  it('swallows a delete rejection (best-effort, never throws into the send path)', () => {
+    const del = vi.fn(async () => {
+      throw new Error('gone')
+    })
+    expect(() => releaseUploadedAttachments([imagePart('x')], del)).not.toThrow()
+  })
+
+  it('is a no-op for a non-array', () => {
+    const del = vi.fn()
+    releaseUploadedAttachments(null, del)
+    expect(del).not.toHaveBeenCalled()
   })
 })

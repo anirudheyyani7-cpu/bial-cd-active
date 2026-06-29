@@ -13,6 +13,9 @@ import { validateAttachmentBytes, validateOfficeBytes, sniffMediaType, ATTACHMEN
 import { OFFICE_MEDIA_TYPES, extractOffice, OfficeExtractError } from './office-extract.js'
 import { AttachmentCapError } from './attachments-repo.js'
 import { isNotFound } from './object-store.js'
+import { deckAttachmentsEnabled, PPTX_MEDIA_TYPE } from './deck-config.js'
+import { convertDeckToPdf, DeckConvertError } from './deck-convert.js'
+import { createAnthropicFiles, AnthropicFilesError } from './anthropic-files.js'
 
 // Client-minted attachment ids (crypto.randomUUID); it becomes part of the
 // object key, so bound it to a safe token (no '/', no '..').
@@ -45,7 +48,10 @@ const safe = (fn) => async (req, res) => {
   }
 }
 
-export function createAttachmentsRouter({ attachmentsRepo }, { limiter = makeAttachmentLimiter() } = {}) {
+export function createAttachmentsRouter(
+  { attachmentsRepo, anthropicFiles = createAnthropicFiles(null), convertDeck = convertDeckToPdf },
+  { limiter = makeAttachmentLimiter() } = {},
+) {
   const router = Router()
 
   // Upload one image/PDF. Text is never uploaded (it travels inline as a text part).
@@ -109,6 +115,73 @@ export function createAttachmentsRouter({ attachmentsRepo }, { limiter = makeAtt
         }
       }
 
+      // Deck (.pptx): a VISUAL medium, so NOT text-extracted like office. Render to
+      // a PDF server-side, upload that PDF to the Files API (vision), and store the
+      // ORIGINAL .pptx for re-download. The PDF is INTERNAL — only the file_id is
+      // kept; every user-facing surface shows the .pptx (see plan user story).
+      if (mediaType === PPTX_MEDIA_TYPE) {
+        if (!deckAttachmentsEnabled()) {
+          return res.status(501).json({ error: { message: "PowerPoint attachments aren't enabled." } })
+        }
+        if (typeof base64 !== 'string' || base64.length === 0) {
+          return res.status(400).json({ error: { message: 'Invalid attachment: missing bytes.' } })
+        }
+        const buffer = Buffer.from(base64, 'base64')
+        if (buffer.length > ATTACHMENT_MAX_BYTES) {
+          return res.status(413).json({ error: { message: 'Attachment is too large (max 4 MB).' } })
+        }
+
+        // 1. Convert FIRST — convertDeck validates structure + zip-bomb + page cap,
+        //    so a bad/oversized deck is rejected WITHOUT storing anything (no orphan).
+        let converted
+        try {
+          converted = await convertDeck(buffer, { name: typeof name === 'string' ? name : '' })
+        } catch (e) {
+          if (e instanceof DeckConvertError) {
+            return res.status(e.status).json({ error: { message: e.message, code: e.code } })
+          }
+          throw e
+        }
+
+        // 2. Store the ORIGINAL .pptx (the only user-facing artifact).
+        let ref
+        try {
+          ref = await attachmentsRepo.putBytes({
+            attachmentId,
+            username,
+            mediaType,
+            size: buffer.length,
+            name: typeof name === 'string' ? name : '',
+            buffer,
+          })
+        } catch (e) {
+          if (e instanceof AttachmentCapError) {
+            return res.status(413).json({ error: { message: e.message, code: e.code } })
+          }
+          throw e
+        }
+
+        // 3. Upload the derived PDF to the Files API (internal). On failure, roll back
+        //    the stored original so we never leave a deck with no file_id.
+        let fileId
+        try {
+          const pdfName = (typeof name === 'string' && name ? name : 'deck').replace(/\.pptx$/i, '')
+          ;({ fileId } = await anthropicFiles.uploadPdf(converted.pdf, pdfName))
+        } catch (e) {
+          await attachmentsRepo
+            .deleteBytes(attachmentId, username, buffer.length)
+            .catch((cleanupErr) => console.error('deck rollback failed:', cleanupErr.message))
+          if (e instanceof AnthropicFilesError) {
+            return res.status(e.status).json({ error: { message: e.message, code: e.code } })
+          }
+          throw e
+        }
+
+        return res.status(201).json({
+          attachment: { ...ref, kind: 'deck', pdfFileId: fileId, pageCount: converted.pageCount, truncated: false },
+        })
+      }
+
       const err = validateAttachmentBytes({ mediaType, base64 })
       if (err) return res.status(400).json({ error: { message: err } })
 
@@ -159,6 +232,11 @@ export function createAttachmentsRouter({ attachmentsRepo }, { limiter = makeAtt
   // Delete one attachment object from the caller's namespace. Size is unknown
   // here, so the counter decrement is skipped (bounded drift; the conversation-
   // delete path decrements precisely from the file-part sizes).
+  //
+  // For a deck, the bare route can't know the internal Files-API file_id, so it
+  // accepts the same bounded drift — UNLESS the client passes `?pdfFileId=...`
+  // (the composer has it when removing a still-pending deck), in which case we
+  // best-effort release it too. The conversation-delete path is the precise sweep.
   router.delete(
     '/:id',
     limiter,
@@ -166,6 +244,14 @@ export function createAttachmentsRouter({ attachmentsRepo }, { limiter = makeAtt
       const { id } = req.params
       if (!ID_RE.test(id)) return res.status(400).json({ error: { message: 'Invalid attachment id.' } })
       await attachmentsRepo.deleteBytes(id, req.user.sub)
+      const pdfFileId = req.query?.pdfFileId || req.body?.pdfFileId
+      if (typeof pdfFileId === 'string' && pdfFileId && pdfFileId.length <= 256) {
+        try {
+          await anthropicFiles.deleteFile(pdfFileId)
+        } catch (e) {
+          console.error('deck Files-API cleanup failed:', e.message)
+        }
+      }
       res.json({ ok: true })
     }),
   )

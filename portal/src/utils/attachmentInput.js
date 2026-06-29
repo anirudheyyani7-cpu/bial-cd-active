@@ -4,6 +4,7 @@
  * composer logic is testable without a DOM render. The real trust boundary is
  * the server (media-type allowlist + magic-byte check); these checks are UX.
  */
+import { DECK_ATTACHMENTS_ENABLED } from '../config/features.js'
 
 // The two OOXML (Office) media types. Word/Excel are uploaded like image/PDF
 // binaries, but the SERVER extracts them to Markdown and the model only ever sees
@@ -13,22 +14,38 @@ export const WORD_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.wo
 export const EXCEL_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 export const OFFICE_MEDIA_TYPES = new Set([WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE])
 
+// PowerPoint (.pptx). A deck is a VISUAL medium, so unlike Word/Excel it is NOT
+// text-extracted: the server renders it to a PDF and the model reads that with
+// vision. The original .pptx is the ONLY user-facing artifact (stored for
+// re-download); the conversion is invisible to the user. See attachmentStore
+// (deck part), server/deck-convert.js, and the plan's "invisible" user story.
+export const PPTX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+export const DECK_MEDIA_TYPES = new Set([PPTX_MEDIA_TYPE])
+
 // Native Anthropic image/document types, inline text files (CSV/plain-text), and
 // Office docs (docx/xlsx — server-extracted to text). Text files aren't native
 // documents — they travel as fenced inline text parts (see
 // attachmentStore.buildUserParts), but they share this allowlist so the validator
 // and OS file picker accept them.
+// PowerPoint (.pptx) is OFFERED only when the deck feature is on (mirrors the
+// DEPLOY_ENABLED gate). resolveMediaType + the legacy-.ppt reject below are
+// flag-independent; the SERVER is the authoritative gate (a clean 501 when off).
 export const ALLOWED_MEDIA_TYPES = [
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
   'text/csv', 'text/plain', WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE,
+  ...(DECK_ATTACHMENTS_ENABLED ? [PPTX_MEDIA_TYPE] : []),
 ]
 // Text media types are special-cased everywhere binary attachments are: inlined
 // as text blocks (sticky across turns), sized by bytes in the context estimate,
 // and previewed as a labelled icon (no thumbnail).
 export const TEXT_MEDIA_TYPES = new Set(['text/csv', 'text/plain'])
-// Extension tokens let the OS picker show .csv/.txt/.docx/.xlsx even when the OS
-// reports an inconsistent or empty MIME for them (see resolveMediaType).
-export const ACCEPT_ATTR = [...ALLOWED_MEDIA_TYPES, '.csv', '.txt', '.docx', '.xlsx'].join(',')
+// Extension tokens let the OS picker show .csv/.txt/.docx/.xlsx (+ .pptx when the
+// deck feature is on) even when the OS reports an inconsistent/empty MIME (see
+// resolveMediaType).
+export const ACCEPT_ATTR = [
+  ...ALLOWED_MEDIA_TYPES, '.csv', '.txt', '.docx', '.xlsx',
+  ...(DECK_ATTACHMENTS_ENABLED ? ['.pptx'] : []),
+].join(',')
 
 /** `'word' | 'excel' | null` for a media type — drives the Office chip icon. */
 export function officeFormat(mediaType) {
@@ -54,6 +71,11 @@ export const MAX_ATTACHMENTS_PER_CONVERSATION = 20
 // failure server-side.
 export const LEGACY_DOC_REJECT_MSG = 'Legacy .doc files aren\'t supported — please save as .docx (or PDF) and re-upload.'
 
+// Legacy `.ppt` (binary PowerPoint 97-2003) is NOT supported — only the OOXML
+// `.pptx`. Clear message rather than a confusing server-side failure. (No "PDF"
+// hint here: the user must never learn we convert decks to PDF internally.)
+export const LEGACY_PPT_REJECT_MSG = 'Legacy .ppt files aren\'t supported — please save as .pptx and re-upload.'
+
 /**
  * Canonicalize a file's media type by extension first. Browsers/OSes report
  * Office and text types inconsistently (`.csv` as `text/csv`,
@@ -68,6 +90,7 @@ export function resolveMediaType(file) {
   if (/\.txt$/i.test(name)) return 'text/plain'
   if (/\.docx$/i.test(name)) return WORD_MEDIA_TYPE
   if (/\.xlsx$/i.test(name)) return EXCEL_MEDIA_TYPE
+  if (/\.pptx$/i.test(name)) return PPTX_MEDIA_TYPE
   return file.type
 }
 
@@ -97,9 +120,16 @@ export function validateAttachmentFiles(incoming, currentCount = 0, existingText
     if (/\.doc$/i.test(name) || (file.type === 'application/msword' && !/\.(docx|xlsx)$/i.test(name))) {
       return { error: LEGACY_DOC_REJECT_MSG }
     }
+    // Legacy binary PowerPoint (.ppt) — not the OOXML .pptx. The extension is
+    // authoritative: a real .pptx the OS mislabels as `application/vnd.ms-powerpoint`
+    // must NOT be rejected (extension wins). `\.ppt$` never matches `.pptx`.
+    if (/\.ppt$/i.test(name) || (file.type === 'application/vnd.ms-powerpoint' && !/\.pptx$/i.test(name))) {
+      return { error: LEGACY_PPT_REJECT_MSG }
+    }
     const mediaType = resolveMediaType(file)
     if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) {
-      return { error: `"${file.name}" isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, a Word (.docx) or Excel (.xlsx) file, or a text file (CSV, TXT).` }
+      const ppt = DECK_ATTACHMENTS_ENABLED ? ', a PowerPoint (.pptx)' : ''
+      return { error: `"${file.name}" isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, a Word (.docx) or Excel (.xlsx)${ppt} file, or a text file (CSV, TXT).` }
     }
     const isTextFile = TEXT_MEDIA_TYPES.has(mediaType)
     if (isTextFile) {

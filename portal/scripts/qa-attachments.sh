@@ -52,6 +52,16 @@ zw('xlsx', {
  'xl/_rels/workbook.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
  'xl/worksheets/sheet1.xml':'<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Region</t></is></c><c r="B1" t="inlineStr"><is><t>Sales</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>North</t></is></c><c r="B2"><v>100</v></c></row></sheetData></worksheet>',
 })
+# Minimal-but-renderable .pptx (LibreOffice/Gotenberg accepts this without a slide
+# master): presentation + one slide carrying a single text shape. The deck is NOT
+# text-extracted — it is rendered to PDF — so the slide just needs to convert cleanly.
+zw('pptx', {
+ '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>',
+ '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>',
+ 'ppt/presentation.xml':'<?xml version="1.0"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>',
+ 'ppt/_rels/presentation.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>',
+ 'ppt/slides/slide1.xml':'<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="838200" y="838200"/><a:ext cx="7000000" cy="2000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en-US" sz="2400"/><a:t>QA Deck Slide One</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+})
 PY
 
 login(){ curl -s -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
@@ -99,6 +109,7 @@ done
 echo; echo "── Office (.docx/.xlsx): upload (201) → kind=office, format, extracted text → download round-trip ──"
 WORD_MT=application/vnd.openxmlformats-officedocument.wordprocessingml.document
 XLSX_MT=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+PPTX_MT=application/vnd.openxmlformats-officedocument.presentationml.presentation
 ofield(){ python3 -c 'import sys,json;print(json.load(open("'"$BODY"'"))["attachment"].get("'"$1"'",""))' 2>/dev/null; }
 for f in docx xlsx; do
   case $f in
@@ -116,6 +127,25 @@ for f in docx xlsx; do
   else no "$f upload" "code=$CODE msg=$(msg)"; fi
 done
 
+echo; echo "── Deck (.pptx): upload (201) → kind=deck, pdfFileId, pageCount → download ORIGINAL .pptx ──"
+# Requires the deck feature ON: DECK_ATTACHMENTS_ENABLED=true + a reachable GOTENBERG_URL
+# (server converts the deck to PDF and uploads it to the Files API on ingest). The
+# original .pptx is what is stored/returned — the PDF is an internal artifact and must
+# never surface to the user.
+aid=$(uuid); mkbody "$aid" "$PPTX_MT" pptx; UP "$UT"
+if [ "$CODE" = 201 ]; then
+  k=$(ofield kind); pid=$(ofield pdfFileId); pc=$(ofield pageCount)
+  { [ "$k" = deck ] && [ -n "$pid" ] && [ "${pc:-0}" -ge 1 ]; } \
+    && ok "pptx upload 201, kind=deck, pdfFileId set, pageCount=$pc" \
+    || no "pptx deck descriptor" "kind=$k pdfFileId=$pid pageCount=$pc"
+  CREATED+=("$aid")
+  g=$(GET "$aid" /tmp/qa_dl); magic=$(head -c2 /tmp/qa_dl)
+  src=$(shasum -a256 "$FX/pptx"|cut -d' ' -f1); dl=$(shasum -a256 /tmp/qa_dl|cut -d' ' -f1)
+  { [ "$g" = 200 ] && [ "$src" = "$dl" ] && [ "$magic" = PK ]; } \
+    && ok "pptx download 200, ORIGINAL .pptx bytes match (PK zip, not %PDF)" \
+    || no "pptx download" "code=$g sha_match=$([ "$src" = "$dl" ]&&echo y||echo n) magic=$magic"
+else no "pptx upload" "code=$CODE msg=$(msg)  (deck feature enabled + gotenberg reachable?)"; fi
+
 echo; echo "── Rejections: correct status + message ──"
 chk(){ # name expected_code expected_substr
   if [ "$CODE" = "$2" ] && echo "$(msg)" | grep -qF "$3"; then ok "$1 → $2 \"$(msg)\""
@@ -126,6 +156,7 @@ aid=$(uuid); mkbody "$aid" "image/bmp" bmp;         UP "$UT"; chk "image/bmp uns
 aid=$(uuid); mkbody "$aid" "application/zip" zip;   UP "$UT"; chk "application/zip unsupported" 400 "Unsupported attachment type: application/zip"
 aid=$(uuid); mkbody "$aid" "$WORD_MT" zip;          UP "$UT"; chk "zip mislabelled as .docx"   400 "Not a valid Word"
 aid=$(uuid); mkbody "$aid" "$XLSX_MT" png;          UP "$UT"; chk "png mislabelled as .xlsx"   400 "Not a valid Office file"
+aid=$(uuid); mkbody "$aid" "$PPTX_MT" docx;         UP "$UT"; chk "docx mislabelled as .pptx"  415 "Not a valid PowerPoint (.pptx) file."
 aid=$(uuid); mkbody "$aid" "image/png" gif;         UP "$UT"; chk "magic mismatch (png≠gif)"  400 "do not match the declared type image/png"
 aid=$(uuid); mkbody "$aid" "image/webp" wave;       UP "$UT"; chk "webp RIFF but not WEBP"     400 "do not match the declared type image/webp"
 aid=$(uuid); mkbody "$aid" "image/png" "";          UP "$UT"; chk "empty bytes"               400 "missing bytes"

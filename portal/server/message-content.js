@@ -127,6 +127,23 @@ export function validateAttachments(messages) {
       }
       if (block?.type !== 'image' && block?.type !== 'document') continue
       const src = block.source
+      // Deck: a `document` block referencing a Files-API `file_id` (the internal
+      // converted PDF). There are no bytes to magic-check — validate the reference
+      // shape and an optional ephemeral cache_control, then accept.
+      if (block.type === 'document' && src?.type === 'file') {
+        if (typeof src.file_id !== 'string' || src.file_id.length === 0 || src.file_id.length > 256) {
+          return 'Invalid attachment: malformed document file reference.'
+        }
+        if (
+          block.cache_control !== undefined &&
+          (block.cache_control === null ||
+            typeof block.cache_control !== 'object' ||
+            block.cache_control.type !== 'ephemeral')
+        ) {
+          return 'Invalid attachment: malformed cache control.'
+        }
+        continue
+      }
       if (!src || src.type !== 'base64' || typeof src.data !== 'string') {
         return 'Invalid attachment: malformed source.'
       }
@@ -188,6 +205,9 @@ export function officeFence(part) {
  * - Office file parts are STICKY too, but as a TEXT block carrying the extracted
  *   Markdown (fenced as data) — the original bytes are NEVER inlined to the model
  *   (Decisions 2, 3, 8). Emitted on every turn, regardless of `binary`.
+ * - Deck (.pptx) file parts are STICKY as a vision `document` block referencing the
+ *   internal Files-API PDF by `file_id` (+ `cache_control`); emitted every turn,
+ *   regardless of `binary`. No base64; the user-facing artifact is the .pptx.
  * - Image/PDF file parts are emitted ONLY when `binary` is true (the newest
  *   turn), with bytes supplied by `getBase64(part)`; on older turns they're
  *   dropped (the model already saw them) so the request body stays bounded.
@@ -203,6 +223,20 @@ export function partsToContent(parts, { binary = true, getBase64 } = {}) {
       blocks.push({ type: 'text', text: officeFence(p) })
       continue
     }
+    if (p?.type === 'file' && p.kind === 'deck') {
+      // STICKY vision document block referencing the INTERNAL Files-API PDF by
+      // file_id (cheap to re-send every turn, cheap to re-read under the cache;
+      // cache_control makes follow-ups ~0.1x). No base64 ever touches this path,
+      // and the user-facing artifact stays the original .pptx.
+      if (p.pdfFileId) {
+        blocks.push({
+          type: 'document',
+          source: { type: 'file', file_id: p.pdfFileId },
+          cache_control: { type: 'ephemeral' },
+        })
+      }
+      continue
+    }
     if (p?.type === 'file') {
       if (!binary) continue // historical binary dropped — the model already saw it
       const data = getBase64?.(p)
@@ -216,6 +250,12 @@ export function partsToContent(parts, { binary = true, getBase64 } = {}) {
     }
     if (p?.type === 'text' && typeof p.text === 'string') prose.push(p.text)
   }
+  // Anthropic permits at most 4 `cache_control` breakpoints per request, and each
+  // deck block would carry its own. Keep the marker on ONLY the last deck block (a
+  // single trailing breakpoint caches the whole prefix) so many decks in a turn
+  // can't blow the limit. The cross-turn budget is owned by the request assembler.
+  const deckBlocks = blocks.filter((b) => b.type === 'document' && b.source?.type === 'file' && b.cache_control)
+  for (let i = 0; i < deckBlocks.length - 1; i += 1) delete deckBlocks[i].cache_control
   const text = prose.join('\n')
   if (blocks.length === 0) return text // no emitted file blocks → plain string
   blocks.push({ type: 'text', text }) // prose after files (Anthropic ordering)

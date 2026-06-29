@@ -121,3 +121,46 @@ describe('estimateConversationTokens', () => {
     expect(estimateConversationTokens(older, '')).toBe(0)
   })
 })
+
+describe('estimateConversationTokens — deck (.pptx) parts', () => {
+  const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  const textPart = (text) => ({ type: 'text', text })
+  const deckPart = (extra = {}) => ({
+    type: 'file', kind: 'deck', attachmentId: 'd1', mediaType: PPTX_TYPE,
+    name: 'q3.pptx', size: 1, pdfFileId: 'file_d1', pageCount: 10, ...extra,
+  })
+
+  it('adds a heavy per-page cost for a deck (far more than a nominal binary)', () => {
+    // 10 pages — counted on its (first) turn even though it carries no `text`.
+    const est = estimateConversationTokens([{ role: 'user', parts: [deckPart({ pageCount: 10 })] }], '')
+    expect(est).toBe(10 * 3000)
+    expect(est).toBeGreaterThan(1600) // not the flat per-file nominal
+  })
+
+  it('counts a sticky deck mostly ONCE (first turn full, follow-ups ~0.1x), not full every turn', () => {
+    const dp = deckPart({ pageCount: 20 }) // 60,000 full
+    const oneTurn = estimateConversationTokens([{ role: 'user', parts: [dp, textPart('a')] }], '')
+    const threeTurns = estimateConversationTokens(
+      [
+        { role: 'user', parts: [dp, textPart('a')] },
+        { role: 'assistant', parts: [textPart('ok')] },
+        { role: 'user', parts: [dp, textPart('b')] }, // SAME sticky deck again
+      ],
+      '',
+    )
+    // The repeated deck adds only ~0.1x on its second appearance — nowhere near 2x.
+    expect(threeTurns).toBeLessThan(oneTurn * 1.3)
+    expect(threeTurns).toBeGreaterThan(oneTurn) // the cached re-read still adds a little
+  })
+
+  it('falls back to 1 page when pageCount is missing/invalid', () => {
+    expect(estimateConversationTokens([{ role: 'user', parts: [deckPart({ pageCount: undefined })] }], '')).toBe(3000)
+    expect(estimateConversationTokens([{ role: 'user', parts: [deckPart({ pageCount: 0 })] }], '')).toBe(3000)
+  })
+
+  it('a large deck pushes the estimate past the soft warn threshold', () => {
+    // 60 pages * 3000 = 180,000 > CONTEXT_SOFT_LIMIT (150k) → the high-usage warning fires.
+    const est = estimateConversationTokens([{ role: 'user', parts: [deckPart({ pageCount: 60 })] }], '')
+    expect(est).toBeGreaterThan(CONTEXT_SOFT_LIMIT)
+  })
+})

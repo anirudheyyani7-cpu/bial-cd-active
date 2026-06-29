@@ -151,6 +151,34 @@ describe('server integration', () => {
     expect(res.text).toContain('[DONE]')
   })
 
+  it('omits the Files-API beta header for a non-deck request', async () => {
+    await request(app)
+      .post('/api/claude')
+      .set('Authorization', `Bearer ${validToken()}`)
+      .send({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(claudeStream).toHaveBeenCalledOnce()
+    expect(claudeStream.mock.calls[0][1]?.headers?.['anthropic-beta']).toBeUndefined()
+  })
+
+  it('adds the Files-API beta header when a file-source document block (deck) is present', async () => {
+    const deckMessages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'file', file_id: 'file_deck' }, cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: 'summarize the deck' },
+        ],
+      },
+    ]
+    const res = await request(app)
+      .post('/api/claude')
+      .set('Authorization', `Bearer ${validToken()}`)
+      .send({ messages: deckMessages })
+    expect(res.status).toBe(200)
+    expect(claudeStream).toHaveBeenCalledOnce()
+    expect(claudeStream.mock.calls[0][1]?.headers?.['anthropic-beta']).toBe('files-api-2025-04-14')
+  })
+
   it('unknown non-/api GET returns the SPA index.html', async () => {
     const res = await request(app).get('/workspace/builder')
     expect(res.status).toBe(200)

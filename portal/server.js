@@ -32,6 +32,7 @@ import { ensureIndexes } from './server/ensure-indexes.js'
 import { createAttachmentsRepo } from './server/attachments-repo.js'
 import { createConversationsRouter } from './server/conversations.js'
 import { createAttachmentsRouter } from './server/attachments.js'
+import { createAnthropicFiles, FILES_API_BETA } from './server/anthropic-files.js'
 import { createAppRegistryRepo } from './server/app-registry-repo.js'
 import { createDataRecordsRepo } from './server/data-records-repo.js'
 import { createAuditRepo } from './server/audit-repo.js'
@@ -428,12 +429,22 @@ export function createApp({
       res.setHeader('Cache-Control', 'no-cache')
       res.setHeader('Connection', 'keep-alive')
 
-      stream = await claudeClient.messages.stream({
-        model: model || 'claude-opus-4-7',
-        max_tokens: Math.min(Math.max(1, Number(max_tokens) || MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS),
-        system,
-        messages,
-      })
+      // A deck attachment rides as a `document` block with a Files-API `file_id`
+      // source. Those require the Files-API beta header on the relay too; add it
+      // ONLY when such a block is present so non-deck requests are unchanged.
+      const usesFilesApi =
+        Array.isArray(messages) &&
+        messages.some((m) => Array.isArray(m?.content) && m.content.some((b) => b?.source?.type === 'file'))
+
+      stream = await claudeClient.messages.stream(
+        {
+          model: model || 'claude-opus-4-7',
+          max_tokens: Math.min(Math.max(1, Number(max_tokens) || MAX_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS),
+          system,
+          messages,
+        },
+        usesFilesApi ? { headers: { 'anthropic-beta': FILES_API_BETA } } : undefined,
+      )
 
       for await (const event of stream) {
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
@@ -498,8 +509,13 @@ export function createApp({
 
   // Per-user persistence: conversations + messages (chats/builder) and attachment
   // bytes. Gated at the mount point; every handler scopes by req.user.sub.
-  app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
-  app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo }))
+  // Deck (.pptx) ingest uploads the derived PDF to the Anthropic Files API through
+  // the same Foundry client used for the chat relay; conversation-delete releases
+  // those PDFs. createAnthropicFiles(null) degrades gracefully (503 when called)
+  // if the client isn't configured.
+  const anthropicFiles = createAnthropicFiles(claudeClient)
+  app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo, anthropicFiles }))
+  app.use('/api/attachments', requireAuth, createAttachmentsRouter({ attachmentsRepo, anthropicFiles }))
 
   // Dynamic app data service: the shared, schemaless per-app record store every
   // generated CRUD app calls. NO global requireAuth here — the router owns its own

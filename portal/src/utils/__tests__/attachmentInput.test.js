@@ -9,6 +9,8 @@ import {
   toAttachmentRef,
   ACCEPT_ATTR,
   LEGACY_DOC_REJECT_MSG,
+  LEGACY_PPT_REJECT_MSG,
+  PPTX_MEDIA_TYPE,
   WORD_MEDIA_TYPE,
   EXCEL_MEDIA_TYPE,
   MAX_FILE_SIZE,
@@ -156,6 +158,33 @@ describe('ACCEPT_ATTR', () => {
     expect(ACCEPT_ATTR).toContain(EXCEL_MEDIA_TYPE)
     expect(ACCEPT_ATTR).toContain('.docx')
     expect(ACCEPT_ATTR).toContain('.xlsx')
+  })
+})
+
+// These hold regardless of the deck feature flag. The shipped default now has
+// DECK_ATTACHMENTS_ENABLED ON, so the off-state offering is covered separately in
+// attachmentInput-deck-disabled.test.js (which mocks the flag off) rather than
+// asserted against the real flag here.
+describe('deck (.pptx) — flag-independent behavior', () => {
+  it('resolveMediaType canonicalizes .pptx by extension even with empty/generic MIME', () => {
+    expect(resolveMediaType(file('q3.pptx', ''))).toBe(PPTX_MEDIA_TYPE)
+    expect(resolveMediaType(file('DECK.PPTX', 'application/octet-stream'))).toBe(PPTX_MEDIA_TYPE)
+    expect(resolveMediaType(file('zip.pptx', 'application/zip'))).toBe(PPTX_MEDIA_TYPE)
+  })
+
+  it('rejects a legacy .ppt with a clear "save as .pptx" message (no PDF mention)', () => {
+    expect(validateAttachmentFiles([file('old.ppt', 'application/vnd.ms-powerpoint')], 0)).toEqual({
+      error: LEGACY_PPT_REJECT_MSG,
+    })
+    expect(validateAttachmentFiles([file('deck.ppt', '')], 0)).toEqual({ error: LEGACY_PPT_REJECT_MSG })
+    expect(LEGACY_PPT_REJECT_MSG).not.toMatch(/pdf/i) // invisible conversion
+  })
+
+  it('treats a real .pptx the OS mislabels as application/vnd.ms-powerpoint by extension (never as legacy .ppt)', () => {
+    // Extension wins over the ms-powerpoint mislabel, so it is NEVER the legacy
+    // .ppt rejection — independent of whether the deck feature is on or off.
+    const res = validateAttachmentFiles([file('real.pptx', 'application/vnd.ms-powerpoint')], 0)
+    expect(res.error || '').not.toBe(LEGACY_PPT_REJECT_MSG)
   })
 })
 

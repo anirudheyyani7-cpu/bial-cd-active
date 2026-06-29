@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import express from 'express'
 import request from 'supertest'
+import { PPTX_TYPE } from './officeFixtures.js'
 import { requireAuth } from '../auth/middleware.js'
 import { createConversationsRouter } from '../conversations.js'
 import { createConversationsRepo } from '../conversations-repo.js'
@@ -18,7 +19,7 @@ beforeAll(() => {
 
 const token = (sub = 'alice@bial.test') => signAccessToken({ sub, username: sub, role: 'user' })
 
-function makeApp() {
+function makeApp({ anthropicFiles } = {}) {
   const convContainer = makeFakeConversationsContainer([])
   const msgContainer = makeFakeMessagesContainer([])
   const objectStore = makeFakeObjectStore()
@@ -28,7 +29,11 @@ function makeApp() {
   const attachmentsRepo = createAttachmentsRepo(objectStore, usage)
   const app = express()
   app.use(express.json({ limit: '2mb' }))
-  app.use('/api/conversations', requireAuth, createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo }))
+  app.use(
+    '/api/conversations',
+    requireAuth,
+    createConversationsRouter({ conversationsRepo, messagesRepo, attachmentsRepo, ...(anthropicFiles ? { anthropicFiles } : {}) }),
+  )
   return { app, convContainer, msgContainer, objectStore, usage, attachmentsRepo }
 }
 
@@ -173,5 +178,99 @@ describe('auth gate', () => {
     expect((await request(app).post('/api/conversations/x/messages').send({})).status).toBe(401)
     expect((await request(app).patch('/api/conversations/x').send({})).status).toBe(401)
     expect((await request(app).delete('/api/conversations/x')).status).toBe(401)
+  })
+})
+
+describe('DELETE /api/conversations/:id — deck Files-API cleanup', () => {
+  const deckPart = (id, fileId) => ({
+    type: 'file',
+    kind: 'deck',
+    attachmentId: id,
+    key: `att/alice@bial.test/${id}`,
+    mediaType: PPTX_TYPE,
+    name: `${id}.pptx`,
+    size: 100,
+    pdfFileId: fileId,
+    pageCount: 3,
+  })
+  const deckMsg = (id, seq, fileId) => ({ _id: id, role: 'user', seq, parts: [deckPart(`d-${id}`, fileId)] })
+
+  it('releases the Files-API PDF for each deck part on delete', async () => {
+    const deleteFile = vi.fn(async () => {})
+    const { app } = makeApp({ anthropicFiles: { uploadPdf: vi.fn(), deleteFile } })
+    await post(app, 'conv-d', { message: deckMsg('m0', 0, 'file_a'), header: { kind: 'planning' } }, 'alice@bial.test')
+    await post(app, 'conv-d', { message: deckMsg('m1', 2, 'file_b'), header: { kind: 'planning' } }, 'alice@bial.test')
+
+    const del = await request(app).delete('/api/conversations/conv-d').set('Authorization', `Bearer ${token('alice@bial.test')}`)
+    expect(del.status).toBe(200)
+    expect(deleteFile).toHaveBeenCalledTimes(2)
+    expect(deleteFile.mock.calls.map((c) => c[0]).sort()).toEqual(['file_a', 'file_b'])
+  })
+
+  it('de-dupes a repeated pdfFileId across turns (sticky deck)', async () => {
+    const deleteFile = vi.fn(async () => {})
+    const { app } = makeApp({ anthropicFiles: { uploadPdf: vi.fn(), deleteFile } })
+    await post(app, 'conv-d', { message: deckMsg('m0', 0, 'file_same'), header: { kind: 'planning' } }, 'alice@bial.test')
+    await post(app, 'conv-d', { message: deckMsg('m1', 2, 'file_same'), header: { kind: 'planning' } }, 'alice@bial.test')
+    await request(app).delete('/api/conversations/conv-d').set('Authorization', `Bearer ${token('alice@bial.test')}`)
+    expect(deleteFile).toHaveBeenCalledTimes(1)
+    expect(deleteFile).toHaveBeenCalledWith('file_same')
+  })
+
+  it('does not fail the delete when deleteFile throws (best-effort)', async () => {
+    const deleteFile = vi.fn(async () => {
+      throw new Error('already gone')
+    })
+    const { app, convContainer } = makeApp({ anthropicFiles: { uploadPdf: vi.fn(), deleteFile } })
+    await post(app, 'conv-d', { message: deckMsg('m0', 0, 'file_a'), header: { kind: 'planning' } }, 'alice@bial.test')
+    const del = await request(app).delete('/api/conversations/conv-d').set('Authorization', `Bearer ${token('alice@bial.test')}`)
+    expect(del.status).toBe(200)
+    expect(convContainer._get('conv-d')).toBeUndefined() // delete still completed
+  })
+
+  it('makes no Files-API calls when there are no deck parts', async () => {
+    const deleteFile = vi.fn(async () => {})
+    const { app } = makeApp({ anthropicFiles: { uploadPdf: vi.fn(), deleteFile } })
+    await post(app, 'conv-t', { message: textMsg('m0', 0, 'just text'), header: { kind: 'planning' } }, 'alice@bial.test')
+    await request(app).delete('/api/conversations/conv-t').set('Authorization', `Bearer ${token('alice@bial.test')}`)
+    expect(deleteFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/conversations/:id/messages — deck part validation', () => {
+  // A structurally valid deck part; each case overrides ONE field with a bad value.
+  const deckMsg = (deckExtra) => ({
+    _id: 'm0',
+    role: 'user',
+    seq: 0,
+    parts: [{ type: 'file', kind: 'deck', attachmentId: 'd1', mediaType: PPTX_TYPE, pdfFileId: 'file_x', pageCount: 3, ...deckExtra }],
+  })
+
+  it('rejects an empty pdfFileId (400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pdfFileId: '' }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pdfFileId/)
+  })
+
+  it('rejects an over-length pdfFileId (257 chars → 400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pdfFileId: 'a'.repeat(257) }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pdfFileId/)
+  })
+
+  it('rejects a negative pageCount (400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pageCount: -1 }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pageCount/)
+  })
+
+  it('rejects a non-integer pageCount (400)', async () => {
+    const { app } = makeApp()
+    const res = await post(app, 'conv-x', { message: deckMsg({ pageCount: 'three' }), header: { kind: 'planning' } }, 'alice@bial.test')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toMatch(/pageCount/)
   })
 })

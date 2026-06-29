@@ -18,3 +18,15 @@ export const CHAT_ENABLED = false
  * restore both entry points — that one-line change is the whole "un-hide".
  */
 export const DEPLOY_ENABLED = false
+
+/**
+ * DECK_ATTACHMENTS_ENABLED surfaces PowerPoint (.pptx) chat attachments in the
+ * composer (file picker + drag/drop allowlist). A deck is converted to a PDF by
+ * an in-tenant Gotenberg sidecar and read by Claude with vision — unlike Word/
+ * Excel, which are read as extracted text. This client flag only controls whether
+ * .pptx is OFFERED in the UI; the server independently enforces its own gate
+ * (DECK_ATTACHMENTS_ENABLED env + a reachable GOTENBERG_URL) and rejects .pptx
+ * cleanly when off. Enabling the feature means flipping BOTH this flag and the
+ * server env — that pair is the whole "turn it on".
+ */
+export const DECK_ATTACHMENTS_ENABLED = true

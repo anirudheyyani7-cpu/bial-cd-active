@@ -90,10 +90,16 @@ export function revokeAllAttachmentUrls() {
   urlCache.clear()
 }
 
-/** Delete one attachment object (best-effort) and drop its cached URL. */
-export async function deleteAttachment(attachmentId, deps = {}) {
+/**
+ * Delete one attachment object (best-effort) and drop its cached URL. For a deck,
+ * pass its `pdfFileId` so the route also releases the internal Files-API PDF (the
+ * bare route can't otherwise know it); the conversation-delete sweep is the
+ * authoritative cleanup.
+ */
+export async function deleteAttachment(attachmentId, { pdfFileId } = {}, deps = {}) {
   try {
-    await authFetch(`/api/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' }, deps)
+    const q = typeof pdfFileId === 'string' && pdfFileId ? `?pdfFileId=${encodeURIComponent(pdfFileId)}` : ''
+    await authFetch(`/api/attachments/${encodeURIComponent(attachmentId)}${q}`, { method: 'DELETE' }, deps)
   } catch {
     // best-effort; the conversation-delete sweep is the authoritative cleanup.
   }

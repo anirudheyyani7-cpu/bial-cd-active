@@ -587,11 +587,11 @@ describe('daily token limit enforcement', () => {
     expect(res.status).toBe(401)
   })
 
-  it('clamps a client-supplied max_tokens to the server ceiling (16000)', async () => {
+  it('clamps a client-supplied max_tokens to the server ceiling (64000)', async () => {
     const app2 = makeServer()
     await auth(request(app2).post('/api/claude')).send({ max_tokens: 999999, messages: [{ role: 'user', content: 'hi' }] })
     expect(claudeStream).toHaveBeenCalledOnce()
-    expect(claudeStream.mock.calls[0][0].max_tokens).toBe(16000) // not the requested 999999
+    expect(claudeStream.mock.calls[0][0].max_tokens).toBe(64000) // not the requested 999999
   })
 })
 

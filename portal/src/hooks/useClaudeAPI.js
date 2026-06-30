@@ -119,7 +119,7 @@ export function buildSystemPrompt(context) {
 }
 
 // Backstop for the silent truncation in truncateMessages. Raised from the old
-// 50k cost-control cap to sit under the 200k model window minus the 16k
+// 50k cost-control cap to sit under the 1M model window minus the 64k
 // max_tokens output budget, so an allowed near-limit send still fits the window
 // (no API "prompt too long"). The user-facing guardrail (CONTEXT_* below) warns
 // at 150k and blocks at 200k; this backstop only trims for a user who pushed
@@ -352,7 +352,7 @@ export function useClaudeAPI() {
         const fullText = await fetchClaudeStream({
           body: {
             model: 'claude-opus-4-7',
-            max_tokens: 16000,
+            max_tokens: 64000,
             system: buildSystemPrompt(context),
             messages: truncateMessages(messages).map((m) => ({ role: m.role, content: m.content })),
           },

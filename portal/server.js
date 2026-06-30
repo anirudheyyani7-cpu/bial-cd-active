@@ -76,10 +76,10 @@ const DEFAULT_DIST = path.join(__dirname, 'dist')
 // unset/invalid.
 
 // Server-side ceiling on a single response's output. The client never asks for
-// more than 16k, but max_tokens arrives in the request body, so clamp it here so
+// more than 64k, but max_tokens arrives in the request body, so clamp it here so
 // one request can't request an arbitrary output size and amplify spend past the
 // daily gate (which only reconciles AFTER a turn completes).
-const MAX_OUTPUT_TOKENS = 16_000
+const MAX_OUTPUT_TOKENS = 64_000
 
 /**
  * Validate the optional DAILY_TOKEN_LIMIT env at boot. parseInt is lenient

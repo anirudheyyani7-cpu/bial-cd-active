@@ -54,8 +54,8 @@ export const BIAL_USERS = [
   { username: 'vikas.pruthi@bialairport.com',   email: 'vikas.pruthi@bialairport.com',   name: 'Vikas Pruthi',           role: 'user' },
   { username: 'prithvi@bialairport.com',        email: 'prithvi@bialairport.com',        name: 'Prithvi Ponnappa',       role: 'user' },
   { username: 'schaudhari@bialairport.com',     email: 'schaudhari@bialairport.com',     name: 'Sandeep Chaudhari',      role: 'user' },
-  { username: 'priyaranjanpati1@kpmg.com',      email: 'priyaranjanpati1@kpmg.com',      name: 'Priyaranjan Pati',       role: 'user' },
-  { username: 'rahulkohli1@kpmg.com',           email: 'rahulkohli1@kpmg.com',           name: 'Rahul Kohli',            role: 'user' },
+  { username: 'priyaranjan.p@bialairport.com',      email: 'priyaranjan.p@bialairport.com',      name: 'Priyaranjan Pati',       role: 'user' },
+  { username: 'rahul.kohli@bialairport.com',           email: 'rahul.kohli@bialairport.com',           name: 'Rahul Kohli',            role: 'user' },
 ]
 
 /** The seed map this script ships: every pilot user → its derived password. */

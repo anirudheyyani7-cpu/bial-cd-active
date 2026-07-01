@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Env / secrets (never commit real values — the *.example files are templates)
+.env
+.env.*
+!.env*.example
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.ty_cache/

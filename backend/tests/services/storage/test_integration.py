@@ -1,12 +1,8 @@
-"""Cross-provider parity, proven against live backends — MinIO (S3 path) and
-Azurite (Azure). Opt-in: `uv run pytest -m integration` after
-`docker compose -f docker-compose.test.yml up -d`.
+"""Azure Blob behavior, proven against a live Azurite backend. Opt-in:
+`uv run pytest -m integration` after `docker compose -f docker-compose.test.yml up -d`.
 
-One parametrized body (via the `ready_backend` fixture) asserts identical LCD
-behavior across providers. NOTE: MinIO exercises the S3 backend's LCD code, which
-R2 shares verbatim — but MinIO cannot reproduce the real Cloudflare R2 checksum
-landmine; that risk is covered by the config-introspection unit test in
-`test_s3_backend.py`, not here.
+One body (via the `ready_backend` fixture) asserts the storage-port contract
+end-to-end against Azurite — put/get/head/delete, signed reads, and pagination.
 """
 
 from __future__ import annotations

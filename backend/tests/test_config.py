@@ -1,12 +1,11 @@
-"""Config fail-first startup-gate tests + logging renderer selection."""
+"""Config fail-first startup-gate tests."""
 
 from __future__ import annotations
 
 import pytest
-import structlog
 from pydantic import ValidationError
 
-from src.config import Settings, configure_logging
+from src.config import Settings
 
 # Minimal required fields so Settings validates without reading a real env file.
 # model_validate runs full pydantic validation over the dict WITHOUT touching the
@@ -18,13 +17,13 @@ _BASE_ENV: dict[str, object] = {
 
 
 # A minimal valid object-store block, needed anywhere a production Settings is
-# constructed (the prod gate requires storage in production).
-_S3_STORE: dict[str, object] = {
-    "provider": "s3",
-    "bucket": "b",
-    "region": "us-east-1",
-    "access_key_id": "ak",
-    "secret_access_key": "sk",
+# constructed (the prod gate requires storage in production). Azure Blob is the
+# only provider.
+_AZURE_STORE: dict[str, object] = {
+    "provider": "azure",
+    "account_url": "https://acct.blob.core.windows.net",
+    "container": "b",
+    "account_key": "a2V5",
 }
 
 
@@ -42,7 +41,7 @@ def test_valid_settings_construct() -> None:
 
 def test_is_production_true_in_production() -> None:
     # Production requires storage (the prod gate below), so supply it here.
-    assert _settings(ENVIRONMENT="production", object_store=_S3_STORE).is_production is True
+    assert _settings(ENVIRONMENT="production", object_store=_AZURE_STORE).is_production is True
 
 
 def test_production_requires_object_store() -> None:
@@ -80,15 +79,3 @@ def test_unknown_key_forbidden() -> None:
     # falling back to a default.
     with pytest.raises(ValidationError):
         _settings(TOTALLY_BOGUS="x")
-
-
-def test_configure_logging_dev_uses_console_renderer() -> None:
-    configure_logging(is_production=False)
-    processors = structlog.get_config()["processors"]
-    assert isinstance(processors[-1], structlog.dev.ConsoleRenderer)
-
-
-def test_configure_logging_prod_uses_json_renderer() -> None:
-    configure_logging(is_production=True)
-    processors = structlog.get_config()["processors"]
-    assert isinstance(processors[-1], structlog.processors.JSONRenderer)

@@ -10,12 +10,28 @@ queue / Redis runs yet (ADR-0011).
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.cors import CORSMiddleware
 
-from src.config import configure_logging, settings
+from src.config import settings
 
-configure_logging(is_production=settings.is_production)
+# Configure structlog process-wide at import: a human ConsoleRenderer in dev,
+# one-line JSON in production (for log aggregation).
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+        if settings.is_production
+        else structlog.dev.ConsoleRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(0),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
+)
 
 
 @asynccontextmanager

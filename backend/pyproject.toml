@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "BIAL Citizen Developer Platform — FastAPI control-plane"
 requires-python = ">=3.14"
 dependencies = [
-    "aiobotocore>=3.7.0",
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
     "azure-identity>=1.25.3",
@@ -30,7 +29,6 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.20",
     "ty>=0.0.55",
-    "types-aiobotocore[s3]>=3.7.0",
 ]
 
 [tool.uv]
@@ -81,12 +79,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# Keep the default lane free of EXTERNAL object-storage services: the MinIO +
-# Azurite storage round-trips are opt-in via `-m integration`. A live Postgres
-# test database (backend/.env.test, name must contain "test") IS required for the
+# Keep the default lane free of EXTERNAL object-storage services: the Azurite
+# storage round-trips are opt-in via `-m integration`. A live Postgres test
+# database (backend/.env.test, name must contain "test") IS required for the
 # default lane, matching the template. --strict-markers turns a typo'd marker
 # into an error instead of silently running.
 markers = [
-    "integration: opt-in; needs external services (docker-compose MinIO + Azurite for storage round-trips)",
+    "integration: opt-in; needs external services (docker-compose Azurite for storage round-trips)",
 ]
 addopts = "-m 'not integration' --strict-markers"

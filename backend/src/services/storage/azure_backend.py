@@ -1,6 +1,5 @@
 """AzureBlobStorage — Azure Blob Storage via `azure-storage-blob.aio` +
-`azure-identity.aio`. The second of the two backends behind the `ObjectStorage`
-interface (the S3 backend serves S3+R2).
+`azure-identity.aio`. The sole backend behind the `ObjectStorage` interface.
 
 No vendor type crosses the port: `BlobProperties`, `ContentSettings`, the page
 iterator, and the `upload_blob` `dict[str, Any]` are consumed only here; every
@@ -21,6 +20,7 @@ from hashlib import sha256
 from typing import NoReturn, cast
 from urllib.parse import urlsplit
 
+import structlog
 from azure.core.async_paging import AsyncPageIterator
 from azure.core.exceptions import (
     ClientAuthenticationError,
@@ -53,6 +53,8 @@ from src.services.storage.errors import (
     StorageUploadError,
 )
 from src.services.storage.keys import normalize_metadata
+
+_log = structlog.get_logger()
 
 # Signed URLs / delegation keys start ~15m in the past to tolerate clock skew.
 _CLOCK_SKEW = timedelta(minutes=15)
@@ -179,9 +181,16 @@ async def _close_state(fingerprint: str) -> None:
 
 async def close_all_clients() -> None:
     """Close every cached Azure client + credential. Called by `aclose_storage()`
-    on shutdown."""
+    on shutdown. Each per-fingerprint close is isolated: a single failure is
+    logged (fail-first.md — never a silent swallow) and the loop continues so one
+    bad client never leaves the rest open."""
     for fingerprint in list(_client_cache):
-        await _close_state(fingerprint)
+        try:
+            await _close_state(fingerprint)
+        except Exception:
+            # No credential value is ever logged — the fingerprint is a sha256
+            # hash and the message is static.
+            _log.exception("failed to close an azure storage client")
 
 
 async def reset_client_for_tests() -> None:
@@ -407,10 +416,15 @@ class AzureBlobStorage(ObjectStorage):
                 or _needs_remint(now, state.delegation_expiry, expires_in)
             ):
                 try:
-                    # Request the maximum-allowed 7-day window; re-mint proactively
-                    # before it can no longer cover a bounded request.
+                    # Request Azure's maximum-allowed window, which is a HARD 7-day
+                    # cap on (expiry - start). The start is pulled back by the clock
+                    # skew (to match the SAS `start`), so the expiry must be pulled
+                    # in by the same skew to keep the total span at exactly 7d — a
+                    # bare `now + MAX_SIGNED_URL_TTL` here would be 7d+skew and Azure
+                    # rejects the mint. Re-mint proactively before it can no longer
+                    # cover a bounded request.
                     key = await state.service_client.get_user_delegation_key(
-                        now - _CLOCK_SKEW, now + MAX_SIGNED_URL_TTL
+                        now - _CLOCK_SKEW, now + MAX_SIGNED_URL_TTL - _CLOCK_SKEW
                     )
                 except (HttpResponseError, ServiceRequestError) as exc:
                     self._raise_azure(exc, op="sign", key="")

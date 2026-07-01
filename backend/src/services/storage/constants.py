@@ -15,14 +15,14 @@ from datetime import timedelta
 from typing import Final
 
 # Hard ceiling on signed read-URL lifetime. The ABC rejects any larger
-# `expires_in` with StorageSignError BEFORE delegating to a backend — fail
-# closed, never silently clamped. Matches the S3/R2 presigned-GET sig-v4 limit
-# and bounds an Azure SAS so a leaked URL self-expires within a week.
+# `expires_in` with StorageSignError BEFORE delegating to the backend — fail
+# closed, never silently clamped. Matches the Azure Blob user-delegation SAS
+# 7-day maximum, so a leaked URL self-expires within a week.
 MAX_SIGNED_URL_TTL: Final = timedelta(days=7)
 
-# Upper bound on a single `put`. The S3 single-PutObject limit is 5 GiB
-# (multipart is a deferred follow-up); enforced identically on Azure for a
-# uniform contract.
+# Upper bound on a single `put`. 5 GiB is a conservative single-request ceiling
+# for an Azure block blob; larger objects would need staged block commits (a
+# deferred follow-up).
 MAX_PUT_BYTES: Final = 5 * 1024 * 1024 * 1024  # 5 GiB
 
 # Default page size for prefix listings when the caller does not specify one.

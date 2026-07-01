@@ -1,24 +1,29 @@
-"""App-level storage accessor + lifecycle. Two caching layers, kept distinct:
+"""App-level storage accessor + lifecycle for the Azure Blob backend. Two caching
+layers, kept distinct:
 
-1. *Backend level* (the source of truth for open SDK clients) — each backend's
-   config-fingerprint client cache (`s3_backend`/`azure_backend`).
+1. *Backend level* (the source of truth for open SDK clients) — the Azure
+   backend's config-fingerprint client cache (`azure_backend`).
 2. *App level* — `get_storage()` reads `settings.object_store`, calls
    `create_storage` ONCE, and memoises the returned backend. It opens no clients
    of its own; it just holds a reference into layer 1.
 
 `get_storage()` returns the base `ObjectStorage` because `settings.object_store`
-is statically the union — the honest dynamic contract (concrete types are for code
-holding a named config). It lazy-imports `settings` so this module can be
+is statically the storage port — the honest dynamic contract (concrete types are
+for code holding a named config). It lazy-imports `settings` so this module can be
 re-exported from the package `__init__` without an import cycle through
 `src.config` (which itself imports `storage.config`).
 """
 
 from __future__ import annotations
 
-from src.services.storage import azure_backend, s3_backend
+import structlog
+
+from src.services.storage import azure_backend
 from src.services.storage.base import ObjectStorage
 from src.services.storage.errors import StorageError
 from src.services.storage.factory import create_storage
+
+_log = structlog.get_logger()
 
 _backend_singleton: ObjectStorage | None = None
 
@@ -40,13 +45,19 @@ def get_storage() -> ObjectStorage:
 
 
 async def aclose_storage() -> None:
-    """Close every cached backend client (layer 1, across both backends — and the
-    Azure credential) and drop the layer-2 singleton. Wired into the FastAPI
-    lifespan shutdown."""
+    """Close every cached Azure client (layer 1 — and the Azure credential) and
+    drop the layer-2 singleton. Wired into the FastAPI lifespan shutdown.
+
+    The close is isolated: if it raises we log it (fail-first.md — never a silent
+    swallow) but STILL reset the singleton, so a restart never reuses a
+    half-closed backend."""
     global _backend_singleton
-    await s3_backend.close_all_clients()
-    await azure_backend.close_all_clients()
-    _backend_singleton = None
+    try:
+        await azure_backend.close_all_clients()
+    except Exception:
+        _log.exception("azure storage teardown failed during aclose_storage")
+    finally:
+        _backend_singleton = None
 
 
 async def reset_storage_for_tests() -> None:
@@ -54,5 +65,4 @@ async def reset_storage_for_tests() -> None:
     never reuses a stale client across tests."""
     global _backend_singleton
     _backend_singleton = None
-    await s3_backend.reset_client_for_tests()
     await azure_backend.reset_client_for_tests()

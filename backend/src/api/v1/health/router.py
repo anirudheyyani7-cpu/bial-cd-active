@@ -5,14 +5,13 @@ so it is not probed yet.
 """
 
 import asyncio
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.session import get_db
+from src.api.deps import DbSession
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -24,12 +23,9 @@ class HealthStatus(BaseModel):
 
 @router.get(
     "",
-    response_model=HealthStatus,
     responses={503: {"model": HealthStatus, "description": "A dependency is unreachable"}},
 )
-async def health_check(
-    response: Response, db: Annotated[AsyncSession, Depends(get_db)]
-) -> HealthStatus:
+async def health_check(response: Response, db: DbSession) -> HealthStatus:
     # Time-bounded so a black-holed DB can't hang the health gate. The broad catch
     # is deliberate: any failure means "unreachable", surfaced as a 503 — this
     # converts the error into a status, it does not swallow it.

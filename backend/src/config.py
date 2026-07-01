@@ -1,4 +1,4 @@
-"""Typed application configuration (fail-first) + structured-logging setup.
+"""Typed application configuration (fail-first).
 
 All config flows through the `Settings(BaseSettings)` object. A required setting is
 a field with NO default, so pydantic-settings raises `ValidationError` at
@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 from typing import Literal, Self
 
-import structlog
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
@@ -44,13 +43,12 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
     BACKEND_URL: str = "http://localhost:8000"
 
-    # Object storage (Azure Blob / S3 / R2), populated from one OBJECT_STORE__*
-    # env block with OBJECT_STORE__PROVIDER selecting the variant of the
-    # discriminated union. This is the sanctioned genuinely-optional integration:
-    # `| None` keeps dev/test booting without it, and the single prod gate below
-    # requires it in production (fail-first-python.md — storage is its named
-    # example). pydantic-settings validating this field IS the one config funnel;
-    # there is no hand-written TypeAdapter on the env path.
+    # Object storage (Azure Blob), populated from one OBJECT_STORE__* env block
+    # (StorageConfig is an alias for AzureStorageConfig). This is the sanctioned
+    # genuinely-optional integration: `| None` keeps dev/test booting without it,
+    # and the single prod gate below requires it in production (fail-first-python.md
+    # — storage is its named example). pydantic-settings validating this field IS
+    # the one config funnel; there is no hand-written TypeAdapter on the env path.
     object_store: StorageConfig | None = None
 
     @property
@@ -75,22 +73,3 @@ class Settings(BaseSettings):
 # cannot see (mypy's pydantic plugin knows BaseSettings fields are env-sourced;
 # ty / pyright do not, hence the suppressions).
 settings = Settings()  # ty: ignore[missing-argument]  # pyright: ignore[reportCallIssue]
-
-
-def configure_logging(*, is_production: bool) -> None:
-    """Configure structlog process-wide: a human ConsoleRenderer in dev, one-line
-    JSON in production (for log aggregation). Called once at app import."""
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer()
-            if is_production
-            else structlog.dev.ConsoleRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(0),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )

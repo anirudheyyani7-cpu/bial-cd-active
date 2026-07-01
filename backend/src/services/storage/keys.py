@@ -13,8 +13,8 @@ boundary (never a bare `startswith`) so one owner id can never be a prefix of
 another. A dropped ownership check is a cross-user leak, not a style nit.
 
 `normalize_metadata` / `normalize_metadata_key` are carried over verbatim from
-badger — both backends call `normalize_metadata` before handing user metadata to
-the SDK, so the S3∩Azure charset round-trips identically across providers.
+badger — the backend calls `normalize_metadata` before handing user metadata to
+the SDK, so the Azure metadata charset round-trips deterministically.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ import uuid
 from src.services.storage.errors import StorageError
 
 # Azure metadata names must be valid C# identifiers (letters/digits/underscore,
-# no leading digit, no hyphen); S3 lowercases keys on storage. The intersection,
-# applied after lowercasing, makes a metadata round-trip identical on both.
+# no leading digit, no hyphen). Lowercasing first, then enforcing this charset,
+# makes a metadata round-trip deterministic.
 _METADATA_KEY_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
@@ -62,8 +62,8 @@ def assert_owned(key: str, user_id: uuid.UUID) -> None:
 
 
 def normalize_metadata_key(key: str) -> str:
-    """Lowercase + validate one user-metadata key to the S3∩Azure charset so it
-    round-trips identically across providers."""
+    """Lowercase + validate one user-metadata key to the Azure metadata charset
+    (a valid C# identifier) so it round-trips deterministically."""
     lowered = key.lower()
     if not _METADATA_KEY_RE.match(lowered):
         raise StorageError(

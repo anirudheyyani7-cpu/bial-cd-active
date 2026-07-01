@@ -6,7 +6,7 @@ Create Date: 2026-07-01
 
 Foundation migration: no tables yet (auth/quota/admin models land in later
 phases). It provisions the `vector` extension for future embedding/RAG flows
-(ADR-0009 defers actual use) and asserts the server ships `uuidv7()` so an
+(actual use deferred to a later phase) and asserts the server ships `uuidv7()` so an
 under-versioned Postgres fails here, at migration time, rather than silently at
 the first UUIDv7 PK insert (ADR-0006, ADR-0013).
 """

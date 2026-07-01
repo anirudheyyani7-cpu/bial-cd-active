@@ -23,7 +23,11 @@ logger = structlog.get_logger()
 def validation_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     # Typed as Exception to match Starlette's handler signature; Starlette only
     # dispatches RequestValidationError here.
-    assert isinstance(exc, RequestValidationError)
+    if not isinstance(exc, RequestValidationError):
+        raise TypeError(
+            f"validation_exception_handler received {type(exc).__name__}, "
+            "expected RequestValidationError"
+        )
     # Keep field location and message; drop `input` and `ctx`, which can carry the
     # submitted value (e.g. a plaintext password) or the whole request body.
     safe_errors = [

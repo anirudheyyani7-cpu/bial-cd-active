@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-07-01
+
+### Added
+- **The FastAPI control-plane backend lands (Phase 1 foundation).** A new `backend/`
+  Python service (FastAPI, async SQLAlchemy 2.0 + asyncpg, Alembic, PostgreSQL) begins the
+  incremental, strangler-fig replacement of the Express portal backend (ADR-0001). This first
+  cut is the foundation scaffold (U1–U6): a typed fail-first `Settings`, the app factory with
+  security headers + credentialed CORS, boundary exception handlers, the v1 router with a
+  `/health` database-liveness probe, UUIDv7 / timestamp / user-scope DB mixins, the initial
+  Alembic migration (pgcrypto + pgvector extensions), and an Azure Blob object-storage service
+  (owner-scoped keys, no-SAS server-proxy default, managed-identity user-delegation SAS). All
+  four type gates (ruff, ty, mypy --strict, pyright) and the pytest suite pass. No user-facing
+  behavior changes yet — the portal is untouched.
+
+### Changed
+- **The changelog and product version moved to the repo root.** As the platform grows past the
+  single `portal/` app to include the `backend/` control-plane, this changelog moved from
+  `portal/CHANGELOG.md` to `CHANGELOG.md`, and the product version of record now lives in a
+  root `VERSION` file. This is the first release tracked at the root, continuing the line from
+  `1.4.9` → `1.5.0`. (The backend service keeps its own component version, `0.1.0`, in
+  `backend/pyproject.toml` — the product version and the backend's API-maturity version are
+  deliberately separate axes.)
+
 ## [1.4.9] - 2026-06-26
 
 ### Added

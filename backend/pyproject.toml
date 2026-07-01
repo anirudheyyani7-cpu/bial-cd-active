@@ -1,0 +1,90 @@
+[project]
+name = "bial-backend"
+version = "0.1.0"
+description = "BIAL Citizen Developer Platform — FastAPI control-plane"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "azure-identity>=1.25.3",
+    "azure-storage-blob>=12.30.0",
+    "greenlet>=3.5.3",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "sqlalchemy>=2.0.51",
+    "structlog>=26.1.0",
+]
+
+[dependency-groups]
+# PEP 735 groups (ADR-0002). `api` = runtime web deps; `dev` = tooling + tests.
+# No `worker` group this phase — the task queue is deferred (ADR-0011).
+api = [
+    "fastapi[standard]>=0.138.2",
+]
+dev = [
+    "mypy>=2.1.0",
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.20",
+    "ty>=0.0.55",
+]
+
+[tool.uv]
+# `uv sync` / `uv run` install api + dev so the app deps and the four gates
+# (ruff, ty, mypy, pyright) are always present in the dev/CI environment.
+default-groups = ["api", "dev"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+# Four gates, by design (ADR-0003): ty is the fast everyday/IDE checker; mypy
+# --strict is the completeness gate (full annotations, no implicit Any / bare
+# generics); pyright (pyrightconfig.json) is the code-quality gate that catches
+# attribute-access issues through multi-inheritance and untyped library
+# boundaries. Ruff formats + lints. All must pass before code ships.
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Tests are type-checked for real errors but not held to src-level annotation
+# rigor (untyped fixtures, bare dict helpers, etc. are fine in tests).
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+disallow_untyped_calls = false
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+# asyncpg ships no py.typed marker / stubs. It's an indirect dep (the SQLAlchemy
+# asyncpg driver); treat as untyped so a direct import in a migration/DB test
+# doesn't fail the gate.
+module = ["asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Keep the default lane free of EXTERNAL object-storage services: the Azurite
+# storage round-trips are opt-in via `-m integration`. A live Postgres test
+# database (backend/.env.test, name must contain "test") IS required for the
+# default lane, matching the template. --strict-markers turns a typo'd marker
+# into an error instead of silently running.
+markers = [
+    "integration: opt-in; needs external services (docker-compose Azurite for storage round-trips)",
+]
+addopts = "-m 'not integration' --strict-markers"

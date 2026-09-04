@@ -1,9 +1,9 @@
 """The front door to application configuration.
 
-The settings themselves live in `src/settings/` (U23/U24, ADR-0029 §9): a `CoreSettings` of what
-every process needs, plus ONE MANIFEST PER ROLE — `api.py` and `worker.py`, each listing that
-role's complete environment in one place. This module stays because 105 modules import `settings`
-from it, and it resolves WHICH manifest this process gets.
+The settings themselves live in `src/settings/`: a `CoreSettings` of what every process needs, plus
+ONE MANIFEST PER ROLE — `api.py` and `worker.py`, each listing that role's complete environment in
+one place. This module stays because 105 modules import `settings` from it, and it resolves WHICH
+manifest this process gets.
 
 WHY `settings` IS LAZY, AND WHY THAT IS LOAD-BEARING
 ----------------------------------------------------
@@ -14,15 +14,9 @@ the union of every subsystem's needs: twelve modules in the *worker's* import cl
 worker and demand an Entra client id, a super-admin allowlist and a frontend URL in a process that
 has no request to authenticate and serves no browser.
 
-The operator's response to a container that will not boot is to trim environment variables until
-it does, and the cheapest trim is `ENVIRONMENT=development` — which switches off every production
-gate at once. That is the most dangerous configuration this platform can be in: with object
-storage unconfigured, the durable-copy check answers "CONFIRMED absent" for every container, and
-the reclamation destroy path (U14) reads that as "nothing to preserve, safe to delete".
-
 So construction is deferred to first attribute access, by which time the process knows its role
-(`BIAL_ROLE`). The worker gets `WorkerSettings`, which **requires** object storage, Redis and ARM
-access in every environment — a guarantee no `ENVIRONMENT` value can dodge.
+(`BIAL_ROLE`) and can be handed the one manifest that role's environment is expected to satisfy,
+rather than the union of every role's.
 
 TYPING
 ------

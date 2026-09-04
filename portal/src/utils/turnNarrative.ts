@@ -174,16 +174,14 @@ export interface AtLimitSendState {
 /**
  * The SEND control's state while today's budget is spent — `null` when it is not.
  *
- * RE-HOMED FROM `BuildProgress.tsx`, which U17 deleted. It came HERE rather than to the composer
+ * RE-HOMED FROM `BuildProgress.tsx`, which was deleted. It came HERE rather than to the composer
  * because it reads FEED ENVELOPES, which is this module's vocabulary and nothing a composer should
  * have to know about: the surface asks the question and hands the composer a finished sentence.
  *
- * THE COMPOSER ITSELF STAYS ENABLED, and that is the whole reason this describes the send control
- * rather than the composer. A citizen who is refused mid-thought has usually just typed something
- * they want to keep; disabling the textarea takes their draft hostage until midnight, and (KTD-3)
- * `disabled` on a focused element blurs it to `document.body`, dropping keyboard focus out of the
- * page entirely. They can still select, copy and paste their draft somewhere safe — they simply
- * cannot spend budget they do not have.
+ * IT DESCRIBES THE SEND CONTROL AND NEVER THE COMPOSER. A citizen refused mid-thought has usually
+ * just typed something they want to keep, so the textarea stays live: they can select, copy and
+ * paste their draft somewhere safe, and only the spending is refused. Take the composer down with
+ * the send and the draft is hostage until midnight.
  */
 export function atLimitSendState(envelopes: FeedEnvelope[]): AtLimitSendState | null {
   // NEWEST WINS, by seq rather than by array order. A reconnect replays the stream and a resumed

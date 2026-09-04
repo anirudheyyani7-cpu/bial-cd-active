@@ -1,12 +1,12 @@
 """The publish gate's shared reading: one stored review + one answer set -> one record.
 
-EXTRACTED IN U10, FROM THE ROUTE THAT STILL OWNS THE LADDER. `deploy/router.py` decides
-which rung answers; this module holds the three things that decision is *written in* —
-how a stored review is read against the commit about to ship, how the three sources are
-handed to the merge, and the declaration document every outcome records. They live here
-rather than in the route because the route is no longer their only writer: on the drift
-path (R13) the DETACHED PIPELINE re-checks the new version and must produce the same
-document, in the same shape, for the same queue. A pipeline that cannot import a route
+THE ROUTE STILL OWNS THE LADDER. `deploy/router.py` decides which rung answers; this
+module holds the three things that decision is *written in* — how a stored review is read
+against the commit about to ship, how the three sources are handed to the merge, and the
+declaration document every outcome records. They live here rather than in the route
+because the route is no longer their only writer: on the drift path the DETACHED PIPELINE
+re-checks the new version and must produce the same document, in the same shape, for the
+same queue. A pipeline that cannot import a route
 (the route imports the pipeline) would otherwise have grown a second copy of a shape the
 route's own docstring calls contract — and two copies of a contract is how `differences`
 quietly stops meaning the same thing in the two places an administrator reads it.
@@ -50,11 +50,11 @@ class ReviewAtHead:
     `complete` is rule 4's predicate and is deliberately narrower than the bare status
     word: COMPLETE status AND the runner's own `answers_complete` signal AND not aged
     out AND stamped exactly this commit. A complete-but-flagged-partial row is FAILED
-    for the ladder — U5 and U6 already class partial as a failure, and reading the bare
-    status here would make the two disagree about the same row.
+    for the ladder — the review runner already classes partial as a failure, and reading
+    the bare status here would make the two disagree about the same row.
 
     `verdicts` and `scan` are populated whenever the stored document exists AND is
-    stamped this commit, even on a FAILED row: that is P8's Tier A floor arriving (the
+    stamped this commit, even on a FAILED row: that is the Tier A scan floor arriving (the
     model never returned, a complete scan's high-confidence hit stands in as the
     credentials answer), and dropping it would discard the one signal origin kept for
     when the model is unavailable. A row stamped ANOTHER commit contributes nothing at
@@ -63,12 +63,12 @@ class ReviewAtHead:
 
     complete: bool
     available: bool
-    """Whether a review document for THIS commit informed the merge — R22's "whether a
-    review was available", recorded on every decision."""
+    """Whether a review document for THIS commit informed the merge, recorded on every
+    decision."""
     status: str | None
     failure_code: str | None
     source: str | None
-    """`review` or `scan_floor` (U6's marker), or None when no document applies."""
+    """`review` or `scan_floor`, or None when no document applies."""
     verdicts: dict[str, Any]
     """Per-question stored entries for this commit, or empty."""
     scan: dict[str, Any]
@@ -78,8 +78,8 @@ class ReviewAtHead:
 def review_at_head(readout: ReviewReadout | None, head_sha: str | None) -> ReviewAtHead:
     """One stored row + the shipping commit -> the gate's reading of it."""
     if readout is None or head_sha is None or readout.review.head_sha != head_sha:
-        # Absent, or stamped a different version — the same nothing, deliberately: R6's
-        # whole point is that a stamp mismatch makes a stored answer unusable.
+        # Absent, or stamped a different version — the same nothing, deliberately: a
+        # stamp mismatch makes a stored answer unusable.
         return ReviewAtHead(
             complete=False,
             available=False,
@@ -121,7 +121,7 @@ def merge_inputs(flags: dict[str, bool], review: ReviewAtHead) -> list[QuestionM
 
     The scan signal is meaningful for credentials alone (the merge's own convention) and
     is read off the stored scan block's booleans — never from a location, which stays
-    internal (OD-B)."""
+    internal."""
     # A FLOOR row is not a review that answered — it is the record of one that never
     # returned, with the scan's Tier A hit written in as the credentials answer. Its
     # verdicts are therefore NOT handed to the merge as verdicts: `review_verdict=None` is
@@ -133,7 +133,7 @@ def merge_inputs(flags: dict[str, bool], review: ReviewAtHead) -> list[QuestionM
     # mislabel was user-visible: the queue item read `review_yes_over_citizen_no`, whose
     # admin copy is "The automatic check found this kind of data" — on the one path where
     # no automatic check ran at all. The non-credentials questions are stored `unanswered`
-    # on a floor row and merge identically either way (both fall to the citizen, R5), so
+    # on a floor row and merge identically either way (both fall to the citizen), so
     # nothing else moves.
     floor = review.source == "scan_floor"
     usable = review.complete or floor
@@ -152,10 +152,10 @@ def merge_inputs(flags: dict[str, bool], review: ReviewAtHead) -> list[QuestionM
             if isinstance(entry, dict):
                 raw = entry.get("verdict")
                 # An unrecognised label is treated as NO COMPLETED VERDICT rather than
-                # guessed at — the question falls to the citizen (R5), which is the
-                # fail-safe direction: it can add routing, never remove it.
+                # guessed at — the question falls to the citizen, which is the fail-safe
+                # direction: it can add routing, never remove it.
                 verdict = next((v for v in Verdict if v.value == raw), None)
-                # R4's discard, carried through rather than re-derived: the runner turned
+                # The runner's discard, carried through rather than re-derived: it turned
                 # a Yes whose every cited location was absent into UNANSWERED, and from
                 # the verdict alone that is indistinguishable from an honest abstention.
                 # The merge routes on it (the agent DID raise a flag), so losing the flag
@@ -176,13 +176,13 @@ def merge_inputs(flags: dict[str, bool], review: ReviewAtHead) -> list[QuestionM
 
 @dataclass(frozen=True)
 class DriftFacts:
-    """WHY THIS QUEUE ITEM LOOKS LIKE AN ANSWER TO A DIFFERENT QUESTION (U10, R13).
+    """WHY THIS QUEUE ITEM LOOKS LIKE AN ANSWER TO A DIFFERENT QUESTION.
 
     Set only on the save-and-publish path, where the citizen answered the form about one
     commit and the pipeline then re-checked another. Nobody is at the form when that
-    decision lands, so R10's mandatory explanation — if there is one at all — was written
+    decision lands, so the citizen's explanation — if there is one at all — was written
     about `answered_about`, not about the version an administrator is being asked to
-    approve. U13 leads with that distinction; these are the facts that make it renderable.
+    approve. These are the facts that make that distinction renderable.
     """
 
     answered_about: str | None
@@ -213,8 +213,8 @@ def declaration_document(
     """THE DECLARATION — the one payload every branch records and the queue carries.
 
     Written once, read by three consumers, so its shape is contract rather than
-    convenience: the registry's `declaration` column (U13's admin review screen renders
-    it), the `publish_gate` audit detail (R22's per-decision record), and the routed
+    convenience: the registry's `declaration` column (the admin review screen renders
+    it), the `publish_gate` audit detail (the per-decision record), and the routed
     response's provenance. Keys are snake_case INSIDE the JSON document — it is stored
     data, not a wire schema, and the questionnaire keys it is keyed by are snake_case
     everywhere else in the system (the deployment row's `classification`, the review
@@ -233,7 +233,7 @@ def declaration_document(
           "merged":   {"answers": {<key>: bool, ...}, "anyWeightedYes": bool},
           "differences": {<key>: ["review_yes_over_citizen_no", ...], ...},
 
-          # PRESENT ONLY ON THE DRIFT PATH (U10/R13) — absent, not null, otherwise:
+          # PRESENT ONLY ON THE DRIFT PATH — absent, not null, otherwise:
           "drift":    {"answeredAbout": "<40-hex>" | null,
                        "shipping": "<40-hex>" | null,
                        "newlyRaised": [<key>, ...],
@@ -243,34 +243,35 @@ def declaration_document(
     `differences` carries the merge module's `DisagreementKind` VALUES verbatim and only
     for questions that recorded one — renaming one of those strings is a data migration,
     not a refactor. Evidence locations are structurally absent: the administrator sees
-    the plain-language reason and the dispute, never where it was found (OD-B).
+    the plain-language reason and the dispute, never where it was found.
 
-    `reasons` is that plain-language half, carried HERE rather than looked up later
-    (U13): the review store holds one row per app and is overwritten by the next run
-    (R6), so an administrator reading a queue item next week would otherwise be shown
-    prose about a version nobody submitted. R6a's rule — the durable history lives in the
-    record written at routing time — applies to the reason exactly as it does to the
-    verdict. The strings are already redacted and already written for a non-technical
-    reader (U6 runs every one through the shared redactor before it is stored), so the
-    projection adds no new exposure; the `evidence` document, which is where locations
-    live, is never read on this path at all. It matters twice over on U10's drift path:
-    the reasons stored there are the RE-CHECK's, about the version actually queued, and
-    the row they came from is overwritten by the citizen's very next save.
+    `reasons` is that plain-language half, carried HERE rather than looked up later: the
+    review store holds one row per app and is overwritten by the next run, so an
+    administrator reading a queue item next week would otherwise be shown prose about a
+    version nobody submitted. The durable history lives in the record written at routing
+    time, and that holds for the reason exactly as it does for the verdict. The strings
+    are already redacted and already written for a non-technical reader (the runner puts
+    every one through the shared redactor before storing it), so the projection adds no
+    new exposure; the `evidence` document, which is where locations live, is never read
+    on this path at all. It matters twice over on the drift path: the reasons stored
+    there are the RE-CHECK's, about the version actually queued, and the row they came
+    from is overwritten by the citizen's very next save.
 
-    `drift` is the U10 block and its presence is itself the signal: this queue item was
-    routed by the pipeline after a save, with nobody at the form. `answeredAbout` is the
-    commit the citizen's answers and explanation describe, `shipping` is the commit
-    actually examined and pinned into the queue, `newlyRaised` names the weighted
-    categories the citizen's answers never covered (possibly none — see `DriftFacts`, it is
-    not the routing reason), and `routedBy` records that no human submitted this. U13
-    renders all four; adding a key here is additive, renaming one is a migration.
+    `drift` is present only on the drift path and its presence is itself the signal: this
+    queue item was routed by the pipeline after a save, with nobody at the form.
+    `answeredAbout` is the commit the citizen's answers and explanation describe,
+    `shipping` is the commit actually examined and pinned into the queue, `newlyRaised`
+    names the weighted categories the citizen's answers never covered (possibly none — see
+    `DriftFacts`, it is not the routing reason), and `routedBy` records that no human
+    submitted this. The admin review screen renders all four; adding a key here is
+    additive, renaming one is a migration.
     """
     document: dict[str, Any] = {
         "commits": {
             "shipping": head_sha,
             # What the recorded verdicts are actually ABOUT. Equal to shipping whenever a
-            # review informed the decision; null when none did. U10's drift path is what
-            # makes these two legitimately differ, and U13 leads with that distinction.
+            # review informed the decision; null when none did. The drift path is what
+            # makes these two legitimately differ.
             "reviewed": head_sha if review.available else None,
         },
         "citizen": {"answers": dict(citizen), "explanation": explanation},
@@ -319,7 +320,7 @@ def declaration_document(
     return document
 
 
-# --- reading one back (U10) ---------------------------------------------------------
+# --- reading one back ---------------------------------------------------------------
 #
 # THE READERS LIVE BESIDE THE WRITER, deliberately. A declaration written here and taken
 # apart somewhere else is the two-copies-of-a-contract failure this module's docstring
@@ -343,7 +344,7 @@ def answers_in(declaration: Mapping[str, Any], section: str) -> dict[str, bool]:
 
 
 def explanation_in(declaration: Mapping[str, Any]) -> str | None:
-    """The citizen's R10 explanation, already redacted by the gate that stored it. On the
+    """The citizen's explanation, already redacted by the gate that stored it. On the
     drift path it was written about the EARLIER version — carried forward unchanged rather
     than dropped, with `drift.answeredAbout` naming the version it answers."""
     citizen = declaration.get("citizen")
@@ -363,21 +364,21 @@ async def append_gate_audit(
     declaration: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    """ONE audit action for every gate outcome, APP-SCOPED (ASM7). Commit-less.
+    """ONE audit action for every gate outcome, APP-SCOPED. Commit-less.
 
     App-scoped is the whole point: the refusal row this replaces was scoped to the
     PROJECT with no app id anywhere in it, so it was invisible to the admin app audit
-    drawer — which matches on `resource_id` or `detail->>'appId'` — and R22's "visible"
-    was false for the only record the platform kept. Both are set here.
+    drawer — which matches on `resource_id` or `detail->>'appId'` — so the only record the
+    platform kept was unfindable where an administrator looks. Both are set here.
 
     One action with a `decision` field rather than four actions: the audit vocabulary is
-    open (ASM6, no migration needed either way), but a reader asking "what did the gate
+    open (no migration needed either way), but a reader asking "what did the gate
     decide for this app, and on what" wants one query, not a union of four. The
     `declaration` carries both answer sets, the differences and whether a review was
     available; `email` is denormalised because the actor REFERENCE is nulled when a user
     is removed and the trail must keep saying who published.
 
-    TWO CALLERS SINCE U10, and the second one is not a request. The route writes the
+    TWO CALLERS, and the second one is not a request. The route writes the
     ladder's decision; the detached pipeline writes its post-re-check decision on the
     drift path, with the same actor (the citizen who pressed Publish) and the same shape.
     A reader asking that one question still gets one query.

@@ -4,11 +4,11 @@ The key strings are a cross-track contract, so these assert the exact formats re
 `docs/engineering/contracts/C5-redis-key-namespace.md` and that the sandbox families are provably
 disjoint — a lock key can never be read as a heartbeat, registry or lease key.
 
-R22 (ADR-0029) added the environment segment. The two properties that earns are asserted here
-rather than inferred: keys for the SAME user never collide across environments, and no key can be
-built for anything that is not a `uuid.UUID`. Everything about the dual-read WINDOW — the legacy
-prefix, migration-on-read, the sweep's visibility across the cutover — lives in
-`tests/services/build_sessions/test_key_migration.py`, because it needs a Redis.
+Two properties of the environment segment are asserted here rather than inferred: keys for the
+SAME user never collide across environments, and no key can be built for anything that is not a
+`uuid.UUID`. Everything about the dual-read window — the legacy prefix, migration-on-read, the
+sweep's visibility across the cutover — lives in `test_key_migration.py`, because it needs a
+Redis.
 """
 
 from __future__ import annotations
@@ -68,8 +68,7 @@ def test_key_prefix_is_the_environment_scoped_root() -> None:
 
 
 def test_legacy_prefix_is_the_pre_r22_root_verbatim() -> None:
-    # Frozen as history, not as taste: it is what the live fleet was registered under, and
-    # release B deletes it. If this string is wrong the dual-read reaches nothing.
+    # If this string drifts the dual-read reaches nothing. `keys.py` records why it is frozen.
     assert LEGACY_KEY_PREFIX == "bial:sandbox:"
     assert legacy_registry_key(_U1) == f"bial:sandbox:registry:{_U1}"
 
@@ -114,9 +113,7 @@ def test_one_users_key_is_never_another_families_key() -> None:
 def test_keys_never_collide_across_environments_for_the_same_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """THE R22 PROPERTY. Production reuses a Redis shared with other BIAL applications, so a
-    process pointed at the wrong instance must not be able to read — later, delete — another
-    environment's containers. One user, three environments, nine keys, no overlap."""
+    """One user, three environments, no key in common — `keys.py` records why it is scoped."""
     built: list[str] = []
     for environment in ("development", "staging", "production"):
         monkeypatch.setattr(settings, "ENVIRONMENT", environment)
@@ -136,9 +133,7 @@ def test_the_environment_segment_is_read_per_call_not_frozen_at_import(
 
 
 def test_the_scan_patterns_are_literals_and_never_wildcard_the_environment() -> None:
-    """A single widened glob (`bial:*:sandbox:registry:*`) would reach into OTHER environments —
-    the exact hazard R22 closes — so the sweep enumerates literal patterns instead. During the
-    dual-read window that is two: the current one and the legacy one."""
+    """Two literal patterns, current and legacy, never one glob across the environment."""
     patterns = registry_scan_patterns()
     assert patterns == (f"bial:{_ENV}:sandbox:registry:*", "bial:sandbox:registry:*")
     for pattern in patterns:
@@ -192,14 +187,8 @@ def test_registry_fields_are_the_frozen_c5_set() -> None:
             "created_at",
             "state",
             "preview_stay_until",
-            # U13/R13 — which named writer last moved the stay. Provenance only; nothing
-            # branches on it. A deadline no operator can attribute is the state R13 removes.
             "stay_writer",
-            # R22 dual-read window — this environment adopted this record from the un-scoped
-            # legacy prefix. Read by exactly one caller, `delete_registry`, which uses it to tell
-            # "the legacy key beside this record is ours" from "it belongs to another deployment
-            # sharing this Redis". Deleting it unconditionally left the owning environment a
-            # running container with no record. GOES IN RELEASE B with the rest of the legacy arm.
+            # Temporary: `keys.py` retires this one with the rest of the legacy arm.
             "adopted_from_legacy",
         }
     )

@@ -168,8 +168,8 @@ async def acquire_lock(redis: aioredis.Redis, user_uuid: uuid.UUID) -> str | Non
 
     Fails CLOSED in both directions: a Redis error never hands out a token. It raises
     `LockUnavailableError` rather than returning `None` because "held" and "unknown" are
-    different answers that the HTTP layer owes the user differently — 409 vs 503 (U3, and
-    `.claude/rules/fail-first.md`: ambiguity denies, but it must deny HONESTLY)."""
+    different answers that the HTTP layer owes the user differently — 409 vs 503. Ambiguity
+    denies, but it must deny HONESTLY."""
     token = secrets.token_urlsafe(_LOCK_TOKEN_BYTES)
     try:
         acquired = await redis.set(lock_key(user_uuid), token, nx=True, ex=LOCK_TTL_SECONDS)
@@ -460,12 +460,9 @@ async def read_registry_and_starting_marker(
     return registry, _parse_starting_marker(raw_starting, user_uuid)
 
 
-# --- the lingering preview's stay of execution (#43, #13) --------------------
-# A relaunched preview (#43) and a COMPLETED build's pardoned preview (#13/R2, granted by
-# `manager._pardon_the_container`) deliberately do NOT occupy the one-per-user build slot:
-# they hold no lock and nothing renews their heartbeat. That leaves the container's
-# lifetime unowned, so it gets an explicit, bounded LEASE written onto the registry hash.
-# The background sweep honors an unexpired stay; reconcile-on-start does NOT (see reaper).
+# --- the lingering preview's stay of execution -------------------------------
+# A FIELD ON THE REGISTRY HASH, not a key of its own, so it cannot outlive the record it
+# reprieves — which is why every write below is guarded on that record still existing.
 
 
 class DeadlineWriter(enum.StrEnum):
@@ -625,21 +622,18 @@ async def stay_of_execution_is_current(redis: aioredis.Redis, user_uuid: uuid.UU
 
 
 async def read_registry(redis: aioredis.Redis, user_uuid: uuid.UUID) -> dict[str, str] | None:
-    """Read the sandbox record, falling back to the pre-R22 key and migrating what it finds.
+    """Read the sandbox record, falling back to the legacy key and migrating what it finds.
 
-    DUAL-READ, and it is the load-bearing half of the R22 cutover (C5). `KEY_PREFIX` used to have
-    no environment segment, and it is the sole input to `sweep_all`'s scan and to the Azure
-    inventory — so reading only the new key would have made every container live at the cutover
-    instant permanently invisible to both, forever, since the registry hash is the one family with
-    no TTL. Widening the SCAN alone would NOT have saved them either: `sweep_all` does not read
-    the record off the scan, it re-enters HERE with the user id it parsed out of the key name.
+    THE DUAL-READ HAS TO LIVE HERE, and widening the SCAN instead would not do it: `sweep_all`
+    does not read the record off its scan, it re-enters HERE with the user id it parsed out of
+    the key name — so a legacy record reached by any other route is still never rescued.
 
     Precedence is current-then-legacy, never the other way round: every write goes to the current
     key, so it is by definition the newer claim, and answering with a superseded `app_name` would
     point a teardown at the wrong container.
 
-    `SandboxClient._read_registry` is the other point read and must behave identically — C5 keeps
-    the two separate on purpose (`services/sandbox/` may not import `services/build_sessions/`),
+    `SandboxClient._read_registry` is the other point read and must behave identically — the two
+    are kept separate on purpose (`services/sandbox/` may not import `services/build_sessions/`),
     and `tests/services/build_sessions/test_key_migration.py` is what stops them drifting.
     """
     raw = await redis.hgetall(registry_key(user_uuid))

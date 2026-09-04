@@ -305,8 +305,6 @@ async def test_the_listing_still_renders_when_the_cluster_is_unreachable(
 async def test_the_listing_renders_with_no_substrate_at_all(
     client: AsyncClient, db_session: AsyncSession, no_substrate: None
 ) -> None:
-    # The fixture-free absent baseline (`.claude/rules/testing.md`): per-project databases
-    # are a genuinely optional integration, so the store-off deployment needs its own test.
     row = await _app_row(db_session)
 
     resp = await client.get(_LIST, headers=await _admin(db_session))

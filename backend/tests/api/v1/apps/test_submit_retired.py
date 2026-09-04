@@ -1,16 +1,13 @@
-"""GUARDS: the citizen submit route is GONE (U8: R15a, ASM18).
+"""GUARDS: the citizen submit route is GONE.
 
-`POST /apps/{app_id}/submit` was the only backend writer of the pending status.
-Retiring it — rather than hiding its button — is what makes "exactly one route into
-the queue" true: reachable, it would let a queue item arrive with no declaration
-attached. Per the repo's retire-a-behaviour convention
+`POST /apps/{app_id}/submit` used to write the pending status; the one-writer rule for
+the queue lives in `src/services/approvals/__init__.py`. Per the repo's
+retire-a-behaviour convention
 (`docs/solutions/conventions/cleanly-removing-dead-ui-controls-2026-06-23.md`, the
 same flip `test_lifecycle.py` carries for `POST /apps/provision`), the route's tests
-become guards that it stays gone: if any of these fails, someone reinstated the
-route, and the R15a invariant fails with it.
+become guards that it stays gone: if any of these fails, someone reinstated it.
 
-The BEHAVIOUR the route carried is not gone — it lives in
-`services/approvals/submit.py` and is proved at
+The behaviour it carried lives in `services/approvals/submit.py`, proved at
 `tests/services/approvals/test_submit.py`.
 """
 
@@ -82,7 +79,7 @@ async def test_the_submit_route_is_gone_unauthenticated_too(client) -> None:
 
 def test_the_submit_route_is_gone_from_the_openapi_schema() -> None:
     # Retired means UNDOCUMENTED: the schema advertises no submit path, so no
-    # client is invited to call one (the same flip U6 applied to provision/source).
+    # client is invited to call one.
     paths = create_app().openapi()["paths"]
     assert "/v1/apps/{app_id}/submit" not in paths
     submit_shaped = [p for p in paths if p.startswith("/v1/apps") and "submit" in p]

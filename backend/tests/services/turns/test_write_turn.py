@@ -493,17 +493,15 @@ async def test_a_build_that_wrote_nothing_fails_instead_of_reporting_success(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE ZERO-FILE BUILD. A live run read a file, said something reassuring, touched
-    NOTHING — and the citizen was told "Build complete — your app is live below" over a
-    container still serving the 145-character golden template, 65k tokens later. The guard
-    above is right for a chat turn and catastrophic for a build: a turn started from a plan
-    card was ASKED to build, so a zero-mutation outcome is a failure, not a quiet success.
+    """★ THE ZERO-FILE BUILD. The guard above is right for a chat turn and catastrophic for a
+    build: a turn started from a plan card was ASKED to build, so a zero-mutation outcome is a
+    failure, not a quiet success.
 
     The copy must say plainly that nothing was built, and must not claim the work is saved —
-    there is no auto-save (KTD-5e), and here there is not even any work to save.
-
-    Mutation-check: restore the bare `return` in the mutation guard and this goes red on
-    `status == "completed"`."""
+    there is no auto-save (KTD-5e), and here there is not even any work to save. Mutation-check:
+    restore the bare `return` in the mutation guard and `status == "completed"` goes red."""
+    # Mutation-check: restore the bare `return` in the mutation guard and this goes red on `status
+    # == "completed"`.
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt13@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()
@@ -546,12 +544,9 @@ async def test_declaring_done_is_not_evidence_that_anything_was_built(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ THE SECOND DOOR INTO THE SAME LIE. The guard above asks "did anything change?", but it
-    asked it as `workspace_touched OR done_requested` — and `declare_done` set BOTH flags. So a
-    model that wrote not one file and simply declared itself finished satisfied the guard and
-    collected "Build complete — your app is live below" over an untouched template: the exact
-    outcome the guard exists to prevent, reached by asking the accused for a character
-    reference.
-
+    asked it as `workspace_touched OR done_requested` — and `declare_done` set BOTH flags, so a
+    model that wrote not one file and simply declared itself finished satisfied it, which is the
+    outcome the guard exists to prevent, reached by asking the accused for a character reference.
     A claim is not a mutation. On a turn that was ASKED to build, only a real write counts.
 
     Mutation-check: restore `session.workspace_touched = True` in `declare_done` (or put
@@ -1502,8 +1497,7 @@ def test_each_showing_arm_is_read_off_the_verdict() -> None:
 
 # THE VOCABULARY BAR, hoisted to module scope so more than one guard can hold a sentence to it.
 # The bar is the citizen's vocabulary, not a spell-checker's: `.tsx`, `npm`, `git`, `Next.js` and
-# their friends all name things the person who asked for a visitor log has never heard of, and
-# every one of them appeared in the 2,397 words that went to a non-technical user on 2026-08-18.
+# their friends all name things the person who asked for a visitor log has never heard of.
 _FORBIDDEN_IN_CITIZEN_COPY = (
     ".tsx",
     ".ts",
@@ -1530,15 +1524,13 @@ _FORBIDDEN_IN_CITIZEN_COPY = (
 
 
 def test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon() -> None:
-    """R13's testable half, and the reason `services/turns/copy.py` exists as a module rather
-    than as strings at their call sites: a promise about a CLASS of text can only be kept if the
-    class has an address.
+    """The honest ending's testable half, and the reason `services/turns/copy.py` exists as a
+    module rather than as strings at their call sites: a promise about a CLASS of text can only
+    be kept if the class has an address.
 
-    The bar is the citizen's vocabulary, not a spell-checker's. `.tsx`, `npm`, `git`, `Next.js`
-    and their friends all name things the person who asked for a visitor log has never heard of;
-    every one of them appeared in the 2,397 words that went to a non-technical user on
-    2026-08-18. The agent's own narration is NOT covered by this — that is the companion plan —
-    and this file is deliberately the whole of what this plan changes about voice."""
+    The bar is `_FORBIDDEN_IN_CITIZEN_COPY` above. The agent's own narration is NOT covered by
+    this — that is the companion plan — and this file is deliberately the whole of what this
+    plan changes about voice."""
     sentences = [
         value
         for name, value in vars(copy_module).items()
@@ -1875,22 +1867,16 @@ def _answered_tools(rows: list[Message]) -> set[str]:
 async def test_a_green_declare_done_ends_the_turn_and_renders_the_summary(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ U18 / R30 / R22 — THE WHOLE UNIT, IN ONE RUN.
+    """★ THE WHOLE UNIT, IN ONE RUN. `declare_done` used to be a request for permission: it
+    returned "stand by", the harness verified, then bought ONE MORE model request whose only
+    product was a closing paragraph. The summary the tool already carries says the same thing in
+    the register the reader actually has, so the harness renders THAT.
 
-    `declare_done` used to be a request for permission: the tool returned "stand by", the
-    harness verified, and then it bought ONE MORE full model request whose entire product was a
-    closing paragraph. That paragraph is the surface the 2026-08-18 demo filled with file paths,
-    package installs and framework names, and the platform paid for the request that produced
-    it. The summary the tool already carries says the same thing in the register the reader
-    actually has, so the harness renders THAT and the turn ends on it.
-
-    ASSERTED ON THE REQUEST COUNT, NOT ON ELAPSED BEHAVIOUR. "The model said nothing afterwards"
-    is also satisfied by a model that WAS asked and happened to return nothing; the claim here
-    is that it was never asked. `counts["requests"]` is how many model requests actually fired:
-    one for the write, one for the `declare_done` call, and no third.
-
-    Mutation check: delete the `break` in `_run_write_once` and the third request fires, the
-    closing paragraph lands in the transcript, and both halves of this go red."""
+    ASSERTED ON THE REQUEST COUNT, not on elapsed behaviour: a model that WAS asked and returned
+    nothing also says nothing afterwards. `counts["requests"]` must be one for the write, one for
+    `declare_done`, and no third; delete the `break` in `_run_write_once` and a third fires."""
+    # Mutation check: delete the `break` in `_run_write_once` and the third request fires, the
+    # closing paragraph lands in the transcript, and both halves of this go red.
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt-u18-green@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()

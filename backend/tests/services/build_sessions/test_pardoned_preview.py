@@ -1,16 +1,11 @@
-"""#13/R2 — the pardoned preview's lifecycle: a COMPLETED build's container outlives its
-build under the bounded stay-of-execution lease, and every owner in the lifecycle triad
-still does its job:
+"""What happens to a pardoned preview after its build ends.
 
-* liveness: nothing renews it (deliberate — the lease is the owner, exactly like a
-  relaunched preview);
-* teardown: the background sweep honors the unexpired lease, then reaps through it once
-  it lapses;
-* reclaim: reconcile-on-start reaps through even an UNEXPIRED lease (covered in
-  `test_manager.py::test_clean_end_then_start_restores_from_snapshot_not_fresh`).
-
-The pardon itself (no teardown, registry kept, stay granted, lock released) is asserted
-on the happy path in `test_manager.py`; this module covers what happens NEXT.
+The pardon itself — no teardown, registry kept, stay granted, lock released — is asserted on
+the happy path in `test_manager.py`; this module covers what comes next: nothing renews
+liveness, the background sweep spares the container inside its stay and reaps it once the stay
+lapses, and a failed build is not pardoned at all. The stay itself lives in `reaper.py`, and
+reconcile-on-start reaping through an unexpired one is covered by
+`test_manager.py::test_clean_end_then_start_restores_from_snapshot_not_fresh`.
 """
 
 from __future__ import annotations
@@ -146,7 +141,7 @@ async def test_pardon_survives_a_stay_grant_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Best-effort per the end-sequence policy: a Redis blip on the grant must not hang the
-    # feed or strand the lock. Degraded mode is the pre-#13 lifetime — the registry is
+    # feed or strand the lock. Degraded mode is the pre-stay lifetime — the registry is
     # still there for the sweep to find at heartbeat lapse, so nothing is orphaned.
     async def boom_grant(*_a: object, **_k: object) -> datetime:
         raise RuntimeError("redis blip on the stay grant")

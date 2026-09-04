@@ -4,16 +4,6 @@
 consumption seam for every protected endpoint: it authenticates a request purely
 from the session cookie and returns the live `User`. This is AUTHENTICATION only
 (who you are) — no role/permission check (RBAC is a later phase).
-
-A DEPENDENCY THAT CAN BE UNCONFIGURED HANDS BACK `None`; IT DOES NOT RAISE. Every `Depends` is
-solved before the route body's first statement, so a provider that raises there raises where no
-`except` of the route's can see it — and a route advertising 503 for an unavailable store,
-sandbox, deploy service or per-app database answers an undocumented 500 instead, in the
-catch-all's `{"detail": ...}` envelope rather than its own. Storage-off and Redis-off are
-supported postures outside production, so that break lands exactly where nobody is watching.
-Take a raising provider (`Storage`) only where an unset dependency genuinely IS a deploy bug;
-anything documenting an unavailable status takes the `| None` twin and maps `None` onto that
-status in its own body.
 """
 
 from typing import Annotated
@@ -92,14 +82,12 @@ CurrentUser = Annotated[User, Depends(current_user)]
 
 def storage_dependency() -> ObjectStorage:
     """The configured object store as a dependency so a test can swap an in-memory fake. The
-    attachments router deliberately keeps its OWN `storage_dependency` — the two are overridden
-    independently in tests, so they must stay distinct symbols.
+    attachments router deliberately keeps its OWN `storage_dependency`: the two are overridden
+    independently, so merging them would bind a test's fake to a key the route never resolves.
 
-    RAISES `StorageUnconfiguredError` on a storage-off deployment, and — because every `Depends`
-    is solved BEFORE the route body's first statement — it raises where no `except` of the route's
-    can see it. Only take this where an unconfigured store genuinely IS a 500 (a deploy bug, not a
-    runtime condition); anything that documents a storage-unavailable status takes
-    `OptionalStorage` below."""
+    Take this only where an unconfigured store genuinely IS a deploy bug — it RAISES at
+    dependency-solve time, where no `except` of the route's can reach it; a route that documents a
+    storage-unavailable status takes `OptionalStorage` below."""
     return get_storage()
 
 
@@ -107,14 +95,9 @@ Storage = Annotated[ObjectStorage, Depends(storage_dependency)]
 
 
 def storage_or_none_dependency() -> ObjectStorage | None:
-    """The configured object store, or **`None` when it is unconfigured** (dev/test) — the
-    None-tolerant twin of `storage_dependency`, and the same idiom as `container_store_dependency`
-    below.
-
-    It still resolves EAGERLY (every `Depends` does); it just cannot FAIL eagerly, which is what
-    lets a route keep the 503 it advertises — see this module's header for the whole contract.
-    Storage-off is a supported posture outside production (`_require_storage_in_production` only
-    gates prod).
+    """The configured object store, or **`None` when it is unconfigured** (dev/test). It resolves
+    eagerly like every `Depends`; it just cannot FAIL eagerly, which is what lets the consuming
+    route map an unset store onto the status it documents instead of answering an undocumented 500.
 
     Deliberately still a dependency rather than a bare `get_storage()` inside the route's `try`:
     that naive fix would read the accessor singleton while a test had wired a fake through
@@ -125,17 +108,12 @@ def storage_or_none_dependency() -> ObjectStorage | None:
         return None
 
 
-# `| None`-tolerant, unlike `Storage`: the consuming route maps an unset store onto its own
-# documented storage-unavailable answer instead of dying at dependency-solve time.
 OptionalStorage = Annotated[ObjectStorage | None, Depends(storage_or_none_dependency)]
 
 
 def container_store_dependency() -> AppContainerStore | None:
     """The per-app container store as a dependency so a test can swap a fake (mirrors
-    `storage_dependency`). Returns **`None` when object storage is unconfigured** (dev/test) —
-    `get_app_container_store` diverges from `get_storage` there on purpose, and the sweep helpers
-    branch on `None` (`storage off → skip`) rather than raising. Injected into the admin
-    hard-delete so `nuke_app` receives the store instead of resolving the singleton inline."""
+    `storage_dependency`). Returns **`None` when object storage is unconfigured** (dev/test)."""
     return get_app_container_store()
 
 

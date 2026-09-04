@@ -1,16 +1,14 @@
-"""Raw Azure Container Apps control-plane ops (the C2 lower seam).
+"""Raw Azure Container Apps control-plane ops — the lower seam under `client.py`.
 
 A thin async wrapper over the SYNC `azure-mgmt-appcontainers` SDK: create / delete /
 get one container app, authenticated by managed identity (`DefaultAzureCredential` —
-no static provisioning secret; `SandboxConfig` §doc). The mgmt SDK is synchronous, so
-every call is offloaded to a worker thread (`asyncio.to_thread`) rather than blocking
-the event loop.
+no static provisioning secret). The mgmt SDK is synchronous, so every call is offloaded
+to a worker thread (`asyncio.to_thread`) rather than blocking the event loop.
 
-This seam is deliberately THIN and SDK-mocked in SESSION-API's tests (the concrete
-`AcaSandboxClient` injects a fake). Track SANDBOX live-validates provision / snapshot /
-restore against real Azure THROUGH this code at its acceptance join — including the ACA
-container-naming rules and the Managed Environment wiring (the one infra prerequisite
-this convention names but does not itself provision).
+This seam is deliberately THIN and SDK-mocked in the backend's tests (the concrete
+`AcaSandboxClient` injects a fake), so the ACA container-naming rules and the Managed
+Environment wiring — the one infra prerequisite this module names but does not itself
+provision — are only ever exercised against real Azure.
 """
 
 from __future__ import annotations
@@ -75,9 +73,9 @@ def _are_you_up_yet() -> list[aca_models.ContainerAppProbe]:
     without touching the workspace). Restarting is strictly worse than reporting. If you are
     here to "complete the set", that is the argument you have to beat.
 
-    Note both probes watch the SUPERVISOR, never the generated app. `next dev` being up is not
-    a container-health question — it is `/dev/status`'s job, and post-U6 that answer means "a
-    request was actually served", which a container-level probe has no business deciding.
+    Note both probes watch the SUPERVISOR, never the generated app: whether `next dev` is up is
+    `/dev/status`'s question, and pointing these at the app would pull the whole revision —
+    `/_sup` included — out of rotation whenever a route was merely still compiling.
     """
     knock = aca_models.ContainerAppProbeHttpGet(
         path=_SUPERVISOR_HEALTH_PATH,
@@ -231,11 +229,9 @@ def _env_value_of(app: aca_models.ContainerApp, key: str) -> str | None:
     """One environment variable off the container app's sandbox container, or `None` when the
     app carries no such variable (attributes are loosely typed by the SDK, so coerce the leaf).
 
-    This is how a supervisor bearer survives a control-plane restart. The token is minted per
-    container and injected here at create (`_provision_container`), so the container app spec —
-    not the control-plane process — is its durable home. Reading it back is strictly cheaper
-    than the alternative the absence used to trigger, which was tearing the container down and
-    restoring it from the last snapshot."""
+    This is how a supervisor bearer survives a control-plane restart: the token is injected here
+    at create, so the container app spec — not the control-plane process — is its durable
+    home."""
     props = app.properties
     template = props.template if props else None
     containers = template.containers if template else None
@@ -264,10 +260,10 @@ class AcaControlPlane:
         c = self._config
         return aca_models.ContainerApp(
             location=c.region,
-            # C10 identity, ON THE ENVELOPE rather than PATCHed on afterwards. A container is
-            # judgeable-without-Redis from the FIRST MOMENT it exists, with no window in which a
-            # create that succeeded and a follow-up stamp that did not leaves an anonymous
-            # container behind — which is the exact population ADR-0029 exists to collect.
+            # Identity ON THE ENVELOPE rather than PATCHed on afterwards, so a container is
+            # judgeable-without-Redis from the FIRST MOMENT it exists: there is no window in
+            # which a create that succeeded and a follow-up stamp that did not leaves an
+            # anonymous container running with nothing able to claim or reclaim it.
             tags=checked_tags(tags),
             properties=aca_models.ContainerAppProperties(
                 managed_environment_id=_managed_environment_id(c),
@@ -308,7 +304,7 @@ class AcaControlPlane:
                             probes=_are_you_up_yet(),
                         )
                     ],
-                    # Single-replica POC (C5/C7): exactly one container per user.
+                    # Single replica: exactly one container per user.
                     scale=aca_models.Scale(min_replicas=1, max_replicas=1),
                 ),
             ),
@@ -363,14 +359,11 @@ class AcaControlPlane:
             raise AcaError("ACA delete failed") from exc
 
     async def list_sandbox_fleet(self) -> list[FleetMember]:
-        """Every sandbox container app ARM knows about, projected to what may be judged on (R3).
+        """Every sandbox container app ARM knows about, projected to what may be judged on.
 
-        THE ONLY AZURE-SIDE VIEW OF THE FLEET, and it exists because the reaper has none.
-        `sweep_all` enumerates from the Redis registry, so it can only ever collect containers it
-        already has a record of — a sandbox whose registry entry is gone (a flushed Redis, a
-        different Redis, a container predating the registry) is invisible to it FOREVER and bills
-        until a human notices. One such container ran for twelve days. Inverting that authority is
-        the whole of ADR-0029, and this method is where the inversion happens.
+        THE ONLY AZURE-SIDE VIEW OF THE FLEET. Every other enumeration starts from the Redis
+        registry and so can only ever collect containers it already holds a record of; this is
+        the one reader that can still see a container whose record is gone.
 
         ONE ENUMERATION, NOT THREE. It replaces a name-only lister and a name→tags lister that
         walked the same page set and threw away different halves of it. Every caller now reads the
@@ -408,7 +401,7 @@ class AcaControlPlane:
             raise AcaError("ACA list failed") from exc
 
     async def stamp_tags(self, *, name: str, tags: dict[str, str]) -> None:
-        """MERGE identity tags onto an existing container app (C10 §1.4).
+        """MERGE identity tags onto an existing container app.
 
         THE MERGE IS OURS, NOT ARM'S — and believing otherwise cost a live fleet its identity.
         `begin_update` is `PATCH` and the schema documents JSON Merge Patch, but the
@@ -422,7 +415,7 @@ class AcaControlPlane:
 
         READ, THEN WRITE THE UNION. The window between the two is a real lost-update race, named
         here rather than hidden: the writers are provision (create-time, before this container is
-        listable), the C10 backfill, and this staging stamp. Two of them colliding costs a
+        listable), the identity backfill, and this staging stamp. Two of them colliding costs a
         re-stamp on the next pass. The alternative is a second ARM client for
         `Microsoft.Resources/tags` — which does merge server-side — and a whole dependency for one
         call is not worth a race this narrow.
@@ -523,8 +516,7 @@ class AcaControlPlane:
         or carries no such variable. The caller disambiguates those two with `get_app_fqdn`;
         they are only conflated here because the SDK gives one shape for both.
 
-        NEVER log the returned value — this is how the supervisor bearer is recovered
-        (`security.md`: never log credential values)."""
+        NEVER log the returned value — this is how the supervisor bearer is recovered."""
 
         def _run() -> str | None:
             app = self._client.container_apps.get(self._config.resource_group, name)

@@ -47,8 +47,8 @@ _CREDENTIAL_RE = re.compile(r"bial_[A-Za-z0-9_-]{16,}")
 # would otherwise force quadratic backtracking over a long run of `[A-Za-z0-9_]` (a
 # `console.log`-dumped blob is app-controlled), stalling the event loop — a measured DoS. Env-var
 # names never approach 64 chars, so the bound keeps the scan LINEAR without losing real matches.
-# The suffix set is deliberately broad (families the child-env-scrub learning shows a narrow
-# `_TOKEN/_SECRET/_KEY` filter misses) — [[sandbox-supervisor-child-env-scrub-allowlist]].
+# The suffix set is deliberately broad — a narrow `_TOKEN/_SECRET/_KEY` filter misses real
+# credential families that a child process's environment carries.
 _SECRET_ASSIGN_RE = re.compile(
     r"(['\"]?[A-Za-z_][A-Za-z0-9_]{0,64}"  # key (bounded → linear)
     r"(?:_TOKEN|_SECRET|_SECRETS|_KEY|_APIKEY|_API_KEY|_ACCESS_KEY|_PASSWORD|_PASSWD|_PWD"
@@ -80,16 +80,16 @@ _BEARER_RE = re.compile(r"(bearer\s+)([A-Za-z0-9._\-]+)", re.IGNORECASE)
 # runs to the next `;`/`&`/whitespace/quote or end. Linear (bounded key alternation + one value run
 # — no nesting), so it stays ReDoS-safe on the input-capped run_command/log egress surface.
 #
-# Widened for U2: a QUOTED value alternation (`Password="p w d"`, `password: "hunter2"`) — the
-# bare class excludes quote characters, so quoted source literals previously passed through
-# unmasked (ASM2). Bare values behave byte-identically to before; quoted arms require at least
-# one char so an empty `""` is never rewritten into a phantom `"***"`.
+# The value alternation admits a QUOTED value (`Password="p w d"`, `password: "hunter2"`): the
+# bare class excludes quote characters, so a quoted source literal would otherwise pass through
+# unmasked. The quoted arms require at least one character, so an empty `""` is never rewritten
+# into a phantom `"***"`.
 _CONN_PARAM_RE = re.compile(
     r"(?i)\b(password|pwd|accountkey|sharedaccesskey|sharedaccesssignature|sig|secret"
     r"|access[_-]?key)(\s*[=:]\s*)(\"[^\"\r\n]{1,512}\"|'[^'\r\n]{1,512}'|[^\s;&,'\"]+)"
 )
 
-# --- the shared name-literal family (U2) ----------------------------------------------------
+# --- the shared name-literal family ---------------------------------------------------------
 #
 # One candidate pattern serving BOTH consumers: the masker masks the value of any
 # credential-shaped name whose value is a hardcoded literal, and the detector reports the same
@@ -158,7 +158,7 @@ def _literal_secret_content(value: str) -> str | None:
 # --- Tier A patterns, ported from established rule sets (gitleaks / detect-secrets) ----------
 #
 # Value-shaped and unambiguous on their own: what stands in as the credentials answer when the
-# model is unavailable, and what an overrule is recorded against (P8). Every quantifier is
+# model is unavailable, and what an overrule is recorded against. Every quantifier is
 # bounded; every class excludes its own delimiter, so no pattern can backtrack quadratically.
 
 _PEM_PRIVATE_KEY_RE = re.compile(r"-----BEGIN[ A-Z0-9_-]{0,64}PRIVATE KEY(?: BLOCK)?-----")
@@ -171,7 +171,7 @@ _GITHUB_TOKEN_RE = re.compile(
 )
 _SLACK_TOKEN_RE = re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,250}")
 # Candidate JWT shape; `_jwt_is_decodable` then requires header AND payload to base64-decode
-# into JSON objects — "decodable" is the plan's word and the whole precision case.
+# into JSON objects — decodability is the whole precision case.
 _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{6,4096}\.[A-Za-z0-9_-]{10,16384}\.[A-Za-z0-9_-]{8,4096}")
 _AZURE_ACCOUNT_KEY_RE = re.compile(r"(?i)\bAccountKey=[A-Za-z0-9+/=]{88}")
 # The whole SAS token (its value class admits `&`, so an embedded `sig=` is covered by the
@@ -215,7 +215,7 @@ def _name_literal_hit(match: re.Match[str]) -> bool:
 
 
 class Tier(enum.StrEnum):
-    """P8's two-tier split: A is value-shaped and binding when the model is down; B is a
+    """The two-tier split: A is value-shaped and binding when the model is down; B is a
     credential-shaped name with a literal value — a lead for the review, nothing more."""
 
     A = "A"
@@ -225,8 +225,8 @@ class Tier(enum.StrEnum):
 @dataclass(frozen=True)
 class CredentialHit:
     """One detection: the pattern family, its tier, and a 1-based line number. Deliberately
-    NOWHERE to carry the matched value (R3/R4a — a hit that quoted its secret would leak it
-    into prompts and admin-visible records)."""
+    NOWHERE to carry the matched value: a hit that quoted its secret would leak it into
+    prompts and admin-visible records."""
 
     family: str
     tier: Tier
@@ -236,14 +236,14 @@ class CredentialHit:
 @dataclass(frozen=True)
 class CredentialScan:
     """The per-file scan result. `truncated` means the input exceeded the ceiling and only
-    the prefix was scanned — the caller must treat that as an incomplete scan (U6 routes it
-    to the review-failed bucket), never as a clean no-hit."""
+    the prefix was scanned — the caller must treat that as an incomplete scan (the review
+    runner routes it to the review-failed bucket), never as a clean no-hit."""
 
     hits: tuple[CredentialHit, ...]
     truncated: bool
 
 
-# Hard per-file input ceiling (bound the INPUT, not the output — the ReDoS learning). 256 KiB
+# Hard per-file input ceiling — bound the INPUT, not the output. 256 KiB
 # comfortably covers real generated source files; a bigger file is reported truncated.
 SCAN_INPUT_MAX_CHARS = 262_144
 
@@ -257,7 +257,7 @@ class _Detector:
 
 
 # The named collection the detector runs — every family label here is a stable identifier that
-# ends up in review prompts and stored evidence (U6), so renaming one is a data migration.
+# ends up in review prompts and stored evidence, so renaming one is a data migration.
 _DETECTORS: tuple[_Detector, ...] = (
     _Detector("pem-private-key", Tier.A, _PEM_PRIVATE_KEY_RE),
     _Detector("stripe-live-key", Tier.A, _STRIPE_LIVE_KEY_RE),
@@ -285,7 +285,7 @@ def _line_starts(text: str) -> list[int]:
 
 
 def detect_credentials(text: str) -> CredentialScan:
-    """Scan one file's text for credential-shaped content (R4a/P8): each hit carries its
+    """Scan one file's text for credential-shaped content: each hit carries its
     pattern family, a Tier label and a 1-based line number — never the matched value. The
     caller attaches the path; this layer only ever sees one file's text.
 
@@ -350,25 +350,18 @@ def _mask_name_literal(match: re.Match[str]) -> str:
 
 # Terminal escape sequences and invisible characters, stripped BEFORE any shape matching runs.
 #
-# THE ORDER IS THE FIX, not a tidy-up. `redact_secrets` matches credentials by SHAPE, so anything
-# that splits a token defeats it while leaving the text visually identical: `DB_PASSWORD=\x1b[0m
-# hunter2` renders as `DB_PASSWORD=hunter2` in any terminal and in most log viewers, and reaches
-# the redactor as two fragments that match nothing. Zero-width and directional-override characters
-# do the same job and are legal inside a JS string.
-#
-# It did not matter while every caller was output WE produced (`tsc`, the dev server, `next
-# build` — none of which is adversarial). It matters for every path that carries text written by
-# unreviewed code inside a generated app: the browser crash report, and the app's own served HTML.
-#
-# Not exhaustive against every Unicode trick — shape matching never can be — but these are the
-# ones an app can emit without the text looking altered to a human reading the log.
+# These are the ones an app can emit without the text looking altered to a human reading a log:
+# a colour byte, a zero-width space and a directional override are each legal inside a JS string
+# and each splits a credential in two while rendering identically — `DB_PASSWORD=\x1b[0m hunter2`
+# reads as `DB_PASSWORD=hunter2` in any terminal and in most log viewers. Not exhaustive against
+# every Unicode trick; shape matching never can be.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\ufeff]")
 
 
 def strip_control_sequences(text: str) -> str:
-    """Remove terminal escapes and invisible characters — see the note above on why this must
-    run BEFORE `redact_secrets` rather than after it, or instead of it."""
+    """Remove terminal escapes and invisible characters. A caller holding sandbox-authored
+    text wants `scrub_untrusted`, which sequences this with the mask."""
     return _INVISIBLE_RE.sub("", _ANSI_RE.sub("", text))
 
 
@@ -388,10 +381,9 @@ _CREDENTIAL_OPEN_QUOTE_RE = re.compile(
 #: every other synchronous scan on this path honours. The callers hand this the ENTIRE prefix of
 #: an app-controlled capture (`sandbox/supervisor` runs `subprocess.run(capture_output=True)` with
 #: no ceiling and the client adds none), so at 8 MB one `run_command` that cats a bundle stalled
-#: the control plane's single event loop for ~12s, per stream, per call — the exact failure the
-#: ReDoS P0 in `security-issues/redos-secret-redaction-regex-2026-07-14.md` was about, whose
-#: Prevention section states the rule this now follows: "cap input length BEFORE the scan, never
-#: after".
+#: the control plane's single event loop for ~12s, per stream, per call — the same failure an
+#: earlier ReDoS incident on this module produced, whose rule this now follows: cap input length
+#: BEFORE the scan, never after.
 #:
 #: AND `asyncio.to_thread` IS NOT THE ANSWER HERE, which is worth writing down because it is the
 #: obvious move and this module's own `detect_credentials_off_loop` looks like a precedent for it.
@@ -484,11 +476,6 @@ def scrub_untrusted(text: str, *, limit: int) -> str:
     """The ONE way sandbox-authored text is made safe to store, log or show: capped, then
     de-escaped, then masked — in that order.
 
-    ONE FUNCTION BECAUSE THE ORDER IS THE WHOLE PROPERTY. Three call sites had to get the same
-    three steps in the same sequence, and the one that got it wrong was exploitable rather than
-    merely untidy. A caller that reaches for `redact_secrets` alone on app-authored text is
-    making the same mistake again, so there is now a name for the thing they actually want.
-
     The cap comes FIRST and is the caller's, because the callers differ on how much they can
     afford to keep: it bounds the work a hostile blob can make a synchronous, event-loop-bound
     scan do (`REDACT_INPUT_MAX_CHARS` is the orchestrator's answer; the served-page probe keeps
@@ -497,14 +484,14 @@ def scrub_untrusted(text: str, *, limit: int) -> str:
 
 
 def redact_secrets(text: str) -> str:
-    """Mask credential-shaped substrings (KD-5): `bial_…` credentials, `NAME<sep>value`
-    assignments across the credential families (underscore-suffixed AND, since U2, camelCase
+    """Mask credential-shaped substrings: `bial_…` credentials, `NAME<sep>value`
+    assignments across the credential families (underscore-suffixed AND camelCase
     names with quoted/literal values — `const password = "hunter2"`), URL-embedded
     `user:pass@`, connection-string / SAS parameters (`Password=`/`AccountKey=`/
     `SharedAccessSignature=`/`sig=`, masked even mid-string after a `;` where the assignment
-    pass stops, now including quoted values), and `Bearer` tokens. Idempotent and safe on any
+    pass stops, quoted values included), and `Bearer` tokens. Idempotent and safe on any
     string — used on every egress path (build error envelopes, raw log relay, `run_command`
-    stdout) AND at the message store's persistence seam (U4). Every pattern is LINEAR so it
+    stdout) AND at the message store's persistence seam. Every pattern is LINEAR so it
     cannot stall the event loop on an adversarial (app-controlled) blob. The name-literal pass
     runs AFTER the URL pass so a credential-shaped username (`postgres://token:x@h`) is masked
     as userinfo, preserving the URL's structure."""
@@ -519,12 +506,9 @@ def redact_secrets(text: str) -> str:
 def redact_and_cap(text: str | None, max_chars: int) -> str | None:
     """Redact, THEN cap — the shape every stored failure detail wants, in one place.
 
-    THE ORDER IS THE POINT, which is why this is a function rather than a line each
-    caller writes for itself: capping first can slice a credential in half and leave its
-    recognizable prefix behind, and nothing downstream can un-leak it. Both pipelines
-    that store an operator-grade detail (the deploy pipeline and the classification
-    review runner) keep their own ceiling — how much diagnostic is worth storing is
-    theirs to decide — and share this rule.
+    Both pipelines that store an operator-grade detail (the deploy pipeline and the
+    classification review runner) keep their own ceiling — how much diagnostic is worth
+    storing is theirs to decide — and share this one ordering.
 
     Empty or absent text answers None: "nothing to say" is a state, not an empty string
     that reads as a detail nobody wrote.

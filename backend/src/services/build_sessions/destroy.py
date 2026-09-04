@@ -1,16 +1,13 @@
-"""The destructive half: single-flight, re-validated, ceilinged, ordered (U15, R7/R8/R19).
+"""The destructive half: single-flight, re-validated, ceilinged, ordered.
 
-Everything here runs only when BOTH flags are on. `reclaim_enabled` gets you a report;
-`reclaim_destroy` is what lets a pass act, and it must not be flipped until the C10 backfill
-reports zero untagged sandboxes.
+Everything here runs only when BOTH reclamation flags are on: `reclaim_enabled` gets you a
+report, `reclaim_destroy` is what lets a pass act.
 
 FOUR PROTECTIONS, AND EACH ONE COVERS A FAILURE THE OTHERS DO NOT:
 
 1. **Single-flight via a Postgres advisory lock.** ACA revision overlap means two schedulers can
    exist during a deploy, so a second pass can start while one is running. Deliberately NOT a
-   Redis lock: U5, U10 and U11 all exist because Redis is the store this work distrusts, its
-   `maxmemory-policy` is unverified, and under any `allkeys-*` policy a lock key can be evicted
-   mid-pass — silently undoing single-flight inside the destructive chain.
+   Redis lock — `locks.py` records why Redis is not trusted to hold one.
 2. **Re-validation immediately before each DELETE — of the TAGS *and* of the CLAIM.**
    `app_name_for(app_id)` is deterministic, so a reclaimed container's name is the name the next
    start provisions into. In-process, the reaper and every start shared one event loop; out of
@@ -100,15 +97,14 @@ _lock_engine: AsyncEngine | None = None
 def _the_lock_engine() -> AsyncEngine:
     """The pass lock's OWN engine — AUTOCOMMIT, `NullPool`, built on first use.
 
-    NOT THE APPLICATION POOL, and this plan's own research is what refuted the first version.
-    `pg_try_advisory_lock` is SESSION-scoped: the lock lives on the connection that took it, for
-    exactly as long as that connection lives. Riding the shared pool puts two failures one
-    accident apart, and both are silent. If the pass's session releases its connection mid-pass —
-    a commit, a rollback, an expiry, anything a future caller adds to the loop — the lock is gone
-    while the destroy loop keeps deleting in the belief that it is the only pass running, which
-    is precisely the overlap the lock exists to prevent. And if the process dies holding it, the
-    lock rides a pooled connection that outlives the pass and blocks every later pass until the
-    pool happens to recycle it.
+    NOT THE APPLICATION POOL. `pg_try_advisory_lock` is SESSION-scoped: the lock lives on the
+    connection that took it, for exactly as long as that connection lives. Riding the shared pool
+    puts two failures one accident apart, and both are silent. If the pass's session releases its
+    connection mid-pass — a commit, a rollback, an expiry, anything a future caller adds to the
+    loop — the lock is gone while the destroy loop keeps deleting in the belief that it is the
+    only pass running, which is precisely the overlap the lock exists to prevent. And if the
+    process dies holding it, the lock rides a pooled connection that outlives the pass and blocks
+    every later pass until the pool happens to recycle it.
 
     `NullPool` gives the lock a connection whose lifetime is the pass and nothing more. Postgres
     drops a session advisory lock when the session ends, so even a hard crash frees it, and no
@@ -140,8 +136,7 @@ def _the_lock_engine() -> AsyncEngine:
 async def _single_flight() -> AsyncIterator[bool]:
     """Hold the pass lock for the body, on a connection of its own. Yields whether we took it.
 
-    NO TTL TO TUNE AND NOTHING TO EVICT, which is the entire reason this is Postgres and not
-    Redis. The explicit unlock is belt-and-braces over the connection close — with `NullPool` the
+    The explicit unlock is belt-and-braces over the connection close — with `NullPool` the
     close alone would free it, and saying so twice costs one statement."""
     async with _the_lock_engine().connect() as conn:
         took = bool(
@@ -258,7 +253,7 @@ async def _somebody_came_back(candidate: ContainerVerdict, *, claim_now: ClaimNo
     THE TAGS ARE UNCHANGED IN THE CASE THIS CATCHES, which is why the check above cannot stand in
     for this one. A staged container stays fully attachable on purpose — `attach_existing` refuses
     anything reading `ending`, so a citizen coming back must be able to reach it — and coming back
-    writes a lock, a heartbeat, a stay or an R10 lease, none of which are ARM tags. Between
+    writes a lock, a heartbeat, a stay or a liveness lease, none of which are ARM tags. Between
     enumeration and this line the classifier's opinion can therefore go stale in the one direction
     that matters, with every tag still saying exactly what it said when we judged it.
 

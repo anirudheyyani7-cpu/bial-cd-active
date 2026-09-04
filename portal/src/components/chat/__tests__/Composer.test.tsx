@@ -1,24 +1,12 @@
 /**
  * ONE COMPOSER (R40–R45, R55, R57–R60, R64, R72).
  *
- * ══ THE PROPERTY THIS FILE EXISTS FOR ══
+ * Nothing here is ever `disabled`; ComposerBox.tsx carries why. This file is the mechanical half —
+ * `noRealDisabled` sweeps the rendered subtree in EVERY state rather than once, because the states
+ * are where a real `disabled` would come back.
  *
- * NOTHING HERE IS EVER `disabled`. Not the textarea, not attach, not Send — in any state,
- * including mid-turn, over the cap, and with an offer pending. `disabled` on the currently-focused
- * element blurs it to `document.body`, which is the mechanism behind "it blurs mid-sentence and
- * focus never comes back"; this codebase has recorded that twice and it is not a style preference.
- *
- * So the subtree sweep below is not one assertion among many — it is the mechanical form of "the
- * library's Send is not used here". `createActionButton` renders
- * `<button disabled={props.disabled || !callback}>` and `useComposerSend` returns no callback
- * while `isRunning && !capabilities.queue`, and `queue` is never registered, so the library's Send
- * ships a hard `disabled` for the whole of every turn. It is swept for in EVERY state rather than
- * checked once, because the states are where it would come back.
- *
- * ══ THE DRAFT IS HELD, NOT RESTORED (R58/R59) ══
- *
- * Nothing is cleared optimistically. A failed send therefore has nothing to put back and no race
- * to guard — which is how issue #154's defect class stops existing rather than being patched.
+ * The draft is held rather than cleared optimistically, so a failed send has nothing to put back
+ * and no race to guard.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -126,10 +114,9 @@ describe('nothing is ever `disabled` — swept in every state', () => {
 
 describe('focus never drops', () => {
   it('Send keeps focus across a turn starting', () => {
-    // The regression guard for the reported "it blurs mid-sentence" defect. jsdom does not
-    // implement blur-on-disable, so this cannot catch a reintroduced `disabled` on its own — the
-    // subtree sweep above is that half. What this pins is the other one: nothing here GRABS or
-    // drops focus at the turn's edges.
+    // jsdom does not implement blur-on-disable, so this cannot catch a reintroduced `disabled` on
+    // its own — the subtree sweep above is that half. What this pins is the other one: nothing here
+    // GRABS or drops focus at the turn's edges.
     const { rerender, props } = draw()
     send().focus()
     expect(document.activeElement).toBe(send())
@@ -151,11 +138,8 @@ describe('growth is bounded, then it scrolls', () => {
     // `react-textarea-autosize` measures with `scrollHeight`, which jsdom reports as 0 — so the
     // pixel behaviour cannot be observed here. What CAN be pinned is that the ceiling is declared
     // and finite, and that reaching it drops nothing.
-    //
-    // THE CEILING MOVED WITH THE BOX (plan 002, U5). It was a `maxRows` prop on our own textarea;
-    // it is a `max-h` on the library's, because the library's input owns its own autosize. One
-    // line is the board's resting height — the box grows from a single line rather than opening
-    // two rows tall.
+    // The ceiling is a `max-h` on the library's input, and one line is the resting height — the
+    // box grows from a single line rather than opening two rows tall.
     draw()
     expect(box().getAttribute('rows')).toBe('1')
     expect(box().className).toMatch(/max-h-\[\d+px\]/)
@@ -178,9 +162,6 @@ describe('the draft is held until the server confirms (R58/R59)', () => {
   })
 
   it('keeps EVERYTHING when the send rejects, and says so once', async () => {
-    // The defect this replaces: `ChatPage` did a blind `setText(rawText)` on failure, and because
-    // the input was fully controlled the browser's undo stack could not recover what it replaced.
-    // Holding the text means there is nothing to restore and no race to lose.
     const onUrgent = vi.fn()
     draw({ onSubmit: vi.fn().mockRejectedValue(new Error('refused')), onUrgent })
     type('do not lose me')
@@ -315,10 +296,6 @@ describe('attachments', () => {
   it('the drop target is the WHOLE composer, not just the row', () => {
     // A drop landing on the chips or the gate note would otherwise fall through to the browser's
     // default handler — which navigates the tab away and discards the draft AND the staged files.
-    //
-    // THE DROPZONE IS THE LIBRARY'S NOW (plan 002, U5) and it wraps the whole box, which is the
-    // same property said about a different element. It sets the same `data-dragging` attribute
-    // the hand-rolled one did, so what changed is the handle, not the behaviour.
     const { container } = draw()
     const zone = screen.getByTestId('composer-dropzone')
     expect(zone.contains(screen.getByTestId('composer'))).toBe(true)

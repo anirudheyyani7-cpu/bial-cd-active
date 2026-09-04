@@ -1,24 +1,19 @@
-"""Concrete C2 `SandboxClient` — the control-plane wrapper over the C1 supervisor.
+"""The concrete `SandboxClient` — the control-plane wrapper over the container's supervisor.
 
-This is the ACA/helper client SESSION-API supplies in Wave 1 behind the frozen C2
-ABC (`base.py`). Two halves:
+Two halves, behind the frozen ABC in `base.py`:
 
-* **The `/_sup/*` supervisor HTTP layer** (U1: `exec` / `files` / `dev_start` /
-  `dev_status` / `dev_logs` / `wait_ready`) — everything BRAIN calls through the
-  injected client, plus the readiness poll. Each call goes to
-  `https://{handle.fqdn}/_sup/<endpoint>` with `Authorization: Bearer {handle.token}`;
-  Caddy strips `/_sup`, so the supervisor sees the C1 paths (C1 / C2). A non-zero
-  `ExecResult.exit` is a NORMAL return, never an exception (C1).
-* **The ACA lifecycle** (U2: `provision_new` / `attach_existing` /
-  `restore_from_snapshot` / `teardown`) — the container create/delete (via `aca.py`),
-  the C5 registry hash, the in-process `token_ref` map, and the C4 restore pull.
+* **The `/_sup/*` supervisor HTTP layer** (`exec` / `files` / `dev_start` / `dev_status` /
+  `dev_logs` / `wait_ready`). Each call goes to `https://{handle.fqdn}/_sup/<endpoint>` with
+  `Authorization: Bearer {handle.token}`; Caddy strips `/_sup`, so the supervisor sees its own
+  paths. A non-zero `ExecResult.exit` is a NORMAL return, never an exception.
+* **The ACA lifecycle** (`provision_new` / `attach_existing` / `restore_from_snapshot` /
+  `teardown`) — the container create/delete (via `aca.py`), the registry hash, the in-process
+  `token_ref` map, and the restore pull.
 
-Accessor mirrors `services/redis/client.py`: a module singleton, lazy `settings`
-import (avoids the `src.config` cycle), a typed `SandboxNotConfiguredError` when
-`settings.sandbox is None` (fail-first — never returns `None`), and an isolated
-`aclose`. `set_sandbox_for_tests` lets the reaper's client (which reads the
-singleton, not a `Depends`) be injected in tests (KTD-9). NEVER log a token or a
-`token_ref` (security.md).
+Accessor mirrors `services/redis/client.py`: a module singleton, a lazy `settings` import
+(avoids the `src.config` cycle) and an isolated `aclose`. `set_sandbox_for_tests` lets the
+reaper's client — which reads the singleton rather than a `Depends` — be injected in tests.
+NEVER log a token or a `token_ref`.
 """
 
 from __future__ import annotations
@@ -179,19 +174,12 @@ _BUNDLE_B64_NAME: Final = "app.bundle.b64"
 # The golden template ships NO `.git` — the image bakes it in with `COPY template/ ./`, and
 # Docker would not carry a repo across even if the template had one. The RESTORE path creates
 # a repo itself (`git init` + fetch + checkout, below), so only a FRESH provision arrives
-# without one, and everything downstream assumes a repo exists:
+# without one, and everything downstream assumes a repo exists: the save-state check reads
+# `git rev-parse HEAD` / `git status --porcelain`, and `write_snapshot` falls back to its own
+# `git init`, which works but folds the template and the first turn's work into one commit.
 #
-#   * the agent is instructed to commit each coherent slice of its work (W1). Without a repo
-#     every one of those commits fails with "not a git repository", on precisely the build
-#     where the history would be most useful — the first one. The commit-reminder counter
-#     never resets either, so the model is nagged for the rest of the run about something it
-#     cannot do.
-#   * the save-state check reads `git rev-parse HEAD` / `git status --porcelain`.
-#   * `write_snapshot` runs its own `git init` as a fallback, which works but collapses the
-#     whole first build into a single commit — the per-slice history is simply gone.
-#
-# So a container is made a working repo at BIRTH, with one baseline commit for the template.
-# Every later commit is then a platform-driven snapshot against a known starting point. Idempotent
+# So a container is made a working repo at BIRTH, with one baseline commit for the template, and
+# every platform snapshot afterwards is a delta against a known starting point. Idempotent
 # (`rev-parse` short-circuits), and `git config --system` in the image supplies the identity.
 _INIT_REPO_SCRIPT: Final = (
     "git rev-parse --git-dir >/dev/null 2>&1 || "
@@ -316,10 +304,9 @@ class AcaSandboxClient(SandboxClient):
         judged with the coordination store gone — the fleet view the Redis-driven reaper cannot
         produce (`build_sessions/inventory.py` explains why it is needed).
 
-        Deliberately NOT on the `SandboxClient` ABC: that is a frozen cross-track contract (C2),
-        and this is an operator-facing capability rather than part of the per-sandbox lifecycle
-        every caller depends on. Satisfies `inventory.FleetLister` by shape; see C2
-        §"Fleet capability lives OFF the ABC" for why it is not an abstractmethod.
+        Deliberately NOT on the `SandboxClient` ABC, which is a frozen contract: this is an
+        operator-facing capability rather than part of the per-sandbox lifecycle every caller
+        depends on, so it satisfies `inventory.FleetLister` by shape instead of by inheritance.
 
         `AcaError` is translated to `SandboxError` here because this is the PORT: no vendor type
         crosses it (C2), and a caller that had to know about `azure.core` to catch a failure would
@@ -607,13 +594,12 @@ class AcaSandboxClient(SandboxClient):
                     if size >= SERVED_HEAD_MAX_CHARS:
                         break
                 raw = b"".join(chunks)[:SERVED_HEAD_MAX_CHARS]
-                # SCRUBBED HERE, at the boundary, so the raw text never leaves this method.
-                # `.claude/rules/security.md` is absolute about credential values in logs, and
-                # the sandbox child env holds `BIAL_DATABASE_URL` and `BIAL_BLOB_SAS` — a page
-                # that renders a server value, or a dev error page quoting a connection string
-                # in a stack, puts one straight into the first 2 KB of the document. Doing it
-                # once here rather than at each reader is what makes the field U25 persists safe
-                # by construction instead of by everyone remembering.
+                # SCRUBBED HERE, at the boundary, so the raw text never leaves this method: the
+                # sandbox child env holds `BIAL_DATABASE_URL` and `BIAL_BLOB_SAS`, and a page
+                # that renders a server value — or a dev error page quoting a connection string
+                # in a stack — puts one straight into the first 2 KB of a document this field
+                # then persists. Scrubbing once here is what makes that safe by construction
+                # rather than by every later reader remembering.
                 head = scrub_untrusted(raw.decode("utf-8", "replace"), limit=SERVED_HEAD_MAX_CHARS)
                 return ServedPage(status=resp.status_code, head=head)
         except Exception:  # noqa: BLE001 - `None` is the contract; nothing may reach the verdict
@@ -696,17 +682,14 @@ class AcaSandboxClient(SandboxClient):
     async def _write_registry(
         self, user_uuid: uuid.UUID, *, app_name: str, fqdn: str, token_ref: str
     ) -> None:
-        """Hydrate the C5 registry hash for a JUST-CREATED container.
+        """Hydrate the registry hash for a JUST-CREATED container.
 
-        `hset(mapping=…)` is a MERGE, so this is also the point where a previous
-        occupant's fields must be actively disowned. `preview_stay_until` is the one that
-        matters (#43): a relaunched preview's 30-minute lease can outlive its own registry
-        hash whenever `reap_user`'s teardown raises (that arm deliberately KEEPS the
-        registry for a later sweep), and a preview holds no lock — so the user's next real
-        build acquires cleanly, re-registers over the surviving hash, and would INHERIT a
-        lease it never asked for. If that build's process then died, the sweep would spare
-        its orphaned container for the rest of the half hour: the protection inverted into
-        a leak. A freshly written registry therefore carries NO stay, always."""
+        `hset(mapping=…)` is a MERGE, so a previous occupant's fields survive into the new
+        record unless they are actively disowned — which is what the `hdel` below is for.
+        `preview_stay_until` is the field that matters: a stay left behind by the last
+        occupant would be INHERITED by this container, and the sweep would then spare it for
+        the rest of that lease if its process died. A freshly written registry therefore
+        carries NO stay, always."""
         key = registry_key(user_uuid)
         await get_redis().hset(
             key,
@@ -721,19 +704,17 @@ class AcaSandboxClient(SandboxClient):
         await get_redis().hdel(key, REGISTRY_FIELD_PREVIEW_STAY_UNTIL)
 
     async def _read_registry(self, user_uuid: uuid.UUID) -> dict[str, str] | None:
-        """Read the sandbox record, falling back to the pre-R22 key and migrating what it finds.
+        """Read the sandbox record, falling back to the legacy key and migrating what it finds.
 
-        DUAL-READ (C5's R22 window). The environment segment was added to the key root while a
-        live fleet was registered under the old one, and the registry hash carries no TTL — so a
-        read that only knew the new key would answer `None` for every pre-cutover container. Two
-        things downstream of here treat that `None` as fact and act destructively on it:
-        `attach_existing` raises `SandboxGoneError`, whose caller RESTORES — tearing the live
-        container down and rolling the builder back to their last save; and
+        A MISSING RECORD IS ACTED ON DESTRUCTIVELY, which is why the fallback belongs in the
+        point read and not only in the scan. Two callers treat this `None` as fact:
+        `attach_existing` turns it into `SandboxGoneError`, whose caller RESTORES — tearing the
+        live container down and rolling the builder back to their last save; and
         `restore_from_snapshot` skips its defensive teardown of the existing container and
         provisions over it, orphaning a running container with nothing pointing at it.
 
         `build_sessions.locks.read_registry` is the other point read and must behave identically.
-        C5 keeps the two separate deliberately — `services/sandbox/` may not import
+        The two are kept separate on purpose — `services/sandbox/` may not import
         `services/build_sessions/` — so the thing stopping them from drifting is
         `tests/services/build_sessions/test_key_migration.py`, not a shared module.
         """
@@ -745,13 +726,10 @@ class AcaSandboxClient(SandboxClient):
     async def _adopt_a_pre_cutover_record(self, user_uuid: uuid.UUID) -> dict[str, str] | None:
         """Migrate one legacy-prefix registry hash into the environment-scoped namespace, on read.
 
-        SINGLE-KEY COMMANDS ONLY, and the legacy key is NOT deleted on read. Both constraints
-        and their full reasoning live on `locks._adopt_a_pre_cutover_record`, which this mirrors
-        field for field — C5 keeps the two point reads as separate implementations because
-        `services/sandbox/` must not import `services/build_sessions/`, so the contract is the
-        doc, not a shared function. In short: `COPY`/multi-key `DEL` are cross-slot and rejected
-        on a clustered Redis, and deleting the legacy key on read lets a mispointed process
-        relocate another environment's record and orphan its container."""
+        SINGLE-KEY COMMANDS ONLY, and the legacy key is NOT deleted on read.
+        `locks._adopt_a_pre_cutover_record` mirrors this field for field and carries the reasoning
+        for both constraints; the two are separate implementations because `services/sandbox/`
+        must not import `services/build_sessions/`."""
         raw = await get_redis().hgetall(legacy_registry_key(user_uuid))
         if not raw:
             return None
@@ -783,7 +761,7 @@ class AcaSandboxClient(SandboxClient):
         """Clear the record under BOTH prefixes — the only place the legacy key is removed, since
         migration-on-read deliberately leaves it. Two single-key DELs, not one two-key `DEL`:
         the keys hash to different slots and a multi-key command is rejected on a clustered
-        Redis. See `locks.delete_registry`. Release B drops the legacy arm."""
+        Redis."""
         await get_redis().delete(registry_key(user_uuid))
         await get_redis().delete(legacy_registry_key(user_uuid))
 
@@ -802,18 +780,16 @@ class AcaSandboxClient(SandboxClient):
         """Re-read a container's supervisor bearer from its own ACA env and re-bind it to the
         registry's `token_ref`, or `None` when it cannot be recovered.
 
-        WHY THIS EXISTS. `_token_refs` is process memory, so every control-plane restart — every
-        deploy — emptied it. `attach_existing` read that emptiness as `SandboxGoneError`, the
-        caller heard "gone" and restored, and restore tears the live container down before
-        pulling the last SAVED bundle. So a routine deploy silently rolled every citizen with an
-        open sandbox back to their last save. That is SL-20's data loss reached through a second
-        door, and it fires on a schedule rather than on a mistake.
+        AN UNRESOLVABLE REF SAYS NOTHING ABOUT THE CONTAINER. `_token_refs` is process memory,
+        so every control-plane restart empties it — and while that emptiness was read as
+        `SandboxGoneError`, the caller heard "gone" and restored, which tears the live container
+        down before pulling the last SAVED bundle. A routine deploy therefore rolled every
+        citizen with an open sandbox back to their last save.
 
-        The premise was simply wrong: an unresolvable ref says nothing about the container. The
-        token was minted per container and injected into its ACA env at create, so the container
-        app spec is the token's durable home and this process's map was only ever a cache.
+        The token is minted per container and injected into its ACA env at create, so the
+        container app spec is its durable home and this process's map was only ever a cache.
 
-        The token is never logged and never returned to a caller that would log it (security.md).
+        Never logged, and never returned to a caller that would log it.
         """
         try:
             token = await self._aca.get_app_env_value(name=app_name, key=_SUPERVISOR_TOKEN_ENV)
@@ -832,11 +808,10 @@ class AcaSandboxClient(SandboxClient):
         """Best-effort ACA delete for a self-clean path. Returns True when the container is
         CONFIRMED gone, False when ARM refused.
 
-        The return value is load-bearing, not informational (U18). This used to return `None`,
-        so every caller treated "I tried" as "it is gone" — and a caller that then dropped the
-        ownership record left a running container with nothing pointing at it: unreachable by
-        the product, invisible to the Redis-enumerating sweep, and billing forever. That is the
-        exact population ADR-0029 exists to collect, manufactured by the recovery path.
+        The return value is load-bearing, not informational: a caller that reads "I tried" as
+        "it is gone" and then drops the ownership record leaves a running container with nothing
+        pointing at it — unreachable by the product, invisible to the Redis-enumerating sweep,
+        and billing forever.
 
         "A timeout is not a death certificate": only positive confirmation may authorise a step
         that assumes the container is gone. ARM's DELETE returns 204 for a resource that does
@@ -878,8 +853,8 @@ class AcaSandboxClient(SandboxClient):
         any fallible post-create step, so a mid-provision death is reaper-visible), and
         return a `ready=False` handle. Self-cleans on a post-create failure."""
         token = secrets.token_urlsafe(_SUPERVISOR_TOKEN_BYTES)
-        # The supervisor bearer lives ONLY in the container env (C1 keeps it out of the
-        # scrubbed child env) and in-process; Redis stores a token_ref, never the token.
+        # The supervisor bearer lives ONLY in the container env (the supervisor keeps it out of
+        # the scrubbed child env) and in-process; Redis stores a token_ref, never the token.
         #
         # WHERE THIS APP IS SERVED FROM, derived here rather than passed in. This is the one seam
         # BOTH births pass through — `provision_new` and `restore_from_snapshot` — so a restored
@@ -894,11 +869,11 @@ class AcaSandboxClient(SandboxClient):
             "BIAL_BASE_PATH": base_path_for(app_name),
             "BIAL_APPS_HOSTNAME": _apps_hostname(),
         }
-        # C10 identity, resolved BEFORE the create so a container never exists untagged. The app_id
+        # Identity resolved BEFORE the create, so a container never exists untagged. The app_id
         # comes from `app_env` for the same reason `restore_from_snapshot` reads it there: the
-        # frozen C2 signature carries no app_id, and C9 guarantees the variable (a KeyError here
-        # would mean the C9 contract was broken upstream, which is worth failing loudly on rather
-        # than provisioning an anonymous container to paper over).
+        # frozen client signature carries no app_id. A `KeyError` here means the env builder
+        # upstream is broken, which is worth failing loudly on rather than provisioning an
+        # anonymous container to paper over.
         tags = sandbox_tags(user_id=user_uuid, app_id=uuid.UUID(app_env["BIAL_APP_ID"]))
         fqdn = await self._create_with_retry(app_name, env, tags)
         token_ref = self._register_token(token)
@@ -972,15 +947,9 @@ class AcaSandboxClient(SandboxClient):
         token_ref = reg.get(REGISTRY_FIELD_TOKEN_REF)
         token = self._token_refs.get(token_ref) if token_ref else None
         if token is None and token_ref and app_name:
-            # A restart empties the in-process map. This USED to raise `SandboxGoneError`, which
-            # the caller answers by restoring — and restore tears the live container down before
-            # pulling the last SAVED bundle. So every deploy silently rolled every citizen with
-            # an open sandbox back to their last save. Same data loss as SL-20, reached through a
-            # door that opens on a schedule rather than on a mistake.
-            #
-            # An unresolvable ref says nothing about the container. The bearer's durable home is
-            # the container's own ACA env, where it was injected at create; this map was only
-            # ever a cache of it. So re-read it and carry on attaching.
+            # A restart empties the in-process map, and that emptiness is not evidence about the
+            # container: recover the bearer from its ACA env rather than concluding "gone",
+            # which the caller answers by restoring over a container that is still running.
             token = await self._recover_token(token_ref, app_name)
         if token is None:
             # Recovery failed. Distinguish HONESTLY, because the two answers have very different

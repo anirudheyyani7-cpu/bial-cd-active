@@ -66,28 +66,14 @@ class MarketplaceEntry(CamelModel):
 
 
 class MarketplaceListResponse(CamelModel):
-    """An OFFSET page envelope — one of the two deliberate exceptions to the keyset default.
+    """An OFFSET page envelope — one of the two deviations `offset_pagination.py` holds.
 
-    `pagination.py` states the platform's position plainly: keyset, not offset, and no
-    `total`/`totalPages` (KD-1), because offset cannot guarantee a page with no duplicates
-    or skips while rows are being inserted underneath it. That reasoning is about a list YOU
-    OWN AND ARE WRITING TO — but it is NOT true that nobody writes this derived view while a
-    caller pages through it. `store.succeed` and `store.unpublish` write it on every deploy
-    and every takedown, and because ids are UUIDv7 under `ORDER BY id DESC`, an insert lands
-    at position 0 — the worst case for OFFSET, not a benign one. The ACCEPTED risk, stated
-    honestly rather than assumed away: a concurrent deploy or unpublish during a page walk
-    can duplicate or skip an entry at a page boundary, and `total` is a separate read from
-    the page itself under READ COMMITTED, not one snapshot. #145 sizes the catalog at
-    10-200 rows, where that window is small and `COUNT(*)` stays trivial regardless.
-
-    What offset buys that keyset cannot: a page NUMBER a person can jump to, a total so the
-    UI knows how many pages exist, and ordering by something other than the cursor column —
-    which is what makes sort-by-name possible at all. It also fixes a real limitation this
-    endpoint shipped with: a relevance-ranked search could only ever return ONE page,
-    because an id-cursor cannot continue a rank ordering.
-
-    The deviation is shared with the projects list, which needs page numbers for the same
-    reason; every other list on the platform stays keyset."""
+    THE ACCEPTED RISK, stated rather than assumed away: this derived view IS written while a
+    caller pages through it. `store.succeed` and `store.unpublish` write it on every deploy and
+    takedown, and a UUIDv7 insert lands at position 0 under `ORDER BY id DESC`, so a page
+    boundary can duplicate or skip an entry and `total` is a separate read from the page. The
+    catalog is tens of rows, where that window is small. Offset also buys this endpoint a
+    relevance-ranked search of more than one page, which an id cursor cannot continue."""
 
     items: list[MarketplaceEntry]
     #: 1-based, echoed back so a client never has to infer which page it is looking at.

@@ -1,4 +1,4 @@
-"""The worker process: `python -m src.worker_main` (ADR-0011 §1-§2).
+"""The worker process: `python -m src.worker_main`.
 
 ONE process runs BOTH taskiq roles — the receiver that executes tasks and the scheduler loop
 that enqueues cron ticks — as two supervised asyncio tasks. A scheduler without a receiver would
@@ -40,7 +40,7 @@ WHAT THE REPLICA PIN DOES AND DOES NOT BUY. Even with one scheduler per process 
 ACA drains the old revision while the new one starts, so **two schedulers exist during every
 deploy window**. Taskiq has no leader election of any kind. The pin is a defence, never an
 exclusivity guarantee — which is why every scheduled pass must be idempotent and single-flighted
-in its own right (ADR-0029 §9).
+in its own right.
 """
 
 from __future__ import annotations
@@ -71,11 +71,6 @@ _SHUTDOWN_GRACE_S: float = 25.0
 # executor, and a task module that is never imported is a queue whose messages are enqueued and
 # never consumed. Each module keeps its own heavy imports inside the task body, after the flag
 # gate, so listing one here costs an import of structlog and the broker and nothing else.
-#
-# The first passenger is deploy reconciliation (U6), chosen because it CANNOT destroy anything:
-# it settles a database row against a read-only view of ARM. Everything else bound for this
-# scheduler can delete an Azure resource, and none of that may run out-of-process until the R10
-# liveness lease lands (U12).
 _TASK_MODULES: tuple[str, ...] = (
     "src.workers.deploy_reconcile",
     "src.workers.reclamation",

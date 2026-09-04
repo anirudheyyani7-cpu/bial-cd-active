@@ -34,8 +34,8 @@ from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.schemas import CamelModel
 from src.services.messages.store import ATTACHMENT_REF_KIND
 
-# The Plan-mode options tool (U8 stub, U11 mechanics). The projection derives the card's
-# resolution state from this tool's stored call/return pair.
+# The Plan chat's options tool. The projection derives the card's resolution state from this
+# tool's stored call/return pair.
 PLAN_OPTIONS_TOOL: Final = "present_plan_options"
 
 TELL_THE_USER_TOOL: Final = "tell_the_user"

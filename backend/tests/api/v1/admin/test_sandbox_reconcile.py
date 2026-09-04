@@ -159,10 +159,9 @@ async def test_a_clean_fleet_reports_nothing(client, app, db_session, fake_redis
 async def test_the_audit_row_carries_counts_but_no_names(
     client, app, db_session, fake_redis
 ) -> None:
-    """A sandbox name embeds its app's uuid, so a name list in the audit trail is a durable
-    inventory of who was running what. The response carries names because the operator must act
-    on them; the audit row carries counts only — the same split `reconcile-storage` makes for
-    blob keys (`.claude/rules/security.md`)."""
+    """The response carries names because the operator must act on them; the audit row carries
+    counts only, the same split `reconcile-storage` makes for blob keys. The rule is on
+    `append_audit`."""
     admin = await _admin(db_session)
     orphan_name = app_name_for(uuid.uuid7())
     _wire(app, _Fleet([orphan_name]))

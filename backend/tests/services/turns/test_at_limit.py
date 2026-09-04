@@ -1,19 +1,14 @@
-"""U24 — the at-limit experience: secure the work, then say so in the citizen's own words.
+"""The at-limit experience: secure the work, then say so in the citizen's own words.
 
-WHAT THIS REPLACES, and why the replacement needs its own file. The old refusal read "You have
-used today's token budget. Your changes are still in the workspace — click Save to keep them",
-which did three things wrong at once. It asserted that the work was still there, having checked
-nothing. It made the citizen responsible for making it durable, in the middle of a paragraph they
-had every reason to skim. And it left the actual durability to the turn's exit-path autosave, which
-is deliberately best-effort and deliberately swallowed — so on the day it failed, the one sentence
-that should have been alarming was the same boilerplate as every other day.
+The refusal this replaced asserted the work was still in the workspace having checked nothing,
+and left the citizen to keep it by clicking Save.
 
-The tests here pin the ORDER (the copy is taken and confirmed before the citizen is told and before
-the turn's `finally` hands the container to the reclamation path), the HONESTY (the reassurance is
-said only when a copy actually landed), and the REGISTER (no file path, command, library or
-framework term reaches the reader). The last of those is checked over the RENDERED sentence rather
-than the template, because the configured support address is substituted in at render time and is
-the one part of this message that comes from outside the copy module.
+The tests here pin the ORDER (the copy is taken and confirmed before the citizen is told and
+before the turn's `finally` hands the container to the reclamation path), the HONESTY (the
+reassurance is said only when a copy actually landed), and the REGISTER (no file path, command,
+library or framework term reaches the reader). The last of those is checked over the RENDERED
+sentence rather than the template, because the configured support address is substituted in at
+render time and is the one part of this message that comes from outside the copy module.
 """
 
 from __future__ import annotations
@@ -263,19 +258,16 @@ async def test_the_work_is_stored_before_the_citizen_is_told_they_are_at_the_lim
 async def test_a_recovery_write_that_fails_still_tells_the_citizen_and_alarms_it(
     store: FakeStorage, alarms: list[tuple[str, dict[str, object]]]
 ) -> None:
-    """★ The write can fail, and neither of the two easy answers is acceptable.
-
-    Raising would turn "you have used your budget" into a crash, for a citizen who did nothing
-    wrong. Swallowing is what the old exit path did, and it is precisely why nobody could say
-    afterwards whether 2026-08-18 was a failure to CHECK the workspace or a failure to make it
-    DURABLE — a write that never landed left no trace an operator would ever look for.
+    """★ The write can fail, and neither of the two easy answers is acceptable. Raising would turn
+    "you have used your budget" into a crash for a citizen who did nothing wrong; a silent swallow
+    leaves an operator nothing to look for. `RECOVERY_WRITE_DID_NOT_LAND_EVENT` carries the trade.
 
     So: the citizen is told, the sentence stops claiming their work is safe, and the failure gets
-    the pinned event with `reason="failed"` — the arm that can only be raised from a call site,
-    because only the call site knows the write threw.
-
-    Mutation check: swap the `except Exception` arm for a bare `raise` (or delete the `_log.error`)
-    and this goes red."""
+    the pinned event with `reason="failed"` — the arm only a call site can raise, because only
+    the call site knows the write threw. Mutation check: swap the `except Exception` arm for a
+    bare `raise` (or delete the `_log.error`) and this goes red."""
+    # Mutation check: swap the `except Exception` arm for a bare `raise` (or delete the
+    # `_log.error`) and this goes red.
     await _seed_recovery(store)
     client = FakeSandboxClient()
 
@@ -597,8 +589,8 @@ async def test_a_failed_copy_changes_the_spend_sentence_and_alarms_it_too(
     """The failure trade is the same on both endings, and it has to be: the citizen is told
     either way, the reassurance stops being made, and an operator gets the pinned event.
 
-    Raising instead would turn a bounded run into a crash for a citizen who did nothing wrong;
-    swallowing is what left the 2026-08-18 reframe unfalsifiable."""
+    Raising instead would turn a bounded run into a crash for a citizen who did nothing wrong,
+    and a silent swallow would leave an operator nothing to count."""
     await _seed_recovery(store)
     client = FakeSandboxClient()
 

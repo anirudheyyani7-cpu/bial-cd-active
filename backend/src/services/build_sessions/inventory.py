@@ -129,12 +129,10 @@ class SandboxInventory:
 async def _registered_app_names(redis: aioredis.Redis) -> set[str]:
     """Every app name the sandbox registry currently claims is live.
 
-    Walks the same patterns `sweep_all` does — `registry_scan_patterns()`, which during the R22
-    dual-read window is the environment-scoped prefix AND the legacy one (C5) — and reads through
-    the same `read_registry`, dual-read and all. Both halves are on purpose: reading the registry
-    a second way would let this function and the sweep disagree, and it exists precisely to be
-    trusted about what the sweep can and cannot see. A container reported here as `unregistered`
-    is one an operator is being told nothing tracks."""
+    Scans through `registry_scan_patterns()` and reads through `read_registry`, which is how the
+    sweep does it. Reading the registry any second way would let this function and the sweep
+    disagree about what is registered, and a container reported here as `unregistered` is one an
+    operator is being told nothing tracks."""
     names: set[str] = set()
     seen: set[uuid.UUID] = set()
     for pattern in registry_scan_patterns():
@@ -300,8 +298,8 @@ async def backfill_sandbox_tags(db: AsyncSession, control_plane: FleetTagger) ->
         try:
             await control_plane.stamp_tags(name=name, tags=_backfill_tags(owner))
         except SandboxError:
-            # Counts only in the report; the name goes to the log, never to the audit row (C10
-            # §3.6).
+            # The name reaches this log line and nowhere else — the report is counts — so this
+            # is an operator's only record of WHICH container refused.
             _log.warning("sandbox_tag_backfill_failed", app_name=name, exc_info=True)
             failed += 1
             continue

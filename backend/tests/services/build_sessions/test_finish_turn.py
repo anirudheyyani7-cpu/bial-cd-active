@@ -1,18 +1,14 @@
-"""U3 — the turn-end recovery write, and the guard that will not overwrite good work with bad.
+"""The turn-end recovery write, and the guard that will not overwrite good work with bad.
 
-R8, AE4. The old write was gated on `touched` alone — "a mutating tool ran", not "the tree
-changed" — and the `put` was unconditional. A container that reverted midway through a turn had
-its empty tree stamped in as the newest copy of the user's work, over a perfectly good bundle,
-with nothing recorded anywhere. That is one half of 2026-08-18; the swallowed failure is the
-reason nobody could prove it afterwards.
+The write this replaced was gated on `touched` alone — "a mutating tool ran", not "the tree
+changed" — and its `put` was unconditional. `RECOVERY_WRITE_DID_NOT_LAND_EVENT` carries why.
 
 THE TEST THIS FILE EXISTS FOR is `test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_
-copy`, and it is named exactly that on purpose. It is the standing contract across a plan
-boundary: the companion plan deletes agent-side commits, at which point "HEAD unchanged + dirty
-tree" becomes the normal shape of EVERY building turn. A skip-on-HEAD-unchanged implementation
-would then silently discard every turn's recovery copy — data loss, plus (ASM24) containers
-nothing would ever reclaim, both reading green to every health check. If this test ever goes red,
-that regression has landed.
+copy`, named exactly that on purpose. It is the standing contract across a plan boundary: the
+companion plan deletes agent-side commits, at which point "HEAD unchanged + dirty tree" becomes
+the normal shape of EVERY building turn. A skip-on-HEAD-unchanged implementation would then
+silently discard every turn's recovery copy — data loss, plus containers nothing would ever
+reclaim, both reading green to every health check. If this test goes red, that has landed.
 """
 
 from __future__ import annotations
@@ -160,19 +156,13 @@ async def test_a_copy_we_cannot_compare_against_is_never_overwritten(store: Fake
     """★★ THE ONE THIS FILE GOT WRONG FIRST, and an adversarial review reproduced the loss.
 
     A bundle written before the head stamp existed carries no claim — `durable_copy.py` documents
-    that population — and the first version of this code read "no claim" as "nothing to protect"
-    and wrote straight over it. An app whose container has reverted has EXACTLY this shape, so the
-    unguarded write stamped the reverted tree over the user's only durable copy, into a store with
-    no versioning and no soft delete. U5's reaper then reads a WRITTEN as proof the work is safe
-    and deletes the container in the same call: the guard written to stop 2026-08-18 reproducing
-    it instead.
-
-    The tree is still KEPT — diverted, not dropped — so the app's durability is not frozen and an
-    operator can promote whichever of the two is real (U25). "We cannot compare" earns caution,
-    not destruction.
-
-    Mutation check: read `recorded is None` instead of `meta is None` on the first arm and this
-    goes red."""
+    that population — and the first version of this code read that as "nothing to protect" and
+    wrote straight over it. An app whose container has reverted has EXACTLY this shape, so "we
+    cannot compare" earns caution rather than destruction: the tree is KEPT, diverted rather than
+    dropped, and an operator promotes whichever of the two is real. Mutation check: read
+    `recorded is None` instead of `meta is None` on the first arm and this goes red."""
+    # Mutation check: read `recorded is None` instead of `meta is None` on the first arm and this
+    # goes red.
     await _seed_recovery(store, sha=None)
     before = await store.get(recovery_key(APP))
     client = _container(bundles_to=MOVED_ON, head=MOVED_ON)

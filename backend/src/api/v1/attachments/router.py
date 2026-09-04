@@ -1,14 +1,10 @@
-"""Attachment HTTP endpoints — image/PDF upload / download / delete (R16, R4).
+"""Attachment HTTP endpoints — image/PDF upload / download / delete.
 
 Byte-matches the Express `/api/attachments` contract (`server/attachments.js`): one base64
 file per request, server-side allowlist + magic-byte validation, a 4 MB per-file cap, a 50 MB
 per-user byte quota, owner-scoped object keys, and the `{error:{message}}` / `{ok:true}`
 envelopes. Text is never uploaded (it travels inline); office and deck uploads take their own
 branches, rendered to a form the model can read before anything is stored.
-
-Identity is the authenticated caller; object keys are `att/{user_id}/{uuid}` (traversal-safe,
-UUID axes) and every read/delete is scoped by `user_id` AND re-guarded with `assert_owned`.
-The object store is injected via `storage_dependency` so tests swap an in-memory fake.
 """
 
 from __future__ import annotations
@@ -145,16 +141,13 @@ def _sniff_media_type(data: bytes) -> str | None:
 async def _resolve_conversation_link(
     db: DbSession, user_id: uuid.UUID, raw: Any
 ) -> uuid.UUID | None:
-    """Resolve an optional client-supplied `conversationId` to an OWNED conversation's id,
-    to stamp on the attachment row (R10 / U9).
+    """Resolve an optional client-supplied `conversationId` to an OWNED conversation's id.
 
-    Absent (or explicit `null`) → `None`: the row stores `conversation_id = NULL`, so existing
-    clients that send no conversationId keep working. A PRESENT value is resolved owner-scoped,
-    mirroring `conversations/router.py::_load_owned`: a malformed token is a 400; a well-formed
-    id the caller does not own is indistinguishable from a nonexistent one and gets the same
-    non-leaking 404 (ADR-0004). This is referential integrity, not a tenancy fix — the row is
-    still written and read under the caller's own `user_id`; the check stops a caller hanging
-    their upload off a stranger's (or a nonexistent) conversation."""
+    Absent (or explicit `null`) → `None` and the row stores `conversation_id = NULL`, so a
+    client that sends no conversationId keeps working. Resolving a PRESENT one is referential
+    integrity, NOT the tenancy boundary — the row is written and read under the caller's own
+    `user_id` either way; what it buys is that an upload cannot be hung off a stranger's, or a
+    nonexistent, conversation."""
     if raw is None:
         return None
     if not isinstance(raw, str) or not _ID_RE.match(raw):
@@ -271,8 +264,8 @@ async def _handle_office_upload(
 
     The extraction runs in the shared killable parse governor (`run_parse`) — NOT in-process —
     so an untrusted docx/xlsx whose compressed bytes pass the 4 MB cap but inflate to gigabytes
-    can never OOM the shared API worker (A.U11 review invariant); a contained OOM/timeout maps
-    to 413, a corrupt file to 400."""
+    can never OOM the shared API worker; a contained OOM/timeout maps to 413, a corrupt file
+    to 400."""
     data = _decode_bounded(body.get("base64"))
     office_format = office_format_for(media_type)
     if office_format is None:
@@ -311,10 +304,9 @@ async def _handle_deck_upload(
     body: dict[str, Any],
 ) -> JSONResponse:
     """pptx: gated on a configured Gotenberg. Convert FIRST (validates structure/zip-bomb/page-cap
-    without storing), then store the original .pptx and the derived PDF. Under Azure-hosted Foundry
-    there is no Anthropic Files API, so the PDF lives in the object store and the chat path
-    rehydrates + inlines it — the exact deck-part replay is finalized with the Foundry hosting-mode
-    decision (ADR-0026); deck is disabled by default (unset GOTENBERG_URL) until then."""
+    without storing), then store the original .pptx and the derived PDF. Azure-hosted Foundry has
+    no Files API, so a deck cannot be handed over by reference: the PDF lives in the object store
+    and the chat path rehydrates and inlines it. Deck is off by default (unset GOTENBERG_URL)."""
     if not deck_attachments_enabled():
         raise AppApiError(501, "PowerPoint attachments aren't enabled.")
     data = _decode_bounded(body.get("base64"))
@@ -454,7 +446,6 @@ async def download_attachment(
     att = await _load_owned(db, user.id, attachment_id)
     if att is None:
         raise AppApiError(404, "Attachment not found.")
-    # Defense in depth: the query already scoped by user_id; re-assert the key is in scope.
     assert_owned(att.storage_key, user.id)
     try:
         data = await storage.get(att.storage_key)
@@ -492,6 +483,5 @@ async def delete_attachment(
             await _safe_delete_pdf(storage, att.storage_key + ".pdf")
         await db.delete(att)
         await db.commit()
-    # A deck's internal Files-API pdfFileId release lands with U11/U13 (Files API). Delete is
-    # always idempotent and 200, even when the id is unknown (Express behavior).
+    # Delete is always idempotent and 200, even when the id is unknown (Express behavior).
     return JSONResponse(content={"ok": True})

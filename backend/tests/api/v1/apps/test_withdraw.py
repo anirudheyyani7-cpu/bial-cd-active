@@ -1,11 +1,9 @@
-"""Withdrawal — the owner's way OUT of the queue (U8: P6, R15b's counterpart).
+"""Withdrawal — the owner's way OUT of the queue.
 
-A pending submission can be withdrawn but not overwritten: re-submitting over an
-item an administrator may be reading is forbidden (the submit service refuses it),
-and withdrawal is what replaced that escape hatch — pending→draft, the pin, the
-declaration and the lineage cleared, the queue item REMOVED rather than replaced.
-Owner-scoped like every `/apps/*` route: a cross-user withdraw is the non-leaking
-404, never a 403.
+Pending→draft with the pin, the declaration and the lineage cleared: the queue item is
+REMOVED, never replaced. Overwriting a pending item instead is refused by
+`services/approvals/submit`. Owner-scoped like every `/apps/*` route: a cross-user
+withdraw is the non-leaking 404, never a 403.
 
 Pending state is seeded through the REAL writer (`services/approvals/submit`)
 wherever the flow matters, so these tests walk the exact submit→withdraw cycle a

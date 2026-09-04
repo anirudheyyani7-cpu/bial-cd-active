@@ -1172,10 +1172,8 @@ describe('LivePreview — a live preview is left alone', () => {
 // ---------------------------------------------------------------------------------------
 // R16 / R18 — THE COVER (U12)
 //
-// On 2026-08-18 a full-screen framework compile-error screen filled this pane for ~66 seconds
-// in each of three builds, in front of a client. This is the fix, and it is a fix that reaches
-// apps ALREADY BUILT: the pane covers its own frame from the outside, so nothing about the
-// app — its Next version, its files, its image — is consulted or changed.
+// The cover reaches apps ALREADY BUILT: the pane covers its own frame from the outside, so
+// nothing about the app — its Next version, its files, its image — is consulted or changed.
 //
 // Every absence assertion below is paired with a liveness assertion in the same test. A
 // `queryBy(...).toBeNull()` also passes when the component threw, and this file is exactly the
@@ -1458,7 +1456,7 @@ describe('LivePreview — the holding state stops when the turn does (U7/R13)', 
     // THE FAILURE THIS CLOSES. "Putting the latest change together…" is true for exactly as long
     // as a turn is running. Left up after one ends it becomes a progress state that never
     // resolves — the citizen's only way to learn the build was over is to wait long enough to
-    // stop believing it, which is the shape of the nine-minute false success inverted.
+    // stop believing it.
     const { container } = setup({ compileState: 'failed', turnRunning: false })
 
     const cover = coverEl(container)

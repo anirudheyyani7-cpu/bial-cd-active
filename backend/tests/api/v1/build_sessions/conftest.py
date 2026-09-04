@@ -1,5 +1,5 @@
-"""Shared fixtures for the C3 router + SSE tests: cookie/CSRF auth, the dep-override
-wiring (KTD-9), and a blocking brain that keeps a session live for the HTTP boundary."""
+"""Shared fixtures for the build-session router + SSE tests: cookie/CSRF auth, the
+dep-override wiring, and a blocking brain that keeps a session live for the HTTP boundary."""
 
 from __future__ import annotations
 
@@ -67,8 +67,7 @@ def auth_headers(user: User, *, with_csrf: bool = True) -> dict[str, str]:
 
 class BlockingBrain:
     """Emits one step then blocks until `release()` — keeps a session live across the
-    HTTP request boundary so status / lock / stop tests aren't racing a fast completion.
-    Emits no terminal `ended`: that frame is SESSION-API's alone (R7)."""
+    HTTP request boundary so status / lock / stop tests aren't racing a fast completion."""
 
     def __init__(self) -> None:
         self._gate = asyncio.Event()
@@ -95,22 +94,21 @@ def wire(app: FastAPI, db_session, monkeypatch: pytest.MonkeyPatch) -> SimpleNam
     sets its own `run_build_dependency` override (FakeBrain / BlockingBrain / None).
 
     The manager's session factory is bound to the ROLLED-BACK test session: the end sequence
-    writes the build outcome (003-U5) through its own session, so an unbound manager would
-    commit real rows into the test database and leak them across tests.
+    writes the build outcome through its own session, so an unbound manager would commit real
+    rows into the test database and leak them across tests.
     """
     monkeypatch.setattr(settings, "sandbox", _sandbox_config())
 
     @contextlib.asynccontextmanager
     async def _session():
-        # Yield the test session; teardown belongs to the `db_session` fixture (mirrors the
-        # chat relay's billing-drain override).
         yield db_session
 
     manager = SessionManager(session_factory=lambda: _session())
     sbx = FakeSandboxClient()
     app.dependency_overrides[session_manager_dependency] = lambda: manager
-    # Bind BOTH sandbox seams to one fake: routes documenting a sandbox 503 take the
-    # None-tolerant `sandbox_or_none_dependency`; the rest keep the raising one.
+    # Both sandbox seams bound to one fake: routes documenting a sandbox 503 take the
+    # None-tolerant `sandbox_or_none_dependency`, the rest the raising one — leaving either
+    # unbound 503s a test that meant to reach the route.
     app.dependency_overrides[sandbox_dependency] = lambda: sbx
     app.dependency_overrides[sandbox_or_none_dependency] = lambda: sbx
     return SimpleNamespace(app=app, manager=manager, sbx=sbx)
@@ -118,11 +116,10 @@ def wire(app: FastAPI, db_session, monkeypatch: pytest.MonkeyPatch) -> SimpleNam
 
 class DeadRedis:
     """A Redis client where EVERY command raises `redis.exceptions.ConnectionError` — the
-    shape a real outage takes at the call site once U1's bounded retry has spent its
-    attempts. Bound in place of the client singleton (below) so `get_redis()` hands it to
-    the manager exactly as it would a live client: the routes under test never learn they
-    are talking to a stub, which is the point — the 503 has to come from the seam, not from
-    the fixture.
+    shape a real outage takes at the call site. Bound in place of the client singleton
+    (below) so `get_redis()` hands it to the manager exactly as it would a live client: the
+    routes under test never learn they are talking to a stub, which is the point — the 503
+    has to come from the seam, not from the fixture.
 
     `__getattr__` rather than a list of methods, deliberately: a total outage does not pick
     and choose commands, and enumerating them would quietly stop covering any new one."""
@@ -137,7 +134,8 @@ class DeadRedis:
 @pytest.fixture
 def dead_redis(monkeypatch: pytest.MonkeyPatch) -> DeadRedis:
     """`get_redis()` returns a client that answers nothing. Mutually exclusive with
-    `fake_redis` — a test asks for one or the other, never both."""
+    `fake_redis`: both bind the same client singleton, so a test taking both gets whichever
+    bound last."""
     from src.services.redis import client as redis_client
 
     stub = DeadRedis()
@@ -165,9 +163,8 @@ async def seed_live_sandbox_state(redis, user_id: uuid.UUID) -> None:
 
 
 async def drain(manager: SessionManager, session_id: str) -> None:
-    """Await a session's background task to a clean finish (test teardown helper). A
-    stopped/force-ended task ends cancelled (CancelledError is BaseException, not
-    Exception), so suppress both."""
+    """Await a session's background task to a clean finish. A stopped/force-ended task ends
+    cancelled (CancelledError is BaseException, not Exception), so suppress both."""
     session = manager.get(uuid.UUID(session_id))
     if session is not None and session.task is not None:
         with suppress(asyncio.CancelledError, Exception):

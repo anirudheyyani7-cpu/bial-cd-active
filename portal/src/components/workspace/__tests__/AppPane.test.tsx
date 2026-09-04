@@ -182,8 +182,7 @@ describe('the seam is the resolved address, not a URL that happens to be in hand
   })
 
   it('mounts NO iframe of its own when there is no address', () => {
-    // A second host is the remount AE4 and AE37 exist to forbid: the app would reload on every
-    // navigation and every crossing of the layout threshold, with nothing red anywhere.
+    // Calling `LivePreview` from here would build a second host — see `AppPaneHost`.
     const { container } = renderPane((c) => c.workspace.set(reportFor(reading())))
     expect(container.querySelector('iframe')).toBeNull()
   })
@@ -264,9 +263,8 @@ describe('one author for every pane sentence', () => {
  * surfaces around this one rather than by review.
  *
  * The shared cause was reading `address.url` as the whole seam. It is not: the resolver also
- * returns a STATUS, deliberately independent of the URL, and an address deliberately OUTLIVES its
- * publisher — so a URL alone is neither necessary nor sufficient evidence that something is
- * serving.
+ * returns a STATUS independent of the URL, and a held address can outlive the container behind
+ * it — so a URL alone is neither necessary nor sufficient evidence that something is serving.
  */
 describe('the seam is the address AND the state, not the URL alone', () => {
   it('★ frames the LOADING state — a status with no URL yet, which is a first build coming up', () => {
@@ -292,10 +290,8 @@ describe('the seam is the address AND the state, not the URL alone', () => {
   })
 
   it('★ stops framing a HELD address once the workspace says nothing is serving', () => {
-    // The address outlives its publisher — that is R8's mechanism — so a URL stays held after the
-    // container behind it has stopped. Framing it regardless meant an app that went to sleep showed
-    // a card saying "nothing is lost" with NO way to bring it back: R3's "exactly one control
-    // starts it", satisfied by zero, in an entirely ordinary state.
+    // A URL stays held after the container behind it has stopped. Framing it regardless meant an
+    // app that went to sleep showed a card saying "nothing is lost" with no way to bring it back.
     renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'asleep', restorable: true })))
       c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
@@ -382,8 +378,7 @@ describe('the column a plan chat does not get (plan 002, U6)', () => {
   })
 
   it('is HIDDEN, never unmounted — a running app survives the move to a plan chat', () => {
-    // The reason the pane is a sibling of the outlet at all. Unmounting re-issues the frame's
-    // `src` on the way back, which is a full reload of somebody's application.
+    // Unmounting would re-issue the frame's `src` on the way back — see `AppPaneHost`.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
       c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })

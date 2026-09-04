@@ -1,24 +1,14 @@
 /**
- * THE PROJECT SURFACE, RENDERED THROUGH THE REAL SHELL (Plan F, U1).
+ * THE PROJECT SURFACE, RENDERED THROUGH THE REAL SHELL.
  *
- * ═══ WHY THIS FILE EXISTS SEPARATELY FROM `ProjectPage.test.tsx` ═══
+ * Everything below is invisible to a suite that mounts the project page alone: the pane host is
+ * the shell's sibling, not the Outlet's child, so a tree holding only the page has no pane in it
+ * and stays green against a project screen that frames nothing. The mechanism is `AppPaneHost`'s.
  *
- * Everything below is invisible to a test that mounts the project page alone, and that is not a
- * detail — it is the shape of the defect this unit fixes. The pane host is a SIBLING of the shell's
- * Outlet, so a suite that renders only the Outlet's child has no pane in its tree at all and would
- * stay green against a project screen that frames nothing. R3's headline behaviour — open a
- * project, see the app — is a claim about two components at once.
- *
- * ═══ THE BUG THESE SCENARIOS ARE WRITTEN AGAINST ═══
- *
- * Before this unit the channel had exactly one publisher in the whole tree: the conversation
- * surface. The project page subscribed and never published. So on a fresh `/projects/:id` load,
- * with no conversation ever mounted, `AppPaneHost` hit its own "no pane and no address" early
- * return and rendered nothing — and every existing test passed, because nothing was looking.
- *
- * The second failure mode is the one a second publisher INTRODUCES rather than fixes: two surfaces
- * publishing to one channel can retire each other's work on the hop between them. Every continuity
- * assertion here is therefore paired with the round trip that would break it.
+ * The project surface is the SECOND publisher on the workspace channel, and that is what
+ * introduces the second failure mode: two surfaces publishing to one channel can retire each
+ * other's work on the hop between them. Every continuity assertion here is paired with the round
+ * trip that would break it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
@@ -171,9 +161,6 @@ afterEach(() => cleanup())
 
 describe('R3 — loading a project address frames the running app, with no chat in the story', () => {
   it('★ frames the app on a direct project load, with no conversation ever mounted', async () => {
-    // THE SCENARIO THE MISSING PUBLISHER WOULD FAIL, and the reason it has to run through the
-    // shell: `ProjectWorkspace` alone has no pane host in its tree, so mounting it by itself
-    // cannot observe a frame that never appeared.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -191,8 +178,7 @@ describe('R3 — loading a project address frames the running app, with no chat 
     render(<Workspace project={{ ...PROJECT, appId: null, hasRelaunchableSnapshot: false }} />)
 
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
-    // The pane is on screen and SAYING something — not a hidden column the citizen has to
-    // interpret. There is no frame, because there is nothing to frame; there is a sentence.
+    // No frame, because there is nothing to frame. There is a sentence.
     expect(paneRegion()).toBeTruthy()
     expect(screen.getByTestId('app-pane-empty').textContent).toMatch(/describe what you want to build/i)
     // ★ ONE AUTHOR FOR THE WORKSPACE SENTENCE (plan 002, U4). It was rendered twice — by the
@@ -402,9 +388,8 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
 
 describe('the channel is left as the next surface needs to find it', () => {
   it('clears the pane and its visibility on the way out, and keeps the address', async () => {
-    // The channel's stated per-payload rules, now exercised by a SECOND publisher rather than only
-    // the first. Keeping the address is R8; clearing the pane is what stops a departed surface's
-    // chrome from being rendered over the next one's.
+    // The channel's per-payload rules, exercised from a SECOND publisher — the table in
+    // `workspaceChannel.ts` states them.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -430,9 +415,7 @@ describe('the channel is left as the next surface needs to find it', () => {
  */
 describe('a chat that declares no pane', () => {
   it('★ takes the whole rail, and the frame stays mounted rather than being torn down', async () => {
-    // The hide treatment, never an unmount — the same node throughout, which is what makes the
-    // board's "nothing about the app is stopped or reloaded — it is only taken off the screen" a
-    // structural fact rather than a hope.
+    // The hide treatment, never an unmount: the same node throughout.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )

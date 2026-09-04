@@ -1,22 +1,14 @@
 /**
- * The workspace shell and the channel it holds (Plan A, U3).
+ * The workspace shell and the channel it holds.
  *
  * The shell's ROUTING claim — that the same element survives a move between the two addresses —
- * is asserted in `src/App.test.jsx` against the real `<App/>`, because that claim is about the
- * route table and a hand-built one here would prove the component instead of the wiring. What is
- * left for this file is everything the shell does once mounted: the single height model, the grid
- * it owns, the reclaim slot, and above all the channel's contract.
+ * is `src/App.test.jsx`'s, because it is a claim about the route table and a hand-built table
+ * here would prove the component instead of the wiring. This file has everything the shell does
+ * once mounted: the height model, the grid, the reclaim slot, and above all the channel's rules.
  *
- * THE CHANNEL'S CONTRACT IS THE PART WITH TEETH. Two rules make an upward channel between an
- * outlet child and its shell-mounted sibling safe rather than merely convenient, and both are
- * invisible until something breaks far away:
- *
- *  1. A publish must not wake a subscriber that did not care. The alternative — one context value
- *     republished on every change — re-renders the pane host on every character typed.
- *  2. Whether a payload survives its publisher's unmount is a PER-PAYLOAD decision. Uniform in
- *     either direction breaks something real: clear the address and leaving a build chat for the
- *     project screen destroys the running app (R8); keep the reclaim dialog and its buttons
- *     outlive the handlers they call.
+ * Two rules give the channel teeth: a publish must not wake a subscriber that did not care, and
+ * whether a payload survives its publisher's unmount is decided per payload — the table in
+ * `workspaceChannel.ts` names each one.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -64,10 +56,9 @@ vi.mock('../../layout/Navbar', () => ({
 /**
  * Mount `child` as the shell's outlet content, the way a route element is.
  *
- * Every probe below reads the channel from INSIDE the outlet. That is not the pane host's
- * position — the host is the Outlet's sibling — but it is the same channel through the same
- * context, and the tree-position property (that a route change cannot reach the host) is asserted
- * where it actually lives: `App.test.jsx` for the shell, `AppPaneHost.test.tsx` for the frame.
+ * Every probe below reads the channel from INSIDE the outlet — the same channel through the same
+ * context, but not the pane host's position. The tree-position property is asserted where it
+ * lives: `App.test.jsx` for the shell, `AppPaneHost.test.tsx` for the frame.
  */
 function renderShell(child: ReactNode) {
   return render(
@@ -192,10 +183,8 @@ describe('WorkspaceShell — the grid is the shell\'s own', () => {
   }
 
   it('follows the rail slot\'s direction, and the SAME grid element survives the flip', () => {
-    // AE37's precondition, at the container this plan owns. Plan F supplies the threshold that
-    // flips `stacked`; what must be true HERE is that flipping it changes a class on an element
-    // that is not replaced — because the pane host hangs off that element as a sibling, and an
-    // element swapped on a layout change takes the running app with it.
+    // What must be true HERE is that flipping `stacked` changes a class on an element that is NOT
+    // replaced — the pane host hangs off it.
     renderShell(<StackToggle />)
     const before = grid()
     expect(before.className).toMatch(/flex-row/)
@@ -424,13 +413,9 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
   }
 
   it('keeps the ADDRESS and the SAVE STATE, and drops the pane view and the visibility declaration', () => {
-    // Every one of these four has its own reason, and making them uniform breaks something:
-    //  - the address is kept because R8 IS "leaving this conversation does not destroy the running
-    //    app"; it is bounded by the project instead of by its publisher's lifetime;
-    //  - the save state is kept because the unsaved work is in the CONTAINER, not the component —
-    //    which is the coverage hoisting the unload warning to the shell exists to add;
-    //  - the pane view is dropped because it is a departed conversation's chrome;
-    //  - visibility is dropped because a surface that is gone is not asking for anything.
+    // Each of the four has its own reason and uniformity breaks one of them — the table in
+    // `workspaceChannel.ts`. The save state is kept because the unsaved work is in the CONTAINER,
+    // not the component, which is the coverage hoisting the unload warning here exists to add.
     const view = render(<Workspace conversationMounted />)
     expect(probe()).toBe('https://app.example/|view|shown|true')
 
@@ -440,10 +425,8 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
   })
 
   it('a DIFFERENT project invalidates a held address; an UNRESOLVED one does not', () => {
-    // The one thing that can bound an address once its publisher is gone. The asymmetry matters:
-    // every cold open of a chat address learns its project from a fetch, so a `null` claim means
-    // "I do not know yet" — reading that as "some other project" would tear the app down while
-    // the route resolved, which is R8 broken in the round trip it is most obviously about.
+    // The asymmetry is the whole point: a `null` project claims nothing, and only a DIFFERENT one
+    // invalidates a held address. `AppPaneHost` owns the rule.
     function Declarer({ project }: { project: string | null }) {
       usePublishAddress({ url: 'https://app.example/', status: 'ready' }, 'p1')
       useWorkspaceProject(project)

@@ -1,20 +1,14 @@
 """U10 — the confidence-tier classifier (R4, R5, R6).
 
 WRITTEN BEFORE THE IMPLEMENTATION, deliberately: this function IS the safety argument for every
-destructive unit downstream, so the tier table from ADR-0029 §3 is spelled out as tests first and
-the code is written to satisfy them.
-
-The classifier is pure and I/O-free — the same shape as `appdb/reconcile.py::classify_databases`,
-and for the same reason. Every dangerous combination can then be proven against a synthetic fleet
-that holds all of them at once, with no Azure, no Redis and no database in the way.
+destructive unit downstream, so ADR-0029 §3's tier table is spelled out as tests first and the
+code written to satisfy them. They run on synthetic fleets only — no Azure, Redis or database.
 
 THE TWO ASSERTIONS THAT MATTER MOST, both mutation-checked:
-
-* `test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate` — reverting the spare
-  set to "registered ⇒ spared" silently disables ~all reclamation while every other test here
-  stays green.
-* `test_a_partially_lost_spare_list_trips_the_store_fault_guard` — the eviction shape. Reverting
-  the guard to empty-only leaves a live build routed into staging with every signal reading normal.
+`test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate` — reverting the spare
+set to "registered ⇒ spared" silently disables ~all reclamation — and
+`test_a_partially_lost_spare_list_trips_the_store_fault_guard`, the eviction shape: reverting the
+guard to empty-only leaves a live build routed into staging with every signal reading normal.
 """
 
 from __future__ import annotations
@@ -135,9 +129,8 @@ def test_high_confidence_orphan_is_destroyed_at_one_hour() -> None:
 
 
 def test_an_untagged_container_escalates_forever_however_old_it_is() -> None:
-    """*Covers AE2.* Predates identity stamping, so nothing about it can be verified. Age is not
-    evidence — the nineteen-day ghost was exactly this shape, and guessing would have been guessing
-    about somebody's unsaved work."""
+    """*Covers AE2.* Predates identity stamping, so nothing about it can be verified and its age
+    is not evidence — however large the number gets, the verdict stays `ESCALATE`."""
     live, claims = _healthy_padding()
     ancient = a_fleet_member("sbx-prehistoric", tags={})
 
@@ -384,7 +377,7 @@ def test_a_tiny_fleet_cannot_trip_the_guard() -> None:
 def test_every_container_lands_in_exactly_one_bucket() -> None:
     """`scanned == spared + staged + destroy + escalate + not_ours`, stated as an invariant rather
     than hoped for. A container that silently vanished from the accounting is a container nobody
-    is deciding about — which is how the first ghost survived nineteen days."""
+    is deciding about."""
     live, claims = _healthy_padding()
     fleet = [
         *live,

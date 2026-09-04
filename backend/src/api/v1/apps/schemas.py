@@ -2,11 +2,6 @@
 
 camelCase over the wire (via the shared `CamelModel`), matching the SPA/TS
 convention the `/api/apps/*` clients already consume.
-
-`SubmitResponse` retired with the citizen submit route (U8, ASM18): the submit body
-became `services/approvals/submit.py`, whose `SubmissionReceipt` is a service-layer
-dataclass, not a wire schema — the publish gate (U9) reports the outcome through its
-own response shape.
 """
 
 from __future__ import annotations

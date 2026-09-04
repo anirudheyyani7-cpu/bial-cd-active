@@ -11,7 +11,7 @@ build context, build an image, provision the container app, wait for the revisio
 the result. It outlives its request, so it never borrows the request's database session —
 it opens short ones of its own, exactly as the turn engine does.
 
-TWO THINGS THE PIPELINE NOW DECIDES, BOTH ADDED IN U10, AND NEITHER IS A STYLE CHOICE.
+TWO THINGS THE PIPELINE DECIDES, AND NEITHER IS A STYLE CHOICE.
 
 THE EXPECTED COMMIT. The gate makes its decision about a commit it read off the snapshot
 blob's metadata stamp; the pipeline then extracts the mutable snapshot, and a save landing
@@ -19,15 +19,15 @@ in between would ship a tree nobody examined. So the commit travels with the cla
 extracted head must equal it — `snapshot_moved`, failed closed, otherwise. That assertion
 is what turns "what was approved is what is running" from an assumption into a property.
 
-THE DRIFT RE-CHECK (R13). On save-and-publish the request necessarily returned before any
+THE DRIFT RE-CHECK. On save-and-publish the request necessarily returned before any
 review of the version it just minted could exist, so the pipeline runs that review itself,
 as its FIRST step, before packing — and then stands in for the ladder's rules 4-7 with the
-answers those rules would have given: no usable review for this version routes it (R20),
-any weighted category on the merged answer set routes it (R9 — the SAME absolute test the
-route applies at rule 6, because standing in for a rung means giving its answer, not a
-softer one), and anything else publishes. Routing here is a REAL queue entry, pinned to
-the commit just asserted, and the deployment settles FAILED with `routed_for_review` — the
-existing terminal state with its own code, never a fourth status (ASM20). The review is
+answers those rules would have given: no usable review for this version routes it, any
+weighted category on the merged answer set routes it (the SAME absolute test the route
+applies at rule 6, because standing in for a rung means giving its answer, not a softer
+one), and anything else publishes. Routing here is a REAL queue entry, pinned to the
+commit just asserted, and the deployment settles FAILED with `routed_for_review` — the
+existing terminal state with its own code, never a fourth status. The review is
 handed the tree the pipeline already extracted: it uses a caller-owned root and never
 deletes one, so packing still has its files afterwards.
 
@@ -133,7 +133,7 @@ for it. Fails closed: publishing an unexamined tree is the one outcome this feat
 exists to prevent."""
 
 FAIL_ROUTED_FOR_REVIEW: Final = "routed_for_review"
-"""NOT A FAILURE OF THE PLATFORM, AND NOT RED (ASM20). The drift re-check landed on an
+"""NOT A FAILURE OF THE PLATFORM, AND NOT RED. The drift re-check landed on an
 answer only an administrator can give — a weighted category on the merged answers, or no
 usable review of this version — so it went into the queue instead of going live. Note that
 this says nothing about whether the finding was NEW: an app routes here on a category its
@@ -141,9 +141,9 @@ own developer declared, just as it does on one the check discovered. Modelled as
 existing FAILED terminal state with its own code rather than a
 fourth `DeploymentStatus` — that enum change would move what `uq_deployments_one_in_flight`
 covers, a real schema decision — and named to match the route's own 200 `outcome`
-discriminator, since the citizen ends up in exactly the same place either way. U12 renders
-it as an informational state; anything painting `status == failed` red must special-case
-this code."""
+discriminator, since the citizen ends up in exactly the same place either way. The portal
+renders it as an informational state; anything painting `status == failed` red must
+special-case this code."""
 
 FAIL_ROUTE_REFUSED: Final = "route_refused"
 """The re-check decided to route and the QUEUE would not take it — a build session went
@@ -198,8 +198,8 @@ class StartedDeploy:
 
 @dataclass(frozen=True)
 class VersionRecheck:
-    """THE DRIFT PATH'S ORDER TO THE PIPELINE (U10, R13): review the version you are about
-    to ship, then decide, because the request could not.
+    """THE DRIFT PATH'S ORDER TO THE PIPELINE: review the version you are about to ship,
+    then decide, because the request could not.
 
     Set only by the gate's rule 3a — this request performed the save, so the stored review
     is stamped the commit before it. Everything the post-review decision needs travels
@@ -288,7 +288,7 @@ class DeployService:
         side effect runs. Scoring again here would put the same policy in two places and let
         them disagree about a deploy already in flight.
 
-        `expected_commit_sha` IS THE ONE EXCEPTION TO THAT (U10), and it is not a second
+        `expected_commit_sha` IS THE ONE EXCEPTION TO THAT, and it is not a second
         gate: it re-checks no policy and reads no answers. It says only "the tree you
         extract must be the tree the gate decided about", which nothing upstream can
         guarantee because the snapshot is mutable and the extraction happens minutes later.
@@ -430,7 +430,7 @@ class DeployService:
                 ),
             )
 
-        # 1a — THE PIN (U10). The gate decided about a commit it read off the snapshot
+        # 1a — THE PIN. The gate decided about a commit it read off the snapshot
         # blob's metadata stamp; this is the tree that stamp was supposed to name. A save
         # landing in the gap between them is not a race to tolerate — publishing it would
         # put unexamined code behind a decision made about something else — so it fails
@@ -446,7 +446,7 @@ class DeployService:
                 ),
             )
 
-        # 1b — THE DRIFT RE-CHECK (R13), before anything is packed or built: on this path
+        # 1b — THE DRIFT RE-CHECK, before anything is packed or built: on this path
         # the citizen's answers describe the version BEFORE the save this request made, so
         # the platform reviews the one actually leaving and decides on the far side of the
         # 202 the route already sent. Returns to continue publishing, or raises with the
@@ -492,7 +492,7 @@ class DeployService:
         )
 
         # 4 — the runtime environment. Same database, same object-store container as the
-        # sandbox; a LONG-LIVED Blob credential instead of the seven-day session one.
+        # sandbox.
         async with self._session_factory() as db:
             try:
                 env, container_url = await build_published_env(
@@ -587,7 +587,7 @@ class DeployService:
                 )
             await asyncio.sleep(_REVISION_POLL_S)
 
-    # --- the drift re-check (U10, R13) ------------------------------------------
+    # --- the drift re-check ------------------------------------------------------
 
     async def _recheck(
         self,
@@ -607,12 +607,12 @@ class DeployService:
 
         THE THREE OUTCOMES, in the ladder's own order:
 
-        * no genuinely-complete review for this commit -> ROUTE (rule 4 / R20). A re-check
+        * no genuinely-complete review for this commit -> ROUTE (rule 4). A re-check
           that failed, aged out or came back partial is exactly the "unavailable" state the
           gate routes on; letting it publish because a failed review names no categories
           would make failure the cheapest way through the gate.
-        * ANY weighted category on the MERGED answer set -> ROUTE (rule 6 / R9).
-        * anything else -> PUBLISH (rule 7 / R14).
+        * ANY weighted category on the MERGED answer set -> ROUTE (rule 6).
+        * anything else -> PUBLISH (rule 7).
 
         RULE 6 IS ABSOLUTE HERE, NOT DIFFERENTIAL, and the distinction was a live bug. An
         earlier revision routed only on a Yes the SUBMITTED set did not already carry —
@@ -621,19 +621,19 @@ class DeployService:
         button, and rule 3a deferred while the re-check found "nothing new" and published.
         Rule 6 was then evaluated by nobody, on the one path that skips it in the request.
         This branch stands in for rules 4-7, so it owes rule 6 the same answer the ladder
-        gives, and ASM17's floor — the merge can only ADD routing, never remove it — is not
-        satisfied by a decision that reads the merge and then ignores half of it.
+        gives, and the merge's own floor — it can only ADD routing, never remove it — is
+        not satisfied by a decision that reads the merge and then ignores half of it.
 
         THE FLOW STILL TERMINATES, which is what the differential was reaching for and did
         not need to be. Rule 3 is what breaks the loop: an administrator approving THIS
         commit for self-publishing makes the next publish of it take the approval override
         and never reach this pipeline branch at all. What routes twice is a version saved
-        twice, which is R18 exactly — a later save produces a version the earlier approval
+        twice, which is correct — a later save produces a version the earlier approval
         does not cover.
 
         `newly_raised` therefore stops being a decision input and stays what it is for:
         telling the administrator which categories the citizen's explanation does not
-        cover (U13 renders it). Nothing about the decision reads it.
+        cover. Nothing about the decision reads it.
         """
         await self._advance(deployment_id, STEP_CHECKING, head_sha=extracted.head_sha)
 
@@ -667,7 +667,7 @@ class DeployService:
 
         # ROUTING. The declaration is rebuilt around the NEW review — it is what the
         # administrator will read — and carries the drift block that says whose question
-        # the citizen's explanation actually answered (U13 leads with that distinction).
+        # the citizen's explanation actually answered.
         declaration = declaration_document(
             head_sha=extracted.head_sha,
             citizen=citizen,
@@ -797,8 +797,8 @@ class DeployService:
         declaration: dict[str, Any],
         rule: str,
     ) -> uuid.UUID:
-        """Submit this exact version into the admin queue — R15a's one route in, reached
-        from the pipeline this time. Returns the submission id.
+        """Submit this exact version into the admin queue — the same submit the request
+        path uses, reached from the pipeline this time. Returns the submission id.
 
         THE COPY IS PINNED TO THE COMMIT THE PIPELINE ASSERTED, not to whatever the mutable
         snapshot holds at the moment the submit reads it. The submit forks the bundle that
@@ -806,7 +806,7 @@ class DeployService:
         nobody examined — the same lie the expected-commit assertion exists to prevent, one
         step further down. The whole submit runs inside a SAVEPOINT precisely so that
         refusing it here leaves no half-submitted row: the copied blob is the accepted
-        orphan class the submit service documents (D3), logged, referenced by nothing.
+        orphan class the submit service documents, logged, referenced by nothing.
 
         EVERY GUARD FAILURE BECOMES THE DEPLOYMENT'S FAILURE DETAIL. A build session that
         went live, a store that stopped answering, an app an administrator disabled while
@@ -826,7 +826,7 @@ class DeployService:
             ) from exc
 
         async with self._session_factory() as db:
-            # Owner-scoped read (ADR-0004) even though the pipeline resolved this app from
+            # Owner-scoped read even though the pipeline resolved this app from
             # the citizen's own request: the submit service re-checks ownership fail-closed
             # for the same reason, and a service that trusts its caller with the predicate
             # is one refactor away from a cross-user write.
@@ -886,7 +886,7 @@ class DeployService:
                 )
             await savepoint.commit()
 
-            # R22's record of THIS decision, written by the pipeline that made it — same
+            # The record of THIS decision, written by the pipeline that made it — same
             # action, same shape, same actor as the ladder's own rows, so "what did the
             # gate decide for this app" stays one query. The email is denormalised because
             # the actor reference nulls when a user is removed.
@@ -955,8 +955,8 @@ class DeployService:
         # so the surface has no routed response to read and falls through to `failureDetail`.
         # Storing the operator string there showed them
         # `submitted for review as <uuid> at <40-hex>; routed on: personal_information` —
-        # raw identifiers and internal field names — where U10's three purpose-written
-        # sentences belong. The operator string stays, in the log line below.
+        # raw identifiers and internal field names — where the re-check's three
+        # purpose-written sentences belong. The operator string stays, in the log below.
         stored = citizen_message if code in _ROUTED_CODES else safe
         async with self._session_factory() as db:
             settled = await store.fail(db, deployment_id, code=code, detail=stored)

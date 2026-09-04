@@ -1,25 +1,12 @@
 /**
  * FOLLOWING THE NEWEST CONTENT, AND THE WAY BACK TO IT (R35a, R29a, R64).
  *
- * ══ WHAT THIS REPLACES ══
+ * The thread's own viewport ships auto-scroll with a bottom-proximity check, so nothing here pins
+ * the transcript; what is left to test is the way back to the bottom.
  *
- * The old transcript was pinned by brute force: a sentinel `<div>` and a
- * `scrollIntoView({behavior:'smooth'})` on EVERY `[messages]` change. That is what made the build
- * bubble read as pinned — and it also dragged a reader who had scrolled up back to the bottom on
- * every single delta, so reading the middle of a long build was impossible. The thread's own
- * viewport ships auto-scroll with a bottom-proximity check, and this is one of the places the
- * library genuinely replaces our code.
- *
- * ══ WHY THE LIBRARY'S OWN BUTTON IS NOT USED, AND WHY THAT IS THE TEST ══
- *
- * `ThreadPrimitive.ScrollToBottom` does not disappear at the bottom — it renders a `disabled`
- * button. Verified in the installed 0.15.17: `useThreadScrollToBottom` returns `null` when
- * `isAtBottom`, and `createActionButton` renders `<button disabled={props.disabled || !callback}>`.
- * A disabled control sitting in the reading line is what R64 refuses.
- *
- * So the assertions are about REACHABILITY — present or absent, and never carrying a real
- * `disabled` — rather than about visibility. That distinction is the whole reason the hook was
- * kept and the primitive's button dropped.
+ * `ThreadPrimitive.ScrollToBottom` renders a `disabled` button rather than disappearing, so its
+ * hook is kept and its button is hand-built — ComposerBox.tsx carries why. The assertions are
+ * therefore about REACHABILITY: present or absent, and never carrying a real `disabled`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'

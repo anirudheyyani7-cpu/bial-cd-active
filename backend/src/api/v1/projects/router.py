@@ -1,12 +1,10 @@
-"""Projects HTTP endpoints — user-scoped CRUD for the parent container (R1, R3, R5–R7).
+"""Projects HTTP endpoints — user-scoped CRUD for the parent container.
 
-A project is the home a citizen developer builds one tool inside (KD-4). Identity is always
-the authenticated caller; every query is scoped by `user_id` (a dropped predicate is a
-cross-user leak — a cross-user id is a 404, never a leak, ADR-0004). List is keyset-paginated
-+ searchable (KD-1); delete cascades through the blob-aware, rollback-safe U6 service (KD-3).
+A project is the home a citizen developer builds one tool inside. Delete cascades through the
+blob-aware, rollback-safe project-delete service.
 
 Errors use the ported `{"error": {"message": ...}}` shape (`AppApiError`), documented with
-the shared `error_responses(...)` + `AUTH_401` builders (KD-7).
+the shared `error_responses(...)` + `AUTH_401` builders.
 """
 
 from __future__ import annotations
@@ -84,14 +82,12 @@ StorageDep = Annotated[ObjectStorage, Depends(storage_dependency)]
 
 def container_store_dependency() -> AppContainerStore | None:
     """The per-app container store for the cascade container sweep, or `None` when object storage
-    is unconfigured (dev/test). Deliberately NOT mirroring `storage_dependency` (which raises via
-    `get_storage()`): the sweep is None-tolerant so a delete still succeeds with storage off
-    (KTD-2); in prod `_require_storage_in_production` guarantees a store. A dependency (not a bare
-    call) so tests swap a fake via `dependency_overrides`."""
+    is unconfigured (dev/test) — `| None` unlike `StorageDep`, so the delete still succeeds with
+    the container sweep skipped. A dependency rather than a bare `get_app_container_store()` call
+    so tests can swap a fake through `dependency_overrides`."""
     return get_app_container_store()
 
 
-# `| None`-tolerant, unlike StorageDep — the container sweep no-ops when storage is disabled.
 ContainerStoreDep = Annotated[AppContainerStore | None, Depends(container_store_dependency)]
 
 
@@ -127,9 +123,9 @@ def _to_response(
 async def _project_app(
     db: DbSession, user_id: uuid.UUID, project_id: uuid.UUID
 ) -> tuple[uuid.UUID | None, AppStatus | None]:
-    """The project's ONE app's (id, status) — read-only discovery for the response
-    (one app per project, KD-4) — or (None, None) for a fresh project. Owner-scoped
-    like every query (ADR-0004)."""
+    """The project's ONE app's (id, status) — read-only discovery for the response (one app
+    per project, which is what makes `.one_or_none()` safe) — or (None, None) for a fresh
+    project."""
     row = (
         await db.execute(
             sa.select(AppRegistry.id, AppRegistry.status).where(
@@ -189,9 +185,9 @@ async def create_project(body: ProjectCreate, user: CurrentUser, db: DbSession) 
 async def _provision_database_or_shrug(db: DbSession, project_id: uuid.UUID) -> None:
     """Provision the project's database; on failure log and carry on (never 500).
 
-    Resolved lazily INSIDE the body rather than through a `Depends`, so an unconfigured or
-    unreachable substrate can never turn create-project into a dependency-solve 500
-    (commit 6be7a9c closed exactly that class of bug).
+    Resolved inside the body rather than through a `Depends`, which would be solved before
+    this route's first statement: an unconfigured or unreachable substrate would then 500 a
+    create that in fact succeeded.
 
     Only the exception TYPE is logged, never its message: a failing `CREATE ROLE` surfaces
     as a SQLAlchemy `DBAPIError` whose string carries the offending `[SQL: ...]` — which
@@ -255,7 +251,7 @@ async def list_projects(
     limit = clean_limit(limit)
     # LEFT-JOIN the project's ONE app (uq_app_registry_project) so the page carries the
     # read-only appId/appStatus discovery without an N+1; the outer join keeps app-less
-    # projects, and the app side carries its own owner scope (ADR-0004).
+    # projects listed.
     # ONE JOIN, not one request per row. The status column needs to know whether each app is
     # SERVING, and "live = deployed / published, with a url" is a deployment fact rather than
     # a lifecycle one (#158). `PublishStatusChip` gets it from `getDeployment(projectId)`,
@@ -326,8 +322,8 @@ async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsRespo
     declaration order, so a `/counts` registered after the parameterised route would be
     swallowed by it and answer 422 on a UUID parse instead.
 
-    Owner-scoped like every route here (ADR-0004) — these are the citizen's own projects,
-    unlike `/admin/apps/counts`, which counts across owners.
+    These are the citizen's OWN projects; `/admin/apps/counts` is the across-owners count, so
+    the two answer different questions and are not each other's cross-check.
 
     Three aggregates over one owner's rows, no row projection and no per-app probing. The
     liveness half reads the SHARED `live_app_ids` collapse, which is the whole reason this
@@ -502,9 +498,9 @@ async def delete_project(
         )
         or 0
     )
-    # R9: refuse while this project's app is being built. Owner-scoped discovery (ADR-0004);
-    # a project with no app row can have no build session, so the guard is skipped rather
-    # than fired — an app-less project must not inherit another project's live build.
+    # Refuse while this project's app is being built. A project with no app row can have no
+    # build session, so the guard is skipped rather than fired — an app-less project must not
+    # inherit another project's live build.
     app_id, _app_status = await _project_app(db, user.id, project.id)
     if app_id is not None:
         await refuse_while_build_session_live(

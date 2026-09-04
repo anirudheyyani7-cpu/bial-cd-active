@@ -1,11 +1,10 @@
 /**
  * What a chat's KIND is called, and how a row draws it — ONE table, not a predicate.
  *
- * The project page used to answer this with `chat.kind === 'builder'`, a two-way test on a
- * THREE-valued field (`ConversationKind` is PLANNING | ASSISTANT | BUILDER), so an `assistant`
- * row fell into the else arm and drew the Plan icon. An icon can get away with that; a word that
- * says "Plan" cannot. Hence an exhaustive lookup with a NAMED fallback: every value the field can
- * hold today, plus one honest answer for every value it might hold tomorrow.
+ * An exhaustive lookup with a NAMED fallback, never a two-way test on the kind: every value the
+ * field can hold today, plus one honest answer for every value it might hold tomorrow. A test
+ * that recognises one kind drops everything else into its else arm, and an icon can get away
+ * with that where a word that says "Plan" cannot.
  *
  * THE FALLBACK'S WORD IS "Chat", deliberately. Not "Unknown" — citizen-hostile on a row someone
  * is about to click — and not "Assistant", which is a schema word, not a product word. "Chat" is
@@ -27,12 +26,6 @@
  * the help page's prose, a named deferral rather than an oversight — the copy rides a later
  * release. When it does catch up, it should read the `description` this module already carries
  * rather than restating it.
- *
- * (The paragraph above used to name a SECOND surface too — the composer's mode chooser,
- * `components/chat/ModeSwitcher.tsx`, on a different axis, ask/plan/write, not the stored kind.
- * That axis is gone, not merely unmigrated: U1 collapsed conversation kind and the mode it
- * switched into one two-valued `ChatKind`, and U19 deleted `ModeSwitcher` with it. Recorded here
- * so this file does not go on describing a control that no longer exists.)
  *
  * `kind` arrives as a plain `string` (`conversationApi` types it that way, and `ProjectPage`'s
  * `narrowChat` legitimately coerces a malformed row's kind to `''`), so the lookup is keyed on a

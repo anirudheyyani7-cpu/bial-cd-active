@@ -142,24 +142,15 @@ class DeployConfig(BaseModel):
     target_port: PositiveInt = DEFAULT_TARGET_PORT
 
     # --- scheduled reconciliation ------------------------------------------------------
-    # Whether the SCHEDULED deploy reconciliation runs on the Taskiq worker (U6, ADR-0011).
-    #
-    # SHIPS ON, because the thing it replaced was never optional. This defaulted to False while
-    # `_reconcile_deploys_periodically` was still looping in the API lifespan — correct then: the
-    # loop was doing the work and this flag was how an operator promoted the scheduled pass after
-    # watching it run. U15 deleted the loop, and at that moment an off default stopped meaning
-    # "not yet promoted" and started meaning "nobody reconciles a deploy that straddled a
-    # restart". A pipeline runs for minutes and every platform deploy kills it, so that is the
-    # expected case during a rollout — the exact leak U6 was written to close.
+    # Whether the scheduled deploy reconciliation runs on the Taskiq worker. What sits on the
+    # platform's clock, and what deliberately does not, is set out in `src/worker_main.py`.
     #
     # An optional knob with a defined meaning (the fail-first exception): False = the cron tick
-    # logs `deploy_reconcile_pass_disabled` and returns, having imported nothing. It stays a real
-    # kill switch; what changed is which way it points when nobody has said anything.
+    # logs `deploy_reconcile_pass_disabled` and returns, having imported nothing.
     #
-    # It gates the CLOCK only. The boot one-shot (`main.py::_reconcile_interrupted_deploys`) and
-    # the operator endpoint (`POST /v1/admin/apps/reconcile-deploys`) are deliberately
-    # unaffected: an operator who has switched the timer off must still be able to settle a
-    # wedged deploy by hand, which is the whole reason the endpoint exists.
+    # It gates the CLOCK only: the boot one-shot (`main.py::_reconcile_interrupted_deploys`) and
+    # the operator endpoint (`POST /v1/admin/apps/reconcile-deploys`) are unaffected, so an
+    # operator who has switched the timer off can still settle a wedged deploy by hand.
     reconcile_enabled: bool = True
 
     # --- timeouts ---------------------------------------------------------------------

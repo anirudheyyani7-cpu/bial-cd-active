@@ -1,4 +1,4 @@
-"""Everything the Taskiq worker needs to boot, in one list (ADR-0011, ADR-0029 §9).
+"""Everything the Taskiq worker needs to boot, in one list.
 
 Read this file to answer "which environment variables does the worker need?". Tiers are the ones
 defined in `__init__.py`, and a field's tier is spelled by its SHAPE, never by a class name.
@@ -6,8 +6,8 @@ defined in `__init__.py`, and a field's tier is spelled by its SHAPE, never by a
 WHY THREE FIELDS ARE REQUIRED HERE AND ONLY PRODUCTION-GATED IN `api.py`. A gate keyed on
 `ENVIRONMENT` is dodged by setting `ENVIRONMENT=development` — which is precisely what an operator
 does when a new container will not boot, and the cheapest thing to try. For the API that dodge
-costs a broken feature. For this process it can delete the Azure fleet (see `object_store` below).
-So these fail in EVERY environment and cannot be talked out of.
+costs a broken feature; here it costs containers. So these fail in EVERY environment and cannot be
+talked out of.
 
 DELIBERATELY ABSENT, and each absence is a decision:
   auth, superadmin_emails   no request to authenticate, no admin gate to enforce
@@ -44,12 +44,9 @@ class WorkerSettings(CoreSettings):
     # No default, so a missing block fails construction in EVERY environment. This is the whole
     # point of the role split: read the three docstrings below before making any of them optional.
 
-    # THE SINGLE MISCONFIGURATION THAT COULD DELETE THE FLEET. The durable-copy precondition (U14)
-    # is unsatisfiable without a bundle store, and worse, `manager.py` reports an unconfigured
-    # store as "CONFIRMED absent" — correct for its original caller (do not offer a restore that
-    # cannot work) and catastrophic for a destroy path, which reads it as "nothing to preserve,
-    # safe to delete". A worker booted without storage would delete every container in the
-    # subscription while believing it had verified each one.
+    # Required in EVERY environment, unlike the API's production gate: the reclamation pass runs
+    # in this process, and nothing it destroys can be checked against a recovery bundle without
+    # this store. A worker booted without one deletes containers blind.
     object_store: StorageConfig
 
     # Both the task broker AND the spare-list. Without it the worker consumes nothing and can prove

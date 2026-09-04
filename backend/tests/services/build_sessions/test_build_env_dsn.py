@@ -173,8 +173,8 @@ async def test_the_restore_arm_reinjects_the_dsn(
     fake_storage: FakeStorage,
     salted: list[uuid.UUID],
 ) -> None:
-    # A restored container is a BRAND NEW container: it gets its env once, at birth, so the
-    # DSN has to ride this arm too or a resumed app silently loses its database (KTD-3).
+    # Restore is one of `_resolve_sandbox`'s birth arms, so the DSN has to ride it too or a
+    # resumed app silently loses its database.
     user, project_id = await _mk(db_session, "u3restore@rvaiglobal.com")
     salted.append(project_id)
     manager = SessionManager()

@@ -1,21 +1,14 @@
 /**
- * THE COMPOSER CONTRACT (U4). One gate, and its only term is turn state.
+ * THE COMPOSER CONTRACT (U4). One gate, and its only term is turn state. Mode appears nowhere in
+ * it — a mode is a tool-access level on the same conversation, and using it as a composer gate is
+ * what produced the Write dead end. The gate withholds *sending*, not typing: the box and attach
+ * stay live so the citizen can compose while they wait.
  *
- * Mode appears nowhere in it — a mode is a tool-access level on the same conversation, and using
- * it as a composer gate is what produced the Write dead end. What the gate withholds is *sending*,
- * not typing: the text box and attach stay live so the citizen can compose their next message
- * while they wait, and not disabling the textarea IS the focus fix (a `disabled` on the focused
- * element blurs it to `document.body`).
- *
- * Four defects live here and each has its own trap:
- *   N10 — the composer went dead mid-reply and stole focus mid-sentence.
- *   G1  — the gate read "open" while the adopt round-trip was unresolved, over a possibly-live
- *          build. Its fix has FOUR arms, and missing the no-anchor one bricks every ordinary chat.
- *   G2  — `generating` was global, so switching chats mid-stream gated the new chat on the old
- *          chat's turn.
- *   G3  — a typed draft died three different ways: a reload, a chat switch, and a refinement chip
- *          that overwrote it. The chips themselves are gone now (2026-07-30), so the third way is
- *          pinned from the other side: nothing canned may appear to seed the composer at all.
+ * Four defects live here. N10: the composer went dead mid-reply and stole focus. G1: the gate read
+ * "open" while the adopt round-trip was unresolved over a possibly-live build, and its fix has
+ * FOUR arms — miss the no-anchor one and every ordinary chat bricks. G2: `generating` was global,
+ * so a mid-stream switch gated the new chat on the old chat's turn. G3: a typed draft died on a
+ * reload, on a switch, and to a refinement chip; the chips are gone, so nothing canned may seed it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, cleanup, within } from '@testing-library/react'
@@ -134,9 +127,7 @@ describe('the gate withholds SENDING, not typing (N10)', () => {
   })
 
   it('focus never leaves the box — not at the turn\'s start, not at its terminal (the N10 complaint)', async () => {
-    // `disabled` on the currently-focused element blurs it to `document.body`. That single line was
-    // the whole "blurs mid-sentence, focus never restored" report. There is also no programmatic
-    // focus GRAB at either edge — stealing focus at an async moment is its own bug class.
+    // Nothing GRABS focus at either edge — stealing focus at an async moment is its own bug class.
     //
     // HONEST LIMIT: jsdom does not implement blur-on-disable, so the `activeElement` assertions
     // below cannot by themselves catch a reintroduced `disabled` — they pin the no-focus-grab half.
@@ -843,20 +834,10 @@ describe('the send-failure catch splits on whether the turn was accepted (N8)', 
 })
 
 /**
- * THE SEND PROMISE IS THE CONTRACT, and these are the paths that broke it.
- *
- * `Composer.doSend` empties the box when `onSubmit` RESOLVES and keeps everything when it REJECTS.
- * That is the whole of R58/R59 — there is no optimistic clear and no restore path. So every way out
- * of the send has to settle the promise, and settle it the right way. Three did not:
- *
- *   - `onSent` fired before `startTurn` was attempted, so a refusal arrived at an already-resolved
- *     promise. The composer had emptied; the later `onAbort` did nothing. On a CONTINUING thread it
- *     fired on no network call whatsoever, which is every message after the first;
- *   - the double-Enter guard RETURNED, and a return is a resolve — so the second press emptied the
- *     composer while the first send was still in flight;
- *   - a bail-out taken after the reader had moved on settled nothing at all, so `handleSubmit`'s
- *     `finally` never ran, `sendingRef` kept naming that chat, and every later press there matched
- *     the stale guard and returned as though it had sent.
+ * THE SEND PROMISE IS THE CONTRACT, and these are the paths that broke it. `Composer.doSend` clears
+ * only on a resolved `onSubmit` and keeps everything on a rejected one, so every way out of the
+ * send has to settle the promise, and settle it the right way. Three did not, and each test below
+ * names the one it pins.
  */
 describe('a refused send leaves the citizen holding their message', () => {
   /** A conversation that already has a turn in it — so the next send is NOT the first. */

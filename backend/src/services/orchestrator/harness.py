@@ -1,25 +1,22 @@
-"""`run_build` — the frozen C7 entry point, implemented as a multi-run self-heal state machine
-(KD-1 / KD-3 / KD-11 / KD-12 / KD-13).
+"""`run_build` — the frozen build entry point, implemented as a multi-run self-heal state machine.
 
 The build is a SEQUENCE of `agent.iter` runs. Within each run the harness drives the node loop
 manually and meters EVERY model step: `enforce_daily_limit` strictly before the request fires,
 `record_usage` strictly after off `CallToolsNode.model_response.usage`, in BRAIN's own per-step
 billing session (BRAIN owns the commit). Between runs it verifies (`tsc` + dev health) and, if red,
-starts the next run seeded with the redacted diagnostic (KD-5). Three ceilings, three outcomes
-(KD-7): the daily quota → graceful `ended`; the flat self-heal budget / the per-run request limit →
-`escalation` → `ended(failed)`.
+starts the next run seeded with the redacted diagnostic. Three ceilings, three outcomes: the daily
+quota → graceful `ended`; the flat self-heal budget / the per-run request limit → `escalation` →
+`ended(failed)`.
 
-INVARIANTS (KD-12): `run_build` never lets an Exception escape (a raise would strand SESSION-API's
-task with no terminal); every path funnels to exactly one `BuildResult`.
+INVARIANTS: `run_build` never lets an Exception escape (a raise would strand SESSION-API's task
+with no terminal); every path funnels to exactly one `BuildResult`.
 
-BRAIN NEVER EMITS THE TERMINAL `ended` (R7). It never runs git, never tears down, never touches
-the lock; SESSION-API performs the single C4 snapshot on return and renders the one authoritative
-`ended` from the returned `BuildResult` (KD-11) — which is the only emission point that can report
-a TRUE `snapshot_committed`, since anything BRAIN emitted would necessarily predate that snapshot.
-So completion travels as DATA (`BuildResult.status` / `.reason` / `.preview_url`), not as a frame:
-the funnel emits only the non-terminal context envelopes BRAIN owns (`quota_exceeded`,
-`escalation`) and returns. On stop/idle SESSION-API cancels the task; BRAIN unwinds on
-`CancelledError` and returns no value (SESSION-API owns that terminal too).
+BRAIN NEVER EMITS THE TERMINAL `ended`. It never runs git, never tears down, never touches the
+lock: completion travels as DATA (`BuildResult.status` / `.reason` / `.preview_url`), and
+SESSION-API renders the one terminal frame from that returned result. The funnel emits only the
+non-terminal context envelopes BRAIN owns (`quota_exceeded`, `escalation`) and returns. On
+stop/idle SESSION-API cancels the task; BRAIN unwinds on `CancelledError` and returns no value
+(SESSION-API owns that terminal too).
 """
 
 from __future__ import annotations
@@ -669,9 +666,9 @@ class BuildOrchestrator:
     ) -> BuildResult:
         """The single terminal funnel: emit the non-terminal context envelopes BRAIN owns and
         return the verdict. `quota_exceeded` / `escalation` still egress here — they are
-        informational, not the terminal boundary. The terminal `ended` itself is NOT emitted:
-        it is SESSION-API's, rendered from this `BuildResult` after the C4 snapshot (R7/KD-11),
-        which is why `reason` travels on the verdict."""
+        informational, not the terminal boundary. The terminal `ended` itself is NOT emitted; it is
+        SESSION-API's, rendered from this `BuildResult`, which is why `reason` travels on the
+        verdict."""
         if terminal.kind == "completed":
             return _result(
                 BuildSessionStatus.ENDED,
@@ -898,12 +895,12 @@ def _result(
 ) -> BuildResult:
     return BuildResult(
         status=status,
-        reason=reason,  # SESSION-API renders this into the one terminal `ended` (R7)
+        reason=reason,  # SESSION-API renders this into the one terminal `ended`
         app_id=app_id,
         preview_url=preview_url,
         last_seq=last_seq,
-        # Always False, and true-by-construction: BRAIN returns strictly BEFORE the C4 snapshot
-        # SESSION-API owns (KD-11). The frame's real value is folded in there, not here.
+        # Always False, and true-by-construction: BRAIN returns strictly BEFORE the snapshot
+        # SESSION-API owns, so the frame's real value is folded in there, not here.
         snapshot_committed=False,
         error=error,
     )

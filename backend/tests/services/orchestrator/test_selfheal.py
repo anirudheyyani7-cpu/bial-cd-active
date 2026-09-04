@@ -663,10 +663,9 @@ async def test_a_dev_process_that_is_down_is_still_a_defect() -> None:
 
 
 async def test_an_app_still_serving_the_starter_template_is_not_finished() -> None:
-    """★ COVERS AE6 — THE 2026-08-18 HEADLINE. `tsc` is clean, the dev server is ready, the log
-    tail is quiet, the root answers 200, and `app/page.tsx` is byte-for-byte the golden template.
-    Every signal the platform had said green, and "Build complete — your app is live below" sat
-    above the untouched starter page for nine minutes in front of a client.
+    """`tsc` is clean, the dev server is ready, the log tail is quiet, the root answers 200, and
+    `app/page.tsx` is byte-for-byte the golden template — every server-side signal clean over an
+    app that is not the user's.
 
     Mutation check: drop the `STILL_THE_BASELINE` arm and this goes green — which is precisely
     the bug."""
@@ -834,14 +833,9 @@ class _AnswersOnTheSecondLook(FakeSandbox):
 
 
 async def test_a_crash_the_agent_has_already_fixed_costs_no_repair_round_trip() -> None:
-    """★ COVERS AE12. Three of the four repair cycles in the 2026-08-18 demo were the platform
-    re-reporting errors it had already fixed, and the mechanism is structural: `log_cursor` bounds
-    the read by log POSITION rather than by agent action, a dev-server restart resets the ring
-    underneath it, and a dead child's last words are carried forward on purpose. So a crash
-    printed before the agent's edit can be read after it and charged as a fresh defect.
-
-    Here the log holds a crash, the agent HAS written since the watermark, and the re-check's
-    fresh window is clean — so the verdict is healthy and no repair is bought.
+    """The log holds a crash, the agent HAS written since the watermark, and the re-check's fresh
+    window is clean — so the verdict is healthy and no repair is bought. Why a crash can be stale
+    in the first place is `selfheal.verify`'s re-check comment.
 
     Mutation check: drop the `changed is True` gate (or the `continue`) and this goes red."""
     fake = FakeSandbox()

@@ -130,10 +130,9 @@ def lease_key(user_id: uuid.UUID) -> str:
 
     The value is a deadline in Unix epoch seconds (`time.time()`, never `time.monotonic()` — a
     monotonic reading means nothing outside the process that took it, and cross-process
-    readability is the whole point). Renewed by the turn engine for the duration of a turn,
-    read by the reconciliation sweep, and it **must** carry a TTL: the registry hash's lack of
-    one is the root cause of ADR-0029, and a lease that never expires is a container that can
-    never be reclaimed. `build_sessions/locks.py` owns the three primitives (U12)."""
+    readability is the whole point). Renewed by the turn engine for the duration of a turn, read
+    by the reconciliation sweep, and it **must** carry a TTL: a lease that never expires is a
+    container that can never be reclaimed. `build_sessions/locks.py` owns the three primitives."""
     return ns(FAMILY_LEASE, user_id)
 
 
@@ -141,15 +140,16 @@ def starting_key(user_id: uuid.UUID) -> str:
     """`bial:{env}:sandbox:starting:{user_id}` — the U13 start-in-flight marker (C5 family 5).
 
     The value is the `project_id` (str(uuid.UUID)) being started, and it **must** carry a TTL
-    bounded by the cold-start budget plus margin: a marker with no expiry is the registry hash's
-    mistake (ADR-0029) repeated in a new key. Written once, by `_holding_user_lock` — the one
-    skeleton behind the build start, the relaunch and the turn's `ensure_sandbox` — and cleared
-    on the same scope exit that releases or adopts the lock, and in the compensation arm.
+    bounded by the cold-start budget plus margin: the marker is one of the disjuncts that spare
+    a container from reclamation, so one that never expires spares its container forever.
+    Written once, by `_holding_user_lock` — the one skeleton behind the build start, the
+    relaunch and the turn's `ensure_sandbox` — and cleared on the same scope exit that releases
+    or adopts the lock, and in the compensation arm.
 
-    DELIBERATELY NOT A REGISTRY FIELD. A registry entry written before a container exists is
-    exactly the "registered ⇒ spared" hazard ADR-0029 exists to remove, and it would be visible
-    to the sweep, the reconciler and the ARM reconciliation as a container that does not exist.
-    `build_sessions/locks.py` owns the write/read/clear primitives (U13)."""
+    DELIBERATELY NOT A REGISTRY FIELD. A registry entry written before a container exists reads to
+    the sweep, the reconciler and the ARM reconciliation as a live container that is not there, and
+    a registered container is spared rather than collected. `build_sessions/locks.py` owns the
+    write/read/clear primitives."""
     return ns(FAMILY_STARTING, user_id)
 
 

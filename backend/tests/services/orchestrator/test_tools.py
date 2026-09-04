@@ -621,11 +621,10 @@ async def test_run_command_sandbox_gone_escalates(sink: CollectingSink) -> None:
         await _run(fake, sink, [tool_turn("run_command", {"command": ["npm", "install"]})])
 
 
-# F4 — the bound depends on WHAT the command is, and one global value could not satisfy both
-# halves of the fix. The observed wedge (a `drizzle-kit generate` blocking on an interactive
-# prompt with no terminal to answer it) burned 249s, so catching it needs a bound well under
-# that; but this repo's own constant documents that a cold-base `npm install` "routinely" takes
-# the full 600s, so lowering a single global would kill healthy builds instead.
+# The bound depends on WHAT the command is, and one global value could not satisfy both halves.
+# A `drizzle-kit generate` that blocks on an interactive prompt has to be caught in a fraction of
+# the time a cold-base `npm install` needs — and this repo's own constant documents that install
+# "routinely" takes the full 600s, so lowering a single global would kill healthy builds instead.
 
 
 @pytest.mark.parametrize(
@@ -717,13 +716,11 @@ async def test_run_command_never_leaks_the_supervisor_token(sink: CollectingSink
     assert FAKE_SUPERVISOR_TOKEN not in captured["all_incoming"]
 
 
-# --- U19 / R25: the commit reminder that no longer exists ------------------------------
+# --- the commit reminder that no longer exists -----------------------------------------
 #
-# THIS REPLACES FOUR TESTS that pinned the reminder's cadence and its reset — the reminder fires
-# on the third uncommitted write, names the exact action, stays non-binding, and a SUCCESSFUL
-# `git commit` zeroes the count while a failed one does not. All four were correct, and all four
-# enforced an instruction that no longer exists: the Write segment's COMMIT AS YOU WORK block is
-# deleted, because the platform commits the tree itself at every turn boundary.
+# The Write segment's COMMIT AS YOU WORK block is gone; who commits the tree, and when, is in
+# `services/build_sessions/snapshot.py`. These tests replace four that pinned the retired
+# reminder's cadence and its reset.
 #
 # THE ENFORCER HAD TO GO WITH THE INSTRUCTION, and that is the whole point of testing it here.
 # `_note_write_and_maybe_remind` lived in `tools.py` — the toolset BOTH agents build from —
@@ -1137,15 +1134,11 @@ async def test_a_repeat_run_is_counted_on_the_repeat_only(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# U23 / R29 — one operation for applying a database change
+# One operation for applying a database change
 # ═══════════════════════════════════════════════════════════════════════════════════════
 #
-# THE DEFECT THESE PIN is not a slow loop, it is a LIE. Applying a schema change was two
-# prompt-taught commands and BOTH of them exit 0 after failing: drizzle-kit's rename resolver
-# prints "Interactive prompts require a TTY terminal", writes no migration and exits 0, and
-# `scripts/db-migrate.mjs` catches every error and exits 0 by design so a bad migration can never
-# stop the dev server. A model reading exit codes therefore believes a schema change happened
-# that did not, and then builds queries against tables that are not there.
+# THE DEFECT THESE PIN is not a slow loop, it is a LIE: both halves of the sequence this one call
+# replaced exit 0 after failing, which `sandbox/template/db/schema.ts` sets out in full.
 #
 # So every test below is really one assertion in two halves: the operation NEVER reports success
 # when a step failed, and when it reports failure it says which step, what the output actually
@@ -1325,15 +1318,14 @@ def test_the_migrate_failure_markers_match_the_script_that_prints_them() -> None
 async def test_the_interactive_resolver_fails_fast_with_a_plain_explanation(
     sink: CollectingSink,
 ) -> None:
-    """★ The wedge, asserted the only honest way: on the BOUND and the measured signature, never
-    by waiting one out.
+    """The wedge, asserted the only honest way: on the BOUND and the measured signature, never by
+    waiting one out.
 
-    Under a TTY the rename resolver waits forever — that is the observed 4m09s stall. Under this
-    sandbox's real conditions it cannot: the supervisor sets `CI=1`, closes stdin, and refuses a
-    manufactured pty (`test_prompt.py` pins all three), so drizzle-kit fails immediately with the
-    signature below. What this test owns is what the composite does with those seconds: it takes
-    the SHORT bound rather than the ten-minute install class, and it hands back an explanation in
-    words rather than a wedged command and a timeout."""
+    Under this sandbox's real conditions the resolver cannot wait: the supervisor sets `CI=1`,
+    closes stdin, and refuses a manufactured pty (`test_prompt.py` pins all three), so drizzle-kit
+    fails immediately with the signature below. What this test owns is what the composite does
+    with those seconds: it takes the SHORT bound rather than the ten-minute install class, and it
+    hands back an explanation in words rather than a wedged command and a timeout."""
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout="", stderr=_THE_TTY_REFUSAL, exit=0))
     captured = await _apply(fake, sink)

@@ -1,5 +1,5 @@
-"""U6 — the reusable CSRF dependency (KTD-4): mutating POSTs require a valid signed
-double-submit token; the status GET is exempt."""
+"""The reusable CSRF dependency: mutating POSTs require a valid signed double-submit
+token; the status GET is exempt."""
 
 from __future__ import annotations
 
@@ -29,36 +29,20 @@ _TTL = settings.auth.access_ttl_seconds
 # superadmin gate, so the caller is allowlisted to prove CSRF (not RBAC) is the failing check.
 _MUTATING_POSTS = [
     "/v1/build-sessions/{sid}/stop",
-    # U28 — `lock/acquire` / `lock/renew` / `lock/release` / `heartbeat` are RETIRED: nothing
-    # called them (the portal's keep-alive loop that was their only caller was itself deleted
-    # back in U13), so their rows are gone with the routes. `lock/force-end` is the one lock op
-    # still reachable from the UI and stays covered below.
     "/v1/build-sessions/{sid}/lock/force-end",
     "/v1/build-sessions/internal/reap",
     "/v1/build-sessions/projects/{project_id}/save",
-    # U13 — the app's own client-error report. This table is HAND-MAINTAINED, not
-    # auto-discovered from the route tree, so a new mutating POST is only covered here
-    # because the change that added it added this row too.
     "/v1/build-sessions/projects/{project_id}/client-error",
-    # U4 — the idle-tab workspace check. A POST rather than a GET because it costs a container
-    # exec and can raise an operational alarm, which is exactly the kind of thing CSRF is for.
     "/v1/build-sessions/projects/{project_id}/workspace-check",
-    # U25 — the operator surface for the trees this plan parks. Superadmin-gated, but CSRF'd
-    # like every other mutating POST here: the gate answers WHO, the token answers whether
-    # they meant to.
     "/v1/build-sessions/internal/apps/{app_id}/parked",
     "/v1/build-sessions/internal/apps/{app_id}/promote",
-    # #43 — restore a saved build's preview. Project-scoped via the body (`projectId`), not the
-    # path, so it takes no `{sid}`/`{project_id}` placeholder — the CSRF dependency still fires
-    # before the body is ever read.
     "/v1/build-sessions/relaunch",
-    # #83 — the stop / save / release reclaim sequence's first and third steps.
     "/v1/build-sessions/projects/{project_id}/stop-active-build",
     "/v1/build-sessions/projects/{project_id}/release",
 ]
 
 # The one CSRF-guarded build-session POST this table deliberately omits — `start` is covered by
-# the three focused tests above instead of the parametrized ones below.
+# the three focused tests in this file instead of the parametrized pair.
 _COVERED_BY_FOCUSED_TESTS = {"/v1/build-sessions"}
 
 _PLACEHOLDER = re.compile(r"\{[^}]+\}")
@@ -74,11 +58,10 @@ def _walk_api_routes(routes: Iterable[object]) -> Iterator[APIRoute]:
     """Recurse through FastAPI's lazy route inclusion to reach real `APIRoute`s.
 
     `app.routes` only lists a handful of top-level entries — this FastAPI version defers each
-    `include_router()` behind `_IncludedRouter`, which `tests/test_import_graph.py::
-    test_the_app_still_builds_with_its_full_route_surface` already had to work around for the
-    same reason. `.original_router.routes` is the real sub-tree; each leaf `APIRoute.path` is
-    already fully resolved against every prefix except the top-level app mount (`/v1`), which
-    the caller adds once (verified against `app.openapi()`'s own path list)."""
+    `include_router()` behind `_IncludedRouter`. `.original_router.routes` is the real sub-tree;
+    each leaf `APIRoute.path` is already fully resolved against every prefix except the
+    top-level app mount (`/v1`), which the caller adds once (verified against `app.openapi()`'s
+    own path list)."""
     for route in routes:
         if isinstance(route, _IncludedRouter):
             yield from _walk_api_routes(route.original_router.routes)
@@ -109,17 +92,8 @@ def _csrf_guarded_build_session_posts() -> set[str]:
 
 
 def test_mutating_posts_matrix_matches_the_route_table() -> None:
-    """The structural guard `_MUTATING_POSTS` never had: U28's own plan asked for an assertion
-    on the collected parametrization count and it was never added, which matters because a row
-    silently dropped from this hand-maintained table makes the CSRF matrix SHRINK while staying
-    green.
-
-    Walks the real FastAPI route table for every POST under `/v1/build-sessions` that carries
-    `RequireCsrf`, and asserts that set equals `_MUTATING_POSTS` (plus `start`, which the three
-    focused tests above cover instead). A route added with `RequireCsrf` but no row here fails
-    this test; so does a row left behind for a route that lost the dependency or was deleted —
-    exactly the `test_csrf.py` half of the U28 retirement that this file's own comments describe
-    doing by hand."""
+    """A row silently dropped from this hand-maintained table would make the CSRF matrix
+    SHRINK while staying green."""
     actual = _csrf_guarded_build_session_posts() - _COVERED_BY_FOCUSED_TESTS
     expected = {_normalize_path(p) for p in _MUTATING_POSTS}
     assert actual == expected, (
@@ -180,7 +154,6 @@ async def test_mismatched_csrf_token_is_403(
     wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
     user, project = await _user_project(db_session, "csrf3@rvaiglobal.com")
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
-    # Cookie CSRF and header CSRF disagree -> double-submit fails.
     headers = {"Cookie": f"session={jwt}; csrf=aaa.bbb", "X-CSRF-Token": "ccc.ddd"}
     resp = await client.post(
         "/v1/build-sessions",
@@ -214,7 +187,6 @@ async def test_mismatched_csrf_token_is_403_on_every_mutating_post(
     )
     wire.app.dependency_overrides[superadmin_allowlist] = lambda: frozenset({user.email})
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
-    # Cookie CSRF and header CSRF disagree -> double-submit fails.
     headers = {"Cookie": f"session={jwt}; csrf=aaa.bbb", "X-CSRF-Token": "ccc.ddd"}
     path = path_tmpl.format(sid=uuid.uuid4(), project_id=uuid.uuid4(), app_id=uuid.uuid4())
     resp = await client.post(path, headers=headers)
@@ -234,7 +206,6 @@ async def test_status_get_needs_no_csrf(
     )
     sid = r.json()["sessionId"]
     await drain(wire.manager, sid)
-    # A cookie-only GET (no X-CSRF-Token) is accepted.
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
     s = await client.get(f"/v1/build-sessions/{sid}", headers={"Cookie": f"session={jwt}"})
     assert s.status_code == 200

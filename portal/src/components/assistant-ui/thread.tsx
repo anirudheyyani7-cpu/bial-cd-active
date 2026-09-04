@@ -20,35 +20,28 @@
  * Dropped ON ARRIVAL rather than carried through the rewrite and then deleted — applying the v4→v3
  * table to a block that is about to be removed is the expensive way to ship nothing:
  *
- *   Composer, ComposerAction   — U10 replaces them with one composer of ours.
- *   ComposerPrimitive.Send     — see below. It ships a real `disabled`.
+ *   Composer, ComposerAction   — our own composer replaces them.
+ *   ComposerPrimitive.Send     — it ships a real `disabled`; ours is hand-built without one.
+ *   ThreadPrimitive.ScrollToBottom
+ *                              — the BUTTON only; it ships the same real `disabled`. The hook is
+ *                                kept and drives our own return control.
  *   EditComposer, UserActionBar, BranchPicker
- *                              — driven by `edit`, `feedback` and `switchToBranch`, all of which
- *                                U4's exact-equality capability snapshot pins to FALSE. Vendoring
+ *                              — driven by `edit`, `feedback` and `switchToBranch`, all three
+ *                                pinned FALSE by the exact-equality capability snapshot. Vendoring
  *                                UI for a capability we have a test asserting is absent is dead
  *                                code by construction.
  *   ToolFallback               — 627 lines whose entire payload is a `<pre>` of the tool's raw
  *                                arguments and a `<pre>` of `JSON.stringify(result)` in `text-xs`:
- *                                the exact fields R36 redacts, at a size R68 forbids. Nothing here
- *                                imports it. `ToolGroup` renders our own row instead.
+ *                                the exact fields this portal redacts, dumped in the raw. Nothing
+ *                                here imports it. `ToolGroup` renders our own row instead.
  *   ThreadWelcome, Suggestions, follow-ups, history skeleton
  *                              — no requirement mounts them.
- *
- * ══ WHY THE LIBRARY'S OWN BUTTONS ARE NOT USED ══
- *
- * `createActionButton` renders `<button disabled={props.disabled || !callback}>`. For Send,
- * `useComposerSend` returns no callback while `isRunning && !capabilities.queue` — and `queue` is
- * never registered — so the library's Send is a HARD `disabled` for the whole of every turn. That
- * is the focus-dropping bug R45 and R64 forbid: `disabled` on the focused element blurs it to
- * `document.body`. `ThreadPrimitive.ScrollToBottom` has the same shape (`useThreadScrollToBottom`
- * returns `null` at the bottom, so the control renders disabled rather than disappearing), which is
- * why U8 keeps the hook and drops the button.
  *
  * ══ THE FLAT LOOK IS THE LIBRARY'S, NOT OURS ══
  *
  * An assistant reply is plain flush text on the page background — no bubble, no avatar, no card.
  * Only the USER message gets a muted rounded fill. That is the registry's own treatment and it is
- * what R49 asks for, so nothing here re-styles it into panels.
+ * what the boards draw, so nothing here re-styles it into panels.
  *
  * ══ THE v4→v3 REWRITE APPLIED HERE ══
  *
@@ -82,21 +75,21 @@ import { cn } from '@/lib/utils'
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart
 
 /**
- * The slots this portal fills. `ToolGroup` is the activity group (U6); `TextPart` is
- * `MessageContent`, re-hosted (U5) so the whole sanitisation pipeline — the image refusal, the
+ * The slots this portal fills. `ToolGroup` is the activity group; `TextPart` is
+ * `MessageContent`, re-hosted so the whole sanitisation pipeline — the image refusal, the
  * CSV-injection table control, `remark-breaks`, the `mode="static"` corruption guard — comes across
  * intact rather than being replaced by `@assistant-ui/react-markdown`, which has none of them.
  */
 export type ThreadComponents = {
   /** Renders one text part. Receives the already-assembled text of that part. */
   TextPart: ComponentType<{ text: string; isUser: boolean }>
-  /** The activity group (U6). Given the group part and its rendered children. */
+  /** The activity group. Given the group part and its rendered children. */
   ToolGroup: ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
-  /** The working status (U1's decision): status only, never reasoning content. */
+  /** The working status: status only, never reasoning content. */
   ReasoningGroup: ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
   /** One row inside a group. */
   ToolPart: ToolCallMessagePartComponent
-  /** Rendered above the viewport's bottom — U8's return control, U16's offer strip. */
+  /** Rendered above the viewport's bottom — the return control and the offer strip. */
   ViewportFooter?: ComponentType | undefined
   /**
    * The chips under a user message's prose. Attachments are the portal's own pipeline, so they
@@ -123,10 +116,11 @@ export const Thread: FC<{ components: ThreadComponents }> = ({ components }) => 
 /**
  * ONE SCROLL CONTAINER, and it is this viewport.
  *
- * Plan A's `ConversationSlot` owns the slot's height; nothing here positions itself against the
- * viewport and there is no `calc(100vh - …)` anywhere in this file. What the old surface had —
- * four nested scrollers on the planning page and another on the builder — is exactly what R49
- * deletes, so this must stay the only `overflow-y-auto` inside the chat slot. A test asserts it.
+ * `ConversationSlot` owns the slot's height; nothing here positions itself against the viewport
+ * and there is no `calc(100vh - …)` anywhere in this file. What the old surface had — four
+ * nested scrollers on the planning page and another on the builder — is exactly what this
+ * rebuild deleted, so this must stay the only `overflow-y-auto` inside the chat slot. A test
+ * asserts it.
  */
 const ThreadRoot: FC = () => {
   const { ViewportFooter } = useThreadComponents()
@@ -159,9 +153,9 @@ const ThreadMessage: FC = () => {
  * The in-thread error, authored FLAT.
  *
  * The registry ships `border-destructive bg-destructive/10 … rounded-md border p-3` — a bordered
- * tinted box, which is the nested-panel look R49 exists to remove. The border and the fill go; the
- * colour and the `role="alert"` that `ErrorPrimitive.Root` sets both stay, because those carry the
- * meaning. `elements-error-state` was rejected for the same reason plus a second one: it uses raw
+ * tinted box, which is the nested-panel look this surface does without. The border and the fill
+ * go; the colour and the `role="alert"` that `ErrorPrimitive.Root` sets both stay, because those
+ * carry the meaning. `elements-error-state` was rejected for the same reason plus a second one: it uses raw
  * `red-500` rather than the `destructive` token.
  */
 const MessageError: FC = () => (
@@ -238,9 +232,9 @@ const AssistantText: FC<{ Component: ThreadComponents['TextPart'] }> = ({ Compon
 }
 
 /**
- * N1 — every assistant message carries a copy action, and ONLY a copy action.
+ * Every assistant message carries a copy action, and ONLY a copy action.
  *
- * `hideWhenRunning` is deliberately NOT set, and that is the whole of N1's difficulty.
+ * `hideWhenRunning` is deliberately NOT set, and that is the whole of the difficulty.
  * `useActionBarFloatStatus` reads `hideWhenRunning && s.thread.isRunning` — the THREAD, not the
  * message — and a hidden Root returns `null`. Setting it would remove copy from EVERY assistant
  * message for the whole of every turn, so a citizen watching a build could not copy the plan they
@@ -266,7 +260,7 @@ const AssistantActionBar: FC = () => (
         variant="ghost"
         size="icon"
         // The accessible name does NOT change to "Copied" — renaming a control mid-interaction is
-        // its own defect. The icon swaps and U9's polite region announces; the name stays put.
+        // its own defect. The icon swaps and the polite region announces; the name stays put.
         aria-label="Copy message"
         className="h-7 w-7"
       >

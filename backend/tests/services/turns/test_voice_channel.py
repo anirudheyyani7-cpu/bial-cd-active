@@ -673,25 +673,13 @@ async def test_no_note_the_platform_wrote_is_rendered_from_the_result_it_rides_o
 
 
 def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
-    """★ R82's honest structural half, and the test docstring says which half.
-
-    ON A TURN THAT ENDS BADLY, THE MODEL'S REGISTER IS NOT LOAD-BEARING, because the model
+    """★ ON A TURN THAT ENDS BADLY, THE MODEL'S REGISTER IS NOT LOAD-BEARING, because the model
     wrote none of what the citizen reads. Every ending this plan introduces or touches resolves
     by IDENTITY to a constant in `copy.py` — asserted by identity rather than by inspecting
     words, so it cannot pass because a sentence happened to sound right.
 
-    WHAT THIS IS NOT. It asserts over constants we wrote, so it cannot fail because of anything
-    the model produced. The recorded incident was not a failure ending at all: it was a build
-    that hit errors, recovered, and narrated 2,397 words while CONTINUING — and that shape is
-    no longer held back by anything structural, which this docstring says plainly rather than
-    leaving to be discovered. The drop that used to swallow it is deleted, because swallowing
-    it also swallowed every explanation between the receipts and left a citizen reading a run
-    of receipts with nothing joining them. What remains is `NARRATION_VOICE`, observed rather
-    than asserted (R92), and nothing else: the voice channel's ceiling went the way the prompt's
-    caps did, at the tool body and at the renderer together, so no number anywhere now decides
-    how much of what the agent wrote a citizen may read. The composition guards in
-    `test_mode_prompts.py` prevent a real drift failure and are NOT evidence that the contract
-    holds; this platform shipped that confusion once."""
+    WHAT THIS IS NOT: it asserts over constants we wrote, so nothing the model produced can fail
+    it, and the guards in `test_mode_prompts.py` are not evidence that the contract holds."""
     from src.services.turns import copy as copy_module
 
     endings = {
@@ -727,10 +715,9 @@ def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
 
 
 def test_the_word_prompt_appears_in_no_claim_that_the_contract_holds() -> None:
-    """★ R82's inertness half. The tempting test — "the composed prompt contains the audience
-    block, therefore the agent speaks plainly" — is the confusion that let a 2,397-word reply
-    ship under a green suite: it proves an instruction was PRESENT, which is the one thing
-    nobody doubted.
+    """★ The inertness half. The tempting test — "the composed prompt contains the audience
+    block, therefore the agent speaks plainly" — proves an instruction was PRESENT, which is
+    the one thing nobody doubted.
 
     So: no test in this file or its neighbours asserts the contract by reaching for a prompt.
     The composition guards live in `test_mode_prompts.py` and say in their own docstrings that

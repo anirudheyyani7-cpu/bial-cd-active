@@ -280,9 +280,9 @@ class PatchAppRequest(CamelModel):
 
 
 class PrefixReconcileCounts(CamelModel):
-    """One object-store prefix's reconciliation tally (U10, R11/R13). Counts ONLY — never a key
-    list, which would leak the internal object layout. `scanned == owned + withinGrace +
-    eligible`; `deleted` is 0 on a report-only prefix (`submissions`, `apps`)."""
+    """One object-store prefix's reconciliation tally. Counts only, never a key list.
+    `scanned == owned + withinGrace + eligible`; `deleted` is 0 on a report-only prefix
+    (`submissions`, `apps`)."""
 
     scanned: int
     owned: int
@@ -292,10 +292,9 @@ class PrefixReconcileCounts(CamelModel):
 
 
 class AttachmentReclaimSummary(CamelModel):
-    """The aggregate never-sent-attachment reclaim tally folded into the operator sweep (U9/U10).
-    Counts ONLY (R13 posture, like `PrefixReconcileCounts`): rows reclaimed, quota bytes freed, and
-    object keys swept — summed across every owning user the pass touched. Never a key, a user id,
-    or any list, which would leak the internal layout / the roster."""
+    """The aggregate never-sent-attachment reclaim tally folded into the operator sweep: rows
+    reclaimed, quota bytes freed, and object keys swept, summed across every owning user the pass
+    touched. Counts only, like `PrefixReconcileCounts` — never a key, a user id or any list."""
 
     reclaimed: int
     freed_bytes: int
@@ -324,9 +323,7 @@ class StorageReconcileResponse(CamelModel):
 
 
 class DatabaseReconcileCounts(CamelModel):
-    """The per-project-database half of the orphan sweep (U7, R10). Counts ONLY — never a
-    database name, which embeds the owning project's uuid and would turn this report into an
-    inventory of who has what (the exact posture `PrefixReconcileCounts` takes on keys).
+    """The per-project-database half of the orphan sweep. Counts only, never a database name.
 
     `scanned == notOurs + owned + orphaned + unknownAge`. `unknownAge` is its own bucket
     rather than a share of `orphaned` because `pg_database` has no creation timestamp: the
@@ -383,10 +380,8 @@ class SandboxReconcileResponse(CamelModel):
     ambiguity between "orphaned" and "provisioned seconds ago, registry not written yet" is not
     something to hand an irreversible ARM delete.
 
-    Counts for the fleet, NAMES only for the gaps. The operator needs the names to act on;
-    everything else is a number, because a sandbox name embeds its app's uuid and a full list
-    would be an inventory of who is running what. The names travel in the RESPONSE and never in
-    the audit row — the same split the storage report makes for blob keys."""
+    Counts for the fleet, NAMES only for the gaps — the operator needs those to act on. The
+    names travel in the RESPONSE and never in the audit row."""
 
     live: int
     registered: int
@@ -434,8 +429,7 @@ class ReclamationReportResponse(CamelModel):
     happen on an armed one, and an operator must not have to go and look up which they are in.
 
     COUNTS TO THE AUDIT ROW, NAMES ONLY TO THE RESPONSE — the split every sibling admin report
-    makes. A sandbox name embeds 28 hex characters of its app's uuid, so a name list in an audit
-    log is a durable inventory of who was running what."""
+    makes."""
 
     scanned: int
     spared: int
@@ -485,10 +479,9 @@ class SandboxTagBackfillResponse(CamelModel):
     reading an operator takes as "the fleet is clean, flip the destroy flag". `unowned` is the
     number that keeps saying otherwise.
 
-    COUNTS ONLY, unlike its sibling reports, and the asymmetry is deliberate: `reconcile-sandboxes`
-    returns names because an operator has to know WHICH container to go and delete, whereas this
-    endpoint has already acted on every container it found, so a name list would be an inventory of
-    who is running what with nothing to do about it. Failures travel to the logs by name."""
+    Counts only, unlike `reconcile-sandboxes`, which returns names because an operator has to
+    know WHICH container to go and delete; this endpoint has already acted on everything it
+    found. Failures travel to the logs by name."""
 
     scanned: int
     already_tagged: int
@@ -511,8 +504,7 @@ class DeployReconcileResponse(CamelModel):
     DEFERRED — left exactly as it was for the next pass — because a throttled request that read
     as "gone" would eventually mark a live app failed.
 
-    Counts only, like every sibling report: a deployment id or an app name would turn the
-    operator trail into an inventory of who deployed what (`.claude/rules/security.md`).
+    Counts only, like every sibling report — no deployment id, no app name.
     """
 
     resolved: int

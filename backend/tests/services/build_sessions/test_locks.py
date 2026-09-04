@@ -207,8 +207,7 @@ PROJECT = uuid.uuid4()
 async def test_a_written_marker_names_the_project_and_carries_a_mandatory_ttl(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """The whole payload is the project id, and the TTL is not a default — a marker with none
-    would be the registry hash's own mistake (ADR-0029) repeated in a new key."""
+    """The whole payload is the project id, and the TTL is mandatory rather than a default."""
     await locks.write_starting_marker(fake_redis, USER, PROJECT)
 
     assert await locks.read_starting_marker(fake_redis, USER) == PROJECT
@@ -281,8 +280,7 @@ async def test_the_pipelined_read_still_migrates_a_legacy_registry_record(
     fake_redis: aioredis.Redis,
 ) -> None:
     """The legacy-prefix adoption `read_registry` performs on a plain read must not be lost by
-    routing through the pipeline instead: a pre-R22 user starting a build for the first time
-    since the cutover still finds their record."""
+    routing through the pipeline instead."""
     from src.services.redis.keys import legacy_registry_key
 
     await fake_redis.hset(legacy_registry_key(USER), mapping={REGISTRY_FIELD_APP_NAME: "sbx-x"})

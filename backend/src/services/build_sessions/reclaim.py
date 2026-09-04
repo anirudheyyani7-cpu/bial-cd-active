@@ -42,10 +42,9 @@ from src.services.sandbox.base import KIND_BUILD_SANDBOX, FleetMember
 # config. Every one of them is a *floor* on how long the platform waits before touching somebody
 # else's container, so raising one is always safe and lowering one needs the ADR reopened.
 
-#: A container younger than this is never a candidate, whatever else is true of it. `_start_locked`
-#: takes the per-user lock BEFORE provisioning the container that writes the registry hash, so a
-#: four-second-old sandbox legitimately presents as an unregistered orphan. Sized to the
-#: provisioning retry policy's own ceiling rather than guessed.
+#: A container younger than this is never a candidate, whatever else is true of it. A sandbox a
+#: few seconds old legitimately presents as an unregistered orphan — `inventory.py` documents that
+#: window — so this is sized to the provisioning retry policy's own ceiling rather than guessed.
 PROVISIONING_GRACE = dt.timedelta(minutes=20)
 
 #: THE RECLAMATION PASS'S OWN CADENCE, and the qualifier is the correction. This read five
@@ -199,9 +198,8 @@ class ContainerVerdict:
 class ReclamationPlan:
     """What one pass would do, and — when the coordination store looks wrong — what it refused to.
 
-    THE BUCKETS SUM: `scanned == spared + staged + destroy + escalate + not_ours`. Not tidiness. A
-    container that silently vanishes from the accounting is a container nobody is deciding about,
-    which is how the first ghost survived nineteen days."""
+    THE BUCKETS SUM: `scanned == spared + staged + destroy + escalate + not_ours`. Not tidiness.
+    A container that silently vanishes from the accounting is nobody's to decide about."""
 
     verdicts: tuple[ContainerVerdict, ...]
     store_fault: bool

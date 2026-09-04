@@ -1,36 +1,13 @@
-"""Deploy reconciliation on the scheduler — the chassis's first passenger (U6, ADR-0011).
+"""Deploy reconciliation on the worker's clock.
 
-WHY THIS WORKLOAD FIRST. It cannot destroy anything. `reconcile_stalled_deployments` settles a
-database ROW and at most promotes it, and the type it is handed (`PublishedAppReader`) declares
-no delete method at all — so a wrong answer here costs a row that reads `failed` instead of
-`running`, never a container app. Everything else queued for this scheduler can delete an Azure
-resource, and already runs out-of-process here too: the sandbox sweep does almost all of the
-deleting today, gated by its own destructive-action flag rather than by any pending signal.
+BLAST RADIUS. `reconcile_stalled_deployments` settles a deployment ROW and at most promotes it —
+the reader type it is handed declares no delete method — so a wrong answer costs a row reading
+`failed` instead of `running`, never a container app.
 
-AND ITS LIVENESS SIGNAL IS ALREADY OUT-OF-PROCESS. Staleness is `deployments.heartbeat_at`, a
-shared database column read under a `status = 'running'` guard — not an in-process set like the
-sandbox reaper's live-session shield — so moving this pass into another container changes nothing
-about what it can see. That is precisely why it is safe today and the sandbox sweep is not.
-
-WHAT IS DELIBERATELY NOT HERE
------------------------------
-`main.py`'s `_reconcile_interrupted_deploys` is a BOOT-PATH ONE-SHOT, not a loop. It settles a
-deploy that straddled a restart *before the first request is served*, which no cron can do — a
-five-minute tick would leave the citizen looking at a Deploy button that 409s in the meantime. It
-survives untouched. Its periodic twin has already been deleted from `main.py`, and
-`reconcile_stalled_deploys` here is its sole replacement, running on the deployed worker. The two
-no longer coexist, so there is nothing left to confuse or to delete symmetrically.
-
-RUNNING TWO PASSES AT ONCE IS STILL SAFE, which is what made that handover affordable. Every
-terminal write goes through `store._finish`'s `WHERE status = 'running'` guard and returns its
-rowcount, so of two racing reconcilers exactly one settles a given row and the other learns it
-lost. The pass is idempotent for the same reason two schedulers during an ACA revision roll are
-survivable (ADR-0029 §9).
-
-IMPORT DISCIPLINE. Module scope imports structlog, the broker, the settings front door and
-taskiq's own cron predicate — nothing else. The ORM, the ARM SDK and the reconciler itself are
-imported INSIDE the task body, after the flag gate, so a disabled task costs an import of the
-chassis and nothing more (`src/workers/__init__.py`).
+TWO PASSES AT ONCE ARE SAFE, which is why this one carries no lock of its own. Staleness is
+`deployments.heartbeat_at` under a `status = 'running'` guard — a shared column, not in-process
+state, so the pass sees the same rows out of process as the API does — and every terminal write
+goes through `store._finish`'s `WHERE status = 'running'` guard and returns its rowcount.
 """
 
 from __future__ import annotations
@@ -42,10 +19,9 @@ from src.config import settings
 
 _log = structlog.get_logger()
 
-# Distinguishable event names: an operator (or an Azure Monitor rule) greps for exactly these,
-# so they are constants rather than inline literals. Deliberately distinct from `main.py`'s
-# `deploy_startup_reconcile`, so "the scheduler ran a pass" and "a process booted" never blur
-# into one another in the log stream.
+# An operator (or an Azure Monitor rule) greps for exactly these, so they are constants rather
+# than inline literals, and deliberately distinct from the boot one-shot's
+# `deploy_startup_reconcile` — "a pass ran" and "a process booted" must never blur together.
 DEPLOY_RECONCILE_DONE_EVENT = "deploy_reconcile_pass_done"
 DEPLOY_RECONCILE_DISABLED_EVENT = "deploy_reconcile_pass_disabled"
 
@@ -62,19 +38,10 @@ DEPLOY_RECONCILE_SCHEDULE_ID = "deploy-reconcile-every-five-minutes"
 def _honoured_by_the_clock(expression: str) -> str:
     """Return `expression`, or refuse to import.
 
-    Taskiq validates a cron NOWHERE at decoration time: `@broker.task(schedule=[...])` stores the
-    label verbatim, and a bad expression surfaces only as a warning logged once a second inside
-    the scheduler loop, forever, while the task never fires. A reconciler that silently never
-    runs is the exact failure this plan exists to stop being surprised by — so it is asserted at
-    IMPORT, which is worker startup: `worker_main.startup()` imports every task module before the
-    receiver and the clock begin.
-
-    Two properties, not one. Checked with `is_cron_task_now` — the very predicate the scheduler
-    loop calls — rather than a second cron library that could disagree with the one that actually
-    decides. And checked for FIRING rather than merely for parsing, because the underlying
-    evaluator accepts `99 * * * *` without complaint and then matches no minute ever; "it parses"
-    is not the property worth asserting. Any cadence of an hour or finer must match at least one
-    minute in the next sixty.
+    Taskiq validates a cron nowhere at decoration time — a bad one surfaces only as a warning
+    logged once a second inside the scheduler loop, forever, while the task never fires. So it is
+    asserted at IMPORT, and for FIRING rather than parsing: the evaluator accepts `99 * * * *`
+    and then matches no minute ever.
     """
     from datetime import UTC, datetime, timedelta
 
@@ -98,9 +65,7 @@ def _honoured_by_the_clock(expression: str) -> str:
     return expression
 
 
-# Every five minutes on the wall clock — the cadence the in-process loop has run at since v1.6.5
-# (`main.py::DEPLOY_RECONCILE_INTERVAL_SECONDS`), so moving the work to the worker changes WHERE
-# it runs and nothing else.
+# Every five minutes on the wall clock.
 #
 # CRON, NEVER `interval`. `is_interval_task_now` returns True whenever `last_run is None`, and
 # last-run state is an in-memory dict the scheduler never persists — so an interval task fires on
@@ -112,11 +77,10 @@ DEPLOY_RECONCILE_CRON = _honoured_by_the_clock("*/5 * * * *")
 def _off_duty_because() -> str | None:
     """Why this pass must not run, or `None` when it may.
 
-    Two conditions, reported separately because they mean different things to whoever reads the
-    log line. `unconfigured` is "this deployment does not publish apps at all" — the ordinary
-    dev, test and not-yet-granted-the-registry-role posture. `flag_off` is "it does, and an
-    operator has the timer switched off". The flag ships ON, so this is only ever reached when
-    someone has deliberately disabled it.
+    Two strings rather than a bool, because they mean different things to whoever reads the log
+    line: `unconfigured` is "this deployment does not publish apps at all", the ordinary dev,
+    test and not-yet-granted-the-registry-role posture; `flag_off` is "it does, and an operator
+    switched the timer off". The flag ships ON, so `flag_off` is always a deliberate act.
     """
     deploy = settings.deploy
     if deploy is None:
@@ -134,28 +98,7 @@ def _off_duty_because() -> str | None:
     schedule=[{"cron": DEPLOY_RECONCILE_CRON, "schedule_id": DEPLOY_RECONCILE_SCHEDULE_ID}],
 )
 async def reconcile_stalled_deploys() -> None:
-    """Settle every deployment row whose pipeline stopped beating, and say how many.
-
-    THE FLAG GATE COMES FIRST, before a single heavy import — that ordering is the contract, not
-    an optimization. A disabled task must cost structlog, the broker and the settings profile and
-    nothing else, so that adding a passenger to this scheduler never taxes a deployment that has
-    not turned it on.
-
-    NOTHING IS SWALLOWED. Unlike the boot-path one-shot — where a raise would turn an ARM blip
-    into a container that refuses to start, so it catches broadly on purpose — a raise here is
-    caught by the receiver, logged with a traceback, and re-driven by the next tick five minutes
-    later. Swallowing would buy nothing and hide everything.
-
-    A row ARM could not answer for is NOT counted as reconciled. `reconcile_stalled_deployments`
-    catches the transient case per row and leaves that row exactly as it was, so it reappears in
-    the next pass's work list — the one answer that must never collapse into "gone", because
-    collapsing it eventually marks a live app failed.
-
-    Counts only in the log line (`.claude/rules/security.md`): `resolved` is a number, never a
-    deployment id and never an app name. Every completed pass logs, including a pass that
-    resolved nothing — the presence of the event is the liveness signal an out-of-process worker
-    is judged by, and "quiet" would be indistinguishable from "dead".
-    """
+    """Settle every deployment row whose pipeline stopped beating, and say how many."""
     off_duty = _off_duty_because()
     if off_duty is not None:
         _log.info(DEPLOY_RECONCILE_DISABLED_EVENT, reason=off_duty)

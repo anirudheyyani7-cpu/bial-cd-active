@@ -1,11 +1,10 @@
 /**
- * STOP, MOVED TO WHERE THE COMPOSER IS (R55).
+ * STOP, MOVED TO WHERE THE COMPOSER IS.
  *
  * Stop used to live inside `BuildProgress`, the pinned card this plan deleted. This component is
  * the same ability in a component of its own, mounted on the composer's chrome, and it shipped
  * BEFORE anything was removed so there was never a commit in which a build could be started and
- * not stopped. U10 gave it its permanent home on the composer; U17 asserts a running turn is
- * still stoppable now `BuildProgress.tsx` is gone.
+ * not stopped. A test asserts a running turn is still stoppable now `BuildProgress.tsx` is gone.
  *
  * RELOCATED, NOT REDESIGNED. The better version of stop is its own work.
  *
@@ -14,25 +13,15 @@
  * They discriminate on whether a TURN ID EXISTS, which is a transport fact, not a kind of chat.
  * A turn build is stopped through the turn endpoint with its conversation and turn ids; a legacy
  * build session has no turn id and is stopped through the session. Nothing here asks what kind of
- * chat this is, and after this plan nothing on the surface does.
+ * chat this is.
  *
  * FORCE-END DELIBERATELY DID NOT MOVE. `BuildProgress` recorded that a turn build has no
  * force-end equivalent, and a kill switch that confirms "this kills in-progress work" and then
  * does nothing is worse than no kill switch. It died with the card.
  *
- * ── `aria-disabled`, NEVER `disabled` (R64) ──
- *
- * The button in `BuildProgress` used a real `disabled={stopping}`. That is the bug R64 forbids:
- * `disabled` on the currently-focused element blurs it to `document.body`, so a keyboard
- * user who has just pressed Stop loses their place at the exact moment they were promised
- * feedback. This codebase recorded the mechanism twice before that (the old builder page's
- * textarea and its Send button) and it is not a style preference. Enforcement lives in the handler; the attribute
- * is affordance only.
- *
- * THE ACCESSIBLE NAME IS STABLE. The old button's label flips "Stop" → "Stopping…", which renames
- * the control mid-interaction — the same defect U15 avoids on the copy button. The word stays
- * "Stop" in every state; the in-flight state is carried by the glyph and by `title`, which is the
- * `aria-disabled`-plus-reason shape the composer's Send already uses.
+ * THE ACCESSIBLE NAME IS STABLE. The old button's label flipped "Stop" → "Stopping…", which
+ * renames the control mid-interaction. The word stays "Stop" in every state; the in-flight state
+ * is carried by the glyph and by `title`.
  *
  * It is mounted by `Composer`, and therefore reachable in both kinds of chat.
  */
@@ -73,9 +62,9 @@ export interface StopTurnControlProps {
   /** Stop a legacy build session, which has no turn id. */
   onStopSession: () => Promise<unknown>
   /**
-   * A stop request failed. The caller decides where the sentence lands — U9 consolidates that
-   * onto the assertive slot. What this component guarantees is that a failure is never silent
-   * and never leaves a dead button.
+   * A stop request failed. The caller decides where the sentence lands — the surface
+   * consolidates those onto its assertive slot. What this component guarantees is that a
+   * failure is never silent and never leaves a dead button.
    */
   onStopFailed: (message: string) => void
 }
@@ -106,7 +95,7 @@ export default function StopTurnControl({
 
   const handleStop = useCallback(async () => {
     // The enforcement, and the whole of it. A second press while one is in flight is a no-op —
-    // `aria-disabled` on the button is what SAYS so, and says nothing else.
+    // `aria-disabled` only says so. `ComposerBox` owns why it is never a real `disabled`.
     if (stopping) return
     setStopping(true)
     try {

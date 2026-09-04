@@ -1,29 +1,14 @@
-"""App-lifecycle endpoints — owner-facing withdraw / status (R18, R4; U8: R15a, P6).
+"""App-lifecycle endpoints — the owner's own withdraw and status reads.
 
-The citizen-callable submit route is RETIRED (ASM18). It was the only backend writer
-of the pending status, and leaving it reachable while the publish flow became the
-route into the queue would let a queue item arrive with no declaration attached —
-the second differently-worded way in that R15a forbids. The submit body lives on,
-verbatim plus its documented divergence, as `services/approvals/submit.py`; its only
-callers are the publish gate (U9) and any future admin-initiated entry. The manual
-go-live runbook lineage consequently gets NO new entrants — apps already in it keep
-their controls and their address, which is R15a's accepted cost.
+Owner-scoped and authenticated via `current_user`; every query carries the `user_id` predicate
+the v1 router's header states. The submit body lives as `services/approvals/submit.py`, called
+by the publish gate, and the app ROW is minted by the build session, never by a client call.
 
-What remains here is owner-scoped and authenticated via `current_user`, scoped by
-`user_id` (ADR-0004) — a cross-user read or write is a 404, never a leak:
-
-* `withdraw` — the P6 escape hatch that replaced the re-submit refresh: an owner
-  pulls their own PENDING submission back to draft, clearing the pin, the
-  declaration and the lineage. The queue item is REMOVED, never replaced — an
-  administrator mid-review sees it disappear rather than change underneath them.
+* `withdraw` — an owner pulls their own PENDING submission back to draft.
 * `status` — the owner-scoped lifecycle read.
 
-The app ROW is minted by the build session (`build_sessions/appdata.resolve_app_for_project`),
-not by a client call: the standalone `POST /apps/provision` and `GET /apps/{id}/source`
-endpoints had zero production callers and were removed in U6.
-
-Errors use the ported `{"error": {"message": ...}}` shape (`AppApiError`) the SPA
-already consumes, not the auth endpoints' `{"detail": ...}`.
+Errors use the `{"error": {"message": ...}}` shape (`AppApiError`) the SPA already consumes,
+not the auth endpoints' `{"detail": ...}`.
 """
 
 from __future__ import annotations
@@ -50,8 +35,7 @@ router = APIRouter(prefix="/apps", tags=["apps"])
 
 
 async def _owned_app_or_404(db: DbSession, app_id: uuid.UUID, user_id: uuid.UUID) -> AppRegistry:
-    """Load an app scoped to its owner, or fail closed with a non-leaking 404 (a
-    cross-user id is indistinguishable from a missing one)."""
+    """Load an app scoped to its owner, or 404."""
     app = await db.get(AppRegistry, app_id)
     if app is None or app.user_id != user_id:
         raise AppApiError(status.HTTP_404_NOT_FOUND, "App not found.")
@@ -72,29 +56,14 @@ _NOT_PENDING_WITHDRAW_MSG = "Only a submission that is waiting for review can be
     ),
 )
 async def withdraw(app_id: uuid.UUID, user: CurrentUser, db: DbSession) -> WithdrawResponse:
-    """Pull the owner's own PENDING submission back out of the queue (P6, audited).
+    """Pull the owner's own PENDING submission back out of the queue (audited).
 
-    pending→draft through the same guarded-UPDATE shape as the admin transitions —
-    `STATUS_TRANSITIONS[DRAFT]` is the source set — plus the `user_id` ownership
-    predicate the admin helper deliberately omits (an admin acts across owners; an
-    owner must not). Zero rows updated is a refused withdrawal (409), never a no-op.
-
-    What clears, and why: the submission pin (`source_submission_id` /
-    `source_commit_sha` / `submitted_at`) — the queue item is REMOVED, not left
-    dangling; the `declaration` — it described the withdrawn submission, and the next
-    submit attaches a fresh one; and the LINEAGE (`approval_route` → NULL) — a
-    withdrawn submission entered through a route that no longer describes it, and
-    NULL is the documented "no current submission" state (`ApprovalRoute`'s NULL
-    semantics), so a later submit stamps its own lineage rather than inheriting one.
-
-    What deliberately survives: the APPROVED pin (`approved_submission_id` et al.) —
-    same rule as reject: status governs liveness, the pin governs WHICH artifact —
-    and the immutable submission BLOB, because submissions are retained and their ids
-    never reused (R2); withdrawal removes the queue item, not the audit trail's
-    artifact. An administrator racing this with an approve conflicts safely: their
-    approve names a submission id the row no longer carries, updates zero rows → 409
-    (purpose-written admin copy for that moment is U13's).
-    """
+    pending→draft through the same guarded-UPDATE shape as the admin transitions
+    (`STATUS_TRANSITIONS[DRAFT]` is the source set), plus the ownership predicate the admin
+    helper omits because an admin acts across owners. Zero rows updated is a refused withdrawal
+    (409), never a no-op. Clearing the submission pin, the declaration and the lineage REMOVES
+    the queue item; the APPROVED pin and the immutable submission blob survive, because
+    withdrawal takes back the queue item, not the artifact already decided on."""
     app = await _owned_app_or_404(db, app_id, user.id)
 
     # Non-authoritative pre-check for the honest copy; the guarded UPDATE below is
@@ -111,8 +80,6 @@ async def withdraw(app_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Withd
         sa.update(AppRegistry)
         .where(
             AppRegistry.id == app_id,
-            # The ownership predicate (ADR-0004) — a dropped user_id clause is a
-            # cross-user leak, not a style nit.
             AppRegistry.user_id == user.id,
             AppRegistry.status.in_(tuple(STATUS_TRANSITIONS[AppStatus.DRAFT])),
         )
@@ -151,8 +118,7 @@ async def withdraw(app_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Withd
     responses=error_responses(AUTH_401, (404, ErrorEnvelope, "App not found")),
 )
 async def read_status(app_id: uuid.UUID, user: CurrentUser, db: DbSession) -> AppStatusResponse:
-    """Owner-scoped lifecycle read; an absent or cross-user app is the same non-leaking 404 its
-    sibling `withdraw` returns.
+    """Owner-scoped lifecycle read; an unknown or cross-user app is a 404.
 
     The old `200 {status: null}` "not provisioned" signal was the appId==conversationId polling
     shim: the SPA could hold an id the server had never minted. Provision now mints a server-side

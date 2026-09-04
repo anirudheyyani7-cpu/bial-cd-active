@@ -49,11 +49,6 @@ shape (`router` + `users_router`). Which FILE the code lives in and which URL it
 are independent decisions here: the lever sits under `/v1/admin/*` with every other
 superadmin route regardless of the module it was convenient to write it in. Both are
 registered separately in `api/v1/router.py`.
-
-Every route here takes its Azure/service dependency as OPTIONAL. Every `Depends` is
-resolved BEFORE the route body's first statement, so a raising provider escapes the body's
-own `try` and produces an undocumented 500 with the wrong envelope — which is exactly how
-the 503 paths on the storage and sandbox routes were once broken.
 """
 
 from __future__ import annotations
@@ -299,8 +294,7 @@ async def deploy_project(
     await owned_project_or_404(db, user.id, project_id)
 
     # The full registry row, not `deploy_target`'s two-column projection: the ladder
-    # reads status, the approval pin, the lineage and the rejection note. Ownership
-    # predicate in the WHERE clause (ADR-0004) — a dropped `user_id` is a cross-user leak.
+    # reads status, the approval pin, the lineage and the rejection note.
     app_row = (
         await db.execute(
             sa.select(AppRegistry).where(
@@ -972,8 +966,8 @@ async def latest_deployment(
     lifecycle once on mount goes stale the moment the publish it is watching routes into
     the queue. One response, one poll lifetime, two surfaces that cannot disagree.
 
-    The FULL registry row, not `deploy_target`'s two-column projection, with the ownership
-    predicate in the WHERE clause (ADR-0004) — a dropped `user_id` is a cross-user leak.
+    The FULL registry row, not `deploy_target`'s two-column projection, which carries neither
+    the approval pin nor the rejection note this response returns.
 
     IT DOES NOT NEED THE DEPLOY PIPELINE, and used to refuse without one. Every field it
     returns is a committed row — the registry row for the approval half, the deployments
@@ -989,12 +983,10 @@ async def latest_deployment(
     refuses there — checked once a branch actually needs it, which is the same rule this
     now follows.
 
-    U15 ADDS `publish_state`, computed from the two rows above PLUS exactly one
-    object-store metadata HEAD (`_saved_version_for_publish_state`) — never a download,
-    and never a second query. Storage stays as optional here as everything else on this
-    route: an unconfigured store reads the same as one that raised (see that helper),
-    so this endpoint keeps needing nothing but the database, exactly as the paragraph
-    above already promises for the deploy pipeline.
+    `publish_state` is computed from the two rows above PLUS exactly one object-store
+    metadata HEAD (`_saved_version_for_publish_state`) — never a download, and never a
+    second query. An unconfigured store reads the same as one that raised, so the paragraph
+    above still holds with the chip added: this endpoint needs nothing but the database.
 
     U4 SPENDS THAT SAME HEAD TWICE INSTEAD OF ONCE. The metadata read already happening
     for `publish_state` carries the citizen's saved commit and the store's last-modified

@@ -10,9 +10,7 @@ The legacy message-append/read schemas died with their endpoints (U4's destructi
 the projection read shape joins in U6.
 
 Net-new routes (the turn surfaces, the Build-it handoff) parse their bodies through models
-normally — only the Express-era routes keep the byte-matched JSONResponse discipline. The
-mode-switch request/response models are gone with the route that took them: a chat's kind is
-chosen at creation and there is nothing to switch.
+normally — only the Express-era routes keep the byte-matched JSONResponse discipline.
 """
 
 from __future__ import annotations
@@ -40,11 +38,9 @@ from src.services.sandbox.base import CompileState
 
 class HeaderOut(CamelModel):
     """One conversation header. `title`/`context` are omitted when unset — the route's
-    `_header_dict` builds them in only when present. `kind` is what the chat IS, fixed when it
-    was created (R14/R16) — there is no second field beside it, because there is no longer a
-    second concept. This model is documented-only (the route returns a pre-built
-    `JSONResponse`), so no exclude-unset serialization flag is involved; the `= None` defaults
-    are what document those fields as non-required."""
+    `_header_dict` builds them in only when present. This model is documented-only (the route
+    returns a pre-built `JSONResponse`), so no exclude-unset serialization flag is involved;
+    the `= None` defaults are what document those fields as non-required."""
 
     id: str = Field(alias="_id")
     project_id: str

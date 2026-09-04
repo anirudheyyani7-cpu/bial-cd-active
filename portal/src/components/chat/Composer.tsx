@@ -1,59 +1,14 @@
 /**
- * THE CHAT'S COMPOSER (R40, R41, R42, R43, R45, R55, R57–R60, R64, R72; plan 002, U5).
+ * THE CHAT'S COMPOSER. The box is `ComposerBox`; added here are the cap, the counter, the gate
+ * note, the per-conversation draft, and the chat-only chrome (offer strip, stop, context note).
  *
- * ═══ WHAT IS HERE AND WHAT IS NOT ═══
+ * The rail mounts this component too: the chat-only chrome is all OPTIONAL PROPS that render
+ * nothing when omitted, so one component serves both surfaces and the rail gets the cap, the
+ * counter and the draft with it. `placeholder` and `frameClassName` are the two that differ.
  *
- * The BOX — the border, the input, the attachment control, the send control, the chips, the
- * dropzone and the clear-only-on-acceptance rule — is `ComposerBox`. What is added HERE is the
- * character cap, the counter, the gate note, the draft that follows a conversation, and the
- * chat-only chrome: the offer strip, the stop control, the context warning.
- *
- * ══ THE RAIL MOUNTS THIS COMPONENT TOO, AND THAT IS THE CORRECTION ══
- *
- * This docblock used to say the two composers "differ in seven respects, so a single component
- * with a placeholder prop would have been a fiction", and the rail therefore mounted `ComposerBox`
- * directly. The fiction was the other way round. Sharing only the inner box meant the rail had no
- * cap, no counter and no draft — so a citizen could paste 45,000 characters there with Send still
- * lit (the server refuses at 64,000), and lose a half-written description by stepping to another
- * screen and back. That screen carries the LONGEST message anyone writes.
- *
- * The seven differences are all ABSENT PROPS. `offer`, `stop`, `contextWarning`, `footerNote` and
- * `gate` are optional and render nothing when omitted; `isRunning` is false where no turn can run;
- * `placeholder` and `frameClassName` are the two that genuinely differ. A component whose
- * chat-only chrome is opt-in serves both surfaces without pretending they are the same screen —
- * and, unlike two components, cannot drift apart again.
- *
- * ══ NOTHING HERE IS EVER `disabled` (R45, R64) ══
- *
- * Not the textarea, not attach, not Send — in any state, including while a turn runs, while an
- * offer is pending, and when today's budget is spent. `disabled` on the currently-focused element
- * blurs it to `document.body`, which is the mechanism behind "it blurs mid-sentence and focus never
- * comes back". This codebase records that twice already and it is not a style preference. The
- * boards say the same thing in words: the composer keeps accepting typing while the agent answers.
- *
- * ══ THE DRAFT IS CONSUMED, NOT OWNED (R-7) ══
- *
- * `utils/composerDraft.ts` is the one store, and this is its ONE WRITER. `sessionStorage`, per
- * conversation, last-writer-wins across tabs, cleared only on a SUCCESSFUL send, throw-wrapped
- * because `sessionStorage` genuinely throws in Safari private mode rather than degrading.
- *
- * IT IS WRITTEN THROUGH THE RUNTIME NOW, not through local state, because the library owns the
- * composer's text. Hydration sets it; every keystroke mirrors it out. One writer either way.
- *
- * ══ ISSUE #154's FOUR DEFECTS ARE PROPERTIES, NOT PATCHES (R57–R60) ══
- *
- * R58 — THE DRAFT OVERWRITE. Nothing is cleared optimistically, so a failed send leaves the text
- *   and the files exactly where they were and there is no restore path to race with. That rule
- *   lives in `ComposerBox`, against the library's own `composer.send()`, which empties the text
- *   before it awaits anything.
- * R59 — DROPPED IN-FLIGHT READS. Because nothing clears until the server confirms, a read that
- *   lands late lands on the send it belongs to.
- * R57 — THE CAP BYPASS. The adapter validates against what is ALREADY staged, read live off the
- *   runtime — see `stagedAttachments.tsx` for why that is a ref rather than a closure.
- * R60 — CROSS-CHAT LEAKAGE is guarded in ONE place, `ComposerBox`: the send stamps its
- *   conversation at press time and, on completion, compares it against the chat that is on screen
- *   THEN — read through a ref, because the callback itself is press-time too. A send whose chat
- *   the citizen has left touches neither the box nor the chips nor this file's stored draft.
+ * `utils/composerDraft.ts` is the one store and this is its ONE WRITER — sessionStorage, per
+ * conversation, cleared only on a send the server accepted. Nothing here is ever `disabled`,
+ * for the reason `ComposerBox` gives; it also owns the send path and the cross-chat rule.
  */
 import { useEffect, useMemo, useRef, type FC, type ReactNode } from 'react'
 import { useAui, useAuiState } from '@assistant-ui/react'
@@ -79,19 +34,17 @@ export interface ComposerProps {
   isRunning: boolean
   /** Any other reason Send must wait, with the sentence that explains it. */
   gate?: { blocked: boolean; reason: string } | undefined
-  /** R55 — the relocated stop, given its permanent home on this chrome. */
+  /** The stop control, in its permanent home on this chrome. */
   stop?: Omit<StopTurnControlProps, 'onStopFailed'> | undefined
-  /** R29 — the pending plan offer, rendered on the composer rather than in the transcript. */
+  /** The pending plan offer, rendered on the composer rather than in the transcript. */
   offer?: Omit<OfferStripProps, 'onFailed'> | undefined
   /**
    * The "this chat is getting long" line, or null/absent when it is not.
    *
-   * A SENTENCE, NOT A NUMBER AND NOT A STATE. The surface owns the transcript and therefore
-   * owns the estimate (`utils/contextLimits.ts`); the composer's job is to show the line where
-   * a citizen will read it.
-   *
-   * IT IS NOT A GATE. Send stays available past the soft threshold; the hard boundary is the
-   * server's refusal, which arrives as an ordinary turn error.
+   * A SENTENCE, NOT A NUMBER AND NOT A STATE: the surface owns the transcript and therefore the
+   * estimate (`utils/contextLimits.ts`); the composer only draws the line where it will be read.
+   * IT IS NOT A GATE — Send stays available past the soft threshold, and the hard boundary is
+   * the server's refusal, arriving as an ordinary turn error.
    */
   contextWarning?: string | null | undefined
   /**
@@ -105,13 +58,8 @@ export interface ComposerProps {
   onUrgent: (message: string) => void
   /**
    * The frame around the box. Defaults to the chat surface's, which sits the composer on the
-   * transcript's own ground with its own gutter.
-   *
-   * It is a prop because the RAIL mounts this same composer inside a section that already owns
-   * its padding and ground — and the whole point of the rail using `Composer` rather than
-   * `ComposerBox` is that the cap, the counter and the draft come with it. Letting the frame
-   * differ is what makes one composer serve both surfaces instead of two composers drifting
-   * apart, which is what happened last time.
+   * transcript's own ground with its own gutter. It is a prop because the RAIL mounts this same
+   * composer inside a section that already owns its padding and ground.
    */
   frameClassName?: string
 }
@@ -154,8 +102,8 @@ const Composer: FC<ComposerProps> = ({
   // change event — which also means a paste, a drag-in and the library's own writes are all
   // covered by one rule instead of three.
   //
-  // NO TRUNCATION, EVER, AT ANY LENGTH. The text is stored exactly as typed or pasted; R42's whole
-  // point is that a citizen whose paste was silently cut believes it all went in.
+  // NO TRUNCATION, EVER, AT ANY LENGTH. The text is stored exactly as typed or pasted: a citizen
+  // whose paste was silently cut believes it all went in.
   useEffect(() => {
     const id = conversationId ?? null
     // THE FIRST COMMIT FOR A CONVERSATION WRITES NOTHING, and that one skip is the whole guard.
@@ -214,9 +162,9 @@ const Composer: FC<ComposerProps> = ({
     // composer's own bordered box, with nothing between them. The full-width hairline read as a
     // second edge stacked on the box's, and on a plan chat it cut the one centred column in two.
     <div className={frameClassName}>
-      {/* R55 — stop's permanent home, ABOVE the box rather than inside it: it acts on the turn,
-          not on the message being composed, and a control inside the box would read as part of
-          sending one. */}
+      {/* Stop's permanent home, ABOVE the box rather than inside it: it acts on the turn, not on
+          the message being composed, and a control inside the box would read as part of sending
+          one. */}
       {stop && (
         <div className="flex justify-end">
           <StopTurnControl {...stop} onStopFailed={onUrgent} />
@@ -250,8 +198,8 @@ const Composer: FC<ComposerProps> = ({
         onUrgent={onUrgent}
         header={
           offer ? (
-            /* R29 — INSIDE the box, fixed to its top, which is what the board draws: "this teal
-               strip is not text the agent typed — it is a control the interface draws". */
+            /* INSIDE the box, fixed to its top, which is what the board draws: "this teal strip
+               is not text the agent typed — it is a control the interface draws". */
             <OfferStrip {...offer} onFailed={onUrgent} />
           ) : undefined
         }
@@ -277,10 +225,10 @@ const Composer: FC<ComposerProps> = ({
               </p>
             )}
 
-            {/* The context guardrail's SOFT half: advisory, non-blocking, and deliberately not
-                `disabled` anything. Send still works past this line; what stops a turn is the
-                server, and it says so itself. `role="status"` so it is announced once when it
-                appears rather than interrupting. */}
+            {/* The context guardrail's SOFT half: advisory and non-blocking. Send still works
+                past this line; what stops a turn is the server, and it says so itself.
+                `role="status"` so it is announced once when it appears rather than
+                interrupting. */}
             {contextWarning && (
               <p
                 role="status"
@@ -291,14 +239,14 @@ const Composer: FC<ComposerProps> = ({
               </p>
             )}
 
-            {/* THE STANDING NOTE, LAST AND BELOW THE BOX (plan 002, U6). The plan chat's line
-                about the app is the board's use of this slot: a caption under the composer, not a
-                banner above it. It comes after the transient notes because those answer the press
-                the citizen just made, and this one has been true the whole time. */}
+            {/* THE STANDING NOTE, LAST AND BELOW THE BOX. The plan chat's line about the app is
+                the board's use of this slot: a caption under the composer, not a banner above it.
+                It comes after the transient notes because those answer the press the citizen just
+                made, and this one has been true the whole time. */}
             {footerNote}
 
-            {/* R43 — silent until it is useful, and then exact. See `composerCap.ts` for why the
-                number is code points rather than String.length. */}
+            {/* Silent until it is useful, and then exact. See `composerCap.ts` for why the number
+                is code points rather than String.length. */}
             {cap.showCounter && (
               <p
                 data-testid="composer-counter"

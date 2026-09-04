@@ -216,7 +216,7 @@ async def test_never_sent_orphan_is_reclaimed_by_the_sweep(client, app, db_sessi
         )
         is None
     )
-    # Tallies land in the audit trail (counts only, security.md).
+    # Tallies land in the audit trail.
     row = await db_session.scalar(select(AuditLog).where(AuditLog.action == "storage:reconcile"))
     assert row is not None and row.detail is not None
     assert row.detail["reclaimedAttachments"] == 1
@@ -295,7 +295,7 @@ async def test_clean_system_body_is_all_zero(client, app, db_session) -> None:
 
 
 async def test_response_body_carries_no_key_list(client, app, db_session) -> None:
-    # R13 posture: counts only, no storage keys — dumping keys leaks the internal layout.
+    # Counts only, never keys — the rule lives in `services/audit/log.py`.
     store = _wire_shared_storage(app)
     admin = await _admin(db_session)
     stale = snapshot_key(uuid.uuid7())
@@ -355,11 +355,9 @@ async def test_storage_error_returns_retryable_503(client, app, db_session) -> N
 
 
 async def test_unconfigured_store_is_503_not_500(client, app, db_session) -> None:
-    # FIX 8 regression + the fixture-free store-off baseline (`.claude/rules/testing.md`): with NO
-    # store wired, `storage_or_none_dependency` resolves `get_storage()` →
-    # StorageUnconfiguredError → None, and the body maps None to the DOCUMENTED 503. An eager
-    # `Storage` dependency raised at solve time → an undocumented 500. Deliberately does not touch
-    # the accessor singleton.
+    # NO store fixture is wired, which is what makes the branch reachable: `get_storage()` raises
+    # StorageUnconfiguredError, `storage_or_none_dependency` resolves it to None, and the body
+    # maps None to the DOCUMENTED 503.
     from src.services.storage import accessor as _storage_accessor
 
     _storage_accessor._backend_singleton = None  # store off: no backend configured in .env.test

@@ -3,28 +3,13 @@
 Configures structlog at import, then `create_app()` wires the middleware
 (security headers + credentialed CORS), the boundary exception handlers, and the
 v1 router. The lifespan opens AND PROBES the Redis coordination pool when configured
-(the sandbox lock/heartbeat/registry — C5) and, on shutdown, closes the Redis pool +
+(the sandbox lock/heartbeat/registry) and, on shutdown, closes the Redis pool +
 the sandbox client + the object-store client(s) so no aiohttp session / connection
 pool leaks.
 
-A task queue DOES run, but not in this process (ADR-0011, Accepted 2026-08-11). Scheduled
-work — reclamation and deploy reconciliation — runs on a Taskiq worker in its own
-ingress-less Container App, from this same image under `python -m src.worker_main`. This
-docstring said "No task queue runs (ADR-0011)"; that became false in the change that added
-`src/broker.py`, and is corrected here rather than in a later sweep, because decoupling the
-two is exactly what let a false "there is no scheduler" claim survive in sixteen places and
-turn two data-loss incidents into scheduling triage (ADR-0029).
-
-**There are no `while True` loops left in this lifespan.** Both in-process sweepers — the
-sandbox reap and the periodic deploy reconcile — now run as scheduled tasks on the taskiq
-worker, at the same cadences, through the same functions. Each replacement was built and
-observed running BEFORE its loop was deleted (U6/U7 for deploy, U15 for the sweep), never the
-other way round: removing a live reconciler ahead of its replacement reopens the exact leak
-this work exists to close.
-
-What stays is `_reconcile_interrupted_deploys`, and it is not a loop. It is a boot one-shot
-doing something no cron can — settling a deploy that straddled a restart *before the first
-request is served*.
+Nothing recurring runs here. A sweep put back into this lifespan would run in every API
+replica beside the copy the worker already schedules; the one thing on the boot path,
+`_reconcile_interrupted_deploys`, is a one-shot rather than a loop.
 """
 
 import asyncio
@@ -117,15 +102,6 @@ async def _probe_redis() -> None:
         _log.info(REDIS_PROBE_OK_EVENT)
 
 
-# The in-process sandbox sweeper is GONE (U15). It lived here as a `while True` because the
-# platform had no scheduler; it now runs as `src/workers/sandbox_reap.py` on the taskiq worker,
-# at the same 5-minute cadence, through the same `sweep_all`.
-#
-# Ported BEFORE this deletion, deliberately — the same order U6 used for deploy-reconcile — so
-# there was never a window in which nothing swept. What made moving it out of the API process
-# possible at all is the R10 wall-clock liveness lease (U12): `live_users` was an in-process set
-# that means nothing in a second process, and the lease is the signal that replaced it.
-
 DEPLOY_RECONCILED_EVENT: Final = "deploy_startup_reconcile"
 
 
@@ -150,15 +126,6 @@ async def _reconcile_interrupted_deploys() -> None:
         return
     except Exception:
         _log.warning("deploy_startup_reconcile_failed", exc_info=True)
-
-
-# The periodic deploy reconciler is GONE too (U6 built its replacement, U15 removes the loop).
-# It now runs as `src/workers/deploy_reconcile.py` on the scheduler, at the same cadence.
-#
-# `_reconcile_interrupted_deploys` above STAYS. It is a boot one-shot, not a loop, and it does
-# something no cron can: settle a deploy that straddled a restart *before the first request is
-# served*. A pipeline runs for minutes and every platform deploy kills it, so a deploy straddling
-# a restart is the expected case during a rollout rather than an edge case.
 
 
 @asynccontextmanager
@@ -221,15 +188,13 @@ def create_app() -> FastAPI:
     )
 
     register_exception_handlers(app)
-    # Register the 429 handler for the in-process rate limiters and log the
-    # single-replica store assumption at startup (R31). The limiters are deliberately
-    # in-process counters, NOT Redis-backed — a Redis-backed limiter was rejected in
-    # scope, and ADR-0011 defers the TASK QUEUE, not Redis (which this app very much
-    # uses, for the C5 sandbox lock/heartbeat/registry).
-    # SINGLE-REPLICA CONSTRAINT (binding — see the deploy checklist): because the counters
-    # are per-process, N replicas give N× the intended ceiling. This is one of three
-    # sites that assume a single replica (with the reaper's live-session shield and the
-    # manager's double-session guard); scaling out needs a shared store for all three.
+    # Register the 429 handler for the in-process rate limiters and log the single-replica
+    # store assumption at startup. The limiters are deliberately in-process counters, NOT
+    # Redis-backed — a Redis-backed limiter was rejected in scope.
+    # SINGLE-REPLICA CONSTRAINT (binding): because the counters are per-process, N replicas
+    # give N× the intended ceiling. This is one of three sites that assume a single replica
+    # (with the reaper's live-session shield and the manager's double-session guard);
+    # scaling out needs a shared store for all three.
     install_rate_limiting(app)
 
     # CROSS-ORIGIN WRITE GUARD — the cost of moving generated apps onto a BIAL hostname.

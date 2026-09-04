@@ -1,57 +1,15 @@
-"""Operator-invoked orphan reconciler for per-project databases and roles — REPORT-ONLY,
-plus the advisory `pg_database_size()` probe the admin listing renders (R9, R10).
+"""Operator-invoked orphan reconciler for per-project databases and roles — REPORT-ONLY, plus
+the advisory `pg_database_size()` probe the admin listing renders.
 
-Teardown is per-step best-effort (`salt_the_earth` never raises), so a failed drop leaves a
-database — or, worse, a surviving LOGIN role whose database is already gone — with nothing
-but a `_log.warning` naming it. This module turns that into a number an operator can act on:
-enumerate the cluster, diff it against the `project_databases` registry, and report.
+Teardown is per-step best-effort, so a failed drop can leave a database, or a surviving LOGIN
+role whose database is already gone. This diffs the cluster against `project_databases`.
 
-NOTHING HERE DELETES ANYTHING. That is the mechanism, not a courtesy, because the blob
-reconciler's safety argument does not transfer. `reconcile_orphaned_storage` can delete
-because `head().last_modified` gives every key a provable age and a 24h grace protects an
-in-flight write; `pg_database` carries NO creation timestamp at all (and `pg_stat_file`
-needs a superuser Azure will not grant). The provision-time `COMMENT ON DATABASE`
-(`provision._stamp_provisioned_at`, read back here via `shobj_description(oid,
-'pg_database')`) is the only age source that survives orphaning, and a comment is
-mutable, absent on anything not provisioned by us, and trivially lost. Delete-eligibility
-is therefore a human ruling made with this report in hand, never an inference made here.
-
-Three independent guards decide "not ours", and ALL of them must agree before a name is
-even reported:
-
-1. **Denylist** — the control-plane databases, the maintenance database, PostgreSQL's own
-   `postgres`/`template0`/`template1`, and Azure's `azure_maintenance`/`azure_sys`. None of
-   these could pass guard 2 either; the redundancy IS the point.
-2. **Full-UUID name anchor** — only `bialapp_<32 hex>` / `bialrole_<32 hex>` are candidates,
-   parsed by `names.project_id_from_*`, which already fail closed. This is what protects the
-   unrelated databases sharing a dev cluster (`ascend`, `badger`, `knit`, `neox`,
-   `singularity`, `tod`, …): none of them can be named by the derivation, so none of them
-   can ever be attributed to a project.
-3. **Fail closed on anything unparseable** — an unparseable name, and an absent or
-   unparseable provision comment, both land in a not-actionable bucket. Mirrors
-   `_owned_by_app_row` (`services/storage/reconcile.py`), which returns "owned" for a key it
-   cannot parse: a thing we cannot attribute is a thing we must not propose destroying.
-
-TWO SERVERS, ONE DIFF. The enumeration runs against whatever cluster the MAINTENANCE DSN
-points at, and it is diffed against whatever registry the CONTROL-PLANE session reads. On a
-shared dev box those two can legitimately disagree — a database belonging to a `citizen_one`
-project looks orphaned to a `citizen_one_test` session — which is a second reason nothing
-here deletes, and the reason the future separate-apps-server lever must not silently point
-this at a cluster the control plane does not own.
-
-COUNTS ONLY, NEVER NAMES. Database names embed the project uuid, so a name list is an
-inventory of who has what; it is the exact analogue of the storage report's key list, which
-is pinned counts-only by test. The report, the response body and the audit `detail` all carry
-integers and nothing else.
-
-OPERATOR-INVOKED: THIS reconciler is not on a schedule. A superadmin drives
-`POST /v1/admin/apps/reconcile-databases`. (Corrected 2026-08-11 from "there is no scheduler in
-this repo, by decision" — false when written, doubly false now that ADR-0011 is Accepted; see
-ADR-0029. Scheduling it is available and unclaimed.) No per-object fan-out exists to bound (the
-whole cluster answers in two catalog round trips), so the storage reconciler's semaphore has no
-analogue here — the bound it enforces is achieved by construction. Failures PROPAGATE, so a
-cluster we could not reach surfaces as a retryable 503 rather than a silent partial report.
-"""
+NOTHING HERE DELETES ANYTHING: `pg_database` carries no creation timestamp, and the
+provision-time `COMMENT ON DATABASE` standing in for one is mutable and easily lost, so
+delete-eligibility is a human ruling made with this report in hand. Three guards must all agree
+before a name is reported — denylist, full-UUID anchor, fail closed on anything unparseable.
+The MAINTENANCE cluster enumerated and the CONTROL-PLANE registry it is diffed against can
+legitimately disagree on a shared box."""
 
 from __future__ import annotations
 
@@ -122,52 +80,36 @@ class CatalogDatabase:
 
 @dataclass(frozen=True)
 class DatabaseCounts:
-    """What the database sweep found. Counts ONLY — never a name list.
-
-    `scanned == not_ours + owned + orphaned + unknown_age`, always.
-
-    The blob reconciler collapses "fresh" and "age we cannot prove" into one `within_grace`
-    bucket because both are protected identically. Here they are genuinely different
-    findings, so `unknown_age` is its OWN counter rather than a silent share of `orphaned`:
-    an orphan with a readable provision stamp is a real reclaim candidate an operator can
-    age out, while an orphan with no parseable stamp is something we refuse to reason about
-    at all. Conflating them would either overstate the actionable set or hide it.
+    """What the database sweep found. `scanned == not_ours + owned + orphaned + unknown_age`.
 
     - `not_ours` — denylisted, or a name the derivation could never have produced.
-    - `owned` — a `project_databases` row claims this exact name. NOT filtered by
-      `db_ready`: a claim whose external sequence is still running already owns its name,
-      and reporting a mid-provision database as an orphan would be a lie with a race in it.
-    - `orphaned` — ours by name, claimed by no registry row, with a parseable provision
-      stamp. The actionable set, and still nothing is deleted.
-    - `unknown_age` — the same, minus the parseable stamp. Fail-closed: not actionable.
-    """
+    - `owned` — a `project_databases` row claims this name. NOT filtered by `db_ready`: a claim
+      whose external sequence is still running already owns its name.
+    - `orphaned` — ours by name, unclaimed, with a parseable provision stamp. The actionable
+      set, and still nothing is deleted.
+    - `unknown_age` — the same, minus the stamp. Its own counter, never a share of `orphaned`."""
 
     scanned: int
     not_ours: int
     owned: int
     orphaned: int
     unknown_age: int
-    # Whole hours since the oldest orphan's provision stamp, or None when there are none.
-    # An age, not an identity — it is what tells an operator whether the orphans are stale
-    # or were minted by a provision that failed minutes ago.
+    # Whole hours since the oldest orphan's provision stamp, or None when there are none —
+    # what tells an operator whether the orphans are stale or were minted by a provision
+    # that failed minutes ago.
     oldest_orphan_age_hours: int | None
 
 
 @dataclass(frozen=True)
 class RoleCounts:
-    """What the role sweep found. Counts ONLY.
-
-    `scanned == not_ours + owned + stranded + paired`, always.
+    """What the role sweep found. `scanned == not_ours + owned + stranded + paired`.
 
     Roles are swept because teardown is best-effort PER STEP: `salt_the_earth` drops the
     database and then the role, so a failure between the two leaves a LOGIN role with a
     password the platform has already forgotten and a registry row that no longer exists —
-    a latent re-entry handle, precisely the thing `NOCREATEROLE` exists to prevent
-    elsewhere. That strand is `stranded`, and it is invisible to a database-only diff.
-
-    - `paired` — ours by name, unregistered, but its `bialapp_<hex>` database still exists,
-      so the DATABASE is already the finding; counting the role again would double-report it.
-    """
+    a latent re-entry handle invisible to a database-only diff. That strand is `stranded`.
+    `paired` is ours by name and unregistered but its `bialapp_<hex>` database still exists,
+    so the DATABASE is already the finding."""
 
     scanned: int
     not_ours: int
@@ -321,7 +263,7 @@ async def reconcile_orphaned_app_databases(
         live_databases=frozenset(row.name for row in catalog),
         denylist=_role_denylist(),
     )
-    # Counts only, here as everywhere: a log line naming an orphan database names a project.
+    # Counts, never names — the same rule `append_audit` holds for audit rows.
     _log.info(
         "app_database_reconcile_completed",
         orphaned_databases=databases.orphaned,
@@ -334,15 +276,12 @@ async def reconcile_orphaned_app_databases(
 async def advisory_database_sizes(engine: AsyncEngine, db_names: Sequence[str]) -> dict[str, int]:
     """On-disk bytes per database, keyed by name. **ADVISORY — never a limit.**
 
-    Nothing in the platform reads this as a quota, a gate, or a precondition, and nothing
-    may start: it replaced the retired `data_bytes` counter as an OBSERVATION for the admin
-    listing, not as its enforcement half. `pg_database_size` is a whole-cluster point-in-time
-    figure including bloat and indexes; treating it as a limit would throttle an app for
-    disk it does not logically hold and for which no user-facing story exists.
+    Nothing reads this as a quota, a gate, or a precondition, and nothing may start:
+    `pg_database_size` is a point-in-time figure including bloat and indexes, so treating it as
+    a limit would throttle an app for disk it does not logically hold.
 
-    One query for every name — never per-app, which on the listing would be an N+1 against
-    the cluster. A database the caller cannot connect to is simply absent from the result.
-    """
+    One query for every name — never per-app, which on the listing would be an N+1 against the
+    cluster. A database the caller cannot connect to is simply absent from the result."""
     if not db_names:
         return {}
     statement = sa.text(_SIZES_SQL).bindparams(sa.bindparam("names", expanding=True))

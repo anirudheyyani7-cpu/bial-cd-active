@@ -1,31 +1,20 @@
 /**
- * The two per-user session lifecycle banners (U15) — relocated from the retired
- * SessionControls cockpit row to just above the composer, where the operator is
- * already looking when they need to act on one. Presentational: every decision is
- * `useBuildSession` state; every action is one of its callbacks.
+ * The two per-user session lifecycle banners — relocated from the retired SessionControls
+ * cockpit row to just above the composer, where the operator is already looking when they
+ * need to act on one. Presentational: every decision is `useBuildSession` state; every
+ * action is one of its callbacks.
  *
  * ASSERTIVE IS FOR THINGS THAT WENT WRONG. Both of these interrupt the operator
  * (`role="alert"` / `aria-live="assertive"`) because something is genuinely blocked or
  * broken.
  *
- * THERE WERE FOUR, AND TWO ARE GONE — each because its producer was, not because it was re-toned.
- *
- *   · "your workspace went to sleep" was raised only by the blind keep-alive loop U13 deleted, so
- *     nothing had passed `reclaimed: true` since. The R17 argument it carried — a reclaimed
- *     container is a sleeping workspace, not an emergency — lives on in `LivePreview`'s `asleep`
- *     state, which has a live producer in the preview poll.
- *   · "you already have a build running", with its Force-end button and its Dismiss, was raised by
- *     the session hook's `blocked` state. That had TWO producers — `start`'s 409 and `relaunch`'s —
- *     and neither was reachable: `start` lost its caller when the build moved inside the turn
- *     transaction, and `relaunch`'s one caller hung off `LivePreview`'s `onRelaunch`, a prop the
- *     pane accepts and never reads. The live 409 today comes off `relaunchPreview`, called directly
- *     by `StartAppControl`, and is reported as a workspace sentence in the pane instead.
- *
- * A banner nothing can raise is worse than a missing one: it reads as covered.
+ * TWO, NOT FOUR: the other two were deleted when their producers were, not because they read
+ * badly. Add a banner back without a live producer and it is worse than a missing one — the
+ * state it names then reads as covered when nothing is watching it.
  *
  *   - feed-disconnected — the SSE feed died and the bounded reconnect gave up; offers a
- *                      manual reconnect (heartbeat/renew may still be succeeding, so
- *                      nothing else signals it).
+ *                      manual reconnect (the build may well still be running, so nothing
+ *                      else signals the dead feed).
  *   - quota          — the daily token cap was hit; building pauses until it resets.
  */
 import { RefreshCw } from 'lucide-react'

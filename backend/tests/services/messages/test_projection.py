@@ -262,17 +262,12 @@ def _rendered(item: StepItem) -> str:
 async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_session) -> None:
     """★ U5 (plan 2026-09-02-001) — THIS TEST USED TO PIN THE OPPOSITE FLAG.
 
-    `hidden` meant "a read" for as long as reads were the only class it marked, and what that
-    bought was a build whose activity opened on a write with no account of what the agent had
-    looked at to get there. Looking at the app before changing it is work a citizen recognises,
-    so the whole read class is drawn — the structured read tools and the read-only shell
-    binaries alike. What `hidden` still marks is plumbing, and only plumbing: a write to a
-    configuration file, and a housekeeping shell command.
-
-    BECOMING VISIBLE RAISES THE STAKES ON THE SECOND HALF OF THIS TEST rather than lowering
-    them. A `grep` over the citizen's own app returns the citizen's own data, and it used to
-    ride a step the feed did not draw; it now rides one the feed does. The only thing keeping
-    that output off the screen is its absence from the item, which is where it belongs."""
+    `hidden` meant "a read" while reads were the only class it marked, which bought a build whose
+    activity opened on a write with no account of what the agent had looked at to get there. The
+    whole read class is drawn now, and `hidden` marks plumbing only: a write to a configuration
+    file, and a housekeeping shell command. That RAISES the stakes on the second half — a `grep`
+    over the citizen's own app returns the citizen's own data, and the only thing keeping it off
+    the screen is its absence from the item."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
     await _step(
@@ -336,13 +331,11 @@ async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_sessio
 
 async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db_session) -> None:
     """★ U5's headline scenario, on the reload path. Three reads and a write are four things the
-    agent did, and the citizen sees four rows — where the same turn used to show one, the three
-    reads that explain it filtered out of the feed by their flag.
+    agent did, and the citizen sees four rows where the same turn used to show one.
 
     THE FLAGS ARE THE CLAIM, not the item count: the projection always emitted four items, and a
     feed that draws only the visible ones is what turned that into a single row. So the flags are
     asserted as a list, in order, beside the labels that make each row worth drawing.
-
     Mutation-check: make `_step_label`'s read arm return `hidden=True` again and this goes red on
     the three reads while the write's own flag does not move."""
     user, _, conversation = await _thread(db_session)
@@ -400,14 +393,12 @@ async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db
 async def test_a_configuration_write_and_a_housekeeping_command_stay_hidden(db_session) -> None:
     """The other half of U5, and the reason it is a NARROWING rather than a deletion.
 
-    A write to `package.json` and a `mkdir` are plumbing between the steps that matter: drawing
-    them prints a generic building line into the feed that tells the citizen nothing about their
-    app. Both still render as ITEMS — the flag says "do not draw this", not "forget this
-    happened" — so the audit read and the step's own state survive.
+    A write to `package.json` and a `mkdir` are plumbing between the steps that matter. Both
+    still render as ITEMS — the flag says "do not draw this", not "forget this happened" — so the
+    audit read and the step's own state survive.
 
     The read beside them is the liveness half and the discriminator at once: a projection that
-    flagged everything hidden would satisfy the two assertions this test is named for, and the
-    visible read is what stops it."""
+    flagged everything hidden would satisfy the two assertions this test is named for."""
     user, _, conversation = await _thread(db_session)
     await _step(
         db_session,
@@ -456,12 +447,9 @@ async def test_a_housekeeping_command_that_failed_is_never_hidden(db_session) ->
     """★ U5's rule that nothing is hidden when something went wrong, whatever class it belongs to.
 
     A group opens itself saying one thing went wrong and then counts the rows the citizen can
-    see; a hidden failure makes that count name a row nobody can find. Housekeeping is exactly
-    the case — plumbing while it works, and the whole story the moment it does not.
-
-    The identical command that SUCCEEDED sits beside it, so this pins the conditional rather
-    than a projection that simply stopped hiding housekeeping altogether.
-
+    see; a hidden failure makes that count name a row nobody can find. The identical command that
+    SUCCEEDED sits beside it, so this pins the conditional rather than a projection that simply
+    stopped hiding housekeeping altogether.
     Mutation-check: drop the `and state != "failed"` conjunct where the step item is built and
     the failed row comes back hidden while its successful twin does not move."""
     user, _, conversation = await _thread(db_session)
@@ -720,17 +708,13 @@ async def test_plan_options_states_have_no_third_member(db_session) -> None:
     """U8 — `build_failed` is retired without a caller, so a resolution recorded before its
     retirement must not read back as a still-actionable third state. `_plan_options_state`'s
     catch-all reads ANYTHING it does not recognise — including a stray `build_failed:<reason>`
-    overlay from before the retired recorder — as `refine`: the build behind it never
-    happened, and the card is spent, so offering a button with nothing behind it would be
-    worse than reading it as resolved.
+    overlay — as `refine`: the build behind it never happened, and the card is spent. The fixture
+    is deliberately the PRE-MIGRATION shape, a prose message ahead of an empty-argument tool
+    call.
 
-    The fixture is deliberately the PRE-MIGRATION shape: a prose message ahead of an
-    empty-argument tool call, which is what every card presented before U5 looks like on
-    disk (`test_the_plan_renders_from_the_offers_own_stored_call_args` below covers the new
-    shape, where the plan rides the argument itself).
-
-    Mutation-check: revert `_plan_options_state`'s catch-all to return `"build_failed"` and
-    this goes red on opt-2's state without any other test in this file moving."""
+    Mutation-check: revert the catch-all to `"build_failed"` and this goes red on opt-2's state."""
+    # Mutation-check: revert `_plan_options_state`'s catch-all to return `"build_failed"` and this
+    # goes red on opt-2's state without any other test in this file moving.
     user, _, conversation = await _thread(db_session)
     await append_batch(
         db_session,
@@ -898,9 +882,7 @@ def test_classify_command_maps_the_pinned_commands() -> None:
 
 def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
     """U5, at the shell half of the classifier. This asserted `hidden is True` for BOTH groups
-    until the flag stopped meaning "a read" and started meaning "plumbing": an inspection is
-    work the citizen recognises, and hiding the whole class left a build's activity opening on a
-    write with nothing to explain it.
+    until the flag stopped meaning "a read" and started meaning "plumbing".
 
     Housekeeping keeps the flag, which is why the flag is kept at all — `mkdir`, `mv` and
     `touch` draw a generic line that says nothing about the app.
@@ -920,16 +902,12 @@ def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
 def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_entry() -> None:
     """★ THE NARROWED SET, pinned once at the entry BOTH feeds call.
 
-    `classify_tool_call` is what the live emitter classifies a tool call through and what the
-    reload projection classifies it through; a per-tool `hidden` that disagreed between them
-    would show a citizen a step live that vanished on reload, or the reverse. So the whole
-    visible set is asserted here rather than one member at a time in whichever feed's test
-    happened to notice — every inspection is drawn, and the two plumbing classes are not.
-
-    The flag alone is asserted for the visible members and the LABEL table is deliberately left
-    open, matching the field-set guard at the bottom of this file: a tool registered tomorrow is
-    classified in the same construction, and a guard that pinned its wording too would go red
-    for a reason that has nothing to do with what is drawn."""
+    A per-tool `hidden` that disagreed between the live emitter and the reload projection would
+    show a citizen a step live that vanished on reload, or the reverse. So the whole visible set
+    is asserted here rather than one member at a time — every inspection is drawn, and the two
+    plumbing classes are not. The LABEL table is deliberately left open, matching the field-set
+    guard at the bottom of this file: a tool registered tomorrow is classified in the same
+    construction."""
     for tool, args in (
         ("read_file", '{"path": "app/page.tsx"}'),
         ("list_files", '{"path": "app"}'),
@@ -947,22 +925,14 @@ def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_ent
 def test_a_read_binary_asked_to_write_is_never_drawn_as_an_inspection() -> None:
     """★ U5's read class is decided by argv[0], and two of its members write on a flag.
 
-    `sed -i` rewrites a file in place and `find -delete` removes what it matched — both routine
-    agent edits in an open sandbox, and both would otherwise draw "Inspected the app's files"
-    over a command that changed the citizen's app, with the write appearing nowhere else in the
-    activity group. While the class was hidden the mislabel cost nothing; drawing the class made
-    it a false statement on screen.
-
-    THE FALLBACK IS THE ANSWER, not a new write label: "Working on your app" is true of every
-    one of these, and the classifier's own rule is that anything it cannot name confidently
-    fails closed to it rather than guessing.
-
-    THE SPELLINGS ARE THE TEST. `-i.bak` carries its suffix on the flag and `-ni` bundles it
-    with another short option, so a classifier matching the literal `-i` would pass the first
-    case and mislabel the other two.
-
-    Mutation check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` again and
-    every writing case below goes red while the reading cases stay green."""
+    `sed -i` rewrites a file in place and `find -delete` removes what it matched, so both would
+    otherwise draw "Inspected the app's files" over a command that changed the citizen's app.
+    THE FALLBACK IS THE ANSWER, not a new write label: anything the classifier cannot name
+    confidently fails closed to "Working on your app". THE SPELLINGS ARE THE TEST — `-i.bak`
+    carries its suffix on the flag and `-ni` bundles it with another short option. Mutation
+    check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` and this goes red."""
+    # Mutation check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` again and
+    # every writing case below goes red while the reading cases stay green.
     for writing in (
         ["sed", "-i", "s/a/b/", "app/page.tsx"],
         ["sed", "-i.bak", "s/a/b/", "app/page.tsx"],
@@ -1111,17 +1081,11 @@ async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to
 ) -> None:
     """AE13 — asserted over the COMPLETE rendered set, not only the agent's narration.
 
-    The narration was never the whole story: the platform's own error rendering was the most
-    developer-looking thing on the screen, and it sat below a feed whose read steps printed raw
-    paths. So this walks a full build — a read, a write, an install, a failed typecheck, the
-    agent's closing line, the outcome banner — and then walks the platform's error copy for
-    EVERY error class, and holds one rule over all of it.
-
-    The user's OWN words are excluded, and that is not a loophole: a citizen may perfectly well
-    type "make it look like the React docs", and echoing their prompt back is not the platform
-    speaking developer.
-
-    LIVENESS IS ASSERTED FIRST. A projection that returned nothing at all would satisfy every
+    This walks a full build — a read, a write, an install, a failed typecheck, the agent's
+    closing line, the outcome banner — and then walks the platform's error copy for EVERY error
+    class, and holds one rule over all of it. The user's OWN words are excluded, and that is not
+    a loophole: echoing a prompt back is not the platform speaking developer.
+    LIVENESS IS ASSERTED FIRST: a projection that returned nothing at all would satisfy every
     absence below, so the rendered set is required to be non-trivial before it is scanned."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
@@ -1386,19 +1350,11 @@ async def test_a_plan_chat_renders_prose_beside_a_tool_call_exactly_as_a_build_c
     """★ AE43 / R74 / N2 — one rule, and it still does not ask which kind of chat this is.
 
     THIS TEST USED TO ASSERT THE PROSE WAS DROPPED, on the grounds that a plan travels in the
-    offer tool's argument and a mid-work word travels through `tell_the_user`, so anything left
-    over was the model narrating its way to a call. Those two routes still exist and are still
-    the right home for a plan and for a spoken update — but they stopped being the ONLY way a
-    word reaches the citizen, and the paragraph a planner writes on its way to reading a file is
-    the explanation, not noise. It renders at the position it was written, exactly as the same
-    shape does in a Build chat: what N2 forbids is one response meaning two different things
-    depending on which chat it sat in, and that is as true of rendering it as it was of
-    dropping it.
-
-    `entry_kind=TURN`, not STEP, because that is the only shape the product can actually
-    produce: every production writer of a STEP row stamps the Build kind (the BRAIN build loop
-    owns that kind), and a Plan turn persists as TURN. Mirrors
-    `test_plan_options_states_have_no_third_member` above."""
+    offer tool's argument and a mid-work word travels through `tell_the_user`. Those routes are
+    still the right home for each, but they stopped being the ONLY way a word reaches the citizen.
+    What N2 forbids is one response meaning two different things depending on the chat it sat in.
+    `entry_kind=TURN`, not STEP, because that is the only shape the product can produce: every
+    production writer of a STEP row stamps the Build kind, and a Plan turn persists as TURN."""
     user, _project, conversation = await _thread(db_session)
     await append_batch(
         db_session,
@@ -1504,26 +1460,12 @@ async def test_a_row_written_before_this_change_renders_its_prose_too(db_session
 def test_no_browser_facing_shape_carries_tool_arguments_results_or_a_stack() -> None:
     """★ AE34, and this is where U14's guarantee actually lives.
 
-    THE MECHANISM IS THE ABSENCE OF A FIELD, not a promise at a draw site. A step used to carry
-    `detail.args` and `detail.result` — the raw arguments and the raw return of every tool call,
-    redacted, clipped to four thousand characters, shipped on every frame and every reload item
-    INCLUDING hidden steps — and the browser parsed them and rendered them nowhere. A
-    `DiagnosticFrame` used to carry `title` and `cleaned_stack` beside the citizen's sentence,
-    under a docstring that called them "safe to transmit; NOT a product surface"; the sentence
-    "safe to render verbatim" that preceded it is what put a stack trace under a file-path title
-    in somebody's chat. A client that does not render a field is not a guarantee — it is a
-    client, and the next one is a different client.
-
-    THIS GUARD PINS THE FIELD SET AND DELIBERATELY LEAVES THE LABEL TABLE OPEN. Plan C registers
-    further tools that are classified in this same construction, and a guard that pinned the
-    labels too would go red in C's branch for a reason that has nothing to do with redaction —
-    at which point the fix under time pressure is to loosen it. So: the fields are closed, the
-    vocabulary is not.
-
-    The catch-up snapshot's ordered `parts` are NOT in scope and must not be: they are the
-    citizen's own prose and the steps it was written between, and they are what lets a tab
-    reconnecting mid-turn see what it missed, in the order it happened.
-    """
+    THE MECHANISM IS THE ABSENCE OF A FIELD, not a promise at a draw site. A client that does not
+    render a field is not a guarantee — it is a client, and the next one is a different client.
+    THIS GUARD PINS THE FIELD SET AND DELIBERATELY LEAVES THE LABEL TABLE OPEN: further tools are
+    classified in the same construction, and pinning their labels would go red for a reason that
+    has nothing to do with redaction. The catch-up snapshot's ordered `parts` are NOT in scope —
+    they are the citizen's own prose and the steps it was written between."""
     assert set(StepItem.model_fields) == {"type", "seq", "tool", "label", "state", "hidden"}
     assert set(PlanOptionsItem.model_fields) == {"type", "seq", "tool_call_id", "state"}
     assert set(DiagnosticFrame.model_fields) == {
@@ -1704,12 +1646,9 @@ async def test_the_terminal_reads_through_the_banners_own_vocabulary(db_session)
 
     THE QUOTA CASE IS COARSER THAN THE LIVE FRAME, and that is stated here rather than papered
     over. A turn that runs out of budget ends `failed` with `reason="quota_exceeded"`, and
-    `_banner_kind` reads status before reason — so it answers `failed`, where the live
-    `TurnEndedFrame` carries both halves and a client can tell the two apart. The finer answer
-    is not lost: it is in the row's `meta["reason"]`, which is where the mapping read it from.
-    Sharpening this would mean reordering `_banner_kind`, which is also the build banner's
-    mapping and is pinned by that surface's own tests — a second vocabulary for one fact is the
-    thing this reuse exists to avoid, and it is the worse trade."""
+    `_banner_kind` reads status before reason, so it answers `failed`. The finer answer is not
+    lost: it is in the row's `meta["reason"]`. Sharpening it would mean reordering the build
+    banner's own mapping, and a second vocabulary for one fact is the worse trade."""
     for status, reason, expected in (
         ("stopped", "stopped_by_user", "stopped"),
         ("failed", "quota_exceeded", "failed"),
@@ -1852,16 +1791,15 @@ async def test_a_voice_update_far_past_the_old_ceiling_renders_whole(db_session)
 
 async def test_a_first_slice_far_past_the_old_ceiling_renders_whole(db_session) -> None:
     """★ R6 — how many pieces belong in a first round is a judgement about the citizen's request,
-    which is the thing the agent is for. A ceiling here refused proposals the agent had made
-    well and, worse, drew nothing for a call the tool body had already refused: the citizen was
-    shown no proposal at all rather than one they could argue with.
+    which is the thing the agent is for. A ceiling here refused proposals the agent had made well
+    and drew nothing for a call the tool body had already refused.
 
     Six pieces, half again the retired bound, and every one of them is named — along with all
     nine the agent said it had picked up, because a proposal that narrows without listing
-    everything back reads as a refusal (which is why the lead sentence exists).
-
-    Mutation-check: put a `len(first) > N` arm back into `_slice_argument` and this goes red on
-    an empty projection."""
+    everything back reads as a refusal. Mutation-check: put a `len(first) > N` arm back into
+    `_slice_argument` and this goes red on an empty projection."""
+    # Mutation-check: put a `len(first) > N` arm back into `_slice_argument` and this goes red on
+    # an empty projection.
     user, _, conversation = await _thread(db_session)
     found = [
         "a visitor sign-in form",

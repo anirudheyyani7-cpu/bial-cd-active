@@ -532,13 +532,10 @@ async def approve(
     commit_sha = app.source_commit_sha
     app_user_id = app.user_id
 
-    # R11 — verify the reviewed artifact still exists before pinning it, so an app
-    # can never reach APPROVED with a bundle that 404s at runbook time. Fail
-    # closed: a storage ERROR is ambiguity, not absence (503, not 409).
-    # An UNCONFIGURED store is the same ambiguity, and arrives as `None` (the None-tolerant
-    # `OptionalStorage`): with no store there is nothing to verify against, so approving would
-    # pin an artifact nobody checked. Answers the DOCUMENTED 503 the eager `Storage` dependency
-    # could never reach — it raised at dependency-solve time, before this body ran at all.
+    # Verify the reviewed artifact still exists before pinning it, so an app can never reach
+    # APPROVED with a bundle that 404s at runbook time. Fail closed: a storage ERROR is
+    # ambiguity, not absence (503, not 409), and an UNCONFIGURED store is the same ambiguity —
+    # with nothing to verify against, approving would pin an artifact nobody checked.
     if storage is None:
         raise AppApiError(503, "Storage is temporarily unavailable. Please try again.")
     try:
@@ -811,8 +808,8 @@ async def enable(
     return AdminAppStatusResponse(app_id=app_id, status=AppStatus.APPROVED)
 
 
-# Minutes-scale (deliberately far under the ABC's 7-day ceiling): long enough for an
-# out-of-band review download, short enough that a leaked URL dies fast (R15).
+# Minutes-scale: long enough for an out-of-band review download, short enough that a leaked
+# URL dies fast.
 _BUNDLE_URL_TTL = timedelta(minutes=15)
 
 
@@ -839,9 +836,8 @@ async def bundle_download_url(
     if submission_id is None:
         # No submission is a non-event: no URL, and no audit row for nothing.
         raise AppApiError(409, "This app has no submission to download.")
-    # An unconfigured store arrives as `None` (the None-tolerant `OptionalStorage`) → the SAME
-    # documented 503 as a signing failure below, and no audit row for a URL that never existed.
-    # An eager `Storage` dependency raised at solve time, ahead of even the 404/409 above.
+    # An unconfigured store is the SAME documented 503 as a signing failure below, and no audit
+    # row for a URL that never existed.
     if storage is None:
         raise AppApiError(503, "Storage is temporarily unavailable. Please try again.")
     try:
@@ -882,29 +878,28 @@ async def mint_deploy_credential(
     db: DbSession,
     container_store: ContainerStore,
 ) -> DeployCredentialResponse:
-    """Mint the deployed app's long-lived, container-scoped Blob credential (R2) — the runbook's
-    step-5 `BIAL_BLOB_CONTAINER_URL` + `BIAL_BLOB_SAS` pair, and the answer to its former KNOWN
-    GAP (a session SAS expires in ≤7 days and stranded every live app's storage).
+    """Mint the deployed app's long-lived, container-scoped Blob credential — the runbook's
+    step-5 `BIAL_BLOB_CONTAINER_URL` + `BIAL_BLOB_SAS` pair.
 
     Deliberately independent: the credential reaches the app's own container DIRECTLY, so a
     deployed app never proxies file traffic through the control-plane. That independence cuts
     both ways and the runbook says so — `disable` kill-switches the DATA plane but does NOT
-    revoke this SAS; revoking it means deleting the app's stored access policy.
+    revoke this SAS.
 
     Like `bundle-url`, the minted token is a bearer credential: audited as an EVENT (who, which
-    app, when it dies) with the SAS value itself never logged and never in the audit `detail`
-    (security.md). Not part of any list projection — a mint is always an explicit, recorded act.
+    app, when it dies) with the SAS value itself never logged and never in the audit `detail`.
+    Not part of any list projection — a mint is always an explicit, recorded act.
     """
     await _get_app_or_404(db, app_id)
     if container_store is None:
         # Fail closed and say what to fix: object storage is simply not configured here, so
-        # there is no container and nothing to sign with (the dependency yields None, D2).
+        # there is no container and nothing to sign with.
         raise AppApiError(409, "Object storage is not configured on this deployment.")
     try:
         credential = await container_store.mint_deploy_container_sas(app_id)
     except StorageSignError as exc:
-        # The managed-identity config: only a user-delegation key is available and Azure caps
-        # those at 7 days. Actionable, and admin-only — but still no internal error text.
+        # Actionable, and admin-only — but still no internal error text: the copy names the
+        # configuration to change, never what the SDK raised.
         raise AppApiError(
             409,
             "This deployment's storage uses managed identity, which cannot issue a credential "
@@ -1232,35 +1227,23 @@ async def reconcile_storage(
     """Sweep the whole object store against the database and reclaim ownerless, past-grace blobs
     (R11/R12/R13) — the recovery lever for a cleanup that a `_log.warning` was the only trail of.
 
-    OPERATOR-INVOKED (KD-7): THIS sweep is not on a schedule — nothing but a superadmin calls it.
-    A superadmin drives this endpoint by hand (headlessly too — the admin router declares no CSRF,
-    so `curl -b "session=<jwt>"` works); a grace-period sweep nothing calls reclaims nothing.
-
-    Corrected 2026-08-11 (ADR-0029): this said "there is NO scheduler in this repo, and an
-    in-process one was deliberately rejected". That was FALSE when written — a 300 s sandbox
-    sweeper had run in the lifespan since v1.6.5 — and is doubly false now that ADR-0011 is
-    Accepted. Sixteen copies of that claim are why two data-loss incidents were triaged as
-    scheduling failures. Only the narrow statement above survives; putting this sweep on the
-    Taskiq scheduler is available and unclaimed.
+    OPERATOR-INVOKED: nothing but a superadmin calls this sweep, headlessly too — the admin
+    router declares no CSRF, so `curl -b "session=<jwt>"` works.
 
     Two passes, one operator action. First the blob-vs-row diff sweep (`att/` + `snapshots/`
     delete; `submissions/` + `apps/` report-only). Then the U9 never-sent-upload reclaim, per
     owning user (`_reclaim_orphans_for_all_users`) — the pass that finally runs
     `reclaim_orphaned_attachments` in prod rather than only in its unit test, closing the
     quota leak the diff sweep cannot (it treats a still-rowed orphan as owned). `attachmentReclaim`
-    in the response and the `reclaimed*` audit fields carry its tallies (counts only, security.md).
+    in the response and the `reclaimed*` audit fields carry its tallies.
 
     Safe at any time: only a key with NO owning row AND older than the 24h grace is deleted, so a
     blob a concurrent submit/upload is about to record a row for is protected (R12). `submissions/`
     and `apps/` are REPORT-ONLY (the report's whole point) — `submissions` because deleting the
     immutable approval record is the open D7 governance call, `apps` because it has no known writer
     since migration 0017. Idempotent: a second run is a no-op. A `StorageError` surfaces as a
-    retryable 503 rather than being lost to a log line — INCLUDING the unconfigured-store case,
-    which arrives here as `storage is None` (the None-tolerant `OptionalStorage` dependency)
-    rather than the solve-time 500 an eager `Storage` (`get_storage()`) annotation raised."""
+    retryable 503 rather than being lost to a log line, and so does an unconfigured store."""
     if storage is None:
-        # An unconfigured store is the documented 503, the same class of answer as the transient
-        # failure below — never the solve-time 500 an eager `Storage` dependency would raise.
         raise AppApiError(503, "Storage is temporarily unavailable. Please try again.")
     try:
         report = await reconcile_orphaned_storage(db, storage)
@@ -1272,8 +1255,8 @@ async def reconcile_storage(
         actor_id=admin.id,
         action="storage:reconcile",
         resource_type="storage",
-        # Counts only in the trail (never keys, security.md): what each sweep reclaimed + the
-        # ownerless-submission tally the D7 call needs.
+        # Counts only in the trail, never keys: what each sweep reclaimed, plus the
+        # ownerless-submission tally the open governance call needs.
         detail={
             "attDeleted": report.attachments.deleted,
             "snapshotsDeleted": report.snapshots.deleted,
@@ -1336,11 +1319,8 @@ async def reconcile_sandboxes(
     with `release` or the CLI.
 
     A sibling of `reconcile-storage` and `reconcile-databases` in every operational respect:
-    superadmin-gated, operator-invoked, idempotent, and AUDITED WITH COUNTS ONLY — a sandbox name
-    embeds its app's uuid, so a name list is an inventory of who is running what.
-
-    The names come back in the RESPONSE (the operator has to know what to delete) but never in
-    the audit row or a log line — the same split `reconcile-storage` makes for blob keys."""
+    superadmin-gated, operator-invoked, idempotent, and AUDITED WITH COUNTS ONLY. The container
+    names come back in the RESPONSE, because the operator has to know what to delete."""
     if sandbox is None:
         raise AppApiError(503, _SANDBOX_UNAVAILABLE)
     if not isinstance(sandbox, FleetLister):
@@ -1415,9 +1395,8 @@ async def reclamation_report(
     `destroy` list MEANS: a preview on a report-only deployment, a description of what is about to
     happen on an armed one.
 
-    Audited with COUNTS ONLY, like every sibling report here. A sandbox name embeds 28 hex
-    characters of its app's uuid, so a name list in the audit log is a durable record of who was
-    running what. The names go in the response, where the operator needs them."""
+    Audited with COUNTS ONLY, like every sibling report here. The names go in the response,
+    where the operator needs them."""
     if sandbox is None or not isinstance(sandbox, FleetLister):
         # Retryable-shaped, not a 500: nothing is wrong with the request — this deployment has no
         # ARM access, or a substrate that cannot enumerate, so it cannot answer.
@@ -1505,9 +1484,8 @@ async def backfill_sandbox_tags_endpoint(
 
     A sibling of the three reconcilers above in every operational respect: superadmin-gated,
     operator-invoked, idempotent (an already-tagged container is skipped, so the age clock is never
-    reset by a second press), and AUDITED WITH COUNTS ONLY. A sandbox name embeds 28 hex characters
-    of its app's uuid, so a name list is an inventory of who is running what; the names of
-    containers that could not be stamped go to the logs, never to the audit row.
+    reset by a second press), and AUDITED WITH COUNTS ONLY — the names of containers that could
+    not be stamped go to the logs, never to the audit row.
 
     Unlike `reconcile-sandboxes` this needs NO Redis: identity comes from ARM and the app table,
     and that independence is the property being installed."""
@@ -1576,19 +1554,14 @@ async def reconcile_databases(
     parse), and the sweep still stops at telling an operator the number.
 
     A sibling of `reconcile-storage` in every operational respect: superadmin-gated,
-    OPERATOR-INVOKED (this reconciler is not on a schedule; nothing but a superadmin calls it —
-    corrected 2026-08-11 from "there is no scheduler in this repo, by decision", which was false
-    when written and is doubly false now, see ADR-0029), headless-friendly
-    because the admin router declares no CSRF, idempotent, and audited with counts only —
-    a database name embeds its project's uuid, so a name list is an inventory of who has
-    what, exactly the leak the storage report's key list is pinned against.
+    OPERATOR-INVOKED (this reconciler is not on a schedule; nothing but a superadmin calls it),
+    headless-friendly because the admin router declares no CSRF, idempotent, and audited with
+    counts only.
 
-    The maintenance engine is resolved HERE, in the body, never as an eager `Depends`: a
-    route that documents a 503 must be able to answer with it, and a dependency that raises
-    at solve time turns the documented 503 into an undocumented 500 (commit 6be7a9c). An
-    unconfigured substrate and an unreachable cluster are the same answer to the caller —
-    retryable — because a sweep that reported "no orphans" for either would be actively
-    dangerous.
+    The maintenance engine is resolved HERE, in the body, never as an eager `Depends`: this
+    route documents a 503 and must be able to answer with it. An unconfigured substrate and an
+    unreachable cluster are the same answer to the caller — retryable — because a sweep that
+    reported "no orphans" for either would be actively dangerous.
     """
     engine = get_maintenance_engine()
     if engine is None:
@@ -1606,7 +1579,7 @@ async def reconcile_databases(
         # Cluster-wide, so it belongs to no single app or project — the `storage:reconcile`
         # shape (a resource TYPE with no id), with `database` as the subject.
         resource_type="database",
-        # Counts only (security.md): never a database name, never a role name, never a host.
+        # Counts only: never a database name, never a role name, never a host.
         detail={
             "orphanedDatabases": report.databases.orphaned,
             "unknownAgeDatabases": report.databases.unknown_age,
@@ -1638,8 +1611,7 @@ async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployRe
 
     A SIBLING of the other three in every operational respect: superadmin-gated, operator-invoked,
     headless-friendly (the admin router declares no CSRF, so `curl -b "session=<jwt>"` works),
-    idempotent, and audited with COUNTS ONLY — a deployment id or an app name would make the trail
-    an inventory of who deployed what (`.claude/rules/security.md`).
+    idempotent, and audited with COUNTS ONLY.
 
     Deliberately NOT gated on `DEPLOY__RECONCILE_ENABLED`. That flag switches off the CLOCK (the
     scheduled pass in `src/workers/deploy_reconcile.py`); an operator who has silenced the timer
@@ -1648,16 +1620,14 @@ async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployRe
 
     SAFE TO PRESS AT ANY TIME, including alongside the other two things that reconcile: the
     scheduled pass on the worker (`src/workers/deploy_reconcile.py`) and the API's boot one-shot
-    (`main._reconcile_interrupted_deploys`). It used to name "the in-process loop" as the second
-    of those — U15 deleted that `while True` from the lifespan, and `main.py`'s own docstring is
-    the authority. Staleness is measured from `heartbeat_at`, so a live pipeline is never in the
-    work list at all, and every terminal write is guarded on `status = 'running'` — of two racing
-    reconcilers exactly one settles a given row and the other learns it lost.
+    (`main._reconcile_interrupted_deploys`). Staleness is measured from `heartbeat_at`, so a live
+    pipeline is never in the work list at all, and every terminal write is guarded on
+    `status = 'running'` — of two racing reconcilers exactly one settles a given row and the
+    other learns it lost.
 
-    The publish client is resolved HERE, in the body, never as an eager `Depends`: a dependency
-    that raises at solve time turns this route's documented 503 into an undocumented 500 (commit
-    6be7a9c). An unconfigured `DEPLOY__*` block therefore 503s, which is the honest answer — there
-    is nothing to reconcile *with*.
+    The publish client is resolved HERE, in the body, never as an eager `Depends`: this route
+    documents a 503 and must be able to answer with it. An unconfigured `DEPLOY__*` block
+    therefore 503s, which is the honest answer — there is nothing to reconcile *with*.
 
     A 200 FROM THIS ROUTE DOES NOT MEAN THE FLEET IS SETTLED, and the difference is worth knowing
     before you act on the number. `reconcile_stalled_deployments` **never raises** — by design, so
@@ -1666,8 +1636,6 @@ async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployRe
     logged. Either way the pass completes and returns a `resolved` count that is simply lower.
     So the two failures are NOT the same answer: unconfigured is a 503, unreachable ARM is a 200
     with rows deferred, visible only as `deployment_reconcile_deferred` / `_failed` in the logs.
-    An earlier version of this docstring claimed they were identical; they are not, and a 200 read
-    as "everything settled" is exactly the misleading answer it was trying to avoid.
 
     It opens its OWN sessions through `async_session_factory` rather than borrowing the request's:
     each row is settled and committed independently, so a slow ARM call on row three cannot hold a
@@ -1687,7 +1655,7 @@ async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployRe
         # TYPE with no id), with `deployment` as the subject.
         resource_type="deployment",
         resource_id=None,
-        # Counts only (security.md): never a deployment id, never an app name, never a URL.
+        # Counts only: never a deployment id, never an app name, never a URL.
         detail={"resolved": resolved},
     )
     await db.commit()
@@ -1781,10 +1749,10 @@ async def list_users(
     q: SearchQuery = None,
 ) -> UsersResponse:
     """Keyset page of the roster, newest-first, optionally filtered by a case-insensitive
-    email/display-name substring (KD-1 — replaces the unbounded full-table load). Each row
-    carries raw + effective limits, the suspension marker, and today's folded token spend.
-    Overrides and usage are fetched for the PAGE in one query each — the usage read is a
-    single `GROUP BY user_id` aggregate keyed to the IST day, never a per-row N+1 (R9)."""
+    email/display-name substring. Each row carries raw + effective limits, the suspension
+    marker, and today's folded token spend. Overrides and usage are fetched for the PAGE in one
+    query each — the usage read is a single `GROUP BY user_id` aggregate keyed to the IST day,
+    never a per-row N+1."""
     after = parse_cursor(cursor)
     search = clean_search(q)
     limit = clean_limit(limit)

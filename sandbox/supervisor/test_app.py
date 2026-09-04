@@ -114,10 +114,10 @@ def test_child_env_carries_the_npm_and_node_runtime_names() -> None:
 
 
 def test_child_env_sets_ci_so_clis_refuse_to_prompt() -> None:
-    # F4: no TTY reaches a demoted child, so an interactive CLI (drizzle-kit's rename-vs-create
-    # disambiguation, npm/next confirmations) would block on stdin until the timeout burned — the
-    # 600s hang the walkthrough QA hit. CI=1 makes well-behaved tools fail fast. It is set before
-    # `extra`, so a step that genuinely needs CI unset can still override it.
+    # No TTY reaches a demoted child, so an interactive CLI (drizzle-kit's rename-vs-create
+    # disambiguation, npm/next confirmations) would block on stdin until the timeout burned.
+    # CI=1 makes well-behaved tools fail fast. It is set before `extra`, so a step that
+    # genuinely needs CI unset can still override it.
     assert _child_env()["CI"] == "1"
     assert _child_env({"CI": "0"})["CI"] == "0"
 
@@ -140,16 +140,14 @@ def test_exec_closes_child_stdin_so_a_prompt_cannot_hang(monkeypatch: pytest.Mon
 
 
 def test_a_manufactured_tty_is_refused_before_it_can_hang(monkeypatch: pytest.MonkeyPatch) -> None:
-    """F4 — the escalation the trace actually recorded. Told to run a prompting
-    `drizzle-kit generate`, the agent worked AROUND the closed stdin by manufacturing a
-    terminal, and the command then sat at its prompt for 4m09s until the timeout fired. A real
-    pty defeats every `isTTY` check, so this is the only layer that can refuse it.
+    """A manufactured terminal is refused before it can reach `subprocess.run` — a real pty
+    defeats every `isTTY` check, so this is the only layer that can refuse it.
 
     Refused as a normal exit-1 result with a correctable message, not an HTTP error: the caller
     is a model, and a 4xx reads as an opaque tool failure it cannot learn anything from.
 
     Mutation-check: delete the `_refuse_a_manufactured_tty` call in `exec_cmd` and the pty case
-    reaches `subprocess.run` — in production, that is the four-minute hang.
+    reaches `subprocess.run`.
     """
     spawned: list[list[str]] = []
 
@@ -172,12 +170,9 @@ def test_a_manufactured_tty_is_refused_before_it_can_hang(monkeypatch: pytest.Mo
         # The message must name the way OUT, not just say no — a refusal the model cannot act
         # on just becomes another workaround attempt.
         assert "non-interactively" in body["stderr"], cmd
-        # ...and the way out it names must be one that WORKS. This assertion used to require
-        # `--name` here. U20 measured drizzle-kit 0.31.10 and found that flag answers nothing:
-        # the rename resolver is an interactive select no flag can satisfy. Pointing the model at
-        # a flag that cannot work is what sent the observed build hunting for a longer flag list.
-        # So this is flipped to an inertness guard — the refusal must NOT prescribe a flag as the
-        # answer — paired with the liveness half, that it still prescribes the real escape.
+        # ...and the way out it names must be one that WORKS. An inertness guard — the refusal
+        # must NOT prescribe a flag as the answer, no flag being able to satisfy the rename
+        # resolver — paired with the liveness half, that it still prescribes the real escape.
         assert "--name" not in body["stderr"], cmd
         assert "ONE kind of schema change per generate" in body["stderr"], cmd
 
@@ -456,9 +451,9 @@ def test_child_env_admits_the_database_url() -> None:
 
 
 def test_redactor_strips_the_dsn_and_its_password_sub_token() -> None:
-    # `_redact` is a blind whole-VALUE substring replace, so the whole DSN and its password are two
-    # DIFFERENT registrations covering two different leaks — assert both, on lines where only one
-    # of the two forms appears (a line carrying both would pass with either registration alone).
+    # The whole DSN and its password are two DIFFERENT registrations covering two different
+    # leaks — assert both, on lines where only one of the two forms appears (a line carrying
+    # both would pass with either registration alone).
     password = "Sup3rSecretRolePassw0rd"  # noqa: S105 — a test fixture, not a real credential
     os.environ["BIAL_DATABASE_URL"] = _DSN
     try:
@@ -763,8 +758,7 @@ def test_the_probe_gives_up_on_a_peer_that_trickles_header_bytes() -> None:
 def test_the_probe_counts_a_bound_but_silent_port_as_not_serving() -> None:
     # A connection ACCEPTED but never answered is the compile window, and excluding it is the
     # whole point of the unit. A two-tier "accepted counts as serving" rule would latch `ready`
-    # True during exactly the window this exists to exclude: `next dev` binds and accepts the
-    # instant it starts, then holds the request open while Turbopack compiles.
+    # True during exactly that window.
     with _bound_but_silent_port() as port:
         assert sup._dev_port_serving(port=port, timeout=0.5) is False
 
@@ -792,11 +786,8 @@ def test_dev_status_is_ready_when_the_root_route_500s(monkeypatch: pytest.Monkey
 def test_dev_status_is_not_ready_while_the_route_is_still_compiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """THE defect being fixed. `next dev` prints its ready marker as soon as it is listening and
-    then holds the first request open while the route compiles; `ready` used to latch on that
-    marker alone, so the preview framed onto a blank page and every `/dev/status` consumer
-    believed a still-compiling app was up. Marker printed, child alive, port bound, nothing
-    answered yet -> NOT ready."""
+    """Marker printed, child alive, port bound, nothing answered yet -> NOT ready. The marker
+    may not latch `ready` on its own."""
     with _bound_but_silent_port() as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", _FakeProc(None))
@@ -948,9 +939,8 @@ def test_a_probe_thread_that_cannot_start_hands_the_single_flight_slot_back(
 def test_dev_start_refuses_while_something_serves_the_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The door KTD-1 closes: with an unowned server holding the port, Next 13.4+ does NOT
-    fail to bind — it falls back to the next free port and still prints "Ready in", minting a
-    sticky marker-`ready` child that Caddy never proxies. The start must refuse instead."""
+    """With an unowned server already holding the port, the start must refuse rather than
+    spawn."""
     monkeypatch.setattr(sup._Dev, "proc", None)
     monkeypatch.setattr(sup, "_dev_port_bound", lambda *a: True)
 
@@ -1056,16 +1046,14 @@ def test_next_cache_stays_gitignored_and_untracked() -> None:
 def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE DOUBLE-SPAWN WINDOW U1/U2 made routine. The relaunch attach arm and the Write
-    turn's boot-at-attach now call `/dev/start` against containers that are ALREADY running a
-    dev server — and a server mid-recompile accepts the connection and answers nothing, which is
-    exactly what `_bound_but_silent_port` reproduces. The old guard asked "did anything ANSWER
-    within a second?", read that as an empty port, and spawned a second `next dev`; Next then
-    port-falls-back to a port Caddy does not proxy, and two Turbopack processes share a
-    memory-capped ACA container (the `exit_code 137` this codebase already handles).
+    """The relaunch attach arm and the Write turn's boot-at-attach call `/dev/start` against
+    containers that are ALREADY running a dev server, and a server mid-recompile accepts the
+    connection and answers nothing — exactly what `_bound_but_silent_port` reproduces. Asking
+    "did anything ANSWER within a second?" reads that as an empty port and spawns a second child.
 
-    The port being OCCUPIED is what triggers the fallback, so occupancy is what the guard asks.
-    Mutation check: point `dev_start` back at `_dev_port_serving` and the spawn below fires."""
+    Occupancy is what the guard asks. Mutation check: point `dev_start` back at
+    `_dev_port_serving` and the spawn below fires."""
+    # Mutation check: point `dev_start` back at `_dev_port_serving` and the spawn below fires.
     with _bound_but_silent_port() as port:
         monkeypatch.setattr(sup, "_DEV_PORT", port)
         monkeypatch.setattr(sup._Dev, "proc", None)  # no owned child — only the unowned server

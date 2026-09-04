@@ -1,17 +1,13 @@
-"""The reaper: reconcile-on-start + the full sweep (C5, KTD-3).
+"""The reaper: reconcile-on-start + the full sweep.
 
-Two entry points, plus a scheduled sweeper that arrived in 1.6.5 and MOVED OUT OF THIS PROCESS
-in U15: `src/workers/sandbox_reap.py` runs `sweep_all` on the Taskiq worker every five minutes
-(`SANDBOX_REAP_CRON`). It was a `while True` in `main.py`'s lifespan until then, and this
-docstring said no such thing existed before that — both statements were false in their turn, so
-read `main.py`'s own "there are no `while True` loops left in this lifespan" paragraph as the
-authority on WHERE the timer lives:
+Two entry points, plus the scheduled caller that drives the second of them —
+`src/workers/sandbox_reap.py`, which runs `sweep_all` on the worker:
 
 * `reconcile_user` runs at the top of every `start`, reaping the requesting user's OWN
   stale lock/registry/heartbeat before acquiring — this closes the "crashed tab → can
   never start again" lockout at the exact moment it matters.
 * `sweep_all` reconciles EVERY registered user; it is idempotent + concurrency-safe
-  (teardown idempotent, value-guarded reaper release), so the scheduled worker task above runs
+  (teardown idempotent, value-guarded reaper release), so the scheduled task above runs
   it unattended and an operator can also trigger it by hand at
   `POST /v1/build-sessions/internal/reap`.
 * `reap_the_container_we_judged` is the janitor's, and it is keyed by CONTAINER NAME rather
@@ -57,15 +53,7 @@ is "this is the only replica", and no second process can make it. So a worker ma
 `tests/services/build_sessions/test_reaper.py::test_no_worker_module_may_certify_death`).
 Raising the replica count is likewise still a deploy-time question, not a runtime guard — a
 process cannot detect its siblings, which is why the origin's Scope Boundaries reject a
-startup assertion — and the per-replica rate-limit store is the other blocker (ADR-0029).
-
-Corrected 2026-08-11 (ADR-0029): the sentence removed here read "There is no in-process
-background sweeper by design" — which flatly contradicted this docstring's OWN opening
-paragraph, added when the 1.6.5 sweeper shipped. Both statements lived in one file for months
-and the false one is the one people quoted. ADR-0011 is now Accepted, and the lease that was
-promised as R10 has since landed (U12) — see the constraint note above for what it did and did
-not unblock. Corrected again on 2026-09-04: that same opening paragraph then outlived the
-lifespan loop it described, which U15 moved onto the worker.
+startup assertion — and the per-replica rate-limit store is the other blocker.
 """
 
 from __future__ import annotations
@@ -110,10 +98,9 @@ _HEX_LOWER = frozenset("0123456789abcdef")
 async def _scan_the_registry_namespace(redis: aioredis.Redis) -> AsyncIterator[str]:
     """SCAN-iterate every registry pattern the namespace currently spans (never `KEYS`).
 
-    Plural because of the R22 dual-read window: during it the namespace is the environment-scoped
-    prefix plus the legacy one (C5). This is only what makes the legacy keys REACHABLE — the read
-    that actually rescues them is the dual-read inside `locks.read_registry`, because this loop
-    hands on a user id, not a record.
+    Plural while the namespace spans both the current prefix and the legacy one. This only makes
+    the legacy keys REACHABLE — the read that rescues them is the dual-read inside
+    `locks.read_registry`, because this loop hands on a user id, not a record.
     """
     for pattern in registry_scan_patterns():
         async for raw_key in redis.scan_iter(match=pattern):
@@ -159,9 +146,8 @@ def is_a_sandbox_name(app_name: str) -> bool:
     """Could this string be a container THIS platform minted? (`manager.app_name_for`.)
 
     THE LAST CHECK BEFORE A STRING BECOMES AN ARM DELETE, and until now there wasn't one. The reap
-    path rebuilds its teardown target from the registry record — the least trustworthy input in
-    the system, by this ADR's own argument: the store it distrusts, the one family with no TTL,
-    written by several code paths, surviving crashes. Whatever that record said got deleted.
+    path rebuilds its teardown target from the registry record — written by several code paths and
+    surviving crashes — and whatever that record said got deleted.
     `reg.get(APP_NAME, "")` even turns a *missing* field into a delete request for `""`.
 
     So the shape is checked rather than assumed: `sbx-` + exactly 28 lowercase hex characters,
@@ -194,12 +180,11 @@ class _Reachable:
     a `None` head as "fall back to the bundle", while the copy can still be taken from a container
     that merely failed to count its commits.
 
-    `uncommitted` RIDES ALONGSIDE `head` BECAUSE A HEAD ALONE STOPPED BEING AN ANSWER (U19). The
-    agent no longer commits as it works, so a turn that wrote files leaves `HEAD` where the last
-    turn's recovery copy was stamped — and a gate handed only the head reads that as preserved and
-    destroys the tree. This field is the difference between "nothing changed since the copy" and
-    "nothing was COMMITTED since the copy". `None` when the probe did not answer, which
-    `confirm_durable_copy` refuses rather than guesses."""
+    `uncommitted` RIDES ALONGSIDE `head` BECAUSE A HEAD ALONE IS NOT AN ANSWER: it is the
+    difference between "nothing changed since the copy" and "nothing was COMMITTED since the
+    copy", and a gate handed only the head reads a turn's uncommitted work as preserved and
+    destroys the tree. `None` when the probe did not answer, which `confirm_durable_copy`
+    refuses rather than guesses."""
 
     handle: SandboxHandle
     head: str | None
@@ -750,11 +735,10 @@ async def sweep_all(
     live = live_users if live_users is not None else set()
     reaped = 0
     failed = 0
-    # EVERY pattern the namespace currently spans, which during the R22 dual-read window is the
-    # environment-scoped one AND the legacy one (C5). Two literals, deliberately: a single
-    # `bial:*:sandbox:registry:*` would reach into OTHER ENVIRONMENTS, which is the whole hazard
-    # R22 closes. A user with a key under both prefixes is visited twice; `reconcile_user` is
-    # idempotent, and `seen` keeps the counts honest anyway.
+    # TWO LITERALS RATHER THAN ONE WILDCARD, deliberately: a single `bial:*:sandbox:registry:*`
+    # would match OTHER ENVIRONMENTS' keys and reap their containers. A user with a key under
+    # both prefixes is visited twice; `reconcile_user` is idempotent, and `seen` keeps the counts
+    # honest anyway.
     seen: set[uuid.UUID] = set()
     async for raw_key in _scan_the_registry_namespace(redis):
         user_uuid = _user_from_registry_key(str(raw_key))

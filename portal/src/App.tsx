@@ -24,12 +24,9 @@ function AuthLoading() {
 }
 
 /**
- * Route guard. Auth state derives from a ONCE-CACHED GET /auth/me (the session
- * context): the session JWT lives in an HttpOnly cookie the SPA cannot read, so
- * the server is the source of truth. bootstrapSession() resolves it once —
- * transparently attempting a silent cookie refresh if the session JWT has
- * expired — and every later navigation reuses the cache with no refetch and no
- * spinner:
+ * Route guard. Auth state derives from a ONCE-CACHED GET /auth/me: the session JWT lives in an
+ * HttpOnly cookie the SPA cannot read, so the server is the source of truth. bootstrapSession()
+ * resolves it once, silently refreshing an expired JWT, and later navigations reuse the cache:
  *   - session cached           → render immediately (no async, no flicker)
  *   - first visit / bootstrap  → spinner while /auth/me resolves; render on hit
  *   - no valid session         → redirect to /login
@@ -107,12 +104,9 @@ export default function App() {
             reached on the apps hostname at `/a/<key>/` (nginx SITE 2), never from here. */}
         <Route element={<RequireAuth><WorkspaceShell /></RequireAuth>}>
           <Route path="/projects/:projectId" element={<ProjectPage />} />
-          {/* One flat chat URL for both kinds, and ONE surface behind it: `ChatRoute` renders
-              `ConversationSurface` whatever the conversation's `kind` is — the kind changes the
-              tools a turn is handed on the server, never which component mounts here. (This
-              used to fork between two pages, which is exactly the branch the unified surface
-              removed.) The project is a breadcrumb resolved from the chat, never a path
-              segment. */}
+          {/* One flat chat URL for both kinds: `ChatRoute` mounts the same surface whatever the
+              conversation is, and the project is a breadcrumb resolved from the chat rather than
+              a path segment. */}
           <Route path="/chat/:chatId" element={<ChatRoute />} />
         </Route>
 

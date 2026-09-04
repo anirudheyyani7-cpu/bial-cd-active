@@ -61,33 +61,23 @@ class BuildSessionStatus(enum.StrEnum):
     FAILED = "failed"  # terminal, UNRECOVERABLE: self-heal exhausted / unrecoverable error.
 
 
-# --- Frozen lock TTL + cadence constants (C3 §3) -----------------------------
-# The Redis key namespace + TTLs are owned by C5; C3 freezes the client-facing
-# cadence. SESSION-API's Wave-1 lock ops set these. There is no portal keep-alive
-# loop anymore (deleted in U13) and no HTTP surface to renew them from a browser
-# (the `lock/renew` / `heartbeat` routes were retired in U28) — the server itself
-# is the only renewer now, in-process, via `locks.py`/`manager.py`/`reaper.py`.
+# --- Frozen lock TTL + cadence constants -------------------------------------
+# The server is the only renewer, in-process, via `locks.py`/`manager.py`/`reaper.py`.
 
-LOCK_TTL_SECONDS = 900  # 15 min — lock auto-expires if not renewed (C5 reaper reconciles).
-# THE TWO CADENCES BELOW HAVE NO RUNTIME READER LEFT, and saying so is the point: they were
-# written for the browser that renewed on a timer, and that caller is gone. What renews now is
-# `manager.on_progress`, which calls `renew_lock` + `write_heartbeat` on every non-terminal
-# progress envelope — so a build in flight renews as fast as it produces frames, not on a clock.
-# They stay as the C3-frozen HEAD-ROOM RATIOS the live TTLs are sized against — each is ⅓ of
-# the TTL beside it, so two renewals may be missed before anything lapses. `test_locks.py::
-# test_lock_ttl_has_renew_headroom` pins the lock half of that inequality; the seconds
-# themselves are pinned by `test_schemas.py::test_cadence_constants_are_the_frozen_c3_values`.
+LOCK_TTL_SECONDS = 900  # 15 min — lock auto-expires if not renewed.
+# THE TWO CADENCES BELOW HAVE NO RUNTIME READER: nothing renews on a clock. `manager.on_progress`
+# renews on every non-terminal progress envelope instead, so a build in flight renews as fast as
+# it produces frames. They stay as the frozen HEAD-ROOM RATIOS the live TTLs are sized against —
+# each is ⅓ of the TTL beside it, so two renewals may be missed before anything lapses, and
+# `test_locks.py::test_lock_ttl_has_renew_headroom` pins the lock half of that inequality.
 LOCK_RENEW_CADENCE_SECONDS = 300  # 5 min — ⅓ TTL, i.e. two renews of head-room.
 HEARTBEAT_CADENCE_SECONDS = 30  # ⅓ of the heartbeat TTL below, on the same ratio.
 HEARTBEAT_TTL_SECONDS = 90  # 3× cadence → tolerate 2 missed beats before idle-teardown.
-# A relaunched preview (#43) holds no lock and renews no heartbeat, so it gets an
-# explicit STAY OF EXECUTION instead: 30 min. Long enough to actually look at the
-# restored app (it is read-only and human-paced — read, click, close, not a
-# multi-minute agentic build that renews as it works), short enough to bound an
-# abandoned container on a metered subscription. Honored by the background sweep
-# only; reconcile-on-start reaps through it (the incoming build needs the slot).
-# A plain module constant like its C3-frozen neighbours above — deliberately NOT a
-# Settings field: it is a frozen protocol constant, not deployment config.
+# The bounded STAY OF EXECUTION written onto a relaunched preview: 30 min. Long enough to
+# actually look at the restored app (it is read-only and human-paced — read, click, close, not
+# a multi-minute agentic build that renews as it works), short enough to bound an abandoned
+# container on a metered subscription. A plain module constant like its frozen neighbours above
+# — deliberately NOT a Settings field: it is a frozen protocol constant, not deployment config.
 RELAUNCH_PREVIEW_STAY_SECONDS = 1800  # 30 min
 
 # --- The R10 wall-clock liveness lease (C5 family 4, ADR-0029 §8) ------------
@@ -337,12 +327,10 @@ class BuildSessionStatusResponse(CamelModel):
     updated_at: datetime
 
 
-# --- Lock operations: force-end (C3 §3) ---------------------------------------
-# U28 retired `acquire` / `renew` / `release` / `heartbeat` along with their response models
-# (`LockStateResponse`, `LockReleaseResponse`, `HeartbeatResponse`) — the portal's keep-alive
-# loop that was their only caller was itself deleted back in U13, and nothing else ever called
-# these routes. `force-end` is the sole survivor of this section, and it carries no request
-# body, same as its four retired neighbours.
+# --- Lock operations: force-end -----------------------------------------------
+# `acquire` / `renew` / `release` / `heartbeat` were retired along with their response models
+# (`LockStateResponse`, `LockReleaseResponse`, `HeartbeatResponse`). `force-end` is the sole
+# survivor of this section, and it carries no request body, same as its four retired neighbours.
 
 
 class ForceEndResponse(CamelModel):
@@ -574,13 +562,8 @@ class QuotaExceededEvent(_ProgressEventBase):
 
 class EndedEvent(_ProgressEventBase):
     """`ended` — the terminal envelope (C7 §3.7). After it, the C3 SSE feed emits
-    `data: [DONE]\\n\\n` and closes. `status` equals `BuildResult.status`.
-
-    SESSION-API is its SOLE emitter, and it emits exactly one per session from
-    `_do_finalize` — AFTER the C4 snapshot commit, so `snapshot_committed` is the true
-    post-commit value (R7). BRAIN never emits it: an `ended` from BRAIN necessarily
-    precedes the snapshot SESSION-API owns, so it could only ever report
-    `snapshot_committed=false`. BRAIN returns its verdict on `BuildResult` instead."""
+    `data: [DONE]\\n\\n` and closes. `status` equals `BuildResult.status`, and exactly one is
+    emitted per session."""
 
     type: Literal["ended"] = "ended"
     # Narrowed to the two terminal members: a terminal frame carrying a non-terminal status
@@ -614,9 +597,8 @@ class BuildResult(BaseModel):
     """BRAIN's structured terminal verdict (C7 §1), returned to SESSION-API
     **in-process** (never serialized to the wire).
 
-    This — NOT an envelope — is how BRAIN's completion travels: SESSION-API renders the one
-    terminal `ended` from it after the C4 snapshot (R7), so `status`/`reason`/`preview_url`
-    here are the source those frame fields are built from."""
+    This — NOT an envelope — is how BRAIN's completion travels back, so `status` / `reason` /
+    `preview_url` here are the source the terminal frame's fields are built from."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -627,10 +609,9 @@ class BuildResult(BaseModel):
     app_id: uuid.UUID  # the built app (app_registry.id == BIAL_APP_ID, C9).
     preview_url: str | None = None  # the live preview URL if the dev server came up, else None.
     last_seq: int  # the final envelope `seq` emitted — reconciles the feed + C3 `status.last_seq`.
-    # BRAIN's at-return-time view, and by construction ALWAYS False: BRAIN returns strictly
-    # BEFORE the C4 snapshot SESSION-API owns. NEVER read this as the answer to "was the work
-    # saved?" — only the terminal `ended` frame carries that truth (R7). Kept solely so the C7 §1
-    # verdict shape stays frozen for the pilot; removing it is a clean U8 follow-up.
+    # ALWAYS False by construction — this value is taken before the snapshot runs. NEVER read it
+    # as the answer to "was the work saved?": only the terminal `ended` frame carries that. Kept
+    # solely so the frozen verdict shape keeps its field.
     snapshot_committed: bool
     error: BuildError | None = None  # populated on `failed`; None on a clean end.
 

@@ -2,19 +2,14 @@
 
 The ordering under test is the one the whole delete path is built around: gather handles →
 delete rows → COMMIT → `salt_the_earth` → sweep. Nothing irreversible outside PostgreSQL's
-own rows happens before the commit that authorizes it, and nothing after the commit is
-allowed to raise — a delete that already succeeded must not 500 because a drop failed.
+own rows happens before the commit that authorizes it, and nothing after it may raise — a
+delete that already succeeded must not 500 because a drop failed.
 
-The interesting scenario is the one the build-session guard does NOT cover. A relaunched
-preview holds no lock (pinned by `test_a_relaunched_preview_does_not_block_the_delete_and_
-is_not_torn_down`) and a deployed container has no interlock at all, so at delete time
-something can still be holding live connections to the app database. `DROP DATABASE ...
-WITH (FORCE)` after the sever — not the guard — is what makes that stop.
-
-Real cluster: the `db_session` rollback cannot undo cluster DDL run on the separate
-AUTOCOMMIT engine, so every database created here is destroyed either by the endpoint under
-test or by the session-scoped hook in `tests/conftest.py`.
-"""
+The build-session guard does not cover every case: a relaunched preview holds no lock and a
+deployed container has no interlock at all, so something can still be holding live
+connections at delete time; `DROP DATABASE ... WITH (FORCE)` after the sever is what stops
+that. Every database created here is dropped by the endpoint under test or by the
+session-scoped hook in `tests/conftest.py`."""
 
 from __future__ import annotations
 
@@ -358,8 +353,8 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
 async def test_a_project_without_a_database_deletes_exactly_as_before(
     app: Any, client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # The unconfigured baseline, fixture-free by construction: no `project_databases` row
-    # means no handles, no teardown call, and no audit row — the pre-ADR-0028 behaviour.
+    # No `project_databases` row means no handles, no teardown call, and no audit row — the
+    # pre-ADR-0028 behaviour.
     user = await UserFactory.create(db_session)
     headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
     project = await ProjectFactory.create(db_session, user.id)

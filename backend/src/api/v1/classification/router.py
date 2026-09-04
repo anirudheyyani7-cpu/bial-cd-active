@@ -29,11 +29,6 @@ EVIDENCE NEVER LEAVES THE ROW (R4/OD-B). The stored documents carry things the c
 must not see — cited locations, the scan block, the per-question scan agreement and the
 downgrade marker (the administrator's dispute presentation, U13's concern). The response
 is built through `ReviewAnswers.of`, which projects verdict + reason and nothing else.
-
-Storage is the one dependency that can be unconfigured, and it arrives through the
-EXISTING shared `OptionalStorage` provider — a `None`-yielding seam, because an eagerly
-raising provider resolves BEFORE the route body and would pre-empt the documented 503
-with an undocumented 500 in the wrong envelope (see `deps.py` for both documented burns).
 """
 
 from __future__ import annotations
@@ -156,10 +151,10 @@ class _SavedVersion:
 
 
 async def _saved_version(storage: ObjectStorage, app_id: uuid.UUID) -> _SavedVersion | None:
-    """HEAD the snapshot blob — metadata only, never the bytes. None means nothing was
-    ever saved (R21's nothing-to-review). A store that will not answer is the documented
-    503, not "nothing saved": unknown must never render as an empty state, and per ASM21
-    publishing reads the same bundle, so nobody is stranded behind this refusal."""
+    """HEAD the snapshot blob — metadata only, never the bytes. `None` means nothing was ever
+    saved. A store that will not answer raises the documented 503 instead of reporting the same
+    `None`: folding the two together would render an unknown as an empty state, telling a citizen
+    there is nothing to review while their saved app sits in a store that is merely unreachable."""
     try:
         meta = await storage.head(snapshot_key(app_id))
     except StorageError as exc:
@@ -296,8 +291,6 @@ async def ensure_review(
     # storage is unbound, so no storage (or service) question may precede this read.
     await owned_project_or_404(db, user.id, project_id)
     if storage is None:
-        # The in-body 503 seam (see the module docstring): storage-off is a supported
-        # posture outside production, not a deploy bug.
         raise AppApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             _FAILURE_SENTENCES[FAIL_STORAGE],

@@ -1,5 +1,5 @@
 """Operator-invoked reconciling sweep: diff object storage against the database and
-reclaim keys that a failed cleanup stranded (R11, R12, R13).
+reclaim keys that a failed cleanup stranded.
 
 Today the ONLY trail of a failed post-commit sweep is a `_log.warning` (`sweep.py:43`,
 `:66`, `projects/delete.py:168`) with no persisted failure list — so a reconciler cannot
@@ -8,8 +8,8 @@ resolve each to an owning row, and delete only a key with NO owner AND older tha
 period. Safe to run at any time, idempotent (two runs converge, the second a no-op), and
 recoverable — a failed cleanup becomes a swept orphan on the next operator run.
 
-THE 24h GRACE IS THE ENTIRE CORRECTNESS ARGUMENT (KD-7). It is what makes the sweep safe to
-run mid-submit / mid-upload (R12): a blob a request is about to record a row for (`put` lands
+THE 24h GRACE IS THE ENTIRE CORRECTNESS ARGUMENT. It is what makes the sweep safe to
+run mid-submit / mid-upload: a blob a request is about to record a row for (`put` lands
 before the `commit`) is FRESH, so the grace protects it. Get the polarity right — the ONLY
 path to "eligible" runs through the grace check (`_reconcile_prefix` below), so a within-grace
 or unknown-age blob is NEVER deleted, even with no owning row. An unknown age (`head()` returns
@@ -24,28 +24,18 @@ Per-prefix rules (get every one right):
   no stored object for any row — a PK-derived diff would flag 100% of `att/` blobs as unowned.
   A PPTX upload also writes a derived `{storage_key}.pdf` sibling that no column points at, so
   the owned-set is built with `_blob_keys_for` (the SAME helper the conversation cascade and the
-  U9 reclaimer use), which yields both `storage_key` and `storage_key + ".pdf"` for a deck — or
-  the sweep permanently deletes the only rendered form the Azure-hosted model can read.
+  never-sent-upload reclaim use), which yields both `storage_key` and `storage_key + ".pdf"` for
+  a deck — or the sweep permanently deletes the only rendered form the Azure-hosted model reads.
 - `snapshots/{app_id}/` — reconciled against `AppRegistry`: a bundle whose `app_id` resolves to
   no row is unowned. Owner diff + grace → delete eligible.
-- `submissions/{app_id}/` — REPORT-ONLY until D7 (submission-bundle retention) is answered. These
-  are the immutable record of what was approved; deleting them is a governance call. The report
-  names the ownerless bundles (`ownerless_submissions`) — that is where U7's residual window and
-  the accepted orphan at `apps/router.py` land, the set D7 must rule on. "No app row" is NOT a
-  licence to delete: an append-only `audit_logs` row (`resource_id` is a plain String, no FK) can
-  outlive the app and still name the bundle via `detail.submissionId`.
+- `submissions/{app_id}/` — REPORT-ONLY until submission-bundle retention is decided. These are
+  the immutable record of what was approved; deleting them is a governance call, and the report
+  names the ownerless bundles (`ownerless_submissions`) for it. "No app row" is NOT a licence to
+  delete: an append-only `audit_logs` row (`resource_id` is a plain String, no FK) can outlive
+  the app and still name the bundle via `detail.submissionId`.
 - `apps/{app_id}/` — REPORT-ONLY. `app_files` was dropped in migration 0017 so `app_file_key` has
   no writer; whether anything exists here in a deployed env cannot be answered from the repo.
   Report first, decide after someone with tenant access looks.
-
-OPERATOR-INVOKED (KD-7): THIS reconciler is not on a schedule — nothing but a superadmin calls it.
-A superadmin drives this endpoint headlessly; a grace-period sweep that nothing calls
-reclaims nothing, so the runbook says operator-invoked plainly rather than implying automation.
-
-Corrected 2026-08-11 (ADR-0029): this said "there is no scheduler in this repo and an in-process
-one was deliberately rejected". False when written (a 300 s sandbox sweeper had run in the lifespan
-since v1.6.5) and doubly false now that ADR-0011 is Accepted. Only the narrower claim above holds;
-scheduling this sweep is available and unclaimed.
 
 FAILURES SURFACE, they are not swallowed. Unlike the best-effort post-commit `sweep_blobs`, a
 `StorageError` from the walk / head / delete propagates UP (→ 503 at the endpoint, retryable) —
@@ -69,17 +59,17 @@ from src.db.models.app_registry import AppRegistry
 from src.db.models.attachment import Attachment
 
 # REUSED, not reimplemented (drift guard): the owned-set for `att/` derives blob keys — including
-# each deck's `{key}.pdf` sibling — through the SAME helper the conversation cascade and the U9
-# reclaimer use, so a key shape one honours is honoured here too.
+# each deck's `{key}.pdf` sibling — through the SAME helper the conversation cascade and the
+# never-sent-upload reclaim use, so a key shape one honours is honoured here too.
 from src.services.conversations.delete import _blob_keys_for
 from src.services.storage.base import ObjectStorage
 from src.services.storage.listing import all_keys_under
 
 _log = structlog.get_logger()
 
-# The err-long grace (KD-7, D6): 24 hours, a large multiple of the longest realistic submit /
-# upload transaction. Too short deletes citizen source for which the blob is the only copy; too
-# long costs a few hours of stored bytes. Size it long.
+# The err-long grace: 24 hours, a large multiple of the longest realistic submit / upload
+# transaction. Too short deletes citizen source for which the blob is the only copy; too long
+# costs a few hours of stored bytes. Size it long.
 RECONCILE_GRACE = datetime.timedelta(hours=24)
 
 # Bound the per-key head()/delete() fan-out so a large first run doesn't open an unbounded number
@@ -102,9 +92,10 @@ _APPS_ROOT = "apps/"
 
 @dataclass(frozen=True)
 class PrefixCounts:
-    """What one prefix's reconciliation found. Counts ONLY — never a key list (R13 posture:
-    dumping storage keys leaks the internal layout). `scanned == owned + within_grace + eligible`
-    always; `deleted <= eligible` (and `deleted == 0` on a report-only prefix)."""
+    """What one prefix's reconciliation found. Counts ONLY, never a key list: the list would
+    carry the storage layout out with every report that travels.
+    `scanned == owned + within_grace + eligible` always; `deleted <= eligible` (and
+    `deleted == 0` on a report-only prefix)."""
 
     scanned: int
     owned: int
@@ -116,8 +107,8 @@ class PrefixCounts:
 @dataclass(frozen=True)
 class StorageReconcileReport:
     """The whole sweep's outcome: per-prefix counts plus the ownerless-submission tally as its
-    own named field (the D7 set). Frozen, mirroring the `AttachmentReclaimResult` value-type
-    idiom — the router maps it to the professional API response."""
+    own named field. Frozen, mirroring the `AttachmentReclaimResult` value-type idiom — the
+    router maps it to the professional API response."""
 
     attachments: PrefixCounts
     snapshots: PrefixCounts
@@ -125,7 +116,7 @@ class StorageReconcileReport:
     submissions: PrefixCounts
     apps: PrefixCounts
     # Ownerless submission bundles past grace — `submissions/{app_id}/` blobs whose `app_id`
-    # resolves to no `AppRegistry` row. Report-only; the D7 governance call rules on these.
+    # resolves to no `AppRegistry` row. Report-only; a governance call rules on these.
     ownerless_submissions: int
 
 
@@ -260,7 +251,7 @@ async def reconcile_orphaned_storage(
     recovery_counts = await _reconcile_prefix(
         storage, _RECOVERY_ROOT, _owned_by_app_row(app_ids), cutoff=cutoff, delete_eligible=True
     )
-    # Report-only (D7): the immutable approval record — surface, never delete.
+    # Report-only: the immutable approval record — surface, never delete.
     submissions_counts = await _reconcile_prefix(
         storage,
         _SUBMISSIONS_ROOT,
@@ -281,7 +272,7 @@ async def reconcile_orphaned_storage(
         apps=apps_counts,
         # The ownerless-submission set = unowned + past-grace under `submissions/`. Within-grace
         # ownerless bundles are omitted on purpose: a fresh one may be a legitimate in-flight
-        # submit (R12), and it becomes "ownerless" only once it ages past the grace with no row.
+        # submit, and it becomes "ownerless" only once it ages past the grace with no row.
         ownerless_submissions=submissions_counts.eligible,
     )
     _log.info(

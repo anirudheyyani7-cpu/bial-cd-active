@@ -1,34 +1,17 @@
 /**
- * THE ONE CONTROL THAT STARTS THE APP (Plan F, U3).
- *
- * ═══ IT RENDERS THE MAP'S ACTION, AND THE MAP HAS NO DESTRUCTIVE VERB ═══
+ * THE ONE CONTROL THAT STARTS THE APP.
  *
  * Three action members exist — start, retry, and go to the project that holds the workspace — and
  * this component renders whichever one it is handed. There is no fourth, so no unreadable signal
- * can reach a teardown or a restore FROM HERE. That is a fact about the client's vocabulary and
- * this file will not claim more: what `POST /relaunch` does when the word is pressed is the
- * server's, proved in `backend/tests/api/v1/build_sessions/test_preview_state.py`.
+ * can reach a teardown or a restore FROM HERE; what `relaunch_preview` then does with the press is
+ * the server's, and is proved by its own tests.
  *
- * ═══ KNOW WHAT IS ON THE OTHER END OF THIS BUTTON ═══
- *
- * `relaunchPreview` → `POST /v1/build-sessions/relaunch` → `relaunch_preview`, which has two arms.
- * The ATTACH arm is safe: it reuses the live container, and since the SL-20 fix it fails open on a
- * readiness timeout rather than marking the registry `ending`. The RESTORE arm is not: it tears the
- * live container down before pulling the last saved bundle. This plan added the guard that keeps an
- * unreadable attach OUT of the restore arm, because that is the arm this control enters and it was
- * the recorded data-loss path with the guard missing.
- *
- * A stale-registry read of `asleep` against a container that is in fact live is still reachable —
- * the registry hash has no TTL, so an API restart orphans live containers. This control's job there
- * is to issue one ordinary start and surface whatever the server answers, INCLUDING a refusal. It
- * does not retry on its own, escalate, or offer a recovery verb: the container's survival in that
- * case is the server's to guarantee, and a client that invented a remedy would be guessing.
- *
- * ═══ MARKED UNAVAILABLE, NEVER DISABLED ═══
- *
- * `aria-disabled`, not `disabled`. Disabling a control that currently has focus blurs it to
- * `document.body`, which drops a keyboard user out of the interface at the exact moment something
- * is happening. The name and the reason stay on it throughout.
+ * That restraint is load-bearing, because the press lands on one of that route's two arms and the
+ * restore arm tears the live container down before it pulls the last saved bundle. So the press is
+ * one ordinary start, and whatever comes back — INCLUDING a refusal — is surfaced as it stands:
+ * this control never retries on its own, escalates, or offers a recovery verb. The workspace read
+ * behind it can be stale, and a remedy invented here would be guessing on top of a reading the
+ * browser cannot check.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -53,8 +36,8 @@ export default function StartAppControl({ action, report }: StartAppControlProps
   const [pending, setPending] = useState(false)
   // TWO GUARDS, AND THEY ARE NOT THE SAME GUARD. The ref is synchronous, so two presses in one
   // tick collapse to one request — state would not have committed between them. `mounted` is what
-  // keeps every `await` below from writing into a component the citizen has already navigated away
-  // from, which is L6's rule for a start sequence.
+  // keeps every `await` below from writing into a component the citizen has already navigated
+  // away from.
   const inFlight = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
@@ -169,8 +152,8 @@ export default function StartAppControl({ action, report }: StartAppControlProps
 /**
  * Anything the server named, carried verbatim; anything it did not, called a timeout.
  *
- * The distinction is R4b's: a start that does not end in a running app says WHICH WAY it ended, and
- * "we waited and nothing came back" is a different sentence from "the server said why".
+ * A start that does not end in a running app says WHICH WAY it ended: "we waited and nothing came
+ * back" is a different sentence from "the server said why".
  */
 function outcomeFor(err: unknown): StartOutcome {
   // An `ApiError` means the server answered and said something. Anything else — an aborted fetch,
@@ -192,8 +175,8 @@ function Control({ label, pending, pendingLabel, icon, onPress }: ControlProps) 
   return (
     <button
       type="button"
-      // `aria-disabled`, NEVER `disabled` — see the docblock. The click handler checks the same
-      // flag, so the control is inert without being unfocusable.
+      // `aria-disabled` does not stop a click — the handler's own check on the same flag is what
+      // makes this inert. Drop either half and the control says it is unavailable and fires anyway.
       aria-disabled={pending}
       aria-label={pending ? `${label} — ${pendingLabel}` : label}
       onClick={() => {

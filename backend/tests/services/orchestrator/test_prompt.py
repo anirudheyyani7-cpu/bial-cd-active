@@ -401,11 +401,10 @@ def test_app_boots_with_the_emptied_journal_and_prints_no_migration_failure() ->
 
 
 def test_prompt_teaches_the_drizzle_migration_discipline() -> None:
-    """U4/R5 — the app owns its schema through Drizzle, and the migration files are the only
-    thing that carries that schema across a snapshot restore. Three load-bearing claims:
-    `generate` writes a versioned file, the files under `drizzle/` stay in the workspace, and the
-    schema-mutating `push` shortcut is banned (it applies changes with no migration file, so a
-    restore returns code that expects tables the database does not have)."""
+    """The app owns its schema through Drizzle, and the migration files are the only thing that
+    carries that schema across a snapshot restore. Three load-bearing claims: `generate` writes a
+    versioned file, the files under `drizzle/` stay in the workspace, and the schema-mutating
+    `push` shortcut is banned."""
     prompt = BUILD_SYSTEM_PROMPT
     lowered = prompt.lower()
     assert "db/schema.ts" in prompt
@@ -595,14 +594,12 @@ def test_the_template_offers_no_second_spelling_of_the_generate_command() -> Non
 
 
 def test_the_migration_name_claims_only_what_naming_actually_buys() -> None:
-    """★ U20 / R26 / ASM28, carried onto U23's argument — THE FLIPPED CLAIM.
+    """The `--name` bullet may claim only what naming actually buys.
 
-    The prompt used to read "ALWAYS pass `--name`: without it the command PROMPTS when the diff
-    is ambiguous ... so it hangs until it is killed." A smoke against the template's pinned
-    `drizzle-kit@0.31.10` says otherwise: a bare generate over an unambiguous diff exits 0 and
-    writes `drizzle/0001_special_fantastic_four.sql` — a RANDOM NAME, not a hang. The flag is the
-    composite's `what_changed` argument now, and it may still only claim what it buys, or the
-    model reasons from a mechanism that does not exist."""
+    A readable filename is all it buys; the hang and the ambiguity prompt belong to the rename
+    resolver, and `sandbox/template/db/schema.ts` sets that out. The flag is the composite's
+    `what_changed` argument now, and a bullet that claims either leaves the model reasoning from
+    a mechanism that does not exist."""
     database = _database_block(BUILD_SYSTEM_PROMPT)
     name_rule = database[database.index("`what_changed` names") :].split("\n", 1)[0].lower()
 
@@ -617,14 +614,12 @@ def test_the_migration_name_claims_only_what_naming_actually_buys() -> None:
 
 
 def test_the_prompt_teaches_the_split_that_actually_unblocked_the_wedged_build() -> None:
-    """★ U20 / ASM28 — the one-change-per-generate rule now owns the REAL reason.
+    """The one-change-per-call rule has to carry the rename resolver's real failure mode.
 
-    Verified by smoke, both ways round: under a TTY the rename resolver ("is `label` created, or
-    renamed from `title`?") waits forever — that is the 4m09s stall — and `--name` does not
-    answer it. Under the sandbox's real `stdin=DEVNULL` it is worse: drizzle-kit prints
-    "Interactive prompts require a TTY terminal" to stderr, writes no migration, and EXITS 0. A
-    model taught only "it hangs" reads that zero exit as success and builds on a schema change
-    that never happened, so the zero exit is the half that must be said out loud."""
+    `sandbox/template/db/schema.ts` records what that resolver does under a terminal and under
+    the sandbox's closed stdin. The half the prompt must say out loud is the zero exit code: a
+    model taught only "it hangs" reads that zero as success and builds on a schema change that
+    never happened."""
     database = _database_block(BUILD_SYSTEM_PROMPT).lower()
     assert "one kind of change per call" in database
     assert "rename" in database
@@ -663,10 +658,10 @@ def test_the_two_step_sequence_is_no_longer_the_taught_path_but_the_tty_defences
     accident. The composite's cleanest failure — the rename resolver — is only FAST because of
     three defences in `sandbox/supervisor/app.py`: `CI=1` (well-behaved tools refuse to prompt),
     `stdin=DEVNULL` (drizzle-kit's prompt renderer probes `process.stdin.isTTY` and fails fast
-    against a closed one), and `_refuse_a_manufactured_tty` (the agent's `pty.spawn` workaround,
-    which bought the observed 4m09s stall). Remove any one and this tool's crispest detection
-    becomes a wedged command running to its timeout — with every assertion in this file still
-    green, because none of them is about that file. This one is."""
+    against a closed one), and `_refuse_a_manufactured_tty` (which closes the agent's `pty.spawn`
+    workaround). Remove any one and this tool's crispest detection becomes a wedged command
+    running to its timeout — with every assertion in this file still green, because none of them
+    is about that file. This one is."""
     database = _database_block(BUILD_SYSTEM_PROMPT)
     # INERTNESS — the sequence is not the prescribed path any more.
     assert "run_command([" not in database

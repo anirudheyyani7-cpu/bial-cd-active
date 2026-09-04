@@ -1,4 +1,4 @@
-"""Server-authoritative daily-token gate + accounting (R13, R30).
+"""Server-authoritative daily-token gate + accounting.
 
 The single source of truth the SPA cannot bypass. Three responsibilities:
 
@@ -18,11 +18,11 @@ pydantic-ai `input_tokens` is the GRAND-TOTAL prompt size with the two cache cla
 folded in (`cache_read`/`cache_write` are sub-buckets INSIDE it, not additive siblings — the
 opposite of the raw Anthropic API, whose `input_tokens` is exclusive of cache), so fresh is
 input minus both cache classes. Two historical wrong turns pinned here: re-ADDING the cache
-columns double-counts the prefix (~2x, the Express port's F0 bug), and billing them at FACE
+columns double-counts the prefix (~2x, as the Express port did), and billing them at FACE
 value let one agentic build book ~956k of a 1M cap on 68 fresh tokens (2026-07-30). The raw
 four-class ledger stays untouched — weighting is read-side policy.
 
-`used` also counts `build` rows ONLY (U15): the pre-publish classification review records
+`used` also counts `build` rows ONLY: the pre-publish classification review records
 its spend on the `review` kind — metered against the citizen for attribution, never part of
 what their cap measures — so no sequence of reviews can change what `enforce_daily_limit`
 decides.
@@ -208,7 +208,7 @@ async def _used_today(db: AsyncSession, user_id: uuid.UUID, day: datetime.date) 
     """Today's billable BUILD token total for the user (0 when no row yet): the cost-weighted
     spend, via the shared `billable_spend` expression so it can never drift from the admin
     roster's number. The `kind == build` predicate is deliberate and lives HERE, not inside
-    `billable_spend` (U15/ASM14): only build spend is the citizen's to pay — review rows are
+    `billable_spend`: only build spend is the citizen's to pay — review rows are
     metered for attribution and must never move what this gate (and through it the daily cap,
     default or overridden) decides, or opening the publish dialog would silently spend build
     budget the citizen never chose to spend."""
@@ -238,7 +238,7 @@ async def usage_today(db: AsyncSession, user_id: uuid.UUID) -> UsageSnapshot:
 
 async def enforce_daily_limit(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Raise `DailyTokenLimitExceededError` when today's usage is at/over the effective cap.
-    Called BEFORE any stream byte (U13). `used >= limit` matches Express's at-or-over gate."""
+    Called BEFORE any stream byte. `used >= limit` matches Express's at-or-over gate."""
     day = ist_today()
     used = await _used_today(db, user_id, day)
     limit = await effective_daily_limit(db, user_id)
@@ -258,9 +258,9 @@ async def record_usage(
 ) -> None:
     """Atomically fold a turn's token spend into today's row FOR ITS KIND (add in SQL, no
     lost update). Does NOT commit — the caller owns the transaction so the turn-persist and
-    the usage write commit together (U13). Parity with Express's atomic `$inc`.
+    the usage write commit together. Parity with Express's atomic `$inc`.
 
-    `kind` defaults to `build` on purpose (U15): every call site that predates the dimension
+    `kind` defaults to `build` on purpose: every call site that predates the dimension
     is a build writer, so none had to be touched to stay correct. Only the pre-publish
     classification review passes `review` — spend the gate meters but never bills."""
     day = ist_today()
@@ -325,48 +325,37 @@ class AtLimitEnding:
 async def at_limit_ending(
     workspace: SecurableWorkspace | None, *, sentence: str | None = None
 ) -> AtLimitEnding:
-    """Make the citizen's work durable, THEN tell them why the turn is ending (R31, AE18, R91).
+    """Make the citizen's work durable, THEN tell them why the turn is ending.
 
-    THE ORDER IS THE POINT. What this replaces told the user "your changes are still in the
-    workspace — click Save to keep them", which secured nothing and asserted something nobody
-    had checked. Whether the work actually survived depended entirely on the turn's exit path
-    getting round to its best-effort autosave — an autosave that is deliberately swallowed, so
-    on the day it failed the citizen had already been told it had not. Between that sentence and
-    the reaper there is nothing but the citizen noticing the word "Save" in a paragraph they had
-    every reason to skim.
-
-    So the copy is taken HERE, on the way out of the model loop, and it is confirmed before the
-    turn's `finally` pardons the container and hands it to the reclamation path. The write goes
-    through `write_recovery_copy` rather than a raw `put`, which means it inherits U3's guard:
-    a tree that is not a descendant of the copy on record is diverted rather than promoted, so
-    the one path that MOST wants to be helpful can still never overwrite good work with bad.
+    THE ORDER IS THE POINT. The copy is taken HERE, on the way out of the model loop, and it is
+    confirmed before the turn's `finally` pardons the container and hands it to the reclamation
+    path: a sentence that tells the citizen their changes are safe before anything has checked
+    is a claim, not a save. The write goes through `write_recovery_copy` rather than a raw
+    `put`, so it inherits that function's guard — a tree that is not a descendant of the copy
+    on record is diverted rather than promoted, and the one path that MOST wants to be helpful
+    still cannot overwrite good work with bad.
 
     A FAILURE CHANGES THE SENTENCE AND RAISES AN ALARM — it does not raise an exception. The
-    citizen is at their limit either way and still has to be told; swallowing the failure
-    silently is what made the 2026-08-18 reframe unfalsifiable, and failing the turn over a
+    citizen is at their limit either way and still has to be told, and failing the turn over a
     safety net would turn a budget message into a crash. Both halves of that trade are what
     `RECOVERY_WRITE_DID_NOT_LAND_EVENT` exists for.
 
     `workspace` is `None` for a turn that never took a container, and it has nothing to secure.
     That is the one case where the reassurance is withheld without anything having gone wrong,
     which is why the wording of `COULD_NOT_KEEP_A_COPY` asks the reader to save rather than
-    announcing a fault. It USED to say "an Ask or Plan turn can reach the cap too", and both
-    halves of that stopped being true: Ask is not a chat kind any more, and a Plan turn pins the
-    live container exactly as a Build turn does (`engine._pin_workspace` has ONE ARM for both
-    kinds). Today the `None` arm is the defensive one — this function's only callers are on the
-    Build path, which always attaches — so it is a shape this signature keeps rather than a
-    traffic pattern, pinned by `test_at_limit.py`'s two `at_limit_ending(None)` cases.
+    announcing a fault. The arm is defensive rather than a traffic pattern — every caller is on
+    the Build path, which always attaches — so it is a shape this signature keeps, pinned by
+    `test_at_limit.py`'s two `at_limit_ending(None)` cases.
 
-    ★ TWO ENDINGS, ONE SECURING PATH, AND THAT IS WHY `sentence` IS A PARAMETER (U13/R91). The
-    per-run spend bound has to end a turn exactly the way the daily budget does — copy taken
-    here, on the way out of the model loop, confirmed before the turn's `finally` pardons the
-    container — and it says something different when it gets there. Writing a second function
-    to do that would put a second snapshot→teardown ordering on the one path in this codebase
-    where getting the ordering wrong loses a citizen's tree.
+    ★ TWO ENDINGS, ONE SECURING PATH, AND THAT IS WHY `sentence` IS A PARAMETER. The per-run
+    spend bound has to end a turn exactly the way the daily budget does, and it says something
+    different when it gets there. Writing a second function to do that would put a second
+    snapshot→teardown ordering on the one path in this codebase where getting the ordering
+    wrong loses a citizen's tree.
 
     So the caller passes its own `copy.py` constant and everything above stays exactly as it
     is. `sentence` must carry a `{kept}` field and nothing else; omitting it keeps the daily
-    budget's own wording, which also keeps that path's bytes unchanged by this refactor.
+    budget's own wording.
     """
     # FUNCTION-SCOPED FOR THE PACKAGE CYCLE, exactly as `orchestrator/selfheal.py` documents its
     # own. `src.services.build_sessions.__init__` reaches `manager` → `appdata` →
@@ -421,9 +410,8 @@ async def at_limit_ending(
                 taken_at=datetime.datetime.now(datetime.UTC),
             )
     except Exception:
-        # The bundle, the base64 read back, or the upload itself did not complete. This is the
-        # `failed` arm the alarm's docstring names, and it is raised from a CALL SITE because
-        # the call site is the only place that knows the write threw.
+        # The bundle, the base64 read back, or the upload itself did not complete — the
+        # alarm's `failed` reason.
         _log.error(
             RECOVERY_WRITE_DID_NOT_LAND_EVENT,
             app_id=str(workspace.app_id),
@@ -434,11 +422,9 @@ async def at_limit_ending(
         return _say(secured=False)
 
     # DIVERTED is the guard refusing to promote this tree. It already alarmed on its way past,
-    # with the two heads that explain the refusal attached, so re-raising the event here would
-    # double-count the one outcome an operator counts. What it must NOT do is claim safety: the
-    # bytes are preserved under the divert prefix, but the copy a restore would hand back is
-    # still the older one, and telling the citizen otherwise is the false reassurance this whole
-    # unit exists to remove.
+    # so re-raising the event here would double-count the one outcome an operator counts. What
+    # it must NOT do is claim safety: the bytes are preserved under the divert prefix, but the
+    # copy a restore would hand back is still the older one, so `secured` stays false.
     secured = written.outcome in (RecoveryOutcome.WRITTEN, RecoveryOutcome.SKIPPED)
     if not secured:
         await _count_a_missed_copy(workspace.app_id)
@@ -446,7 +432,7 @@ async def at_limit_ending(
 
 
 async def _count_a_missed_copy(app_id: uuid.UUID) -> None:
-    """Record that a turn's work did not reach the recovery slot (U25).
+    """Record that a turn's work did not reach the recovery slot.
 
     THE SAME RECORD `manager.py` WRITES at the turn boundary, and it has to be written here too or
     the counter that exists to settle "did the platform fail to CHECK the workspace or fail to make

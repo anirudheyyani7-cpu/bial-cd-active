@@ -74,8 +74,8 @@ def test_before_the_mark_it_does_not() -> None:
 
 
 def test_a_container_with_no_trustworthy_age_is_never_drained() -> None:
-    """An untagged container escalates to a human under AE2; draining it would be acting on a
-    guess about its age, which is the one thing R2 exists to forbid."""
+    """An untagged container is escalated to a human, never drained. Why an age Azure reports
+    is not trusted lives in `inventory.py`."""
     untagged = identity_from_tags({})
 
     assert draining_at(untagged, enabled=True, after_hours=24) is None

@@ -1,18 +1,14 @@
 """Conversations HTTP endpoints — user-scoped chat headers (list / get / patch / delete)
-plus the project's canonical builder thread (retires in U13).
+plus the project's canonical builder thread.
 
-The legacy SPA message append/read endpoints are GONE (U4's destructive reset): the `messages`
-table now holds native pydantic-ai batches written by the SERVER (the turn engine and BRAIN —
-U5), and the browser never persists a transcript again. What remains here is the header CRUD
-the SPA still drives: the wire shape keeps Mongo-style `_id` (the SPA normalizes `_id → id`),
-camelCase timestamps, and the `{error:{message}}` envelope. Identity is ALWAYS the
-authenticated caller; every query is scoped by `user_id` (a dropped predicate is a cross-user
-leak). The conversation read API grows the projection + `active_turn` in U6.
+The legacy SPA message append/read endpoints are gone: the `messages` table holds native
+pydantic-ai batches written by the server, and the browser never persists a transcript.
+What remains is the header CRUD the SPA still drives, in the Express wire shape — Mongo-style
+`_id` (the SPA normalizes `_id → id`), camelCase timestamps, and the `{error:{message}}`
+envelope. Identity is ALWAYS the authenticated caller and every query is scoped by `user_id`.
 
-THERE IS NO ROUTE HERE THAT CHANGES WHAT A CHAT IS. The explicit mode switch this file used
-to serve is retired with the vocabulary it switched (R14/R17): a chat is a Plan chat or a Build
-chat, chosen at creation and fixed. Building from a plan does not mutate the plan chat either —
-`transition.py`'s handoff creates a SECOND chat and starts its turn there.
+No route here changes what a chat is; the kind is fixed at creation. Building from a plan
+creates a SECOND chat (`transition.py`) rather than mutating the plan chat.
 """
 
 from __future__ import annotations
@@ -193,13 +189,6 @@ async def create_conversation(
     ):
         return JSONResponse(content={"conversation": _header_dict(existing)})
     raise AppApiError(409, "This conversation id is already in use.")
-
-
-# THERE IS NO MODE-SWITCH ROUTE, and there is no route that changes a chat's kind at all.
-# A chat is one thing or the other from the moment it is created (R14/R15/R17), so the control
-# that let a conversation become something else — and the hidden marker row it appended to tell
-# the model where its toolset changed — are both gone. What used to be a switch is now a choice
-# made once, at creation, on `POST /conversations`.
 
 
 async def _load_owned(db: DbSession, user_id: uuid.UUID, conversation_id: str) -> Conversation:

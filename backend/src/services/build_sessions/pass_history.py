@@ -1,22 +1,17 @@
-"""Is the scheduled worker alive, and did the reap it performed secure anything? (U11, R20; U5.)
+"""Is the scheduled worker alive, and did the reap it performed secure anything?
 
 THE ONLY HONEST DETECTOR OF A DEAD WORKER IS SILENCE. Every alarm the reclamation pass raises is
 emitted *by the pass* — the fleet-count warning, the store-fault error, the candidate lines. A
-crashlooping scheduler emits none of them, which reads exactly like a healthy quiet fleet. That is
-the origin incident's epistemic failure relocated one layer out, and it is why the pass writes a
-record on every outcome and why this module reads the ABSENCE of one as the alarm.
+crashlooping worker emits none of them, which reads exactly like a healthy quiet fleet. So the
+pass writes a record on every outcome, and this module reads the ABSENCE of one as the alarm.
 
-Read from Postgres, never Redis: under any eviction policy a Redis marker is evictable, so a
-staleness alarm keyed on one would fire spuriously *and* its absence would be indistinguishable
-from a real outage.
-
-WHY A WRITER LIVES HERE TOO. U5 taught the reaper to take a durable copy before it reclaims, and
-the failure mode it inherits is the same epistemic one: a container whose copy cannot be taken is
-SPARED, and a spared container is indistinguishable from a fleet with nothing in it. It bills
-forever and nothing says so — which is the state ASM30 found the platform already in, at the two
-`confirm_durable_copy` call sites that only ever logged. So the attempt writes a `worker_passes`
-row on every outcome, exactly as the pass above does, and for exactly the same reason: the row is
-the only thing an operator can look for that does not depend on the failing component to speak up.
+WHY A WRITER LIVES HERE TOO. The reaper takes a durable copy before it reclaims, and the failure
+mode it inherits is the same one: a container whose copy cannot be taken is SPARED, and a spared
+container is indistinguishable from a fleet with nothing in it. It bills forever and nothing says
+so — which is the state the platform was found in, at the two `confirm_durable_copy` call sites
+that only ever logged. So the attempt writes a `worker_passes` row on every outcome, exactly as
+the pass above does, and for exactly the same reason: the row is the only thing an operator can
+look for that does not depend on the failing component to speak up.
 """
 
 from __future__ import annotations
@@ -151,10 +146,9 @@ class CopyAttempt(enum.StrEnum):
 #: adding an outcome cannot ship a row with no explanation in it.
 #:
 #: NOT ONE OF THESE SENTENCES NAMES A CONTAINER OR AN APP, and that is the `WorkerPass.detail`
-#: contract rather than an oversight: a sandbox name embeds 28 hex characters of its app's uuid,
-#: this column is read by an admin endpoint, and the identity belongs in the structlog line the
-#: reaper emits beside the row (C10 §3.6). What the row is for is "this is happening, it is not
-#: getting better, and here is which half to look at".
+#: contract rather than an oversight: the identity belongs in the structlog line the reaper emits
+#: beside the row, never in a column an admin endpoint hands out. What the row is for is "this is
+#: happening, it is not getting better, and here is which half to look at".
 _ATTEMPT_MEANING: Final[dict[CopyAttempt, tuple[PassOutcome, str]]] = {
     CopyAttempt.NOTHING_TO_COPY: (
         PassOutcome.OK,

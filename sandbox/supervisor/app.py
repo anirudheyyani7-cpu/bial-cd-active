@@ -22,10 +22,9 @@ Endpoints:
 
 Injected secret values (the Blob SAS, the app credential, the per-project database DSN) are
 REDACTED from every observable output surface — `/exec` stdout+stderr, each `/dev/logs` line, and
-`/files` `view` — so a secret never rides the orchestrator's context (C9 §6.4). A URL-shaped
-secret is registered BOTH whole and as its parsed password sub-token, since the scrub is a
-substring replace of known values. This is the accidental-leak guard; the real isolation boundary
-is container-scope + TTL (and, for the database, the `REVOKE CONNECT` wall), not redaction.
+`/files` `view`, so a secret never rides the orchestrator's context; `_redaction_secrets` decides
+what goes in the set. This is the accidental-leak guard, and the real isolation boundary is
+container-scope + TTL (and, for the database, the `REVOKE CONNECT` wall), not redaction.
 
 Written LF-only with pathlib to satisfy the ADR-0015 Windows-built-image rule.
 
@@ -190,19 +189,15 @@ def _register_secret(out: list[str], value: str | None) -> None:
 
 
 def _redaction_secrets() -> tuple[str, ...]:
-    """The known secret values to strip from observable output, read from `os.environ` at call time
-    (so a value injected after import is still covered). For each secret env var (non-empty, len >=
-    `_MIN_SECRET_LEN`) we redact BOTH the raw value AND its `urllib.parse.unquote` (URL-decoded)
-    form: the Azure SDK returns the SAS ALREADY percent-encoded, so the raw value is what a logged
-    URL carries, while the decoded `sig=…+…=…` is what a layer that parsed the query emits. We do
-    NOT add the double-encoded `quote()` form (it appears in no log). See KTD-8 / C1.
+    """The known secret values to strip from observable output, read from `os.environ` at call
+    time, so a value injected after import is still covered.
 
-    A URL-shaped secret ALSO contributes its parsed password sub-token. `_redact` is a blind
-    whole-VALUE substring replace, so the two registrations cover different leaks and neither is
-    redundant: registering only the whole `BIAL_DATABASE_URL` lets a line that prints just the
-    password (a libpq/`pg` auth error, a `console.log(cfg.password)`) sail straight through, while
-    registering only the password lets a printed DSN leak its host, database and role name. Both,
-    or the guard has a hole (ADR-0028 / D18)."""
+    `_redact` is a blind whole-VALUE substring replace, so each secret is registered in every form
+    a line can carry it: the raw value, its URL-decoded form (the Azure SDK returns the SAS already
+    percent-encoded, and a layer that parsed the query emits the decoded `sig=…+…=…`), and, for a
+    URL-shaped secret, its parsed password sub-token. The whole `BIAL_DATABASE_URL` alone lets a
+    line printing just the password through; the password alone lets a printed DSN leak its host,
+    database and role name. The double-encoded `quote()` form is not added; it is in no log."""
     out: list[str] = []
     for name in _SECRET_ENV_NAMES:
         value = os.environ.get(name)
@@ -806,13 +801,10 @@ def _error_text(item: Any, secrets: tuple[str, ...]) -> str:
     string, but webpack-shaped object entries are a documented variant, so both are handled and
     anything else degrades to its repr rather than throwing inside the consumer thread.
 
-    THE REDACTION IS NOT OPTIONAL, and it is the same rule `/exec`, `/dev/logs` and `/files`
-    already follow (see this module's header): a compile error is dev-server output, and dev-server
-    output is exactly as credential-shaped as a log line. A Next error that echoes a bad
-    `BIAL_DATABASE_URL` — an unparseable DSN is a compile-time failure, not an exotic one — would
-    otherwise carry the per-project database password out of the container, into the control
-    plane, and on into a model prompt. The scrub is a substring replace of known values, so it
-    catches the whole DSN and its parsed password sub-token both (C9 §6.4)."""
+    THE REDACTION IS NOT OPTIONAL, the same rule `/exec`, `/dev/logs` and `/files` follow: a
+    compile error is dev-server output, and a Next error echoing a bad `BIAL_DATABASE_URL` — an
+    unparseable DSN is a compile-time failure, not an exotic one — would otherwise carry the
+    per-project database password out of the container and on into a model prompt."""
     if isinstance(item, str):
         text = item
     elif isinstance(item, dict):
@@ -975,11 +967,10 @@ def _ensure_hmr_consumer() -> None:
 
 
 # --- the TTY escape hatch ------------------------------------------------------------------
-# `stdin=DEVNULL` below is not enough, and we have the trace to prove it: told to run a bare
-# `npx drizzle-kit generate`, which prompts, the agent worked around the closed stdin by
-# MANUFACTURING a terminal — `python3 -c "import pty; pty.spawn([...])"` — and the command then
-# sat at its prompt for 4 minutes 9 seconds until the timeout fired. A real TTY defeats every
-# `isTTY` check we rely on, so the only place to stop it is here.
+# `stdin=DEVNULL` below is not enough: handed a command that prompts, the agent worked around the
+# closed stdin by MANUFACTURING a terminal — `python3 -c "import pty; pty.spawn([...])"` — and sat
+# at the prompt until the timeout fired. A real TTY defeats every `isTTY` check we rely on, so the
+# only place to stop it is here.
 #
 # A TARGETED DENYLIST, not a general shell filter. `run_command` is deliberately unrestricted in
 # Write mode (that is the open-sandbox model), so the goal is narrow: refuse the handful of
@@ -1001,13 +992,11 @@ _TTY_REFUSAL = (
     "so the tool has nothing ambiguous to ask about (for a migration, make ONE kind of schema "
     "change per generate), or set the tool's non-interactive/CI option."
 )
-"""U20 correction: this used to say "pass the flag that supplies the answer (for example
-`--name <what_changed>`)". Measured against the pinned drizzle-kit 0.31.10, that is false —
-`--name` names the output file and answers nothing. The rename resolver is an interactive select
-NO flag answers, and under this sandbox's own conditions (stdin=DEVNULL, no TTY) it does not even
-hang: it prints "Interactive prompts require a TTY terminal", writes no migration, and exits 0.
-Teaching the agent a flag that cannot work sends it hunting for a longer flag list; teaching it to
-avoid the ambiguity is the instruction that actually resolves the situation."""
+"""NAMES NO FLAG, deliberately. Under this sandbox's conditions (stdin=DEVNULL, no TTY)
+drizzle-kit's rename resolver does not even hang: it prints "Interactive prompts require a TTY
+terminal", writes no migration and exits 0, and no flag answers it — `db/schema.ts` carries that
+account in full. Pointing the agent at a flag sends it hunting for a longer flag list; telling it
+to remove the ambiguity is the instruction that resolves the situation."""
 
 
 def _refuse_a_manufactured_tty(cmd: list[str]) -> str | None:

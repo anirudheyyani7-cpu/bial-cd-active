@@ -2,21 +2,14 @@
 
 The 202 is the load-bearing assertion. A deploy runs for minutes and the edge gateway times
 out at twenty seconds, so a route that waited for the result would 504 on deploys that are
-in fact going fine — and the citizen would retry, and the second claim would 409, and the
-platform would look broken while doing exactly the right thing.
+in fact going fine, the citizen would retry, and the second claim would 409.
 
-The 503 test is the other one worth having: FastAPI resolves every `Depends` BEFORE the
-route body runs, so a provider that RAISED when publishing is unconfigured would escape the
-body's own error handling and surface as a 500 with the wrong envelope. Asserting the status
-AND the envelope shape is what pins that.
+The 503 test is the other one worth having: a provider that RAISED when publishing is
+unconfigured would surface as a 500 in the wrong envelope, so both are pinned.
 
-THE DECISION ITSELF LIVES IN `test_publish_gate.py` (U9). This file covers what surrounds
-it — the 202 contract, the in-flight 409, unsaved work, CSRF, owner scoping, and the
-declaration reaching the pipeline. Every test here therefore seeds a clean stored review
-for the saved version so the ladder lands on rule 7 (publish) and a failure in this file
-is never the gate quietly routing. The old terminal-refusal tests are retired below, as
-guards rather than deletions.
-"""
+THE DECISION ITSELF LIVES IN `test_publish_gate.py` (U9). Every test here seeds a clean
+stored review for the saved version so the ladder lands on rule 7 (publish) and a failure
+in this file is never the gate quietly routing."""
 
 from __future__ import annotations
 
@@ -394,17 +387,12 @@ async def test_publishing_unconfigured_is_a_503_with_the_right_envelope(
 async def test_the_terminal_classification_refusal_is_gone(wire, client, db_session) -> None:
     """A GUARD, not a deletion — this file's four gate tests collapse into this one.
 
-    They pinned a 409 `classification_below_threshold` whose message named the score and
-    told the citizen to "ask an administrator", and the behaviour they described was a
-    dead end: nothing queued, nobody notified. U9 replaced it with the precedence ladder,
-    so the same declaration that used to be refused is now ROUTED — a real queue entry
-    an administrator will see — and the 409 that stood here would be the platform
-    refusing to do the thing it now does.
+    The retired 409 `classification_below_threshold` was a dead end: nothing queued, nobody
+    notified. The same declaration is now ROUTED, so that 409 must not come back.
 
-    The one deliberately-kept assertion from the old block is the NOT-a-403 note:
-    `chatErrors.ts` reads a 403 on this surface as "your session lapsed", so nothing
-    here may answer 403. The ladder's own outcomes are pinned in `test_publish_gate.py`;
-    what this test guards is that the retired code cannot come back."""
+    The kept assertion from the old block is the NOT-a-403 note: `chatErrors.ts` reads a 403
+    on this surface as "your session lapsed", so nothing here may answer 403. The ladder's
+    own outcomes are pinned in `test_publish_gate.py`."""
     user, app_row = await _owner_with_app(db_session, wire)
 
     resp = await client.post(
@@ -426,15 +414,14 @@ async def test_the_terminal_classification_refusal_is_gone(wire, client, db_sess
 async def test_a_routed_deploy_leaves_the_app_queued_at_the_version_examined(
     app, client, db_session, monkeypatch
 ) -> None:
-    """THE REPLACEMENT INVARIANT (R13). The retired test here asserted "a refused deploy
-    never saves the workspace", with the gate running before `_resolve_unsaved_work`.
-    That ordering is deliberately reversed: the ladder's version-dependent rules must
-    run against the POST-save commit, so a save-and-publish saves first.
+    """The retired test here asserted "a refused deploy never saves the workspace", with the
+    gate running before `_resolve_unsaved_work`. That ordering is deliberately reversed: the
+    ladder's version-dependent rules must run against the POST-save commit, so a
+    save-and-publish saves first.
 
-    What replaces it is the property that actually protects the citizen: a routed deploy
-    leaves the app in the queue at exactly the version examined, and publishes nothing.
-    The save is no longer a side effect of a declined request — it is the thing they
-    asked for."""
+    What replaces it is the property that protects the citizen: a routed deploy leaves the
+    app in the queue at exactly the version examined, and publishes nothing. The save is the
+    thing they asked for, not a side effect of a declined request."""
     user, app_row = await _owner_with_app(db_session)
     saved: list[uuid.UUID] = []
     store = FakeStorage()
@@ -654,12 +641,10 @@ async def test_a_never_submitted_app_still_reports_its_draft_lifecycle(
 async def test_the_approval_carries_when_it_was_approved_not_only_which_commit(
     wire, client, db_session
 ) -> None:
-    """The approved states name a DATE first and mute the build code beside it, because a
-    date is what a person recognises — so the stamp has to reach the wire, not just the pin.
-
-    It costs nothing: `approved_at` is a column on the registry row this route already
-    selects in full. It is written in exactly one place, beside `approved_commit_sha`
-    (`admin/router.py`'s `approve`), which is why the two are asserted together here.
+    """The approved states name a DATE first and mute the build code beside it, so the stamp
+    has to reach the wire. `approved_at` is a column on the registry row this route already
+    selects in full, written in exactly one place beside `approved_commit_sha`
+    (`admin/router.py`'s `approve`) — which is why the two are asserted together here.
 
     Mutation receipt: drop `approved_at=row.approved_at` from `ApprovalState.of` and this
     goes red on `approvedAt` being None while the pin beside it is not."""
@@ -686,24 +671,12 @@ async def test_the_status_read_answers_without_a_deploy_pipeline(
 ) -> None:
     """A `DEPLOY__*`-less deployment is a SUPPORTED state, and this route used to 503 on it.
 
-    Every field the response carries is a committed row, so the answer was always sitting in
-    the database. Refusing to hand it over broke the one thing the citizen most needs when
-    there is no pipeline: the ladder ROUTES without one (ASM10), so an app reaches an
-    administrator, gets rejected with a note written for its developer — and the developer's
-    "Review & approval" card rendered empty, because this is the only call that carries
-    approval state.
+    Every field it answers with is a committed row, and the ladder routes without a pipeline
+    (ASM10), so a rejection note has to reach its developer through this call.
 
-    NO `wire` FIXTURE ON PURPOSE. That fixture binds a fake deploy service into
-    `deploy_service_or_none`, which is exactly the configuration that hid the bug: with it
-    always bound, the unconfigured branch is untestable by construction, not merely untested
-    (`.claude/rules/testing.md`). This asserts the fixture-off baseline instead.
-
-    U15: storage is UNBOUND here too (no `wire`, no `fake_storage`), which is exactly the
-    other posture this route must tolerate — `_saved_version_for_publish_state` reads `None`
-    from an unconfigured store the same way it reads one from a `StorageError`, so
-    `publishState` still comes back rather than the route crashing on a `None` storage
-    handle.
-    """
+    No `wire` and no `fake_storage` — the deploy service and the store are both unbound, the
+    two postures this route must tolerate at once. `publishState` still comes back from an
+    unconfigured store, the same as from a `StorageError`."""
     assert deploy_service_or_none not in app.dependency_overrides, (
         "this test is only meaningful with the deploy service UNBOUND — a fixture that "
         "binds it makes the branch under test unreachable"
@@ -731,18 +704,14 @@ async def test_the_status_read_answers_without_a_deploy_pipeline(
 async def test_publishing_still_refuses_without_a_deploy_pipeline(
     wire, client, db_session
 ) -> None:
-    """The counterweight to the test above, and the reason it is safe.
+    """Reading status needs no pipeline; PUBLISHING does, and that refusal is load-bearing —
+    without it "publishing is switched off" becomes a silent no-op.
 
-    Reading status needs no pipeline; PUBLISHING does, and that refusal is load-bearing —
-    without it this change would turn "publishing is switched off" into a silent no-op.
-
-    IT USES `wire` AND THEN UNBINDS ONLY THE DEPLOY SERVICE. Written without the fixture it
+    It uses `wire` and then unbinds ONLY the deploy service. Written without the fixture it
     passed for the wrong reason: storage is checked FIRST, so an all-unbound request 503s as
-    `storage_unavailable` and never reaches the pipeline branch at all — a green test
-    asserting nothing about the thing it names. Everything else is wired, and the seeded
-    all-No review carries the ladder to rule 7, so the only thing left to fail is the
-    missing pipeline. The `code` assertion is what keeps the two 503s apart.
-    """
+    `storage_unavailable` and never reaches the pipeline branch. With everything else wired
+    the missing pipeline is the only failure left, and the `code` assertion keeps the two
+    503s apart."""
     wire.app.dependency_overrides[deploy_service_or_none] = lambda: None
     user, app_row = await _owner_with_app(db_session, wire)
 
@@ -977,19 +946,14 @@ async def test_the_published_approved_and_saved_rows_arrive_together(
 async def test_a_stopped_project_still_reports_its_saved_row_and_wakes_no_container(
     app: FastAPI, client, db_session, monkeypatch
 ) -> None:
-    """THE POINT OF THE FIELD. A citizen whose workspace was reclaimed still gets the
-    saved row, because both halves come from object-store metadata and nothing on this
-    route can reach a container.
+    """THE POINT OF THE FIELD. A citizen whose workspace was reclaimed still gets the saved
+    row, because both halves come from object-store metadata and nothing on this route can
+    reach a container.
 
-    NO `wire` FIXTURE. That fixture binds a `FakeSandboxClient` into both sandbox
-    dependencies, which is precisely the configuration under which "no container was
-    touched" is untestable — a call would simply be answered. Here the sandbox providers
-    are bound to a tripwire instead, and BOTH directions are asserted on the spy: the
-    provider was never even resolved (this route declares no sandbox dependency, so
-    FastAPI never calls it), and no attribute of the sandbox was ever reached for.
-
-    `save-state` is the read that CANNOT answer this — it attaches to a container before
-    it can say anything — which is why the row hangs off the deployment read instead."""
+    No `wire`: the sandbox providers are bound to a tripwire instead, and BOTH directions are
+    asserted on it — the provider was never even resolved (this route declares no sandbox
+    dependency), and no attribute of the sandbox was ever reached for. `save-state` is the
+    read that cannot answer this, because it attaches to a container first."""
     tripwire = _NoContainersHere()
     resolved: list[str] = []
 
@@ -1050,16 +1014,11 @@ async def test_a_bundle_with_no_stamped_head_reports_null_rather_than_a_guess(
 async def test_the_saved_row_reads_the_citizens_save_not_the_platforms_autosave(
     wire, client, db_session
 ) -> None:
-    """THE TRAP THIS UNIT SITS ONE FUNCTION CALL AWAY FROM. `manager.restore_presence`
-    PREFERS `recovery_key` — the platform's turn-boundary autosave — over the citizen's
-    `snapshot_key`, and `newest_restore_source` returns whichever of the two is newer.
-    Both are correct for resuming a workspace and both would be wrong here: the row says
-    "YOUR LATEST", so it must name the version the citizen chose to keep.
-
-    Seeded so the wrong read is unmistakable: the autosave is a DIFFERENT commit and a
-    NEWER object, so a helper that preferred it (or picked the newer of the two) would
-    return `_AUTOSAVED_SHA` and the later timestamp, and report work as saved that the
-    citizen never saved.
+    """`manager.restore_presence` PREFERS `recovery_key` — the platform's turn-boundary
+    autosave — over the citizen's `snapshot_key`, and `newest_restore_source` returns
+    whichever is newer. Both are right for resuming a workspace and wrong here: the row says
+    "YOUR LATEST", so it must name the version the citizen chose to keep. Seeded so the wrong
+    read is unmistakable — the autosave is a DIFFERENT commit and a NEWER object.
 
     Mutation receipt: change `snapshot_key` to `recovery_key` in
     `_saved_version_for_publish_state` and both assertions below go red."""

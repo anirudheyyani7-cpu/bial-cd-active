@@ -191,8 +191,7 @@ async def test_happy_start_provisions_launches_and_ends(
     assert session.preview_url == "https://preview.example/"
     assert session.snapshot_committed is True  # C4 snapshot ran in _finalize
     assert snapshot_key(session.app_id) in fake_storage.objects
-    # #13/R2 — the completed build's container is PARDONED, not executed: it stays up under
-    # the idle lease (registry kept, stay granted) so the user sees what they just built.
+    # A COMPLETED build's container is pardoned: registry kept, stay granted, lock released.
     assert app_name_for(session.app_id) not in client.torn_down
     assert await read_registry(fake_redis, user.id) is not None  # the sweep can still find it
     assert await stay_of_execution_is_current(fake_redis, user.id) is True
@@ -788,18 +787,12 @@ async def test_finalize_survives_a_registry_delete_failure(
 async def test_clean_end_then_start_restores_from_snapshot_not_fresh(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # A COMPLETED end PARDONS the container (#13): registry kept under the lease. The next
-    # start must RESTORE the C4 snapshot the finalize just wrote — provisioning fresh would
-    # wipe the user's work onto a blank template.
-    #
-    # It must ALSO not destroy the pardoned container on the way. `start` used to pass no
-    # `spare_app`, so `_the_live_sandbox_is_already_the_one_we_want` answered False
-    # unconditionally and reconcile-on-start reaped every incumbent — including, as here, one
-    # already serving this very app. That is the same destroy-and-rebuild 1.6.5 removed from
-    # the two turn paths and never removed from this one. Here the reap is invisible because
-    # `attach_handle` is unset, so the attach arm raises `SandboxGoneError` and the restore
-    # happens either way; on a REACHABLE container it cost the user everything since their
-    # last Save (see the sibling below).
+    # A COMPLETED end pardons the container, so the registry survives under the lease. The next
+    # start must RESTORE the snapshot the finalize just wrote — provisioning fresh would wipe
+    # the user's work onto a blank template — and must not destroy the pardoned container on
+    # the way. Here the reap would be invisible: `attach_handle` is unset, so the attach arm
+    # raises `SandboxGoneError` and the restore happens either way. The sibling below runs the
+    # same shape against a REACHABLE container, where it is not invisible at all.
     user, project_id = await _mk(db_session, "m15@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
@@ -1552,9 +1545,7 @@ async def test_birth_path_storage_failure_compensates_no_leaked_lock(
 # --- R7: the single authoritative terminal `ended` ----------------------------
 #
 # The unit's whole point, stated as an invariant: NO end path may emit two `ended` frames or a
-# false `snapshot_committed`. BRAIN emits none at all (see tests/services/orchestrator/); the
-# manager emits exactly one, from `_do_finalize`, AFTER the C4 snapshot — the only moment the
-# flag can be told truthfully. These tests enumerate every end path there is:
+# false `snapshot_committed`. These tests enumerate every end path there is:
 #   completed · quota_exceeded · escalated · stop · idle_teardown · force_end · run_build raised
 
 
@@ -1615,8 +1606,7 @@ async def test_completed_build_emits_one_ended_after_the_snapshot_with_the_true_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # R7's headline: the terminal frame reports snapshot_committed=TRUE on a build whose
-    # snapshot really committed. It can only do so because it is emitted after the commit —
-    # the old BRAIN-emitted frame necessarily preceded it and always said false.
+    # snapshot really committed, which it can only do because it is emitted after the commit.
     manager = SessionManager()
     order = _spy_order(manager, monkeypatch)
     client = _OrderRecordingSandboxClient(order)
@@ -2726,13 +2716,11 @@ async def test_an_attached_relaunch_mints_no_fresh_blob_sas(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A container gets its env exactly ONCE, at birth — ACA sets vars on the revision, not on
-    a running process — so the attach arm builds no env at all, matching `_resolve_sandbox`'s
-    documented attach semantics.
+    """The attach arm builds no env at all, which is `_resolve_sandbox`'s attach semantics.
 
-    This is a real consequence and it is pinned rather than assumed: relaunching used to
-    re-mint the session SAS every time, and U1 makes relaunching cheap, so rotation cadence on
-    this path goes to zero. Deliberate; see the plan's Risks table."""
+    Pinned rather than assumed, because it has a consequence: relaunching used to re-mint the
+    session SAS every time, and relaunching is now cheap, so rotation cadence on this path goes
+    to zero. Deliberate."""
     user, project_id = await _mk(db_session, "r19@rvaiglobal.com")
     manager = SessionManager()
     client = _RelaunchRecorder()
@@ -2757,11 +2745,9 @@ async def test_an_attached_relaunch_mints_no_fresh_blob_sas(
 async def test_a_relaunch_warms_the_route_before_it_hands_back_a_preview_url(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """U3/R3 on the relaunch path. `wait_ready` returning means the dev server ANSWERS, not that
-    this route has been built — Turbopack compiles on first request. Relaunch hands its
-    `previewUrl` straight back to a browser that frames it immediately, so if the platform does
-    not pay that compile the citizen does, staring at a blank white card for 5-7s directly after
-    clicking a button labelled Relaunch."""
+    """`wait_ready` returning does not mean THIS route has been built. Relaunch hands its
+    `previewUrl` straight back to a browser that frames it immediately, so the platform pays
+    the first compile here rather than leaving the citizen to stare at it."""
     user, project_id = await _mk(db_session, "r22@rvaiglobal.com")
     manager = SessionManager()
     client = _RelaunchRecorder()
@@ -2797,26 +2783,14 @@ async def test_a_relaunch_survives_a_warm_request_that_cannot_be_served(
 async def test_a_container_that_never_readies_is_never_condemned_for_it(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ SL-20 — THE MOST EXPENSIVE LESSON ON THIS BRANCH, AND THIS TEST USED TO ASSERT THE BUG.
+    """A readiness timeout is a statement about the generated APP, not the CONTAINER: any root
+    route slower than the supervisor's read timeout reports un-ready forever, while the container
+    stays healthy and still holds the citizen's work.
 
-    Its previous form required a readiness timeout to mark the registry `ending`, so a container
-    whose dev server would not come up "stopped winning the attach arm". Run against real Azure,
-    that is silent data loss. `attach_existing` refuses an `ending` sandbox BEFORE it probes, so
-    the very next press took the RESTORE arm — and restore calls `_safe_teardown` on the live
-    container before pulling the last SAVED bundle. Two clicks, and every unsaved edit was gone
-    with nothing on screen to say so. The 503 the old path raised is the copy that invited the
-    second click.
-
-    The error was reading a readiness timeout as a statement about the CONTAINER. It is a
-    statement about the generated APP: since U6, `ready` means a request was actually served, so
-    any root route slower than the supervisor's read timeout reports un-ready forever — a heavy
-    dashboard query is enough. The container is healthy and holds the citizen's work.
-
-    So it KEEPS its READY state and keeps winning the attach arm, which is exactly right: the
-    next press should attach to the container holding their work, not restore over it. The wedge
-    the `ending` mark was reaching for is closed by the lease we decline to grant before the wait
-    (asserted by its sibling below) — that lapses on its own and covers every exit, not just this
-    one."""
+    So it KEEPS its READY state and keeps winning the attach arm. Marking the registry `ending`
+    instead sends the next press down the RESTORE arm, which tears the live container down before
+    pulling the last SAVED bundle — every unsaved edit gone. The wedge that mark reached for is
+    closed by the lease we decline to grant before the wait, asserted by its sibling below."""
     user, project_id = await _mk(db_session, "r24@rvaiglobal.com")
     manager = SessionManager()
 

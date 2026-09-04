@@ -1,54 +1,14 @@
 /**
- * THE APP PANE (Plan F, U4) — what the pane is called, and how to get past it.
+ * THE APP PANE — what the pane is called, and how to get past it.
  *
- * ═══ IT CONTRIBUTES THREE THINGS AND MOUNTS NO IFRAME ═══
+ * It contributes the region label, the skip control, and the sentence for when there is nothing
+ * to frame. The frame's mounting, identity, hiding and reload nonce are `AppPaneHost`'s; calling
+ * `LivePreview` from here builds a second host.
  *
- * The region label, the skip control, and the sentence for when there is nothing to frame. The
- * frame's mounting, its identity, its hiding and its reload nonce all stay in Plan A's
- * `AppPaneHost`. An implementer who calls `LivePreview` from here has built a SECOND host, and a
- * second host is the remount that AE4 and AE37 exist to forbid — the app would reload on every
- * navigation and every crossing of the layout threshold, with nothing red anywhere.
- *
- * This removes work rather than adding it: the pane needs no framing logic of its own.
- *
- * ═══ THE SEAM: THE RESOLVED ADDRESS, AND THE STATE THAT CAN INVALIDATE IT ═══
- *
- * The address comes from `previewAddress.ts` — never `PreviewState.previewUrl` — with its
- * precedence intact: the live turn's preview outranks the session URL, because the live turn is
- * the app being built in front of the person while the session URL describes the previous build.
- *
- * TWO THINGS AN EARLIER CUT OF THIS FILE GOT WRONG BY READING ONLY `address.url`, both caught by
- * the suites that pin the surfaces around this one:
- *
- *  1. A URL IS NOT THE ONLY THING THE RESOLVER RETURNS. Its own docblock says so: "a build that is
- *     provisioning has a STATUS and no URL yet, and that pair is what renders the loading state
- *     instead of an empty pane". Gating on the URL alone put "We could not check on your app." in
- *     front of a citizen watching their first build come up.
- *  2. AN ADDRESS OUTLIVES ITS PUBLISHER, DELIBERATELY — that is R8's whole mechanism — so a URL
- *     stays held after the container behind it has stopped. Framing it regardless meant an app
- *     that went to sleep showed a card saying "nothing is lost" with NO way to bring it back:
- *     R3's "exactly one control starts it", satisfied by zero, in an ordinary state.
- *
- * So the workspace state gets a veto, and only for the states that DEFINITELY mean nothing is
- * serving. `could-not-read` is pointedly not one of them: an answer that decided nothing must not
- * pull a working app off the screen, which is the rule the whole preview reshape exists for.
- *
- * ═══ WHY A SKIP CONTROL, AND WHY IT CANNOT LIVE INSIDE THE FRAME ═══
- *
- * The pane is a cross-origin iframe. It swallows the tab sequence into a document whose length
- * nothing here can know, and whose focus behaviour is the generated app's business — so a way PAST
- * it has to exist outside it. Without one, a person navigating by keyboard is trapped in somebody
- * else's application (R67).
- *
- * Nothing here makes any claim about the framed document's own accessibility. The pane says what it
- * is; what is inside is the app's.
- *
- * ═══ L10 — DO NOT ASSUME THE APPS ROUTER SERVES A BRANDED PAGE ═══
- *
- * ACA wildcard DNS answers for hostnames whose container is long gone, so an "app is gone" 404 is
- * not a reliable discriminator and a framed URL can resolve to a working-looking host serving
- * nothing. The empty, stopped and gone states are therefore drawn HERE, from the workspace state,
- * rather than left to whatever the framed origin happens to return.
+ * The address comes from `previewAddress.ts`, never `PreviewState.previewUrl`, and the workspace
+ * state vetoes it only for the names that definitely mean nothing is serving. The pane is a
+ * cross-origin iframe, so the way past it lives outside it. ACA wildcard DNS answers for
+ * hostnames whose container is gone, so the empty, stopped and gone states are drawn here.
  */
 import { memo, useCallback } from 'react'
 import { Box, Locate, Play, type LucideIcon } from 'lucide-react'
@@ -67,32 +27,19 @@ const NOTHING_IS_SERVING: ReadonlySet<WorkspaceStateName> = new Set<WorkspaceSta
   'never-built',
   'held-by-another-project',
   'held-unattributed',
-  // `starting` IS one of these, and the wire says so in as many words: it means "a start is in
-  // flight … not `alive` (NO CONTAINER YET)". A held address survives its publisher, so without
-  // this a press over a stale URL re-framed a container that is not there — the pane showing an
-  // app while the platform is still bringing one up. The wait is the honest thing to show, and it
-  // is what the map's `starting` arm says.
+  // `starting` means a start is in flight, with no container yet, and a held address can outlive
+  // the one behind it — so framing on it showed an app while the platform was still bringing one
+  // up. The wait is what the map's `starting` arm says, and it is the honest thing to show.
   'starting',
 ])
 
 /**
- * THE MARK ABOVE THE HEADLINE, ON THE THREE STATES WHOSE BOARDS DRAW ONE.
- *
- * `NothingBuilt`, `PreviewOff` and `PreviewStarting` are the boards for an empty pane, and every
- * one of them puts a 30px #9AA5B1 glyph directly above its headline: a ticked circle, a play
- * triangle and a box. Without it the pane is a headline and a sentence floating in a white card,
- * and a blank half-screen with no mark on it reads as a page that failed to load rather than as a
- * deliberate state.
- *
- * IT IS A LOOKUP HERE AND NOT A FIELD ON `WorkspaceState`, deliberately. The state map is a pure
- * module answering "what is true and what may be pressed"; a Lucide component is a rendering
- * decision, and `chatKind.ts` already draws that line the same way — the words are the catalogue's,
- * the icon and the pill are local. What the map still owns is every sentence on this pane.
- *
- * `null` IS AN ANSWER, not a gap: no board draws a mark for the hand-over states, the read
- * failures or the three start outcomes, and inventing seven glyphs the canvas has never shown
- * would be this file making the design decision. Exhaustive over `WorkspaceStateName` so a new
- * state cannot be added without someone deciding here.
+ * THE MARK ABOVE THE HEADLINE, ON THE THREE STATES WHOSE BOARDS DRAW ONE. `NothingBuilt`,
+ * `PreviewOff` and `PreviewStarting` each put a 30px #9AA5B1 glyph directly above their headline;
+ * without it a blank half-screen reads as a page that failed to load. A lookup here rather than a
+ * field on `WorkspaceState`, which stays a pure module: the words are the map's, the icon is
+ * local. `null` is an answer, not a gap — exhaustive over `WorkspaceStateName` so a new state
+ * cannot be added without someone deciding here.
  */
 const STATE_GLYPH: Readonly<Record<WorkspaceStateName, LucideIcon | null>> = {
   'never-built': Locate, // NothingBuilt — the ticked circle, the same mark the rail's Plan picker has
@@ -186,8 +133,7 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
               // already growing, which is the board's "the conversation is already settling
               // towards the middle of the window".
               'flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden animate-pane-leave'
-            : // Hidden, never unmounted — the whole point of the sibling host is that leaving a
-              // build chat for a plan chat must not re-issue the frame's `src`.
+            : // Hidden, never unmounted — see `AppPaneHost`.
               `w-0 h-0 flex-shrink-0 overflow-hidden ${HIDDEN_BUT_MOUNTED}`
       }
     >
@@ -208,10 +154,7 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           has one home in every state, beside the title that now also survives a collapse. */}
 
       {frameIt ? (
-        // THE FRAME IS THE HOST'S. Everything from the frame inward — the cover that holds on an
-        // unknown, the `load`-gated reveal, the frame key, the inbound-message gate on origin AND
-        // source, the sandbox token list — is unchanged and stays there. The device WIDTH is the
-        // shell's now, because the control that picks it is in the row, and it is passed through
+        // THE FRAME IS THE HOST'S, from the frame inward. The device width is passed through
         // rather than held: two owners of one width is how the card and the switcher disagree.
         //
         // IT DRAWS ITS OWN CARD — `LivePreview` frames the iframe in a padded `#e8edf2` box with a

@@ -2,11 +2,9 @@
 constants, not env config (12-factor: config is what varies between deploys).
 Changed only by a code edit + review, never by ops at runtime.
 
-(badger's per-segment / total object-key byte ceilings are dropped here: they
-guarded the multi-tenant `scoped_key`, whose forgeable string axes this
-single-tenant port replaces with UUID-typed key builders — a canonical UUID
-cannot carry `/`, `..`, or control chars, so the length/traversal guards have
-nothing left to guard. See `keys.py`.)
+No per-segment or total object-key byte ceiling lives here, deliberately: the key
+builders are UUID-typed, so a key cannot carry `/`, `..` or a control character and a
+length guard would have nothing left to guard.
 """
 
 from __future__ import annotations
@@ -41,10 +39,8 @@ DEPLOY_SAS_TTL: Final = timedelta(days=365)
 
 
 def validate_sas_ttl(ttl: timedelta, *, provider: str, key: str) -> None:
-    """Fail-closed TTL guard shared by BOTH SAS/signed-URL paths — `ObjectStorage.signed_read_url`
-    (blob-level) and `AppContainerStore.mint_container_sas` (container-level). The TTL must be
-    positive and within `MAX_SIGNED_URL_TTL`; enforced in ONE place so the two paths can never
-    drift, and a leaked URL/SAS always self-expires within the ceiling."""
+    """Reject a non-positive TTL, or one past `MAX_SIGNED_URL_TTL`, with `StorageSignError`.
+    Both signing paths call this rather than checking inline, so the two cannot drift apart."""
     if ttl <= timedelta(0):
         raise StorageSignError("SAS TTL must be positive", provider=provider, key=key)
     if ttl > MAX_SIGNED_URL_TTL:

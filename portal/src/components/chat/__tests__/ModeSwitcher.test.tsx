@@ -1,26 +1,14 @@
 /**
- * THE MODE SWITCH IS GONE — this file is its inertness guard (L8).
+ * THE MODE SWITCH IS GONE — this file is its inertness guard.
  *
- * WHAT USED TO BE HERE. `ModeSwitcher`: the one compact in-composer Ask / Plan / Write pill,
- * mounted on both `BuilderPage` and `ProjectBuilder`, fully controlled and switching a
- * conversation's `mode` via `turnStreamApi.switchMode` (chat mount) or local draft state
- * (project mount). ⌥P opened it; `MODES` was the FAQ's own source of truth for what the three
- * choices were called.
+ * `ModeSwitcher` was the compact in-composer Ask / Plan / Write pill, opened with ⌥P, switching a
+ * conversation's `mode` through a server route. Route and client call are both gone; a chat's kind
+ * is fixed at creation (`backend/src/api/v1/conversations/schemas.py`), so a switch has nothing
+ * left to do, and a control wired to a deleted endpoint gets deleted rather than flagged off.
  *
- * WHY IT WENT. U1 collapsed the three-valued `ConversationKind` and the three-valued
- * `ConversationMode` it switched into ONE two-valued `ChatKind` (plan | build), fixed at chat
- * creation. There is no longer a mode to switch mid-conversation, so there is nothing left for
- * a switch to do — the server route it called is retired (see the backend's own guard,
- * `backend/tests/api/v1/conversations/test_mode_switch.py`), and `switchMode` itself is gone
- * from `turnStreamApi.ts`. A control wired to a deleted endpoint is not a smaller feature; it is
- * a dead one, so the repo's own convention
- * (`docs/solutions/conventions/cleanly-removing-dead-ui-controls-2026-06-23.md`) applies: delete
- * it, do not hide it behind a flag.
- *
- * WHY THIS FILE STAYS. Deleting the suite deletes the evidence. This walks the real source tree
- * — not a render — because the thing being proven is an ABSENCE: nothing under `portal/src`
- * still imports or mounts the component, and the component file itself does not exist. A render
- * test cannot prove either half of that; only reading the tree can.
+ * WHY THIS FILE STAYS. Deleting the suite deletes the evidence. It walks the real source tree, not
+ * a render, because what is being proven is an ABSENCE: nothing under `portal/src` imports or
+ * mounts the component, and the component file itself does not exist.
  */
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'

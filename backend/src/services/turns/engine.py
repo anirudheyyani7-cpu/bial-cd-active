@@ -17,11 +17,11 @@ in-memory text/step tail — then the live frames. A subscriber that CAN prove c
 therefore never data loss: falling past the ring's tail degrades to a fresh snapshot,
 not a gap (the review's buffer-eviction finding, answered structurally).
 
-Mode gating happens HERE (the server's record, never the client request): the run gets
-exactly `toolsets_for_kind(conversation.kind)` over the turn-pinned workspace, and the
-U9-composed instructions for that kind. Plan turns bill once for the whole turn,
-disconnect-safe by construction — the task IS the drain; Write turns arrive with U12's
-warm sessions and bill per step through the harness.
+Gating on the chat's kind happens HERE, off the server's record and never the client
+request: the run gets exactly `toolsets_for_kind(conversation.kind)` over the turn-pinned
+workspace, and the instructions composed for that kind. Plan turns bill once for the whole
+turn, disconnect-safe by construction — the task IS the drain; Write turns arrive with warm
+sessions and bill per step through the harness.
 
 Ownership: the engine holds the per-conversation guard (`turns/guard.py`) from claim to the
 task's `finally` — a crashed run can never wedge its conversation shut.
@@ -382,9 +382,9 @@ def _persistable_messages(new_messages: list[ModelMessage]) -> list[ModelMessage
     responses-only filter does — leaves each persisted call unanswered, so the reload's
     dangling-call repair papers over a real, successful tool result with a synthesized
     "interrupted" one, corrupting the replayed transcript. Requests bearing a `UserPromptPart`
-    are excluded: the user turn is already persisted before the run, and the ephemeral mode
-    reminder / force-options nudge ride `message_history` and must never fossilize into a row
-    (the `new_messages()` boundary the whole persistence design leans on)."""
+    are excluded: the user turn is already persisted before the run, and the ephemeral workspace
+    note injected onto `message_history` must never fossilize into a row (the `new_messages()`
+    boundary the whole persistence design leans on)."""
     kept: list[ModelMessage] = []
     for message in new_messages:
         if isinstance(message, ModelResponse):
@@ -1035,16 +1035,13 @@ class TurnEngine:
                 manager=manager,
                 sandbox_client=sandbox_client,
             )
-            # U8 / R14 — THE WORKSPACE NOTE, UNCONDITIONALLY, on every turn that pinned a
-            # sandbox: an ephemeral tail on `message_history`, structurally excluded from the
-            # persisted rows because `new_messages()` never contains injected history.
+            # THE WORKSPACE NOTE, UNCONDITIONALLY, on every turn that pinned a sandbox: an
+            # ephemeral tail on `message_history`, structurally excluded from the persisted rows
+            # because `new_messages()` never contains injected history.
             #
-            # It is the ONLY thing injected here now. The per-turn restatement that used to
-            # ride beside it — "you are in Plan mode", on a cadence — went with the modes it
-            # restated: a chat's kind is fixed at creation, and the toolset is what carries
-            # which chat this is. This note stayed because it is a different claim: it tells
-            # the model a FACT about the app that its history cannot know, and it holds on
-            # every turn rather than one in four.
+            # It is the ONLY thing injected here, and it is injected on EVERY turn rather than on
+            # a cadence, because it tells the model a fact about the app that its history cannot
+            # know — one that can change between any two turns.
             if workspace is not None:
                 note = await self._workspace_note(state)
                 history = [*history, ModelRequest(parts=[UserPromptPart(content=note)])]
@@ -1075,15 +1072,8 @@ class TurnEngine:
                 # a Plan run the streaming node loop and the per-step billing it has no steps
                 # for, so the fork is a shape, not a behaviour.
                 #
-                # The other questions belong to the run configurator and are answered there:
-                # `agent/toolsets.py` decides what the model CAN DO, `agent/mode_prompts.py`
-                # what it is TOLD. Nothing downstream of either may ask again — U1 deleted the
-                # `output_type` branch below for exactly that reason.
-                #
-                # NO COUNT IS CLAIMED HERE ON PURPOSE. This comment used to say "three sites
-                # are the closed set" while `ChatKind`'s own docstring said "exactly two", and
-                # both were wrong against the tree. A census belongs somewhere that goes red
-                # when it stops being true, not in a sentence that cannot.
+                # What the model CAN DO and what it is TOLD are decided in `agent/toolsets.py`
+                # and `agent/mode_prompts.py`, and nothing downstream of either asks again.
                 #
                 # A Build turn bills PER MODEL STEP, inside the loop — `record_usage` is
                 # called once per step and that is the only fold. Claiming the turn as
@@ -1110,12 +1100,10 @@ class TurnEngine:
                         workspace=workspace,
                     )
                     toolsets = toolsets_for_kind(state.kind, _workspace_of).toolsets
-                    # UNCONDITIONAL, BECAUSE THE TOOLSET HAS ALREADY DECIDED IT (U1/R69/N2). A
-                    # run can only end deferred if a tool that DEFERS was registered on it, and
+                    # UNCONDITIONAL, BECAUSE THE TOOLSET HAS ALREADY DECIDED IT. A run can only
+                    # end deferred if a tool that DEFERS was registered on it, and
                     # `present_plan_options` — the one `CallDeferred` in the tree — is on the
-                    # Plan arm and nowhere else. Asking the kind a second time here re-decided
-                    # something the line above had just decided, and the two could only ever
-                    # agree; what it bought instead was a branch an auditor has to read.
+                    # Plan arm and nowhere else.
                     #
                     # Widening costs nothing on a run that produced text: pydantic-ai strips
                     # `DeferredToolRequests` out of the output types and keeps a single flag,
@@ -1684,14 +1672,11 @@ class TurnEngine:
         `green` alone would end the turn mid-thought the first time the tree happened to
         compile. Only the conjunction means finished.
 
-        U18/R30 CHANGES WHAT HAPPENS ON THE PASSING SIDE OF THAT GATE, AND NOTHING ELSE ABOUT
-        IT. The conjunction is untouched — a failing verdict after `declare_done` still sends
-        the turn into repair exactly as before. What is gone is the round-trip the passing side
-        used to buy: the model called the tool, was told to stand by, and was then asked for one
-        more full request whose entire product was a closing paragraph. That paragraph is the
-        message the 2026-08-18 build wrote in 2,397 words of file paths and framework names.
-        The summary the tool already carries says the same thing in the register the reader
-        actually has, so the harness renders THAT and ends the turn on it."""
+        THE PASSING SIDE BUYS NO EXTRA ROUND-TRIP. The model used to call the tool, be told to
+        stand by, and then be asked for one more full request whose entire product was a closing
+        paragraph — written in the model's own register, which is file paths and framework
+        names. The summary `declare_done` already carries says the same thing in the register
+        the reader actually has, so the harness renders THAT and ends the turn on it."""
         sandbox = state.sandbox
         if sandbox is None:  # `_pin_workspace` sets it or raises; belt for the impossible
             raise _WriteEndedError("sandbox_unavailable", _TURN_FAILED_MESSAGE)
@@ -1772,20 +1757,17 @@ class TurnEngine:
                 # `tsc` run to confirm nothing changed, then nudge the model to keep going.
                 #
                 # …UNLESS the turn was asked to build. The same zero-mutation outcome means
-                # opposite things on the two paths, and the bare `return` gave BOTH of them
-                # the caller's `_finish(state, "completed")`: a real build once spent 65k
-                # tokens, wrote not one file, and told the citizen "Build complete — your app
-                # is live below" over a container still serving the golden template. A build
-                # that produced nothing is a failure and has to end as one.
+                # opposite things on the two paths, and a bare `return` gives BOTH of them the
+                # caller's `_finish(state, "completed")` — which announces a finished build over
+                # a container still serving the golden template. A build that produced nothing
+                # is a failure and has to end as one.
                 #
                 # …and on the build path the guard asks a NARROWER question, because
                 # `done_requested` is not evidence of a mutation — it is the model's own claim to
-                # have finished, and `declare_done` used to set `workspace_touched` alongside it.
-                # A model that wrote nothing and simply declared itself done therefore satisfied
-                # both halves of this disjunction and walked straight back into "Build complete —
-                # your app is live below" over an untouched template. That is the same lie the
-                # guard was added to stop, reached by asking the accused for a character
-                # reference. On a turn that EXPECTS a mutation, only a real write counts.
+                # have finished. A model that wrote nothing and simply declared itself done would
+                # otherwise satisfy both halves of this disjunction and reach that same false
+                # announcement by asking the accused for a character reference. On a turn that
+                # EXPECTS a mutation, only a real write counts.
                 mutated = sandbox.workspace_touched
                 if not (mutated or sandbox.done_requested):
                     if state.expects_mutation:
@@ -2217,15 +2199,12 @@ class TurnEngine:
         sandbox: SandboxSession,
         session_factory: SessionFactory,
     ) -> None:
-        """THE COMPLETION MESSAGE, WRITTEN FROM `done_summary` (U18/R22).
+        """THE COMPLETION MESSAGE, WRITTEN FROM `done_summary`.
 
-        THE FIELD WAS ALWAYS WRITTEN AND NEVER READ. `declare_done` has stored its `summary`
-        since the tool existed and three model-facing prompts have asked for it; the reader is
-        what was missing, so what the citizen actually read at the end of a build was whatever
-        free-form paragraph the model produced on one more round-trip. On 2026-08-18 that
-        paragraph was file paths and framework names. Rendering the field instead is the whole
-        of this change: same fact, a bounded field the prompt shapes, and no request bought to
-        obtain it.
+        `declare_done` stores its `summary` and three model-facing prompts ask for it, so the
+        sentence that ends a build is a bounded field the prompt shapes — not the free-form
+        paragraph of file paths and framework names the citizen used to read, bought on one
+        more full round-trip.
 
         BOTH FRAMES AND THE ROW, because the completion has to survive a reload. `_push_text`
         puts it on the live stream and onto the turn's parts for a mid-turn re-snapshot; the
@@ -2395,8 +2374,7 @@ class TurnEngine:
         the note tells the model what the user is looking at, where "there is no app on the home
         page yet" is true, useful, and exactly what the note itself goes on to say — that is
         `mode_prompts._WORKSPACE_STILL_TEMPLATE`, which is kind-blind and rides both composed
-        prompts. This used to credit "Ask mode's own segment"; there is no Ask kind, and no
-        per-kind segment says this at all — the note is the single statement of it.
+        prompts. No per-kind segment says this at all, so the note is the single statement of it.
 
         NEVER RAISES. A note that could fail would take the turn down with it, and every failure
         already has a value: not knowing."""
@@ -2756,12 +2734,11 @@ class TurnEngine:
         disagree with the call it describes is worse than no copy — every reader goes to the
         args instead.
 
-        THE SNAPSHOT PIN IS GONE TOO (U6). It recorded the app's head at plan time so Build-it
-        could warn that the app had moved underneath the plan. Its only writer sat inside a
-        mode branch, and what it bought is paid for better: the instruction to follow the
-        code's reality where it differs from what the plan assumed now lives in the Build
-        chat's own prompt, where it works for a plan built weeks later rather than only when
-        two snapshot heads happen to differ."""
+        AND NOT A SNAPSHOT HEAD. Pinning the app's head at plan time so a later build could
+        warn that the app had moved underneath the plan is paid for better elsewhere: the
+        instruction to follow the code's reality where it differs from what the plan assumed
+        lives in the Build chat's own prompt, where it works for a plan built weeks later
+        rather than only when two snapshot heads happen to differ."""
         if deferred is None:
             return None
         return {"kind": PENDING_META_KIND, "toolCallId": deferred.tool_call_id}

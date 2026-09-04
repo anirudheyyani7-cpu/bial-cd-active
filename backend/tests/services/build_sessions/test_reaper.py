@@ -580,13 +580,9 @@ def test_the_reaper_never_binds_the_pass_record_at_module_scope() -> None:
         )
 
 
-# --- #43: the relaunched preview's stay of execution --------------------------
-#
-# A relaunched preview holds no lock and renews no heartbeat, so it trips the
-# lock+heartbeat guard the instant its seeded beat lapses. Its bounded stay is what keeps
-# the background sweep off it — and reconcile-on-start is deliberately NOT fooled by that
-# stay, because the incoming build needs the one-per-user slot. These two behaviours are
-# opposite ON PURPOSE; the pair below is the regression guard against "simplifying" them.
+# The relaunched preview's stay of execution. `sweep_all` honours an unexpired stay and
+# `reconcile_user` reaps through it; the asymmetry belongs to `reaper.py`. The pair below is
+# the regression guard against collapsing the two into one behaviour.
 
 
 async def _seed_preview(
@@ -620,9 +616,7 @@ async def test_sweep_reaps_a_preview_once_its_stay_lapses(fake_redis: aioredis.R
 
 
 async def test_start_reconcile_reaps_through_a_current_stay(fake_redis: aioredis.Redis) -> None:
-    # THE CRUX. reconcile-on-start defaults to honor_stay=False and reaps the preview even
-    # mid-lease: the incoming build claims the slot, so sparing the preview would leave its
-    # container running under a registry entry the new build is about to overwrite.
+    # reconcile-on-start defaults to honor_stay=False and reaps the preview even mid-stay.
     await _seed_preview(fake_redis, USER, stay=_in(600))
     client = FakeSandboxClient()
     assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is True

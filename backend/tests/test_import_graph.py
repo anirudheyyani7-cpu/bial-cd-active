@@ -201,9 +201,8 @@ def test_the_app_still_builds_with_its_full_route_surface() -> None:
     # routes for the trees U2 and U3 park (`internal/apps/{app_id}/parked` and `.../promote`) —
     # without a reader those objects would be write-only, and in a false-reversion they hold the
     # only copy of somebody's work. Each recorded in C3 §9 in the same change that added it.
-    # 17 since U28 retired `lock/acquire` / `lock/renew` / `lock/release` / `heartbeat` (21 - 4):
-    # nothing called them — the portal's keep-alive loop that was their only caller was itself
-    # deleted back in U13. `lock/force-end` is the one lock op still reachable from the UI.
+    # 17 since `lock/acquire` / `lock/renew` / `lock/release` / `heartbeat` were retired (21 - 4):
+    # nothing called them. `lock/force-end` is the one lock op still reachable from the UI.
     # 18 since plan 002 U9 added `projects/{project_id}/stop-state`: the drain's ask
     # (`stop-active-build`) now RETURNS IMMEDIATELY and a detached task does the waiting, so the
     # outcome needs a reader. Holding a request open for the length of a stop was a dependency

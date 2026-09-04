@@ -177,22 +177,6 @@ def declutter(raw: str, source: ErrorSource) -> BuildError:
     `BuildError`. Source-agnostic core (so a later `client` / `next_build` arm reuses it); the
     only source-specific bit is the title heuristic (`tsc` prefers the first `error TS…` line).
     Never crashes — empty input yields a safe fallback title."""
-    # Cap the raw blob BEFORE either pass: the redactor is linear, but an app-controlled
-    # multi-hundred-KB diagnostic must never dominate a synchronous pass on the event loop, and
-    # the output is truncated to CLEANED_STACK_MAX_CHARS anyway (KD-5 defense-in-depth).
-    #
-    # ANSI COMES OFF FIRST, AND THE ORDER IS THE SECURITY PROPERTY. `redact_secrets` finds
-    # credentials by matching their SHAPE — `password=…`, a `postgres://user:pw@host` DSN — so an
-    # escape sequence spliced into the middle of one splits the token and the pattern no longer
-    # matches. Redacting first and stripping second means the strip then closes the text back up
-    # around a credential that has already sailed through: `DB_PASSWORD\x1b[0m=hunter2` came out
-    # as `DB_PASSWORD=hunter2`, in the clear. Verified against this exact input.
-    #
-    # It did not matter while every caller was output WE produced (`tsc`, the dev server, `next
-    # build` — none of which is adversarial). The `client` arm changed that: it carries text
-    # written by unreviewed code inside the generated app, which chooses its own escapes. The
-    # supervisor's own compile-error path already had this order right; this brings the two into
-    # line rather than leaving one of them exploitable.
     cleaned = _relativize_paths(scrub_untrusted(raw, limit=REDACT_INPUT_MAX_CHARS))
     title = _first_meaningful_line(cleaned, source)
     return BuildError(

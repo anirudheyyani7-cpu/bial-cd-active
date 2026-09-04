@@ -37,20 +37,9 @@ import type {
  */
 export type AuthFetchDeps = NonNullable<Parameters<typeof authFetch>[2]>
 
-// THE TWO MIRRORED TTLs ARE GONE TOO (`LOCK_TTL_SECONDS`, `HEARTBEAT_TTL_SECONDS`). Their header
-// said they lived here so the lifecycle hook kept one source of truth — and that hook was deleted,
-// so the mirror had no reader and only a schema to disagree with. The backend schema is the real
-// source of truth and is pinned by its own tests, so nothing knowable was lost with them.
-//
-// THE TWO CLIENT CADENCES ARE GONE, along with `renewLock` and `heartbeat` themselves. U13
-// deleted the blind keep-alive loop that was their only caller, and a client function with no
-// caller is not neutral: it reads as a supported way to keep a session alive, and the next
-// person needing one would have wired the loop straight back. What holds a turn open now is the
-// R10 wall-clock lease the SERVER renews (U12) — legible to a sweep in another process, which a
-// browser timer never was.
-//
-// The backend routes stay. They are the operator surface and the supervisor's, and nothing about
-// deleting a browser client says anything about them.
+// NO KEEP-ALIVE CLIENT HERE, and none may be added back: the `renew` / `heartbeat` routes one
+// would call are retired, so it would be a browser timer POSTing at a 404. The lock and
+// heartbeat TTLs are the backend schema's and are not mirrored here.
 
 const BASE = '/api/build-sessions'
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
@@ -60,8 +49,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' }
  * session's id — the `409` alone is not a self-describing discriminator (U5 identity model).
  *
  * Its one live handler is `StartAppControl`, which reports "a build is already running in this
- * project" through the workspace state. The session hook's block banner, which used to render this
- * with a force-end button, is gone: it hung off a pane callback nobody consumed.
+ * project" through the workspace state.
  */
 export class BuildSessionAlreadyActiveError extends ApiError {
   readonly existingSessionId: string | null
@@ -233,10 +221,8 @@ async function postJson(url: string, body: unknown, fallback: string, deps: Auth
 
 // ─── control operations (C3 §2) ─────────────────────────────────────────────
 
-// `start` IS GONE. It POSTed `BASE` to provision a C3 build session, and nothing had called it
-// since row creation and the build itself moved inside the turn's own transaction — a composer
-// send is a TURN. Its 409 fed the block banner, which this unit deletes with it. The ROUTE stays:
-// deleting a browser client says nothing about the surface it spoke to.
+// `start` IS GONE: nothing here provisions a session — a build happens inside the turn's own
+// transaction. The ROUTE is untouched; deleting a browser client says nothing about it.
 
 /**
  * `relaunch` — restore a project's saved app into a fresh, ready sandbox and get its live URL (#43).
@@ -266,17 +252,11 @@ export async function getStatus(sessionId: string, deps: AuthFetchDeps = {}): Pr
   return toBuildSessionStatusResponse(await res.json())
 }
 
-// ─── lock operations (C3 §3) ─────────────────────────────────────────────────
+// ─── lock operations ─────────────────────────────────────────────────────────
 //
-// `acquireLock` and `releaseLock` are GONE (U28): nothing called them — the portal's blind
-// keep-alive loop that was their only caller was itself deleted back in U13, same as
-// `renewLock` and `heartbeat` before them (see the note above).
-//
-// `forceEnd` HAS NO UI LEFT EITHER, and is kept anyway. Its one control was the block banner's
-// Force-end button, deleted with the banner. It stays because it is the owner-only kill switch for
-// the case the whole lock op exists for — a session stuck mid-`building` that never emits a
-// terminal `ended` (C3 §3.4) — and retiring the portal's only client for that route is the stop
-// lineage's call to make, not this sweep's.
+// `forceEnd` HAS NO CALLER IN THE UI and is kept anyway: it is the owner-only kill switch for the
+// case the whole lock op exists for — a session stuck mid-`building` that never emits a terminal
+// `ended`. Delete it as dead code and that session has no way out.
 
 /** `force-end` — the owner-only kill switch (`kill_switch()`), regardless of in-flight state. A non-owner → `403 build_session_forbidden`. */
 export async function forceEnd(sessionId: string, deps: AuthFetchDeps = {}): Promise<ForceEndResponse> {
@@ -822,12 +802,12 @@ export async function fetchCompileState(
 }
 
 /**
- * Is the app this tab is framing still the citizen's app? (U4, R4/R7.)
+ * Is the app this tab is framing still the citizen's app?
  *
  * THE TURN MAY NEVER COME. Every other integrity check runs at the start of a turn, which catches
  * every reversion between one message and the next — and nothing at all for someone who is
- * reading, or in another tab, or at lunch. The "Build complete — your app is live below" claim
- * goes on being displayed for as long as the page stays open.
+ * reading, or in another tab, or at lunch. A completion claim goes on being displayed for as
+ * long as the page stays open.
  *
  * ONLY A POSITIVE `reverted` MEANS ANYTHING, and it is the server's boolean rather than something
  * derived here. Four states can come back and only one of them may retract a completion claim;

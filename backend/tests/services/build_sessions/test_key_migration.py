@@ -1,19 +1,11 @@
-"""The R22 dual-read window: a fleet registered before the environment segment existed must stay
-visible across the cutover deploy (C5, ADR-0029 U5).
+"""The dual-read window: a fleet registered before the environment segment existed must stay
+visible across the cutover deploy (C5, ADR-0029).
 
-WHY THIS FILE IS THE IMPORTANT ONE IN ITS UNIT. Changing the registry prefix is a one-line edit
-that looks free and is not. That prefix is the sole input to `sweep_all`'s scan AND to the
-report-only Azure inventory, and the registry hash is the one key family with **no TTL** — so a
-straight cutover would make every container live at that instant permanently invisible to both,
-forever. It would manufacture, wholesale, the exact orphan class ADR-0029 exists to collect, three
-phases before any collector exists.
-
-And the obvious half-measure is INERT, which is the part that fools people: widening only the SCAN
-pattern changes nothing, because `sweep_all` does not read the registry off the scan. It extracts
-the `user_id` from the key name and then issues a FRESH point read — which, against the new
-prefix, returns `None`, so the sweep takes its "nothing registered" arm and the fleet vanishes
-anyway. Every assertion below that says "the sweep still sees it" is therefore load-bearing
-against a change that would look correct in review.
+What a moved registry prefix costs is set out in `services/redis/keys.py`. What this file covers
+is the half-measure that looks like the fix: widening only the SCAN pattern changes nothing,
+because `sweep_all` extracts the `user_id` from the key name and then issues a FRESH point read.
+Every assertion below that says "the sweep still sees it" is load-bearing against exactly that
+change, which would read as correct in review.
 
 The mutation-check for this file is: delete the legacy arm from `locks.read_registry` and watch
 the fleet disappear from both `sweep_all` and `take_sandbox_inventory`.
@@ -52,7 +44,7 @@ from src.services.sandbox.client import AcaSandboxClient
 from src.services.sandbox.config import SandboxConfig
 from tests.fakes import FakeSandboxClient, a_fleet_member, a_sandbox_name
 
-_LEGACY_APP = "sbx-019f74300c9f747db10b73b6dcdd"  # the 19-day ghost ADR-0029 names
+_LEGACY_APP = "sbx-019f74300c9f747db10b73b6dcdd"  # a real name from the pre-cutover fleet
 
 
 class _Fleet:

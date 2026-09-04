@@ -62,10 +62,9 @@ const LOADING_TEXT: Partial<Record<BuildSessionStatus, string>> = {
   provisioning: 'Setting up your sandbox…',
   building: 'Building your app…',
 }
-// …and then a THIRD wait nobody used to narrate: the URL has arrived and the frame is mounted,
-// but the sandbox is still compiling its first route, so nothing has painted. "Building your app"
-// is stale by then (the build is done) and silence is the blank white card this unit exists to
-// kill — so the wait gets its own honest line.
+// …and then a THIRD wait, which needs a line of its own: the URL has arrived and the frame is
+// mounted, but nothing has painted yet. "Building your app" is stale by then (the build is done)
+// and silence is a blank white card.
 const FRAMING_TEXT = 'Starting your app…'
 // The frame-load wait's escalated sentence, said in both places it belongs (the card and the live
 // region). It was shared with a second, relaunch-side wait that has since gone with its flag; the
@@ -74,23 +73,21 @@ const FRAMING_TEXT = 'Starting your app…'
 // is the pane talking about itself instead of to them.
 const SLOW_TEXT = 'Your app is taking longer than usual to open'
 
-// R16/R18 — THE COVER. What the citizen sees instead of the framework's full-screen compile-error
-// screen, which filled the preview for ~66 seconds in each of three builds during the 2026-08-18
-// demo.
+// THE COVER. What the citizen sees instead of the framework's full-screen compile-error screen,
+// which has been measured filling the preview for ~66 seconds in each of three consecutive
+// builds.
 //
 // WHY A COVER AND NOT A FIX INSIDE THE APP. The app is framed genuinely cross-origin, so this
 // pane cannot reach into `contentDocument` — but it can absolutely put its own element on top.
-// That is the whole reason this is the right mechanism: it needs no per-app change, no Caddy
-// plugin and no edit to a file the build agent could overwrite; it survives a restore by
-// construction; and it works identically on every Next version, which makes it the ONLY fix that
-// reaches apps already built. A framework env var (a later plan) is defence in depth for new
-// apps, not the fix.
+// That is the whole reason this is the right mechanism: it needs no per-app change and no edit
+// to a file the build agent could overwrite; it survives a restore by construction; and it works
+// identically on every Next version, which makes it the ONLY fix that reaches apps already
+// built. A framework env var is defence in depth for new apps, not the fix.
 //
 // THERE IS NO LAST-GOOD-VIEW, and the reason is the same cross-origin wall: the parent cannot
 // copy or screenshot the working render either. It would also be actively harmful in the case it
 // sounds best in — a citizen whose workspace was wiped would keep watching their app apparently
-// rendering, which is the 2026-08-18 failure inverted. The cover shows the holding state, full
-// stop.
+// rendering. The cover shows the holding state, full stop.
 const HOLDING_TEXT = 'Putting the latest change together…'
 // …and the ONE escalation, because a wait that never changes its wording stops being read as a
 // wait. Said once and never again — a card that keeps re-narrating itself reads as broken.
@@ -142,7 +139,7 @@ const STOPPED_RUNNING_TEXT =
  *  gone, and the server's own action mapping (C3 §10.3) groups it with `alive` as "nothing to
  *  offer, just a wait" — this pane must not invite a "send a prompt" remedy over a container that
  *  is already on its way up. Named once so the copy tables and the render sites all narrow to the
- *  same union instead of each asserting it with a cast (`.claude/rules/fail-first-typescript.md`). */
+ *  same union instead of each asserting it with a cast. */
 type GoneState = Exclude<PreviewLifeState, 'alive' | 'unknown' | 'starting'>
 
 const GONE_TITLE: Record<GoneState, string> = {
@@ -502,21 +499,20 @@ export default function LivePreview({
   // 200 and this pane cannot read a cross-origin status code, so revealing means "a document
   // arrived", never "the app is healthy". Whatever ends up rendering over a framed-but-broken app
   // hangs off a health signal from the server, not off this flag.
-  // …but `previewUrl` alone is NOT a sufficient identity for the frame, and that gap is review
-  // finding #5. U1's attach arm made "same container, same FQDN, same URL" the common case, so a
-  // repair turn ends with `previewUrl` byte-identical to what it was before. React sees the same
-  // key, keeps the same DOM node, the browser never re-requests — and the citizen keeps staring
-  // at the broken render of an app the server has already fixed. SL-16 caught it exactly: the
-  // server served 341 chars of the repaired app while the frame reported `loads 1 -> 1`.
-  //
-  // HMR usually rescues this, which is why it is intermittent rather than constant. It does not
-  // rescue it when self-heal restarts `next dev` mid-turn, because that kills the framed
-  // document's HMR socket without anything on this side noticing.
+  // …but `previewUrl` alone is NOT a sufficient identity for the frame. Attaching to a container
+  // that is already up makes "same container, same FQDN, same URL" the common case, so a repair
+  // turn ends with `previewUrl` byte-identical to what it was before: React sees the same key,
+  // keeps the same DOM node, the browser never re-requests — and the citizen keeps staring at the
+  // broken render of an app the server has already fixed. A browser run caught it exactly: the
+  // server served 341 chars of the repaired app while the frame reported `loads 1 -> 1`. HMR
+  // usually rescues it, which is why it is intermittent rather than constant — but not when
+  // self-heal restarts `next dev` mid-turn, which kills the framed document's HMR socket without
+  // anything on this side noticing.
   //
   // So the frame gets an identity that can change when the URL cannot. `iterating` falling is the
   // honest moment: it means a turn that was running OVER a live preview just ended, which is the
   // repair case and nothing else. A timer would reload an idle pane; a status tick would reload
-  // on every poll and leak the HMR socket the original key comment rightly protects.
+  // on every poll and leak the HMR socket the frame's `key` comment rightly protects.
   const [autoReloadNonce, setAutoReloadNonce] = useState(0)
   const wasIterating = useRef(false)
   useEffect(() => {

@@ -1,37 +1,15 @@
-"""The between-runs self-heal verify (KD-5 / KD-6 / KD-7 / KD-8).
+"""The between-runs self-heal verify.
 
-After each `agent.iter` run the harness runs a CHEAP, harness-driven verify — `tsc --noEmit` over
-the C2 command op and the `dev_logs` cursor tail — and decides the gate. Completion is an OBJECTIVE
-green signal (`tsc` clean AND the dev server ready AND a clean log tail), never the model's word
-alone (KD-6). `next build` is NOT run in Wave-1 (the production build is a DEPLOY concern, D2). A
-slow-but-healthy dev server is distinguished from a stuck one by a bounded readiness poll before
-any run is burned (open-Q F). A red signal becomes a redacted `BuildError` the loop re-seeds as the
-next run's prompt (KD-5).
+After each `agent.iter` run the harness runs a CHEAP verify — `tsc --noEmit` over the C2 command
+op plus the `dev_logs` cursor tail — and decides the gate. Completion is an OBJECTIVE signal,
+never the model's word; `next build` is not run here (the production build is a deploy concern);
+a bounded readiness poll tells a slow-but-healthy dev server from a stuck one before a run is
+burned; and a red signal becomes a redacted `BuildError` the loop re-seeds as the next prompt.
 
-Every one of those signals is asked of the SERVER, and an app can satisfy all of them and still
-throw in the browser before it paints. U13 adds the missing witness: the app's own error reporter
-POSTs what it caught, `client_errors` parks it, and `verify` drains it here — so a reported
-browser-side crash is a not-green verdict exactly like a failed type-check (R17, AE11). This is
-the ONE authority both loops consult, which is why the runtime half lands here rather than at
-either call site: `turns/engine.py` runs the live path and `harness.py` the vestigial one, and a
-health rule that only one of them knew would be a health rule with an escape hatch.
-
-U6 adds the two halves R9 asks for and a third VALUE. The halves: the app's own root is fetched
-over HTTP (`what_is_it_serving`) so a 500 can no longer ship green past a readiness probe that
-fail-opens on it, and `app/page.tsx` is compared against the repository's ROOT COMMIT so an app
-still serving the golden template can no longer be called finished — the nine-minute false
-"Build complete" of 2026-08-18. The value is `INDETERMINATE`: a readiness budget that ran out and
-a serving probe that timed out are "we could not tell", not "it is broken", and feeding either to
-the model as a defect spent a repair run on a fault that may never have existed. `verify` asks
-again instead; only `HEALTHY` is green.
-
-A DEAD dev child gets the IT Crowd treatment first — "have you tried turning it off and on
-again?": verify captures the child's last output + exit code (the ring resets on restart), calls
-`dev_start` once, and only then polls readiness. Before this rescue, nothing in the system ever
-restarted a dead child — not the supervisor, not the harness, and the agent is forbidden to — so
-one startup crash burned the whole self-heal budget re-prompting the agent to fix a rendering bug
-that did not exist (the 2026-07-30 calculator build: 3 repair runs, ~875k tokens, dead process).
-"""
+Server-side signals only answer "is a Next app running here", so verify also asks what the app's
+root actually serves, whether `app/page.tsx` is still the workspace's first commit, and what the
+browser's own error reporter caught. It is the ONE authority both loops consult, and a dead dev
+child is restarted once before its readiness is judged."""
 
 from __future__ import annotations
 
@@ -182,10 +160,8 @@ def served_badly_error(status: int) -> BuildError:
     return from_server(_SERVED_BADLY_DETAIL.format(status=status))
 
 
-# U6 / R9 — THE CONTENT HALF. On 2026-08-18 "Build complete — your app is live below" sat above the
-# untouched starter template for nine minutes. Every server-side signal was green, because every
-# server-side signal answers "is a Next app running here" and none of them answers "is it THEIR
-# app". This one does, and it is the diagnostic the model gets when the answer is no.
+# THE CONTENT HALF — the diagnostic the model gets when every server-side signal is clean and the
+# app on screen is still not the user's app.
 _STILL_THE_STARTER_PAGE_DETAIL = (
     "The app's home page (`app/page.tsx`) is still byte-for-byte the starter template the "
     "workspace was created with — nothing the user asked for is on the page they will actually "
@@ -260,19 +236,14 @@ def the_call_is_coming_from_inside_the_house(reports: list[ClientErrorReport]) -
 
 
 class HealthState(enum.StrEnum):
-    """The harness's read of an app's health — THREE values, and the third is the point (U6, R10).
+    """The harness's read of an app's health — THREE values, and the third is the point.
 
-    This verdict was a boolean, and a boolean cannot tell "the app is broken" apart from "we could
-    not find out". Every way of not finding out — a readiness poll whose budget ran out, a serving
-    probe that timed out, a content check with no baseline to compare against — was folded into
-    "red" and handed to the model as a defect to fix. It then spent a repair run, the user's
-    tokens and the user's time on a fault that may never have existed, and three of the four repair
-    cycles in the 2026-08-18 demo were exactly that.
-
-    Naming discipline, inherited from `durable_copy.CopyState`: `INDETERMINATE` must not be
-    skimmable as either of the other two. It is not a soft red and it is not a cautious green. It
-    means ASK AGAIN — and, specifically, it never revokes a reveal already granted and never
-    reaches a teardown, a restore or a reclaim."""
+    A boolean cannot tell "the app is broken" apart from "we could not find out". Every way of
+    not finding out — a readiness budget that ran out, a serving probe that timed out, a content
+    check with no baseline — was folded into "red" and handed to the model as a defect, spending
+    a repair run on a fault that may never have existed. `INDETERMINATE` must not be skimmable as
+    either of the other two: not a soft red, not a cautious green. It means ASK AGAIN, and it
+    never revokes a reveal already granted or reaches a teardown, a restore or a reclaim."""
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
@@ -468,12 +439,12 @@ async def verify(
         )
         first_pass = False
         carried = outcome.client_reports
-        # U9 / R15 — ONE AUTHORITATIVE RE-CHECK BEFORE A REPAIR ROUND-TRIP IS BOUGHT. Three of the
-        # four repair cycles in the 2026-08-18 demo were the platform re-reporting errors it had
-        # already fixed, and the mechanism is structural: `log_cursor` bounds the read by log
-        # POSITION rather than by agent action, a dev-server restart resets the ring underneath it,
-        # and a dead child's last words are deliberately carried forward. So a crash printed before
-        # the agent's edit can be read after it and charged as a fresh defect.
+        # ONE AUTHORITATIVE RE-CHECK BEFORE A REPAIR ROUND-TRIP IS BOUGHT. The platform can charge
+        # the agent for errors it has already fixed, and the mechanism is structural: `log_cursor`
+        # bounds the read by log POSITION rather than by agent action, a dev-server restart resets
+        # the ring underneath it, and a dead child's last words are deliberately carried forward.
+        # So a crash printed before the agent's edit can be read after it and charged as a fresh
+        # defect.
         #
         # Gated on the EVIDENCE, not on the verdict, and that gate is what keeps this both cheap
         # and safe: a failed type-check, a 500 from the root route and a baseline comparison are
@@ -638,13 +609,10 @@ async def _verify_once(
         # into the log before the read below — but this one keeps a bounded head of the answer,
         # and the status is now LOAD-BEARING rather than merely logged.
         #
-        # THE PROMOTION IS THE POINT, and the note it replaces said what it would cost: the old
-        # comment recorded that a root route answering 500 shipped green because the verdict was
-        # five hard-coded text markers against the dev log, and left promoting it as "a
-        # behavioural decision for the owner". R9 is that decision, made. It also explains why the
-        # call could not simply stay as it was: `someone_has_to_go_first` is contractually
-        # non-load-bearing (R6) and its docstring says no caller may make a decision on what it
-        # returns, so reading a verdict off it would have converted a promise into a lie.
+        # THE PROMOTION IS THE POINT, and it is why the call could not simply stay as it was:
+        # `someone_has_to_go_first` is contractually non-load-bearing and its docstring says no
+        # caller may make a decision on what it returns, so reading a verdict off it would have
+        # converted a promise into a lie.
         served = await sandbox_client.what_is_it_serving(handle)
         if served is None:
             logger.warning("verify_serving_probe_unanswered", app=handle.app_name, tsc_ok=tsc_ok)
@@ -776,8 +744,8 @@ async def _verify_once(
         state = HealthState.INDETERMINATE
         unanswered = Unanswered.BASELINE
     elif baseline is BaselineIdentity.STILL_THE_BASELINE:
-        # R9's content half, and the 2026-08-18 headline. Every server-side check above came back
-        # clean and the citizen is looking at the golden template.
+        # The content half. Every server-side check above came back clean and the citizen is
+        # looking at the golden template.
         state = HealthState.UNHEALTHY
         error = still_the_starter_page_error()
 

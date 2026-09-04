@@ -1090,13 +1090,10 @@ async def test_nuke_app_sweeps_the_per_app_container(db_session) -> None:
 async def test_storage_route_is_503_not_500_when_storage_is_unconfigured(
     client, db_session, route: str
 ) -> None:
-    """Fixture-free store-off baseline (`.claude/rules/testing.md`) for the two governance routes
-    that ADVERTISE a 503: with no store wired at all, `storage_or_none_dependency` resolves
-    `get_storage()` -> StorageUnconfiguredError -> None, and each body maps None onto the
-    documented 503. The eager `Storage` dependency they used to take raised at dependency-solve
-    time — before the route body, and before even the 404/409 guards above it — so the client got
-    an undocumented 500 in the catch-all's `{"detail": ...}` envelope instead. Deliberately
-    fixture-free: any fixture that binds a store makes this branch unreachable BY CONSTRUCTION."""
+    """Fixture-free store-off baseline for the two governance routes that ADVERTISE a 503: with
+    no store wired at all, `storage_or_none_dependency` resolves `get_storage()` ->
+    StorageUnconfiguredError -> None, and each body maps None onto the documented 503. Binding
+    no fixture is the load-bearing half — see `fake_storage` in `tests/conftest.py`."""
     from src.services.storage import accessor as _storage_accessor
 
     _storage_accessor._backend_singleton = None  # store off: no backend configured in .env.test

@@ -44,9 +44,8 @@
  * ═══ WHAT THIS COMPONENT WILL NOT DO ═══
  *
  * NOTHING HERE REQUESTS AN ADDRESS. The host frames what already exists; it never starts a
- * sandbox. That is what keeps R3 true before Plan F owns the start control — a mounted-but-hidden
- * pane on the project screen costs nothing, because there is nothing for it to frame unless a
- * conversation already put something there.
+ * sandbox — a mounted-but-hidden pane on the project screen costs nothing, because there is
+ * nothing for it to frame unless a conversation already put something there.
  */
 import { useRef } from 'react'
 import LivePreview from '../LivePreview'
@@ -59,9 +58,9 @@ export interface AppPaneHostProps {
   device: DeviceName
   reloadNonce: number
   /**
-   * The pane is unwanted but has not finished going (plan 002, U6). Decided by `AppPane`, which
-   * owns the column this sits inside, so the two cannot disagree about whether they are still on
-   * their way out — see `paneExit.ts`.
+   * The pane is unwanted but has not finished going. Decided by `AppPane`, which owns the column
+   * this sits inside, so the two cannot disagree about whether they are still on their way out
+   * — see `paneExit.ts`.
    */
   leaving: boolean
 }
@@ -82,9 +81,8 @@ export default function AppPaneHost({ device, reloadNonce, leaving }: AppPaneHos
   //                  ended over a live preview, re-request the document" signal. Defaulting it
   //                  FABRICATES that edge, so leaving a build chat WHILE A BUILD IS RUNNING reloads
   //                  the app: silently, and semantically wrongly, because the turn had not ended.
-  //   completedLive  the #13/R2 pardon — "this container is alive under an idle lease". It is what
-  //                  makes `keepFramed` outrank a terminal status (`LivePreview.tsx:500`, `:521`).
-  //                  The address KEEPS its status, and for a finished build that status is `ended`,
+  //   completedLive  what makes `keepFramed` outrank a terminal status in `LivePreview`. The
+  //                  address KEEPS its status, and for a finished build that status is `ended`,
   //                  so defaulting this one to `false` collapses `frameContext` and UNMOUNTS the
   //                  iframe — leaving a build chat right after the build SUCCEEDS, which is the
   //                  most common moment to leave one, destroys an app the server is still serving.
@@ -118,10 +116,10 @@ export default function AppPaneHost({ device, reloadNonce, leaving }: AppPaneHos
     <div
       data-testid="app-pane"
       aria-hidden={!visible}
-      // THE MOVEMENT THE BOARD DRAWS (plan 002, U6). `T2Sliding` is an artboard of this one
-      // transition, caught halfway, with an annotation that says exactly what it is: the app card
-      // sliding out to the right and fading as it goes, and "nothing about the app is stopped or
-      // reloaded — it is only taken off the screen".
+      // THE MOVEMENT THE BOARD DRAWS. `T2Sliding` is an artboard of this one transition, caught
+      // halfway, with an annotation that says exactly what it is: the app card sliding out to the
+      // right and fading as it goes, and "nothing about the app is stopped or reloaded — it is
+      // only taken off the screen".
       //
       // THE ANIMATION IS ON THE HIDE TREATMENT, NEVER ON THE MOUNT, and that distinction is the
       // whole reason this is safe. The element is not conditionally rendered — it is the same node

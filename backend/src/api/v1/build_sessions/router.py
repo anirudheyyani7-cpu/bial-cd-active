@@ -1,13 +1,12 @@
 """Build-sessions HTTP router — the C3 control surface (Wave 1).
 
-`start` / `stop` / `status` + `force-end` (the one surviving lock op — U28 retired
-`acquire`/`renew`/`release`/`heartbeat`, which nothing called) + the superadmin
-`internal/reap`, all owner-scoped by `user.id` (ADR-0004): every not-found-or-other-user
-case is a non-leaking 404 EXCEPT the one owner-asserted 403 on `force-end` (C3). The
-mutating POSTs carry the reusable `RequireCsrf` dependency (KTD-4); the `status` GET and
-the GET-SSE progress feed (`sse.py`, `Last-Event-ID`-resumable) are exempt.
+`start` / `stop` / `status` + `force-end` (the one surviving lock op) + the superadmin
+`internal/reap`, all owner-scoped by `user.id`. The one owner-asserted 403 in this file is
+`force-end`; everything else answers a non-leaking 404. The mutating POSTs carry the reusable
+`RequireCsrf` dependency; the `status` GET and the GET-SSE progress feed (`sse.py`,
+`Last-Event-ID`-resumable) are exempt.
 
-U13 adds one inbound route that is not a control op at all — `projects/{project_id}/client-error`,
+One inbound route here is not a control op at all — `projects/{project_id}/client-error`,
 where the app's own in-browser error reporter's findings arrive by way of the portal. It follows
 the same pattern as everything else here (CSRF, `CurrentUser`, owned-or-404), and the reason it
 lives in THIS router rather than under `apps/` is that its only consumer is the build harness's
@@ -131,8 +130,7 @@ class ConflictEnvelope(CamelModel):
 def _owned_or_404(
     manager: SessionManager, session_id: uuid.UUID, user_id: uuid.UUID
 ) -> BuildSession:
-    """Load a session scoped to its owner, or fail closed with a non-leaking 404 (a
-    cross-user id is indistinguishable from a missing one, ADR-0004)."""
+    """Load a session scoped to its owner, or fail closed with a 404."""
     session = manager.get(session_id)
     if session is None or session.user_id != user_id:
         raise AppApiError(status.HTTP_404_NOT_FOUND, "Build session not found.")
@@ -279,22 +277,17 @@ async def internal_reap(
     sandbox: SandboxDep,
     manager: SessionManagerDep,
 ) -> ReapResponse:
-    """Operator-triggered full reconciliation sweep (KTD-3) — `CurrentSuperadmin`-guarded,
-    CSRF'd, audited, idempotent, concurrency-safe. Automated headless scheduling is deferred
-    hardening (a machine-auth path; `CurrentSuperadmin` is cookie-only)."""
+    """Operator-triggered full reconciliation sweep — `CurrentSuperadmin`-guarded, CSRF'd,
+    audited, idempotent, concurrency-safe. The by-hand door onto the same sweep the scheduled
+    pass runs; this route itself is cookie-only, so nothing machine-authed can drive it."""
     # Retention sweep of ended in-process sessions rides the same operator path (the other
-    # opportunistic seam is start()) — nothing evicts them on a timer. Narrowed 2026-08-11:
-    # this said "no background task", which now reads as a claim about the repo. The repo HAS
-    # scheduled work (ADR-0011); what it has no scheduled evictor for is THIS in-process map,
-    # which is per-process state a shared scheduler could not reach anyway.
+    # opportunistic seam is start()) — nothing evicts them on a timer, and nothing scheduled
+    # could: this map is per-process state another process cannot reach.
     manager.evict_ended_sessions()
-    # U3 — the sweep walks the registry namespace with bare primitives, so an outage here
-    # is a 503 to the operator rather than an opaque 500. The audit row is deliberately
-    # inside: a sweep that never ran is not an action worth recording. Redis is resolved
-    # LAZILY inside the seam (never an eager Redis dependency — the `RedisDep` alias that
-    # caused this has been deleted, KTD-9): on a Redis-off deployment
-    # `get_redis()` raises here and the seam's trailing `_coordination_is_gone()` answers 503
-    # — an eager dependency would raise at solve-time and become an undocumented 500.
+    # The sweep walks the registry namespace with bare primitives, so an outage here is a 503
+    # to the operator rather than an opaque 500. The audit row is deliberately inside: a sweep
+    # that never ran is not an action worth recording. Redis is resolved LAZILY inside the seam,
+    # so `get_redis()` raises here and the trailing `_coordination_is_gone()` answers.
     with build_coordination_or_503():
         redis = get_redis()
         result = await sweep_all(redis, sandbox, live_users=manager.live_user_ids())
@@ -344,13 +337,9 @@ async def start_build(
 ) -> StartBuildResponse | JSONResponse:
     if run_build is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Build engine not configured.")
-    # This route's `responses=` names the sandbox in its 503 ("Build engine not configured, or
-    # the sandbox or build coordination is temporarily unavailable"), so an unconfigured sandbox
-    # owes the caller THAT answer. It arrives as `None` (the None-tolerant `OptionalSandbox`)
-    # rather than raising at dependency-solve time, where no `except` here could have reached it.
     if sandbox is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
-    # U3 — the whole start is inside the coordination seam, because Redis is touched at three
+    # The whole start is inside the coordination seam, because Redis is touched at three
     # points the caller cannot tell apart: `reconcile_user` (raw `RedisError`), the lock
     # acquire (`LockUnavailableError`), and the heartbeat seed. Every one of them now answers
     # with the same retryable 503 instead of a 500, or a 409 inventing a session that never
@@ -367,9 +356,9 @@ async def start_build(
                 sandbox_client=sandbox,
             )
         except ConversationNotFoundError as exc:
-            # R3 — the referenced thread is not the caller's, or belongs to another project. Both
-            # are the SAME non-leaking 404 as a missing one (ADR-0004): grounding a build in
-            # another project's files must not even be probeable.
+            # The referenced thread is not the caller's, or belongs to another PROJECT of theirs.
+            # Both answer 404: grounding a build in another project's files must not even be
+            # probeable.
             raise AppApiError(status.HTTP_404_NOT_FOUND, "Conversation not found.") from exc
         except BuildAttachmentError as exc:
             # R3 — an attached file could not be materialized (missing bytes, a magic-byte
@@ -434,14 +423,9 @@ async def relaunch_preview(
     one-per-user build slot — it registers a ready handle in Redis, releases the lock, and
     returns the live preview synchronously (`wait_ready` blocks until the dev server is up).
     """
-    # This route documents "The sandbox or build coordination is temporarily unavailable" AND maps
-    # `SandboxError -> 503` below. `SandboxNotConfiguredError` IS a `SandboxError`, so that except
-    # would have caught it — one frame too late, because an eager `SandboxDep` raised during
-    # dependency solving. `OptionalSandbox` hands it over as `None` instead, so the documented
-    # answer is actually reachable.
     if sandbox is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
-    # U3 — same coordination seam as `start_build`, and relaunch needs it at least as badly:
+    # Same coordination seam as `start_build`, and relaunch needs it at least as badly:
     # it takes the same per-user lock through the same `_holding_user_lock`, so before the
     # split a Redis blip here told the user a build was already running.
     with build_coordination_or_503():
@@ -569,13 +553,8 @@ async def build_events(
 
 # --- lock ops: force-end (the operator/owner kill switch) ---------------------
 #
-# U28 retired `acquire` / `renew` / `release` / `heartbeat`, along with their shared
-# `_renew_and_state` helper: the portal's keep-alive loop that was their only caller was
-# itself deleted back in U13 (`buildSessionApi.ts` says so), and a route with no caller is
-# not neutral — it reads as a supported way to hold the lock, and the next person needing
-# one would have wired the loop straight back. What holds a turn open now is the R10
-# wall-clock lease the SERVER renews (U12), legible to a sweep in another process, which a
-# browser timer never was. `force-end` is the one lock op still reachable from the UI (fed
+# `acquire` / `renew` / `release` / `heartbeat` were retired, along with their shared
+# `_renew_and_state` helper. `force-end` is the one lock op still reachable from the UI (fed
 # by relaunch's 409) and it CARRIES NO REQUEST BODY, same as its four retired neighbours —
 # the surviving proof that this section's routes take none.
 
@@ -592,8 +571,8 @@ async def build_events(
 async def lock_force_end(
     session_id: uuid.UUID, user: CurrentUser, sandbox: SandboxDep, manager: SessionManagerDep
 ) -> ForceEndResponse:
-    # The ONE route with an owner-asserted 403 (C3): a found-but-foreign session is a 403,
-    # not a 404 — force-end is a privileged kill switch, so the caller is told it exists.
+    # The ONE route with an owner-asserted 403: a found-but-foreign session is a 403, not a
+    # 404 — force-end is a privileged kill switch, so the caller is told it exists.
     session = manager.get(session_id)
     if session is None:
         raise AppApiError(status.HTTP_404_NOT_FOUND, "Build session not found.")
@@ -947,9 +926,9 @@ async def workspace_check(
 
     THE TURN MAY NEVER COME. Every other integrity check in this system runs at the start of a
     turn, which catches every reversion between one message and the next — and catches nothing at
-    all for someone who is reading, or in another tab, or at lunch. The "Build complete — your app
-    is live below" claim above their preview goes on being displayed for as long as the page stays
-    open. That is 2026-08-18 with the clock running, and it is what this route exists to end.
+    all for someone who is reading, or in another tab, or at lunch. A standing completion claim
+    above their preview goes on being displayed for as long as the page stays open, which is what
+    this route exists to end.
 
     A POST, WITH CSRF, because it is not a free read: it costs a container exec and it can raise
     an operational alarm. It follows this file's pattern exactly — `RequireCsrf`, `CurrentUser`,
@@ -966,7 +945,7 @@ async def workspace_check(
     app behind their back while they are looking at another tab is not a kindness."""
     await owned_project_or_404(db, user.id, project_id)
     if sandbox is None:
-        # No sandbox service configured (KTD-2). Nothing can be checked and nothing is claimed —
+        # No sandbox service configured. Nothing can be checked and nothing is claimed —
         # `UNREADABLE` is the honest answer, and the client holds its claim on it.
         return WorkspaceCheckResponse(state=WorkspaceState.UNREADABLE, reverted=False)
     state = await manager.project_workspace_check(db, user, project_id, sandbox_client=sandbox)
@@ -1079,11 +1058,6 @@ async def report_client_error(
     had no room for, and that is not a client error to raise — it is a fact about volume the
     caller deserves to be told (see `ClientErrorReportResponse`).
 
-    OWNED-OR-404 on the app, like every other route in this file: a cross-user app id and a
-    missing one are the same non-leaking answer (ADR-0004). Not 403 — telling a caller "that app
-    exists but is not yours" is exactly the probe the 404 exists to refuse, and there is no
-    force-end-style owner assertion here to make an exception for.
-
     NO SESSION, NO REDIS, NO SANDBOX. Deliberately PROJECT-scoped rather than session-scoped: the
     crash arrives from a framed preview, and a preview outlives its build session by design
     (relaunch registers none at all). A route that needed a live session would be unable to
@@ -1097,9 +1071,9 @@ async def report_client_error(
     would MINT an app row. An app that does not exist is a 404 — there is no build for a browser
     crash to be about."""
     await owned_project_or_404(db, user.id, project_id)
-    # Owner AND project in the predicate, not just project: the scope is the isolation boundary,
-    # not a nicety (ADR-0004). `owned_project_or_404` above already refused another user's
-    # project, and the second predicate is what keeps that true if this query is ever moved.
+    # Owner AND project in the predicate, not just project: `owned_project_or_404` above has
+    # already refused another user's project, and the second predicate is what keeps that true
+    # if this query is ever moved somewhere that has not.
     app_id = (
         await db.execute(
             sa.select(AppRegistry.id).where(

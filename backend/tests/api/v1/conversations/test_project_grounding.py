@@ -1,17 +1,12 @@
-"""The project's description grounds every turn, and only its owner's turns (R16, ADR-0004).
+"""The project's description grounds every turn, and only its owner's turns.
 
-These three moved here from `tests/api/v1/projects/` when the legacy `POST /v1/claude` relay
-was retired. They pinned the relay's `_compose_system`; the property they were really about —
-"a turn is grounded in the project's own description, and a project's description never
-reaches another user's turn" — belongs to whichever surface actually sends, so they now assert
-it through `POST /v1/conversations/{id}/turns` and the real prompt composition
+Asserted through `POST /v1/conversations/{id}/turns` and the real prompt composition
 (`services/agent/mode_prompts.compose_kind_prompt`).
 
 Deliberately at the ROUTE, not at `compose_kind_prompt`: `test_mode_prompts.py` already proves
 the composer puts a supplied description into the text. What has no other test is the WIRING —
 `turns.py` reading `project.description` off the owner-scoped row and handing it to that
-composer. A dropped predicate or a dropped field there is a cross-user leak that a
-composer-level test is structurally unable to see.
+composer, which is what a composer-level test is structurally unable to see.
 """
 
 from __future__ import annotations
@@ -133,11 +128,10 @@ async def test_cross_user_cannot_ground_a_turn_in_another_users_project(
     client, db_session, set_chat_model, _fresh_engine
 ) -> None:
     """`turns.py`'s owner-scoped conversation lookup is what stops user B grounding a turn in
-    user A's project (ADR-0004).
+    user A's project.
 
-    The owner's OWN turn is asserted FIRST — otherwise the leak assertion below could pass
-    simply because nothing ever injects a description, which is the vacuity trap the relay
-    version of this test was written to escape and which survives the move.
+    The owner's OWN turn is asserted FIRST — otherwise the assertion below could pass simply
+    because nothing ever injects a description at all.
     """
     owner = await UserFactory.create(db_session)
     project = await ProjectFactory.create(

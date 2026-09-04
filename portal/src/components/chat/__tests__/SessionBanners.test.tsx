@@ -1,25 +1,13 @@
 /**
- * SessionBanners (U15): the lifecycle banners, relocated above the composer from the retired
- * SessionControls. The pinned behaviors carry over verbatim:
+ * The two lifecycle banners rendered above the composer. What is pinned here:
  *  - feed-disconnected offers a manual Reconnect;
  *  - quota shows the daily-limit + IST reset copy;
  *  - both report something BLOCKED or BROKEN and are assertive: the operator must not miss one.
  *
- * TWO BANNERS AND THEIR TESTS ARE GONE, each because its PRODUCER was:
- *
- *  · the sleeping-workspace banner was raised only by the blind keep-alive loop U13 deleted, so
- *    `reclaimed` had no producer left. Its test kept passing — the strongest possible illustration
- *    of why a green suite is not coverage: it exercised a prop production could no longer set. The
- *    R17 argument it protected (a reclaimed container is a sleeping workspace, never an error) is
- *    enforced where a real producer exists, in `LivePreview`'s `asleep` state.
- *  · the block banner, with its Force-end and Dismiss, was raised by the session hook's `blocked`.
- *    That had TWO producers — `start`'s 409 and `relaunch`'s — and neither was reachable, so the
- *    same trap had been set twice. The live 409 comes off `relaunchPreview` today and is reported
- *    as a workspace sentence in the pane; `pages/__tests__/relaunch-chain-retired.test.jsx` drives
- *    BOTH arms and pins that neither can put this banner back on screen.
- *
- * What is left below is the retirement guard: no lifecycle state this component can be given
- * renders a Force-end control.
+ * Two other banners and their tests went with their producers, so the rest is a retirement guard:
+ * no lifecycle state this component can be given renders a Force-end control. That the live 409
+ * arms cannot put the block banner back on screen is pinned separately, in
+ * `pages/__tests__/relaunch-chain-retired.test.jsx`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, cleanup, fireEvent, screen } from '@testing-library/react'

@@ -1,36 +1,14 @@
 """App-row resolution + the base provision-env builder.
 
-`resolve_app_for_project` maps a project to its single `app_registry` row (minting the
-`bial_…` app-key on the first build, reusing it forever after — continuity), scoped by
-the owning `user_id` (ADR-0004), and returns the app id. `build_app_env` produces the
-two always-present `BIAL_*` env vars the sandbox injects at provision and re-injects on
-restore:
+`resolve_app_for_project` maps a project to its single `app_registry` row — minting the
+`bial_…` app-key on first build, reusing it forever after — scoped by the owning `user_id`
+(ADR-0004). `build_app_env` returns the two vars injected at provision and re-injected on
+restore: `BIAL_APP_ID`, the only structural read of `app_env`, and `BIAL_PORTAL_ORIGIN`,
+the Caddy `frame-ancestors` origin, which fails closed when unset.
 
-* `BIAL_APP_ID` — the app's identity, and the only structural read of `app_env`
-  (`sandbox/client.restore_from_snapshot`).
-* `BIAL_PORTAL_ORIGIN` — the C8 Caddy `frame-ancestors` origin (fails closed to an empty
-  ancestor list when unset). Its value is the bare origin of `settings.FRONTEND_URL`.
-
-`BIAL_APP_CREDENTIAL` and `BIAL_DATA_BASE_URL` are GONE (U6): the shared data plane they
-addressed no longer exists, and an app's data now lives in its own PostgreSQL database
-reached through `BIAL_DATABASE_URL` (see `appdb_env.py`). The `app_key` COLUMN survives —
-`GET /apps/{id}/status` still returns it — it is simply no longer injected.
-
-The two names this builder DOES produce — `BIAL_APP_ID` and `BIAL_PORTAL_ORIGIN` — are both on
-the C1 child-env scrub allowlist (`_INJECTED_ENV` → `_BIAL_INJECTED_KEYS`, D5/C6), so both reach
-`next dev`. (This line read "Both names survive …" directly under the paragraph about the two
-RETIRED vars, which reads as a claim that the retired pair still gets through. They do not: the
-allowlist is built from `_INJECTED_ENV` and neither name is in it.)
-
-WHAT IS *NOT* HERE, AND MUST NOT BE. `BIAL_BASE_PATH` and `BIAL_APPS_HOSTNAME` — the address a
-generated app is served at — are injected by `sandbox/client._provision_container`, not by this
-builder, and the reason is that `deploy/env.py` calls `build_app_env` too. A base path added
-here would ship an `sbx-` value into published containers whose images were built with a `pub-`
-one, so every published app would be configured for an address that does not exist. The
-provision seam is also the narrower place: it is the one point both a fresh provision and a
-restore pass through, so a relaunched sandbox comes back at the same path for free.
-The one-app-per-project upsert is REPLICATED inline (KTD-6) rather than extracted from
-another domain's router — refactoring it would edit another domain's file (anti-collision).
+`BIAL_BASE_PATH` and `BIAL_APPS_HOSTNAME` belong to `sandbox/client._provision_container`:
+`deploy/env.py` calls `build_app_env` too, so a base path added here would ship an `sbx-`
+value into published containers built with a `pub-` one. The database half: `appdb_env.py`.
 """
 
 from __future__ import annotations

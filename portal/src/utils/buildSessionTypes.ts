@@ -1,24 +1,24 @@
 /**
- * The wire shapes of the build-session control surface (C3) and the progress
- * envelope the SSE feed carries (C7). Mostly types — imported with `import type` —
- * plus two tiny PURE helpers derived from these shapes (`isActiveBuildStatus`, a
- * predicate over the status union, and `formatDailyLimitMessage`, the shared quota
- * copy) so every surface shares one definition instead of re-deriving it.
+ * The wire shapes of the build-session control surface and the progress envelope
+ * the SSE feed carries. Mostly types — imported with `import type` — plus two tiny
+ * PURE helpers derived from these shapes (`isActiveBuildStatus`, a predicate over
+ * the status union, and `formatDailyLimitMessage`, the shared quota copy) so every
+ * surface shares one definition instead of re-deriving it.
  *
- * TWO DELIBERATELY DIFFERENT CASINGS, frozen by the contracts:
+ * TWO DELIBERATELY DIFFERENT CASINGS, each frozen by its own contract:
  *
- *   - **C3 REST bodies are camelCase** (`CamelModel`: the backend serializes
- *     `by_alias=True`). So Python `session_id` ⇄ JSON `sessionId`, etc. The client
- *     narrows these camelCase fields (`buildSessionApi.ts`).
- *   - **The C7 progress envelope stays snake_case** — field names AND `type`
- *     literals (`preview_ready`, `cleaned_stack`, `resets_at`). It is a streaming
- *     frame shape (kin to the chat relay's `{"delta":{"text":…}}`); U8 renders it
- *     WITHOUT the camelCase alias generator so the keys are byte-stable
- *     BRAIN-emit → SESSION-API-relay → portal-consume (C3 §naming, C7 §wire-casing).
- *     Do NOT run a camel alias over the envelope (KTD-5).
+ *   - **REST bodies are camelCase** — the backend serializes by alias, so Python
+ *     `session_id` arrives as JSON `sessionId`, and the client narrows the
+ *     camelCase field.
+ *   - **The progress envelope stays snake_case** — field names AND `type` literals
+ *     (`preview_ready`, `cleaned_stack`, `resets_at`). It is a streaming frame shape
+ *     (kin to the chat relay's `{"delta":{"text":…}}`) and is rendered with NO
+ *     camelCase alias generator. Do not put one over it: every guard below
+ *     discriminates on those exact literals, so an aliased envelope would stop
+ *     matching silently and the feed would simply go quiet.
  *
  * Bodies arrive as `unknown` (untrusted network input) and are narrowed with type
- * guards at the boundary — never cast, never `any` (`.claude/rules/fail-first-typescript.md`).
+ * guards at the boundary — never cast, never `any`.
  */
 
 // ─── C3: the control-plane status enum (camelCase surface) ───────────────────
@@ -37,12 +37,11 @@ export function isActiveBuildStatus(status: BuildSessionStatus | null): boolean 
   return status === 'provisioning' || status === 'building' || status === 'ready'
 }
 
-// ─── C3: control operations — relaunch / stop / status (§2) ──────────────────
+// ─── Control operations — relaunch / stop / status ───────────────────────────
 //
-// `StartBuildRequest` / `StartBuildResponse` are GONE with the client `start` wrapper they typed.
-// A composer send is a TURN, not a C3 build session: nothing in the portal has provisioned one
-// since the turn transaction took the job over, so the wrapper had no caller and these had no
-// other reader. The ROUTE is untouched — deleting a browser client says nothing about it.
+// `StartBuildRequest` / `StartBuildResponse` are GONE with the client `start` wrapper they
+// typed, and nothing else read them. The ROUTE is untouched — deleting a browser client says
+// nothing about it.
 
 /** `POST …/relaunch` body — restore a project's saved app into a fresh, ready sandbox (#43). */
 export interface RelaunchPreviewRequest {
@@ -104,12 +103,11 @@ export interface BuildSessionStatusResponse {
   updatedAt: string
 }
 
-// ─── C3: lock operations — force-end (§3) ─────────────────────────────────────
+// ─── Lock operations — force-end ─────────────────────────────────────────────
 //
-// `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` are GONE (U28): they typed
-// `acquire` / `renew` / `release` / `heartbeat`, and nothing called those routes — the portal's
-// keep-alive loop that was their only caller was itself deleted back in U13. `ForceEndResponse`
-// is the one lock-op response shape still live.
+// `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` are GONE: they typed
+// `acquire` / `renew` / `release` / `heartbeat`, and nothing called those routes.
+// `ForceEndResponse` is the one lock-op response shape still live.
 
 /** `…/lock/force-end` → 200. The owner-only kill switch; `status` is `ended`. */
 export interface ForceEndResponse {

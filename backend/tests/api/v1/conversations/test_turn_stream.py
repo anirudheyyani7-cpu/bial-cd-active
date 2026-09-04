@@ -1241,20 +1241,15 @@ async def test_free_text_while_pending_resolves_as_implicit_refine(
 async def test_a_turn_in_any_kind_refuses_to_reclaim_another_projects_unsaved_work(
     client, db_session, set_chat_model, fake_redis, fake_storage, app, kind
 ) -> None:
-    """#83 — the refusal must not be gated on Build.
+    """The refusal must not be gated on Build.
 
-    `_pin_workspace` attaches the project's LIVE container for every kind ("Resolve the
-    turn-pinned read surface ONCE, for EVERY mode"), so a Plan turn takes the one-per-user
-    workspace exactly as a Build turn does. Gating the preflight on Build meant Plan still
-    destroyed the incumbent's unsaved work — and did it inside the detached turn, where the
-    only thing the user saw was "Your workspace could not be started right now": no dialog,
-    no named project, and no way to save. Found in live testing.
+    `_pin_workspace` attaches the project's LIVE container for every kind, so a Plan turn takes
+    the workspace exactly as a Build turn does; gating the preflight on Build left Plan on the
+    silent path.
 
-    PARAMETRISED OVER BOTH KINDS, not the three modes ("ask", "plan", "write") this test used
-    to run against: Ask and Plan collapsed into the one `ChatKind.PLAN` (`db/models/
-    conversation.py`), so a third arm would just repeat the Plan case under a retired name.
-    Two arms still catch the original bug — this went wrong because someone (me) read "the
-    workspace" as "the Build workspace", and a single-kind test would let that back in."""
+    Parametrised over both kinds rather than the three retired modes — Ask and Plan collapsed into
+    the one `ChatKind.PLAN` — because a single-kind test is what lets "the workspace" be read as
+    "the Build workspace"."""
     from src.api.v1.build_sessions.deps import sandbox_or_none_dependency
     from src.services.build_sessions.manager import SandboxReclaimBlockedError, SessionManager
     from tests.fakes import FakeSandboxClient
@@ -1285,10 +1280,8 @@ async def test_a_turn_in_any_kind_refuses_to_reclaim_another_projects_unsaved_wo
     error = resp.json()["error"]
     assert error["code"] == "sandbox_reclaim_blocked"  # NOT the generic "try again shortly"
     assert error["projectName"] == "Visitor Log"  # names what is in the way
-    # THE HAND-OVER'S PREFLIGHT IS THIS BODY (U9). The browser draws its dialog before it
-    # navigates, from what a refused send returns: the project holding the workspace, and
-    # whether that project's agent is mid-thought. A refusal that carried only the status left
-    # the dialog with nothing to say and no way to name either project.
+    # The refusal body is what the browser's dialog reads: which project holds the workspace,
+    # and whether that project's agent is mid-thought.
     assert error["agentWorking"] is True
     assert error["building"] is False  # the narrow flag is untouched and travels separately
 

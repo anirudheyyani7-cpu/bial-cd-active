@@ -3,20 +3,12 @@
  *
  * On a pre-body 401 it refreshes ONCE and retries — the same admission pattern the turn stream
  * follows. Refresh yields a success boolean rather than a token, so the retry carries no
- * Authorization header and rides the session cookie. Dependencies are injected so it's testable
- * without a real network or a React render.
+ * Authorization header and rides the session cookie. Dependencies are injected so it is testable
+ * without a real network or a React render, and the Authorization branch below is REACHED ONLY BY
+ * TESTS: `getToken` defaults to `auth.ts`'s `getAccessToken`, whose body is `return null`.
  *
- * The Authorization branch below is REACHED ONLY BY TESTS. `getToken` defaults to
- * `auth.ts`'s `getAccessToken`, whose body is `return null`, so in production no header is ever
- * attached; the seam exists for the type reason the dep bag documents, not for a caller. The
- * "legacy Express callers" this used to name were deleted with that backend in fde58e8b.
- *
- * CSRF: business routes now DO enforce the signed double-submit token — conversation create
- * (`backend/src/api/v1/conversations/router.py` `RequireCsrf`), turn start/stop, and the Build-it
- * transition. (The mode-switch route was the fourth example here; it is retired — that router's
- * own header now says there is no route that changes what a chat is.) This is the seam the older note pointed at, so we attach `X-CSRF-Token` on
- * every unsafe (mutating) method here, reading the same `csrf` cookie `auth.js` uses on
- * `/auth/refresh` / `/auth/logout`. Safe GETs carry no header; routes that don't verify it ignore it.
+ * Unsafe methods carry `X-CSRF-Token` from the same `csrf` cookie `auth.js` sends on
+ * `/auth/refresh` / `/auth/logout`. Safe GETs carry none; a route that does not verify it ignores it.
  */
 import { getAccessToken, refreshAccessToken, handleSuspendedSession, getCsrfToken } from './auth'
 import { isSuspended, ApiError } from './apiError'
@@ -49,8 +41,6 @@ export async function authFetch(
   opts: RequestInit = {},
   { getToken = getAccessToken, refresh = refreshAccessToken, fetchImpl = fetch }: AuthFetchDeps = {},
 ): Promise<Response> {
-  // Signed double-submit CSRF rides every mutating request (create/switch-mode/etc.). GET/HEAD
-  // are safe and carry no token; a route that doesn't verify it simply ignores the header.
   const method = (opts.method || 'GET').toUpperCase()
   const isMutating = method !== 'GET' && method !== 'HEAD'
 

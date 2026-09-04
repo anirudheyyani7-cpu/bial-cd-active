@@ -1,9 +1,7 @@
 """The per-project DATABASE half of a build session's injected environment.
 
 `provision_app_database` ensures the project's own database + role exist and returns the
-single `BIAL_DATABASE_URL` var the sandbox injects into `next dev`. It is called ONLY on
-the arms where a container is BORN — start's provision/restore arm and relaunch — never on
-attach, which reuses the live container's birth environment, exactly as the Blob SAS does.
+single `BIAL_DATABASE_URL` var the sandbox injects into `next dev`.
 
 A module of its own rather than a function in `appdata.py`, for the same reason
 `appstorage.py` is one: `build_app_env` there is a SYNC, pure builder with no session and
@@ -33,10 +31,9 @@ async def provision_app_database(db: AsyncSession, project_id: uuid.UUID) -> dic
     """Ensure the project's database + role; return `{"BIAL_DATABASE_URL": <sandbox DSN>}`.
 
     Returns `{}` when `APP_DB__*` is unconfigured (dev/test) — a no-op merge, so the app
-    simply has no persistence (KTD-2), mirroring `provision_app_storage`'s disabled-store
-    path. A genuine substrate error PROPAGATES (fail-first): on a birth arm it fails the
-    start before any sandbox handle exists, and the whole sequence is idempotent, so the
-    next start just re-runs it.
+    simply has no persistence rather than the start failing. A genuine substrate error is
+    left to PROPAGATE: it fails the start before any sandbox handle exists, and the whole
+    sequence is idempotent, so the next start just re-runs it.
 
     `ensure_project_database` is idempotent and self-healing, which is what makes this the
     LAZY ensure too: a project created before this feature existed (or while the substrate

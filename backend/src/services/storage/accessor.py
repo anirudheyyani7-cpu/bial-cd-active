@@ -51,11 +51,11 @@ def get_storage() -> ObjectStorage:
 
 def get_app_container_store() -> AppContainerStore | None:
     """The per-app container store (layer-2 singleton), or **`None` when object storage is
-    unconfigured** (dev/test). This deliberately DIVERGES from `get_storage()`, which *raises*
-    when unset (KTD-2): per-app storage is a gracefully-disable-able feature, so callers branch
-    on `None` (`storage off → skip`) rather than swallowing a real error. Owns no client — the
-    store resolves the shared `azure_backend` client per-op — so caching it here is cheap and it
-    needs no `aclose` of its own; `aclose_storage` / `reset_storage_for_tests` just drop the ref.
+    unconfigured** (dev/test) — unlike `get_storage()` above, which raises. Callers branch on
+    `None` (`storage off → skip`) rather than wrapping this in a `try` that would also swallow
+    a real storage error. Owns no client — the store resolves the shared `azure_backend` client
+    per-op — so caching it here is cheap and it needs no `aclose` of its own; `aclose_storage` /
+    `reset_storage_for_tests` just drop the ref.
     """
     global _app_container_store_singleton
     if _app_container_store_singleton is None:

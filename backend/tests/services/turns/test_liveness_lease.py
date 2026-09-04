@@ -135,9 +135,7 @@ async def _renew_a_while(state: _TurnState, *, ticks: int = 20) -> None:
 async def test_a_renewal_writes_a_wall_clock_deadline_under_a_mandatory_ttl(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The TTL is the whole reason this family is safe to add: the registry hash's LACK of one
-    # is the root cause of ADR-0029, so a lease with no expiry would be the same bug in a new
-    # key. `ttl` returning -1 means "no expiry" and MUST never happen here.
+    # The TTL is mandatory: `ttl` returning -1 means "no expiry" and MUST never happen here.
     await _register(fake_redis, USER)
     before = time.time()
     assert await locks.renew_liveness_lease(fake_redis, USER) is True
@@ -485,8 +483,7 @@ def test_the_renewal_cadence_leaves_head_room_inside_the_ttl() -> None:
 
 
 async def test_the_lease_key_is_environment_scoped_and_disjoint_from_its_neighbours() -> None:
-    # R22: a process pointed at the wrong Redis must not read another environment's lease and
-    # spare — or fail to spare — the wrong fleet. And the family discriminator keeps a lease
-    # from ever being read as the lock or the heartbeat.
+    # The lease obeys the environment scoping `src/services/redis/keys.py` sets, and the family
+    # discriminator keeps it from ever being read as the lock or the heartbeat.
     assert lease_key(USER).startswith("bial:development:sandbox:lease:")
     assert len({lease_key(USER), lock_key(USER), heartbeat_key(USER), registry_key(USER)}) == 4

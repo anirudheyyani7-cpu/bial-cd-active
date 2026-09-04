@@ -20,28 +20,16 @@
  * already make. A builder who reads for half an hour without acting does lose the container and
  * gets it back on their next prompt behind a labelled wait — a bounded, deliberate cost.
  *
- * NOTHING IN THE BROWSER EXTENDS A SANDBOX'S DEADLINE. No keep-alive timer, no heartbeat, no lock
- * renewal — the client functions and the routes behind them are both gone — so an open tab cannot
- * hold a container up, and neither can tab visibility, a framed preview or an open feed. What does:
- * the server renews the lock and heartbeat itself on every non-terminal progress envelope, so a
- * build in flight renews as fast as it produces frames under a wall-clock lease a sweep in another
- * process can read; and save / stop / relaunch / deploy extend as a side effect of the request they
- * already make. A builder who reads for half an hour without acting does lose the container and
- * gets it back on their next prompt behind a labelled wait — a bounded, deliberate cost.
- *
  * KEY BEHAVIOURS (the plan's load-bearing decisions):
  *
- *  - **Status derivation** (C3 §1, from the envelope stream): the first non-terminal
- *    envelope (step|log|error) moves `provisioning → building`; `preview_ready → ready`;
- *    `ended{status:ended} → ended` (graceful — INCLUDING the quota path, which must resolve
- *    ENDED not FAILED); `ended{status:failed} → failed`. The two absorbing terminals are
- *    distinct (C3 §1).
- *  - **Missed `preview_ready`** (KTD-1): `start`/`reattach` seed `previewUrl` from the C3
- *    status response, so a `preview_ready` that fired BEFORE the client connected still
- *    frames the app — readiness comes from authoritative status, not solely the live envelope.
+ *  - **Status derivation** from the envelope stream: the first non-terminal envelope moves
+ *    `provisioning → building`, `preview_ready` moves it to `ready`, and which terminal an
+ *    `ended` settles on is read off `ended.status`, never off `reason`.
+ *  - **Missed `preview_ready`**: `reattach` seeds `previewUrl` from the status response, so a
+ *    `preview_ready` that fired BEFORE the client connected still frames the app — readiness
+ *    comes from authoritative status, not solely the live envelope.
  *  - **Force-end override**: the terminal transition comes from `ForceEndResponse.status`,
- *    overriding the envelope-derived status — a stuck-mid-`building` session may never emit a
- *    terminal `ended` (that is the whole reason force-end exists, C3 §3.4).
+ *    overriding the envelope-derived status.
  *  - **There is no `reclaimed` state.** Nothing on the client can tell that a container was taken
  *    back; the frozen-tab case is covered by the preview poll's `asleep` state in `LivePreview`.
  *  - **Feed-disconnected** (KTD-1): a bounded `EventSource` reconnect exhaustion (or an admission
@@ -111,10 +99,9 @@ export interface UseBuildSessionResult {
   /** Graceful stop. Resolves `false` when the stop FAILED and the session is still live (the caller must not start over it). */
   stop: () => Promise<boolean>
   /**
-   * The owner-only kill switch (C3 §3.4), and it has no control on any surface since the block
-   * banner's Force-end button went. Kept because it is the only thing that can settle a session
-   * stuck mid-`building` that never emits a terminal `ended`, which is the whole reason the lock op
-   * exists; retiring the portal's client for it belongs to the stop lineage, not to this sweep.
+   * The owner-only kill switch. No surface carries a control for it since the block banner's
+   * Force-end button went; it is kept because it is the only thing that can settle a session
+   * stuck mid-`building` that never emits a terminal `ended`.
    */
   forceEnd: (targetSessionId?: string) => Promise<void>
   reconnect: () => void
@@ -149,10 +136,8 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
   // Refs mirror the state that async callbacks (timers, SSE handlers) must read WITHOUT a stale
   // closure. `statusRef` is the source of truth for lifecycle transitions; `settledRef` guards the
   // terminal transition so it runs exactly once (idempotent across SSE-ended / reclaim / force-end).
-  // `mountedRef` guards `start`/`reattach`: if the component unmounts WHILE their network call is in
-  // flight, the unmount cleanup already ran, so wiring up an SSE feed + keep-alive timers afterwards
-  // would leak them (a zombie heartbeat holds the one-per-user lock). Bail instead — a server session
-  // with no heartbeat is reaped by TTL, far cheaper than a zombie.
+  // `mountedRef` guards `reattach`: if the component unmounts WHILE its network call is in flight,
+  // the unmount cleanup has already run, so a feed subscribed afterwards is never closed. Bail.
   const mountedRef = useRef(true)
   const sessionIdRef = useRef<string | null>(null)
   const statusRef = useRef<BuildSessionStatus | null>(null)
@@ -210,9 +195,8 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
         return
       }
       if (env.type === 'preview_reconnecting') {
-        // F8/U5 — the dev-server PROCESS crashed after framing. A distinct preview signal, NOT a
-        // feed row and NOT the "building" spinner; the following `preview_ready` clears it. Kept
-        // even past a completed-build terminal so LivePreview can BOUND it (never a forever spinner).
+        // A preview signal, not a feed row. Kept even past a completed-build terminal so
+        // LivePreview can BOUND it (never a forever spinner).
         setReconnecting(true)
         return
       }
@@ -289,7 +273,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
       // Seed from the authoritative status (C3 §2.3) — this is what frames a `preview_ready` that
       // fired before we connected (KTD-1). May throw; U5 handles (falls back to the block banner).
       const st = await client.getStatus(sid)
-      // Unmounted mid-flight: same as start() — don't wire a feed/timers the cleanup can't reach (FIX 1).
+      // Unmounted mid-flight: don't subscribe a feed the unmount cleanup has already run past.
       if (!mountedRef.current) return
       settledRef.current = false
       sessionIdRef.current = sid
@@ -335,9 +319,9 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
       if (sid === own && settledRef.current) return // own session already terminal — no redundant call
       try {
         const res = await client.forceEnd(sid)
-        // The kill switch's terminal comes from the CONTROL-PLANE response, overriding any
-        // envelope-derived status (a stuck build may never emit `ended`) — C3 §3.4. A caller may
-        // still name ANOTHER session by id, in which case there is nothing local to settle.
+        // The terminal comes from the CONTROL-PLANE response, overriding any envelope-derived
+        // status. A caller may still name ANOTHER session by id, in which case there is nothing
+        // local to settle.
         if (sid === own) finishSession(res.status)
       } catch (e) {
         if (sid === own && settledRef.current) return // our own session was concurrently settled — no stale error
@@ -377,10 +361,10 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     )
   }, [client, closeFeed, subscribe, setPhase, finishSession])
 
-  // Own timer + feed teardown on unmount — no leaked intervals, no zombie SSE. `mountedRef` also
-  // trips here so an in-flight start()/reattach() bails instead of wiring resources we can't reach.
+  // Own timer + feed teardown on unmount — no orphaned timeout, no zombie SSE. `mountedRef` also
+  // trips here so an in-flight `reattach` bails instead of wiring resources the cleanup can't reach.
   // Re-set `true` on (re)mount: StrictMode double-invokes this effect (mount→cleanup→remount), so a
-  // cleanup-only `false` would strand start()/reattach() as permanently-unmounted after the remount.
+  // cleanup-only `false` would strand `reattach` as permanently-unmounted after the remount.
   useEffect(() => {
     mountedRef.current = true
     return () => {

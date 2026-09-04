@@ -24,12 +24,11 @@ harness's per-run reset is its whole lifetime), never reaches the database or bl
 unknown handle with a plain re-run instruction rather than a `ModelRetry` — which would spend the
 round-trip the tool exists to save.
 
-`apply_schema_change` (U23/R29) is the eighth, and it is the one tool here that is a SEQUENCE
-rather than an action: `drizzle-kit generate` then `npm run db:migrate`, the pair the prompt used
-to dictate step by step. It exists because both of them can fail while exiting zero, so a model
-reading exit codes believes a schema change happened that did not — it reads what they PRINTED,
-reports a per-step outcome, refuses to call a run successful when any step failed, and says which
-step failed and what state that left the workspace and the database in.
+`apply_schema_change` is the eighth, and it is the one tool here that is a SEQUENCE rather than an
+action: `drizzle-kit generate` then `npm run db:migrate`, the pair the prompt used to dictate step
+by step. It reports a per-step outcome read from what each step PRINTED, refuses to call a run
+successful when any step failed, and says which step failed and what state that left the workspace
+and the database in.
 
 EVERY TOOL DOCSTRING BELOW IS PROMPT COPY (U20 / R26). pydantic-ai sends it to the model as the
 tool's description at registration, and since U20 the build prompt's `TOOL SURFACE` block is
@@ -252,23 +251,13 @@ def _scrubbed_lines(text: str, *, denoise: bool) -> list[str]:
 
 
 def _redacted_lines(text: str, *, denoise: bool) -> list[str]:
-    """The SAFE artifact, and the ONLY thing that is ever buffered or returned (U22 / R3).
+    """The SAFE artifact, and the ONLY thing that is ever buffered or returned.
 
-    `scrub_untrusted` is cap → de-escape → redact, in that order, on the raw capture: the cap
-    bounds the work an app-controlled blob can make a synchronous scan do (ReDoS guard), the
-    escape strip runs BEFORE the mask because an ANSI sequence spliced into a credential splits
-    the token and the pattern stops matching, and the mask is what makes the text egressable at
-    all. It replaces the older `redact_secrets(text[:cap])` here because a handle RETAINS this
-    string for the rest of the turn — `core/redaction.scrub_untrusted`'s own docstring names
-    reaching for `redact_secrets` alone on app-authored text as the mistake it exists to stop.
-
-    REDACTION HAPPENS HERE, ONCE, ON EVERY CHARACTER THAT SURVIVES CAPTURE — before any slicing,
-    before the buffer, before the head/tail cut. That ordering is the unit's security property
-    twice over: the elided middle a handle hands back was never read by a human, so a buffer
-    built from raw stdout would be a direct path to a secret nobody ever saw; and cutting first
-    would split a credential that straddles the cut into two fragments that no longer match the
-    redactor's shapes, which is exactly how a cap applied after redaction re-exposes one. The
-    capture cut above is the same rule applied one level up, which is why it cuts on lines.
+    REDACTION HAPPENS HERE, ONCE, AND NOWHERE DOWNSTREAM — everything past this point only ever
+    cuts text that is already masked. It has to be `scrub_untrusted` rather than the older
+    `redact_secrets(text[:cap])`, because a handle RETAINS this string for the rest of the turn
+    and the elided middle it hands back is text no human ever read: a buffer filled from anything
+    less than the full scrub is a direct path to a secret nobody ever saw.
 
     `denoise` is the CALLER's answer to "is this text a build log?", never a guess made from the
     text itself. Dropping a line is only ever right for dependency-manager chatter; the same
@@ -488,31 +477,15 @@ async def _format_command_result(
 
 
 # ---------------------------------------------------------------------------------------
-# U23 / R29: one operation for applying a database change, and a status that tells the truth
+# One operation for applying a database change, and a status that tells the truth
 # ---------------------------------------------------------------------------------------
 #
-# THE SHAPE R29 NAMES, MET TWICE IN ONE SEQUENCE. Applying a schema change used to be two
-# prompt-taught commands, and BOTH of them can fail while exiting zero:
-#
-#   1. `npx drizzle-kit generate --name <what>` reaches the RENAME RESOLVER whenever a diff is
-#      ambiguous ("is `label` created, or renamed from `title`?"). No CLI flag answers it —
-#      `--name` least of all, it names the output file — and under this sandbox's real conditions
-#      (`stdin=DEVNULL`, no TTY, `CI=1`) it does not even hang: drizzle-kit prints "Interactive
-#      prompts require a TTY terminal" to stderr, writes NO migration, and exits 0.
-#   2. `npm run db:migrate` runs `sandbox/template/scripts/db-migrate.mjs`, which is NON-FATAL BY
-#      DESIGN — its own file header explains why: a migrate step that fails hard means `next dev`
-#      never prints "Ready in", and the harness then reports a rendering fault that does not
-#      exist. So it catches every error, abandons a slow migration after 20s, and ALWAYS exits 0.
-#
-# The composite therefore does not merely save a round trip. It is the only thing in the loop that
-# reads what those commands PRINTED and reports the failure their exit codes hide — per step,
-# naming which step failed and what state that left the workspace and the database in.
-#
-# WHAT IT DOES NOT DO is prevent the rename resolver. The one-kind-of-change-per-call rule in the
-# DATABASE block is the only thing that does, and the TTY defences (`CI=1`,
-# `stdin=subprocess.DEVNULL`, and `_refuse_a_manufactured_tty`, all in `sandbox/supervisor/app.py`)
-# are what make reaching it FAST AND LOUD rather than the observed four-minute stall. All three
-# stay; trimming any of them turns this tool's cleanest failure back into a wedge.
+# WHAT THIS COMPOSITE DOES NOT DO is prevent drizzle-kit's rename resolver; it only refuses to
+# report a run that hit one as a success. Prevention is the one-kind-of-change-per-call rule in
+# the DATABASE block, and the TTY defences (`CI=1`, `stdin=subprocess.DEVNULL`, and
+# `_refuse_a_manufactured_tty`, all in `sandbox/supervisor/app.py`) are what make reaching it fail
+# fast and loud instead of waiting at a prompt nobody can answer. All three stay; trimming any of
+# them turns this tool's cleanest failure back into a wedge.
 
 _GENERATE_ARGV: Final = ("npx", "drizzle-kit", "generate", "--name")
 _MIGRATE_ARGV: Final = ("npm", "run", "db:migrate")

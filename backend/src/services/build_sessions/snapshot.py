@@ -1,24 +1,15 @@
-"""C4 snapshot write (KTD-7): commit the working tree → `git bundle` it →
-base64 it over the C1 `/exec` endpoint → `put` to Blob.
+"""C4 snapshot write: commit the working tree → `git bundle` it → base64 it over the C1
+`/exec` endpoint → `put` to Blob.
 
-`git bundle create <file> HEAD` CARRIES COMPLETE HISTORY, not just the current tree, and this
-docstring used to say the opposite. A bundle names HEAD as the ref to include and git walks its
-ancestry, so every commit reachable from HEAD is in the file — which `manager.py` already says
-from the other side. This matters beyond tidiness: the health verdict's baseline comparison (U6)
-identifies an app by its ROOT COMMIT, and that only survives a restore because the history does.
-WRITTEN only by the session API (C4), but no longer session-API-only on
-READ: `submit` (APPROVAL) copies the snapshot to an immutable per-submission key, which
-changes what a swallowed `write_snapshot` failure means — it is no longer just "you lose
-resume", it is "you cannot submit your latest build" (the citizen submits the PREVIOUS
-snapshot instead, and nothing tells them). The failure is still caught-and-logged at the
-finalize call site by design; this note exists so that trade-off is re-weighed rather than
-rediscovered.
+`git bundle create <file> HEAD` CARRIES COMPLETE HISTORY, not just the current tree — it names
+HEAD and git walks its ancestry — and the health verdict identifies an app by its ROOT COMMIT,
+which only survives a restore because that history does. WRITTEN by the session API; READ also
+by `submit`, which copies the snapshot to an immutable per-submission key, so a swallowed
+`write_snapshot` failure costs the citizen their latest build, not just their resume, silently.
 
-CONCURRENCY: two snapshots of one app can overlap (Save is not gated on an in-flight session —
-see `manager.save_project_snapshot`), so this module owns both halves of making that safe: a
-per-call bundle path, and a per-app lock. Neither is optional; see `_BUNDLE_PREFIX` and
-`_serialized_per_app` for what each one prevents.
-"""
+CONCURRENCY: two snapshots of one app can overlap (Save is not gated on an in-flight session), so
+this module owns both halves — a per-call bundle path and a per-app lock (`_BUNDLE_PREFIX`,
+`_serialized_per_app`)."""
 
 from __future__ import annotations
 
@@ -235,17 +226,9 @@ async def write_snapshot(
         return tree.head_sha
 
 
-# HOW MANY TIMES IN A ROW THIS APP'S RECOVERY WRITE HAS BEEN REFUSED.
-#
-# U2 reads it to bound the refusal loop, and the reason is a shape the 2026-08-18 Summary
-# describes: once the recovery slot has been overwritten with a bad tree, `recoverable_work` ranks
-# the two bundles by `last_modified`, not by ancestry — so a poisoned-but-newer recovery copy
-# outranks a perfectly good saved one, and every restore afterwards hands back the poison. Two
-# consecutive refusals for one app is the signal that the slot itself is the problem rather than
-# this turn, and U2 restores from the SAVED bundle instead.
-#
-# Process-local like the snapshot locks, and self-pruning: any outcome that is not a refusal drops
-# the entry.
+# HOW MANY TIMES IN A ROW THIS APP'S RECOVERY WRITE HAS BEEN REFUSED. Process-local like the
+# snapshot locks, and self-pruning: any outcome that is not a refusal drops the entry, so a streak
+# only ever means consecutive refusals seen by this process.
 _consecutive_diverts: dict[uuid.UUID, int] = {}
 
 
@@ -267,12 +250,6 @@ async def write_recovery_copy(
     taken_at: datetime,
 ) -> RecoveryWrite:
     """The turn-end autosave, with a guard that will not overwrite a good copy with a bad tree.
-
-    THE PROBLEM THIS CLOSES (U3, R8, AE4). The old write was gated on `touched` alone — "a
-    mutating tool ran", not "the tree changed" — and the `put` was unconditional. So a container
-    that reverted midway through a turn had its empty tree stamped in as the newest copy of the
-    user's work, over a perfectly good bundle, with nothing recorded anywhere. That is one half of
-    what happened on 2026-08-18, and the swallowed failure is why nobody could prove it afterwards.
 
     THE NO-OP SKIP IS DECIDED ON THE BUNDLED SHA, AND THAT ORDERING IS THE WHOLE TRICK.
     `_COMMIT_SCRIPT` runs `git add -A && git commit` as step ONE inside the bundle below, so by
@@ -302,20 +279,14 @@ async def write_recovery_copy(
             )
 
         if recorded is None:
-            # AN OBJECT IS THERE AND WE CANNOT COMPARE AGAINST IT — a bundle written before the
-            # head stamp existed, which `durable_copy.py` documents as a live population.
-            #
-            # THIS USED TO WRITE, and that was a data-loss path an adversarial review reproduced.
-            # A bundle we cannot compare against is not a licence to overwrite it: an app whose
-            # container has reverted has exactly this shape, so the unguarded write stamped the
-            # reverted tree over the user's only durable copy — into a store with no versioning
-            # and no soft delete. Worse, U5's reaper reads a WRITTEN as proof the work is safe and
-            # deletes the container in the same call, so the guard written to stop 2026-08-18
-            # reproduced it.
-            #
-            # Diverted, so the tree is kept and an operator can promote it (U25) once they can
-            # see which of the two is the real one. Same reasoning `_where_head_sits_relative_to`
-            # already applies to a `recorded` that is not sha-shaped.
+            # AN OBJECT IS THERE AND WE CANNOT COMPARE AGAINST IT — a bundle predating the head
+            # stamp. That is not a licence to overwrite it: an app whose container has reverted
+            # has exactly this shape, so writing would stamp the reverted tree over the user's
+            # only durable copy, into a store with neither versioning nor soft delete — and the
+            # reaper reads a WRITTEN as proof the work is safe and deletes the container in the
+            # same call. Diverted instead, so the bytes are kept for an operator to promote. Same
+            # reasoning `_where_head_sits_relative_to` applies to a `recorded` that is not
+            # sha-shaped.
             where = divert_key(app_id, taken_at)
             await _store_it(store, where, tree)
             _consecutive_diverts[app_id] = _consecutive_diverts.get(app_id, 0) + 1

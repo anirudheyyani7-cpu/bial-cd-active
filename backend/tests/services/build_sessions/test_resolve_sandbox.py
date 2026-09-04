@@ -1,19 +1,14 @@
-"""U2 — the pre-turn integrity gate: say so, quarantine, restore, then confirm.
+"""The pre-turn integrity gate: say so, quarantine, restore, then confirm.
 
-R1/R2/R3/R5/R6. Until this unit the attach path re-attached on a supervisor `/health` 200 and
-never looked at the tree. On 2026-08-18 that is exactly what happened: a container that had
-factory-reset to its baked image answered every check the platform had, and the agent built on
-the wiped workspace in front of a client.
+Until this gate the attach path re-attached on a supervisor `/health` 200 and never looked at
+the tree. THE ORDER OF THE ASSERTIONS IN THIS FILE IS THE ORDER OF THE RISK.
 
-THE ORDER OF THE ASSERTIONS IN THIS FILE IS THE ORDER OF THE RISK.
-
-* `test_the_sentence_arrives_before_the_restore_runs` is the unit's shape. Putting an app back
+* `test_the_sentence_arrives_before_the_restore_runs` is the unit's shape: putting an app back
   takes tens of seconds during which the screen would otherwise say nothing at all.
-* `test_a_check_that_times_out_touches_nothing` is the one that must never regress. `REVERTED` is
-  the only state that may destroy anything, and the whole safety argument collapses if an
-  unanswerable check can reach a teardown.
-* `test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted` is the inertness guard. It
-  is what proves the fakes' default is right — and, more usefully, that it STAYS right.
+* `test_a_check_that_times_out_touches_nothing` must never regress: `REVERTED` is the only state
+  that may destroy anything, and an unanswerable check must never reach a teardown.
+* `test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted` proves the fakes'
+  default is right — and, more usefully, that it STAYS right.
 """
 
 from __future__ import annotations
@@ -519,10 +514,9 @@ async def test_an_idle_reversion_is_caught_at_the_poll_and_alarmed(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ R4/R7 — THE TURN MAY NEVER COME. Every other check in this system runs at the start of a
-    turn; a citizen who is reading, or in another tab, or at lunch gets none of them, and the
-    completion claim above their preview goes on being displayed over a dead app for as long as
-    the page stays open.
+    """★ THE TURN MAY NEVER COME — every other check in this system runs at the start of a turn,
+    and this one runs at the preview poll. Why that is the only notice an idle reversion gets is
+    on `WORKSPACE_LOST_WHILE_IDLE_EVENT`.
 
     Mutation check: return INTACT unconditionally from `project_workspace_check` and this goes
     red."""

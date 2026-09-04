@@ -1,14 +1,11 @@
-"""The thread→build→record seam, composed (003-U5/U6).
+"""The thread→build→record seam, composed.
 
 `test_outcome.py` calls `write_build_outcome` directly, which proves the writer. It cannot prove
 the SEAM: that a real `POST /v1/build-sessions` carrying a `conversationId` actually threads that
 id through the session and into the end sequence. Every link there is a plain assignment, and a
-plain assignment is exactly the kind of thing that gets dropped in a refactor while every unit test
-stays green (`mocks-mask-composition-seams` learning).
-
-So this drives the REAL router → REAL SessionManager → REAL end sequence, with only the sandbox and
-BRAIN faked (they need a container and a model), and asserts the outcome lands in the real thread.
-Includes the scripted-failure half: a build that FAILS must still leave a record saying so.
+plain assignment is exactly the kind of thing that gets dropped in a refactor while every unit
+test stays green. So this drives the REAL router → REAL SessionManager → REAL end sequence, with
+only the sandbox and BRAIN faked (they need a container and a model).
 """
 
 from __future__ import annotations
@@ -31,7 +28,7 @@ PREVIEW = "https://sbx-abc.westeurope.azurecontainerapps.io/"
 
 
 class ScriptedBrain:
-    """Runs to a scripted verdict. Emits no terminal — that frame is SESSION-API's alone (R7)."""
+    """Runs to a scripted verdict."""
 
     def __init__(self, result: BuildResult) -> None:
         self._result = result
@@ -47,14 +44,13 @@ async def _thread(db_session: AsyncSession):
     conv = await ConversationFactory.create(
         db_session, user.id, project_id=project.id, kind=ChatKind.BUILD
     )
-    # The turn that asked for the build — the outcome must land AFTER it.
+    # The turn that asked for the build.
     await MessageFactory.create(db_session, user.id, conv.id, seq=0)
     return user, project, conv
 
 
 def _verdict(
-    # BRAIN's verdict can only be one of the two ABSORBING terminals — the same narrowing
-    # `BuildResult` itself carries.
+    # Only the two ABSORBING terminals, the same narrowing `BuildResult` itself carries.
     status: Literal[BuildSessionStatus.ENDED, BuildSessionStatus.FAILED],
     reason: str,
     *,
@@ -85,9 +81,8 @@ async def _start(client, wire, user, project, conv, verdict: BuildResult) -> str
 
 
 async def _build_parts(db_session: AsyncSession, conversation_id) -> list[dict]:
-    """The build-OUTCOME records only (`meta.kind == 'build_outcome'`, the same predicate the
-    outcome probes use). The hidden `build_started` marker (U5) is deliberately excluded —
-    these tests prove the verdict record, and the marker has its own suite."""
+    """The build-OUTCOME records only (`meta.kind == 'build_outcome'`). The hidden
+    `build_started` marker is deliberately excluded: these tests prove the verdict record."""
     rows = await db_session.scalars(
         select(Message).where(Message.conversation_id == conversation_id).order_by(Message.seq)
     )
@@ -111,8 +106,6 @@ async def test_a_finished_build_records_itself_in_its_thread(
 
     parts = await _build_parts(db_session, conv.id)
     assert len(parts) == 1
-    # The seam: the conversationId from the START body reached the END sequence. Every link is a
-    # plain assignment — this is the only test that would notice one going missing.
     assert parts[0]["sessionId"] == session_id
     assert parts[0]["status"] == "ended"
     assert parts[0]["previewUrl"] == PREVIEW
@@ -121,8 +114,6 @@ async def test_a_finished_build_records_itself_in_its_thread(
 async def test_a_failed_build_still_records_what_happened(
     client, db_session, wire, fake_redis, fake_storage
 ) -> None:
-    """The scripted-failure half: a failure is exactly when a user most needs the record, so it
-    must not be the path that quietly writes nothing."""
     user, project, conv = await _thread(db_session)
 
     await _start(
@@ -144,13 +135,8 @@ async def test_a_failed_build_still_records_what_happened(
 async def test_the_record_reports_the_session_apis_snapshot_verdict_not_brains_claim(
     client, db_session, wire, fake_redis, fake_storage
 ) -> None:
-    """R7, carried into the record: `snapshotCommitted` must be the value SESSION-API settled
-    AFTER its own snapshot step, never BRAIN's — anything BRAIN says necessarily predates that
-    snapshot and could only ever report `false`. Recording BRAIN's claim would tell a user their
-    work was lost when it was saved a moment later."""
     user, project, conv = await _thread(db_session)
 
-    # BRAIN claims the snapshot did NOT commit; the session's own snapshot then succeeds.
     await _start(
         client,
         wire,
@@ -178,8 +164,7 @@ async def test_the_outcome_lands_after_the_turn_that_asked_for_it(
             select(Message).where(Message.conversation_id == conv.id).order_by(Message.seq)
         )
     )
-    # The asking turn, then the hidden build_started marker (U5), then the outcome — the
-    # verdict always lands last, after the turn that asked for it.
+    # The asking turn, then the hidden build_started marker, then the outcome.
     assert [m.seq for m in rows] == [0, 1, 2]
     assert rows[1].meta is not None and rows[1].meta["kind"] == "build_started"
     assert rows[2].meta is not None and rows[2].meta["kind"] == "build_outcome"
@@ -188,9 +173,6 @@ async def test_the_outcome_lands_after_the_turn_that_asked_for_it(
 async def test_a_wedged_outcome_write_still_lets_the_terminal_fire(
     client, db_session, wire, fake_redis, fake_storage, monkeypatch
 ) -> None:
-    """The outcome write is the only step in the end sequence that opens a DB session, and it runs
-    BEFORE the terminal frame. A wedged connection there would hang every SSE feed without `[DONE]`
-    and leave the session un-evictable — so the record is time-bounded and the terminal wins."""
     import src.services.build_sessions.manager as manager_module
 
     async def _never_returns(*args, **kwargs):
@@ -206,16 +188,14 @@ async def test_a_wedged_outcome_write_still_lets_the_terminal_fire(
 
     session = wire.manager.get(uuid.UUID(session_id))
     assert session is not None
-    assert session.status is BuildSessionStatus.ENDED  # the terminal fired regardless
+    assert session.status is BuildSessionStatus.ENDED
     assert session.terminal_emitted is True
-    assert await _build_parts(db_session, conv.id) == []  # …and the record was simply skipped
+    assert await _build_parts(db_session, conv.id) == []
 
 
 async def test_a_build_with_no_thread_records_nothing_and_still_ends(
     client, db_session, wire, fake_redis, fake_storage
 ) -> None:
-    """An API-only start names no conversation. It has no transcript to write to — that is a
-    no-op, not an error, and the session must still reach its terminal."""
     user = await UserFactory.create(db_session)
     project = await ProjectFactory.create(db_session, user.id)
     wire.app.dependency_overrides[run_build_dependency] = lambda: ScriptedBrain(
@@ -236,27 +216,9 @@ async def test_a_build_with_no_thread_records_nothing_and_still_ends(
     assert session.status is BuildSessionStatus.ENDED
 
 
-# --- kind is fixed at creation, a build never touches it ------------------------------------
-#
-# THIS SECTION USED TO PROVE A MODE-RESTORE HANDOFF: `Build it` flipped the thread's
-# three-valued `mode` to WRITE, Write was a chat dead end, and the end sequence had to hand
-# the mode back so the composer could reopen. That whole mechanism — `ConversationMode`, the
-# entry-mode round trip through `manager.start`, and the restore-on-finish step — is retired
-# (`manager.py`'s own `_do_finalize`/Write-end docstring: "Write is no longer a dead end the
-# thread has to be rescued from — that was the whole point of the convergence", predating even
-# this enum collapse). `Conversation.kind` is chosen once at creation and never changes (R14/R15;
-# no route mutates it), so there is nothing left to restore. `_live_write_thread` and
-# `_run_to_terminal`, the two helpers that drove the old round trip, are deleted rather than
-# type-patched: they called `manager.start(..., entry_mode=...)`, a parameter that no longer
-# exists, so "fixing" their types would have kept dead, non-callable code alive. What remains
-# is the inertness guard: an ordinary build must leave `kind` exactly as it found it.
-
-
 async def test_an_api_only_build_never_touches_the_kind(
     client, db_session, wire, fake_redis, fake_storage
 ) -> None:
-    """`POST /build-sessions` must never touch `kind` — it is immutable after creation, so a
-    build session has no mode to flip and nothing to restore."""
     user, project, conv = await _thread(db_session)
     starting_kind = conv.kind
 

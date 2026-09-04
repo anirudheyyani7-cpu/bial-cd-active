@@ -30,9 +30,8 @@ async def append_audit(
     resource_id: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> AuditLog:
-    """Record one accountability event in the CALLER'S transaction. The flush (not
-    commit) assigns the id and surfaces a bad FK immediately while keeping the write
-    atomic with the gated action — the caller owns the commit."""
+    """Record one accountability event. The flush (not commit) is what assigns the id on
+    the returned row and surfaces a bad actor FK here rather than at the caller's commit."""
     entry = AuditLog(
         actor_id=actor_id,
         action=action,

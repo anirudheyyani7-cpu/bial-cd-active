@@ -68,9 +68,7 @@ interface UsersPage {
  * effective limits, `usageToday`, `role`, and the `suspendedAt` marker — plus the
  * standard-plan `defaults` and the `{nextCursor, hasMore}` cursor envelope.
  *
- * The page is filtered server-side by `q` (email / display-name substring). Today's
- * call used to send NO params, so once the backend paginated at 25 a larger roster
- * was silently truncated with nothing thrown; sending the cursor/limit/q closes that.
+ * The page is filtered server-side by `q` (email / display-name substring).
  *
  * `cursor` is `string | null` (not just `string`), matching `useKeysetList`'s real
  * `KeysetFetchArgs.cursor: string | null` contract — passed straight through rather

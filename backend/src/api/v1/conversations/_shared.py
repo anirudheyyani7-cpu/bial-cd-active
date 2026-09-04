@@ -1,17 +1,14 @@
 """The turn plumbing the conversation routes run on.
 
 These helpers used to live as underscore-private names inside the legacy relay's router, and
-`conversations/turns.py` reached across a package boundary to import them anyway — which is
-exactly the coupling ADR-0010 warns about: a "private" name with a second consumer is not
-private, it is undocumented shared API, and the next edit to the relay silently reshaped the
-turn route.
+`conversations/turns.py` reached across a package boundary to import them anyway — exactly the
+coupling ADR-0010 warns about: a "private" name with a second consumer is not private, it is
+undocumented shared API.
 
-The home is `conversations/` rather than beside the relay on purpose: the relay was the surface
-being retired, so the code that outlived it should not sit in the module that died. It has since
-died, and this file is what that move was for. The underscore in the FILE name marks it as
-internal to `api/v1` — it is plumbing, not a route module — while every NAME it exports is
-public, because it genuinely has more than one caller: the send route, the transition route, and
-the test fixtures that bind `chat_model` and `billing_session_factory`.
+The underscore in the FILE name marks it as internal to `api/v1` — it is plumbing, not a route
+module — while every NAME it exports is public, because it genuinely has more than one caller:
+the send route, the transition route, and the test fixtures that bind `chat_model` and
+`billing_session_factory`.
 """
 
 from __future__ import annotations
@@ -158,10 +155,9 @@ class TurnMessage(CamelModel):
 async def resolve_conversation_or_404(
     db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID
 ) -> Conversation:
-    """The turn's owner-scoped conversation row. U7 retires the old load-bearing None arm:
-    conversations are created BEFORE the first turn (`POST /v1/conversations`), so an unknown
-    id is a client bug and a cross-user id is indistinguishable from it — one non-leaking 404
-    (ADR-0004)."""
+    """The turn's owner-scoped conversation row. Conversations are created BEFORE the first turn
+    (`POST /v1/conversations`), so there is no None arm to keep: an unknown or cross-user id is
+    a 404."""
     conversation: Conversation | None = await db.scalar(
         sa.select(Conversation).where(
             Conversation.id == conversation_id, Conversation.user_id == user_id

@@ -1,12 +1,10 @@
-"""The single C7 `seq` source + the only path to `on_progress` (C7 §2/§3/§4, KD-5, KD-12).
+"""The single `seq` source + the only path to `on_progress`.
 
 One `ProgressEmitter` per run owns one counter behind one `_emit` coroutine: every envelope's
-`seq` is assigned there and nowhere else, so the stream is strictly `+1` and gap-free (KD-12).
-Nothing calls `on_progress` directly. Typed helpers construct the FIVE C7 members BRAIN may emit
-(step, error, preview_ready, escalation, quota_exceeded) plus the non-C7 `preview_reconnecting`
-signal (F8/U5); `error` carries a `BuildError` already de-noised + redacted by `errors.declutter`.
-U29 retired the `log` C7 member and its helper — no production path had ever called it, so the
-raw stdout/stderr egress it once redacted before relaying (C7 §3.2) never actually shipped.
+`seq` is assigned there and nowhere else, so the stream is strictly `+1` and gap-free. Nothing
+calls `on_progress` directly. Typed helpers construct the five progress members BRAIN may emit
+(step, error, preview_ready, escalation, quota_exceeded) plus the `preview_reconnecting` signal;
+`error` carries a `BuildError` already de-noised + redacted by `errors.declutter`.
 
 There is deliberately NO `ended` helper: the terminal frame is the build-session manager's, emitted
 from `_do_finalize` AFTER its snapshot and continuing this run's `seq` at `last_seq + 1` (handed
@@ -14,10 +12,10 @@ over on `BuildResult.last_seq`), so the chain stays gap-free across the handoff.
 call here, nothing in this package can race that frame or ship a `snapshot_committed` that predates
 its snapshot: the value on the wire is always the manager's, never this engine's.
 
-The sink is contractually non-throwing (an unbounded `asyncio.Queue.put`, open-Q H); a raising
-sink is swallowed-and-logged so a lost frame never breaks the loop (KD-12).
+The sink is contractually non-throwing (an unbounded `asyncio.Queue.put`); a raising sink is
+swallowed-and-logged so a lost frame never breaks the loop.
 
-CONCURRENT EMITTERS ARE SEQ-SAFE (F8/U5). The build loop is no longer the ONLY emitter: the early
+CONCURRENT EMITTERS ARE SEQ-SAFE. The build loop is no longer the ONLY emitter: the early
 readiness watcher (`harness._watch_preview`) is a second coroutine that emits `preview_ready` /
 `preview_reconnecting` on the SAME emitter while the loop runs. This stays gap-free because `_emit`
 assigns `seq` and reaches the sink with NO `await` between the assignment and the sink call, and
@@ -51,7 +49,7 @@ logger = structlog.get_logger()
 
 
 class ProgressEmitter:
-    """The single seq source + emit path for one `run_build` (KD-12)."""
+    """The single seq source + emit path for one `run_build`."""
 
     def __init__(self, sink: ProgressSink) -> None:
         self._sink = sink
@@ -68,7 +66,7 @@ class ProgressEmitter:
             await self._sink(event)
         except Exception:
             # The sink is contractually non-throwing; if it ever raises, a lost frame must not
-            # break the build loop (KD-12). Swallow-and-log — the counter has already advanced.
+            # break the build loop. Swallow-and-log — the counter has already advanced.
             logger.warning("progress_sink_raised", seq=seq, event_type=event.type)
         return seq
 
@@ -80,8 +78,8 @@ class ProgressEmitter:
         state: Literal["started", "ok", "failed"],
         hidden: bool = False,
     ) -> int:
-        # `hidden` drops read-only + housekeeping steps from the visible feed (F3/U3); it defaults
-        # False so every existing caller keeps emitting a visible step unchanged.
+        # `hidden` drops read-only + housekeeping steps from the visible feed; it defaults False
+        # so a caller that says nothing keeps emitting a visible step.
         return await self._emit(
             lambda seq: StepEvent(seq=seq, name=name, label=label, state=state, hidden=hidden)
         )
@@ -102,7 +100,7 @@ class ProgressEmitter:
         return await self._emit(lambda seq: PreviewReadyEvent(seq=seq, preview_url=preview_url))
 
     async def preview_reconnecting(self) -> int:
-        # F8/U5 — the dev-server process crashed after the preview was framed. A feed-only signal
+        # The dev-server process crashed after the preview was framed. A feed-only signal
         # (no payload): the portal shows a distinct "reconnecting" visual until a `preview_ready`
         # re-frames. Emitted only by the early readiness watcher, which owns crash detection.
         return await self._emit(lambda seq: PreviewReconnectingEvent(seq=seq))
@@ -121,5 +119,4 @@ class ProgressEmitter:
             lambda seq: QuotaExceededEvent(seq=seq, limit=limit, used=used, resets_at=resets_at)
         )
 
-    # NOTE: no `ended` helper by design — see the module docstring. The terminal frame is
-    # SESSION-API's (`_do_finalize`), emitted after the C4 snapshot at `last_seq + 1`.
+    # No `ended` helper by design: the terminal frame is the build-session manager's.

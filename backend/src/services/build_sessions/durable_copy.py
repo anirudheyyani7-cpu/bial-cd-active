@@ -81,24 +81,13 @@ async def confirm_durable_copy(
     no registry record and may not be reachable at all.
 
     `container_dirty` is whether that container's working tree has uncommitted changes, and it is
-    KEYWORD-REQUIRED WITH NO DEFAULT on purpose. A permissive default on a gate that authorises
-    destruction is how the bug below shipped; a caller that does not know must say `None` and be
-    refused, not stay silent and be believed. `None` means the probe did not answer.
+    KEYWORD-REQUIRED WITH NO DEFAULT on purpose. A permissive default here authorises a delete on
+    an unestablished fact; a caller that does not know must say `None` and be refused, not stay
+    silent and be believed. `None` means the probe did not answer.
 
-    A HEAD MATCH ALONE STOPPED MEANING "PRESERVED" WHEN THE AGENT STOPPED COMMITTING (U19).
-    The comparison below was written when the build agent committed as it worked, so a turn that
-    wrote files MOVED `HEAD` and a copy from the previous turn was detectably behind it. U19
-    deleted that commit discipline — the platform now commits only at the turn boundary — so
-    "HEAD unchanged + dirty tree" is the normal shape of every building turn. A turn that dies
-    before its finalizer (process death, OOM, a deploy restart, eviction) therefore leaves `HEAD`
-    exactly where the LAST turn's recovery copy was stamped, and a HEAD-only comparison reads that
-    as provably preserved and destroys a whole turn's uncommitted work — writing an audit row
-    saying it was safe. The dirty flag is what closes that, and it is why this signature changed
-    rather than the call sites quietly passing `head` alone.
-
-    The plan that removed the commits guards the recovery-copy WRITE path against the same new
-    normal (`test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy`). This is the same
-    lesson applied to the DESTROY path, which that test does not reach.
+    A HEAD MATCH ALONE IS NOT "PRESERVED". A turn's work is uncommitted until the platform commits
+    it (`snapshot.py`), so the tree has to be judged alongside `HEAD` — which is why this gate
+    makes the caller answer a second question.
 
     FAILS TOWARD SPARING, ALWAYS. Every branch that could not establish a fact returns
     `UNCONFIRMED`, and `UNCONFIRMED` never authorises a delete. A timeout is not a death
@@ -154,9 +143,8 @@ async def confirm_durable_copy(
             "the recovery copy matches HEAD, but the working tree could not be read",
         )
     if container_dirty:
-        # The copy is not behind HEAD — it is behind the WORKING TREE, which is the shape every
-        # building turn now has. STALE rather than UNCONFIRMED because this is a known state with
-        # a known remedy: take a copy first, then reclaim.
+        # The copy is not behind HEAD — it is behind the WORKING TREE. STALE rather than
+        # UNCONFIRMED because this is a known state with a known remedy: copy first, then reclaim.
         return CopyVerdict(
             CopyState.STALE,
             "the recovery copy matches HEAD but the working tree has uncommitted work",

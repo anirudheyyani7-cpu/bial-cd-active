@@ -90,11 +90,10 @@ def base_path_for(app_name: str) -> str:
 
 # --- ARM identity tags (contract C10, ADR-0029 §2) ---------------------------
 #
-# A container must be judgeable WITHOUT REDIS (R1). The registry hash is the one C5 family with no
-# TTL, it has been lost at least twice, and a container whose record is gone is anonymous:
-# unreachable by the product, invisible to every automatic path, and billing at ~$0.108/hr forever.
-# So identity lives on the ARM resource, written into the creation envelope so it exists from the
-# first moment.
+# A container must be judgeable WITHOUT REDIS (R1). A container whose registry record is gone is
+# anonymous: unreachable by the product, invisible to every automatic path, and billing at
+# ~$0.108/hr forever. So identity lives on the ARM resource, written into the creation envelope so
+# it exists from the first moment.
 #
 # These keys sit here for the same reason `SANDBOX_NAME_PREFIX` does — three writers and (soon) a
 # destructive reader have to agree on them and cannot import each other: `sandbox/aca.py` stamps
@@ -625,10 +624,9 @@ class SandboxClient(abc.ABC):
     async def provision_new(
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
     ) -> SandboxHandle:
-        """Provision a BRAND-NEW container for `user_id`. `app_env` carries the app's
-        injected environment (`BIAL_APP_ID`, `BIAL_PORTAL_ORIGIN`, the blob coordinates,
-        and the per-project `BIAL_DATABASE_URL`) — every name chosen to survive the C1
-        child-env scrub allowlist (D5).
+        """Provision a BRAND-NEW container for `user_id`. `app_env` is the app's injected
+        environment, every name in it chosen to survive the C1 child-env scrub allowlist (D5);
+        what belongs in it is `manager._resolve_sandbox`'s to decide.
         Returns a handle with `ready=False`. The caller MUST already hold the C5
         one-per-user lock. Transient provisioning errors retried with capped
         exponential backoff."""

@@ -790,20 +790,11 @@ def _capture_limit_marker(dropped: int) -> str:
 
 
 def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
-    """The head and the tail of a raw capture, cut ON LINE BOUNDARIES — and what that cost.
+    """The head and the tail of a raw capture, cut ON LINE BOUNDARIES.
 
-    TWO PROPERTIES, and the older single `text[:cap]` slice got both wrong.
-
-    SECURITY: the redactor is never handed half a line. A credential is a shape on ONE line, so a
-    cut landing inside one leaves a fragment matching none of the redactor's shapes — which U22
-    turned from harmless into egressed, because the tail of the capture is now always rendered.
-    Whole lines in, whole lines out; a single line longer than the window is dropped rather than
-    truncated.
-
-    TRUTHFULNESS: a head-only cap silently deleted the END of every capture over the limit, and
-    the notice then reported the surviving line count as the total.
-
-    The two halves together stay inside `_REDACT_INPUT_MAX_CHARS` (the ReDoS guard)."""
+    A window holding no newline at all yields an empty half: one over-long line is dropped
+    whole rather than truncated, because half a line is a credential fragment the redactor
+    can no longer match. The two halves together stay inside `_REDACT_INPUT_MAX_CHARS`."""
     if len(text) <= _REDACT_INPUT_MAX_CHARS:
         return text, "", 0
     half = _REDACT_INPUT_MAX_CHARS // 2
@@ -813,18 +804,7 @@ def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
 
 
 def _redacted_lines(text: str) -> list[str]:
-    """The SAFE artifact, and the ONLY thing that is ever returned (U22 / R3).
-
-    `scrub_untrusted` is cap → de-escape → redact, in that order: the cap bounds the work an
-    app-controlled blob can make a synchronous scan do (ReDoS guard), the escape strip runs
-    BEFORE the mask because an ANSI sequence spliced into a credential splits the token and the
-    pattern stops matching, and the mask is what makes the text egressable at all.
-
-    REDACTION HAPPENS HERE, ONCE, ON EVERY CHARACTER THAT SURVIVES CAPTURE — before any slicing,
-    before the head/tail cut: cutting first would split a credential that straddles the cut into
-    two fragments that no longer match the redactor's shapes, which is exactly how a cap applied
-    after redaction re-exposes one. The capture cut above is the same rule one level up, which is
-    why it cuts on lines."""
+    """The SAFE artifact, and the ONLY thing that is ever returned."""
     head, tail, dropped = _within_the_capture_limit(text)
     # THE HEAD IS CUT WHEN IT ENDS INSIDE A CREDENTIAL — the MIRROR of the Write copy's head
     # guard, and the same reason: a value opened in the head and closed past it matches none of

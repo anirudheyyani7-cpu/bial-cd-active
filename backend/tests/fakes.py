@@ -250,10 +250,9 @@ class FakeSandboxClient(SandboxClient):
         self.restored: list[str] = []
         self.restored_from: list[str | None] = []
         self.torn_down: list[str] = []
-        # The env dict each BIRTH arm actually handed the container. Recorded separately from
-        # the names because a container gets its env exactly once, at birth (KTD-3) — "was the
-        # SAS / the per-project DSN injected on THIS arm" is only answerable here, and the
-        # attach arm's `None` is itself the assertion that it forwards no env.
+        # The env dict each BIRTH arm actually handed the container, recorded separately from the
+        # names so "was the SAS / the per-project DSN injected on THIS arm" stays answerable. The
+        # attach arm leaves these `None`, which is itself the assertion that it forwards no env.
         self.provision_env: dict[str, str] | None = None
         self.restore_env: dict[str, str] | None = None
         # attach returns this handle when set; otherwise raises SandboxGoneError (the

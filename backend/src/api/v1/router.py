@@ -1,5 +1,14 @@
 """Aggregate v1 router. Domain routers (auth, projects, admin, …) mount here as
 they land; the foundation exposes only the public health endpoint.
+
+EVERY QUERY BEHIND THESE ROUTES IS SCOPED BY THE OWNING `user_id`. The platform is single-tenant
+— there is no `org_id`, so that predicate IS the isolation boundary and a dropped one is a
+cross-user leak, not a style nit; it belongs in the WHERE clause, never in a check made after the
+row is loaded. A resource owned by someone else and a resource that does not exist get the SAME
+non-leaking 404, with the same message, and never a 403: a 403 confirms the row exists, which is
+precisely the probe the 404 refuses to answer. Reaching across owners is an explicit, role-gated,
+audited admin action, and the one read that drops the predicate on purpose — the published-app
+catalog — argues for itself in its own module header.
 """
 
 from fastapi import APIRouter

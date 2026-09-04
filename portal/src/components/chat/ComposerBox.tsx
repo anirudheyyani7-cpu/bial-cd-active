@@ -16,19 +16,19 @@
  * `ComposerPrimitive.AttachmentDropzone`. The `attachments` capability is turned on and an adapter
  * registered — those three primitives are gated on it and render nothing without one.
  *
- * ═══ ONE THING IS HAND-BUILT, AND THIS IS WHY, AT THE POINT IT HAPPENS ═══
+ * ═══ NO CONTROL IN THIS CHAT IS EVER GIVEN A REAL `disabled` ═══
  *
- * THE SEND CONTROL. `ComposerPrimitive.Send` is made by `createActionButton`, which renders
- * `<button disabled={props.disabled || !callback}>` — a REAL `disabled` attribute — and
- * `useComposerSend` returns no callback while `isRunning && !capabilities.queue`. `queue` is never
- * registered here, so the library's Send would carry a hard `disabled` for the whole of every turn.
- * `disabled` on the focused element blurs it to `document.body`, which is the mechanism behind "it
- * blurs mid-sentence and focus never comes back"; this repo has recorded that twice and forbids it.
- * The boards contradict it directly too — they draw a composer that keeps accepting typing while
- * the agent answers, with a line saying so.
+ * Not the textarea, not attach, not Send — in any state, including while a turn runs, while an
+ * offer waits and when the day's budget is spent. `disabled` on the currently-focused element
+ * blurs it to `document.body` and drops keyboard focus out of the page: the mechanism behind "it
+ * blurs mid-sentence and focus never comes back", recorded twice here. Unavailability is worn as
+ * `aria-disabled` with the reason in the accessible name, and enforced in the handler.
  *
- * So Send is ours: `aria-disabled` for the affordance, the reason in its accessible name, and the
- * enforcement in the handler.
+ * IT IS ALSO WHY SEND IS HAND-BUILT. Every library action button comes from `createActionButton`,
+ * which renders `<button disabled={props.disabled || !callback}>`, and `useComposerSend` returns no
+ * callback while `isRunning && !capabilities.queue` — `queue` is never registered — so the
+ * library's Send would carry a hard `disabled` for the whole of every turn.
+ * `ThreadPrimitive.ScrollToBottom` has the same shape, so its hook is kept and its button dropped.
  *
  * ═══ AND THE SEND PATH IS OURS, WHICH IS THE PROPERTY THAT MATTERS MOST ═══
  *

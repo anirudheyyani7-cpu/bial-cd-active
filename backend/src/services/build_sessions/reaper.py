@@ -19,6 +19,14 @@ authority on WHERE the timer lives:
   a different one (or none) by the time the delete lands. See its docstring for both ways that
   divergence bites.
 
+THE STAY OF EXECUTION, AND WHY THE TWO ENTRY POINTS DISAGREE ABOUT IT. A build that COMPLETES is
+not torn down: the registry entry stays, a bounded stay-of-execution lease is written onto it and
+the per-user lock is released, so the citizen keeps a live preview without holding the one-build
+slot. A relaunched preview is the same shape. Neither holds a lock nor renews a heartbeat, so the
+stay is the only thing standing between them and a sweep — which is why `sweep_all` honours an
+unexpired one and `reconcile_user` reaps straight through it. The asymmetry is the design: the
+incoming build needs the slot, and sparing the preview there would orphan its container.
+
 WHAT THE SWEEP STRUCTURALLY CANNOT SEE. It enumerates from Redis
 (`_scan_the_registry_namespace`), so it only ever reaches a container it already has a record of.
 A sandbox whose registry entry is gone

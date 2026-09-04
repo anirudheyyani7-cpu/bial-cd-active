@@ -67,9 +67,14 @@ class ConversationCreateRequest(CamelModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
-    # REQUIRED, and the only place a chat's kind is ever set (R15). There is no route that
-    # changes it afterwards; a value outside the enum is refused at this boundary rather than
-    # coerced to a default, because "which chat is this" decides what the model can do.
+    # THE ONE PLACE A CHAT'S KIND IS EVER SET. `ChatKind` is two-valued and fixed at creation:
+    # no route changes it, no in-composer switcher exists, and no hidden marker row tells the
+    # model that its toolset just changed — a three-valued conversation kind and the three-valued
+    # mode that used to switch beside it collapsed into this single field. Building from a plan
+    # does not change the plan chat either; the handoff creates a SECOND chat and starts the turn
+    # there. The kind decides what a turn is handed — its toolset and its prompt — and whether the
+    # surface shows the app pane; nothing else branches on it. A value outside the enum is refused
+    # here rather than coerced to a default.
     kind: ChatKind
     title: str | None = None
     context: Any = None

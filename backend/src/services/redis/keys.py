@@ -25,23 +25,17 @@ the library-derived `autoclaim:<group>:<stream>`, whose literal prefix cannot be
 Single-replica deployment ⇒ there is intentionally **NO** `:channel` family: build progress is an
 in-process asyncio channel (C7), not Redis pub/sub.
 
-WHY THE ENVIRONMENT SEGMENT EXISTS (R22, ADR-0029)
---------------------------------------------------
-Production reuses a Redis instance shared with other BIAL GenAI applications, and the old root
-carried no environment axis. That was benign for as long as nothing deleted; it stops being benign
-the moment a scheduled job reads this namespace as a spare-list and destroys containers from Azure
-on the strength of it. A process pointed at the wrong instance must not be able to act on another
-environment's fleet, and the cheapest way to guarantee that is to make the keys not match.
-
-WHY THE LEGACY PREFIX IS STILL HERE, AND WHEN IT GOES
------------------------------------------------------
-A straight cutover would have been catastrophic. This root is the sole input to `sweep_all`'s scan
-AND to the report-only Azure inventory, and the registry hash is the one family with **no TTL** —
-so changing it in one deploy would make every container live at that instant permanently invisible
-to both, manufacturing wholesale the exact orphan class ADR-0029 exists to collect. So the change
-ships across two releases: this one WRITES only the new prefix but READS both, migrating any legacy
-hash it finds; a later one deletes the legacy arm once the inventory reports zero legacy records.
-C5 §"The prefix change ships as a DUAL-READ WINDOW" carries the full checklist for that removal.
+Every key carries the environment because production shares one Redis instance with other BIAL
+applications, and a scheduled job reads this namespace as a spare-list and deletes Azure
+containers on the strength of it: a process pointed at the wrong instance must not be able to
+act on another deployment's fleet. The registry hash is the ONE family with no TTL, and it is
+the sole input to both the fleet sweep and the report-only Azure inventory — so a key that
+moves or is forgotten does not degrade, it permanently strands every container live at that
+instant, invisible to both. Two rules follow, and the builders below enforce them. A fleet scan
+issues the current and the legacy pattern as two literals, never one `bial:*:` glob, which
+would reach into other environments. And a scan only makes a legacy key REACHABLE, so the point
+read behind it is dual-read as well (`locks.read_registry`). The legacy prefix is read-only,
+and it goes once the inventory reports zero records under it.
 """
 
 from __future__ import annotations
@@ -173,15 +167,10 @@ def legacy_registry_key(user_id: uuid.UUID) -> str:
 
 
 def registry_scan_patterns() -> tuple[str, ...]:
-    """Every registry pattern a FLEET SCAN must cover, current first (C5).
+    """Every registry pattern a FLEET SCAN must cover, current first.
 
-    Two literals, never one widened glob. `bial:*:sandbox:registry:*` is the tempting one-liner
-    and it is exactly wrong: it would match OTHER ENVIRONMENTS, which is the hazard R22 closes.
-    The environment segment is never wildcarded.
-
-    Scanning alone is not enough and must not be mistaken for the fix — `sweep_all` extracts the
-    user id from the key name and then issues a fresh POINT READ, so the dual-read has to live
-    there too. This just makes the legacy keys reachable in the first place.
+    Two literals, never one widened `bial:*:sandbox:registry:*` glob, and never enough on its
+    own — the module docstring above says why on both counts.
     """
     return (f"{key_prefix()}{FAMILY_REGISTRY}:*", f"{LEGACY_KEY_PREFIX}{FAMILY_REGISTRY}:*")
 

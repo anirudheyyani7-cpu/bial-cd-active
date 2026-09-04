@@ -1,19 +1,27 @@
-"""Pinned structlog event names for the build-harness alarms (R32, ASM4).
+"""Pinned structlog event names for the build-harness alarms.
 
-There is no metrics system in this deployment — `api/v1/admin/schemas.py` says so outright — so
-an alarm is a GREPPABLE EVENT CONSTANT an external log rule keys on, plus (where the outcome
-needs to be counted rather than merely noticed) a relational record. That is the shape
-`main.py::REDIS_PROBE_FAILED_EVENT`, `workers/reclamation.py::FLEET_THRESHOLD_EVENT` and
-`turns/engine.py::LEASE_RENEW_FAILED_EVENT` already established; this module gathers the
-harness's own so they stop being scattered across the modules that happen to raise them.
+There is no metrics system in this deployment, so an alarm is a GREPPABLE EVENT CONSTANT an
+external log rule keys on, plus a relational record where the outcome must be counted rather
+than merely noticed. This module gathers the harness's own so they stop being scattered.
 
-THE ONE RULE: each name appears exactly ONCE in the codebase. An alert cannot be written
-against a string that exists in two spellings, and a second spelling is invisible until the
-day it is the only one firing. Import the constant; never retype the literal — including in
-tests, which is why the tests assert on these names rather than on string copies.
+THE ONE RULE: each name appears exactly ONCE in the codebase. An alert cannot be written against
+a string that exists in two spellings, and the second spelling is invisible until the day it is
+the only one firing. Import the constant, never retype the literal — tests included. Reasons that
+distinguish one firing from another belong in structured fields, not in the event name.
 
-Distinguishing REASONS belong in structured fields, not in the event name, for the same
-reason: one operational question, one event, filterable by field.
+WHY THIS EXISTS — the day these names were written for.
+
+On 2026-08-18, in front of a client, "Build complete — your app is live below" sat above the
+untouched starter template for nine minutes. Every server-side signal was green: types compiled,
+the dev server announced itself ready, the root route answered 200. All three answer "is a Next
+app running here". Not one answers "is it THEIR app", and nothing asked.
+
+Underneath, the turn-end autosave was destroying what it existed to protect: gated on "a mutating
+tool ran" rather than "the tree changed", with an unconditional upload, so a container that
+reverted mid-turn had its empty tree stamped in as the newest copy on top of a good bundle. That
+failure was SWALLOWED, which is the half that made the day unarguable — nobody could say whether
+the platform had failed to CHECK the workspace or failed to make it DURABLE. The swallow stays; a
+safety net that can fail a turn is not a safety net. What changed is that it is no longer silent.
 """
 
 from typing import Final

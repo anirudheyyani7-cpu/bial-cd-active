@@ -58,6 +58,11 @@ from src.services.storage.bundle import BUNDLE_CONTENT_TYPE, parse_bundle_head_s
 
 _log = structlog.get_logger()
 
+# THE AGENT DOES NOT COMMIT AS IT WORKS — this script is the platform's single commit, taken at
+# the turn boundary as step one of every bundle. So "HEAD unchanged + a dirty tree" is the normal
+# shape of a building turn, and any reader that decides from a sha taken before this script runs
+# is reading the previous turn's.
+#
 # The baked image ships /workspace/app WITHOUT a `.git` (git identity, `init.defaultBranch`,
 # and `safe.directory` are baked system-wide in Dockerfile.sandbox), so the FIRST snapshot must
 # `git init` — idempotent on every later snapshot (mirrors sandbox/scripts/snapshot.sh). Commit

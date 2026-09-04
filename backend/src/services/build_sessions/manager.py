@@ -3180,23 +3180,25 @@ class SessionManager:
         *,
         announce: RecoveryAnnouncer | None = None,
     ) -> _ResolvedSandbox:
-        """The one-per-user rehydrate resolution: live registry → attach; otherwise (no
-        registry — which a CLEAN end always leaves behind, since finalize deletes it — or
-        registry-but-gone) restore the C4 snapshot when one exists, else provision fresh.
-        Without the no-registry restore arm every graceful stop→start loop would discard
-        the user's work onto a blank template.
+        """The one-per-user rehydrate resolution, in three arms: a live registry ATTACHES to
+        the running container; no registry (which a CLEAN end always leaves, since finalize
+        deletes it) or a registry whose container is gone RESTORES the snapshot when one
+        exists, and PROVISIONS a fresh template only when there is none. Without the
+        no-registry restore arm, every graceful stop→start loop would discard the user's work
+        onto a blank template.
 
-        The ATTACH arm passes no `env`, and that is correct: a container keeps its BIRTH
-        env forever (ACA env vars are set on the revision, not on a running process). Same
-        reason the Blob SAS is not rotated on attach (KTD-3) — and the same consequence for
-        `BIAL_DATABASE_URL`: re-pointing an app at a different database means a REBIRTH
-        (teardown + restore), never an attach.
+        A CONTAINER IS GIVEN ITS ENVIRONMENT EXACTLY ONCE, AT BIRTH — ACA sets variables on the
+        revision, not on a running process — so the two birth arms build and pass the whole
+        `BIAL_*` set while the attach arm passes none, there being nowhere for it to land. An
+        attached container therefore keeps its birth Blob SAS and its birth `BIAL_DATABASE_URL`:
+        rotating a credential, or re-pointing an app at another database, is a REBIRTH
+        (teardown + restore) and never an attach.
 
         REPORTS ITS ARM (`_ResolvedSandbox.attached`) rather than returning a bare handle. The
-        two are indistinguishable downstream, and that indistinguishability had teeth: on the
-        attach arm the caller holds a container it did not create, so letting compensation
-        treat it as a rollback destroys the very container this function went out of its way to
-        reuse. Hand the result to `_LockScope.take`, which applies the rule for you."""
+        two are indistinguishable downstream, and that had teeth: on the attach arm the caller
+        holds a container it did not create, so letting compensation treat it as a rollback
+        destroys the very container this function went out of its way to reuse. Hand the result
+        to `_LockScope.take`, which applies the rule for you."""
         redis = get_redis()
         app_name = app_name_for(app_id)
         if await read_registry(redis, user_id) is None:

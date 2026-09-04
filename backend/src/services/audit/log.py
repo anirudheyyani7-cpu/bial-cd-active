@@ -1,10 +1,14 @@
-"""Append-only audit helper (R9).
+"""Append-only audit helper.
 
-`append_audit` writes ONE accountability row WITHIN the caller's transaction — it
-flushes but never commits, so the audit row shares the fate of the gated action:
-if the action's transaction rolls back, the audit row rolls back with it (no orphan
-trail for an action that never actually happened). Called wherever a
-permission-gated / state-changing action succeeds; the caller commits both together.
+`append_audit` writes ONE accountability row WITHIN the caller's transaction — it flushes but
+never commits, so the audit row shares the fate of the gated action and a rolled-back action
+leaves no orphan trail. Called wherever a permission-gated or state-changing action succeeds.
+
+A SWEEP'S TRAIL CARRIES COUNTS, NEVER THE NAMES OF WHAT IT FOUND — no object key, per-project
+database name, deployment id, sandbox name or app name reaches `detail` or `resource_id`. A
+sandbox name embeds its app's uuid, a database name its project's, and a key list is the storage
+layout, so a trail holding them stops being an accountability record and becomes a durable
+inventory of who has, ran or deployed what. Names go in the operator report; this row gets ints.
 """
 
 from __future__ import annotations

@@ -28,6 +28,25 @@ substring replace of known values. This is the accidental-leak guard; the real i
 is container-scope + TTL (and, for the database, the `REVOKE CONNECT` wall), not redaction.
 
 Written LF-only with pathlib to satisfy the ADR-0015 Windows-built-image rule.
+
+WHY THIS EXISTS — readiness is a SERVED RESPONSE, and the spawn guard is about a second server.
+
+`next dev` prints "Ready in <ms>" as soon as it is listening, which is before the first route has
+compiled. Believing that marker is how a blank page got framed and announced as a finished app:
+every consumer of `/dev/status` read "the child printed its line" as "the app answers". So `ready`
+here means A REQUEST ACTUALLY SUCCEEDED — an HTTP probe against the dev port — and the marker may
+only let a cached affirmative skip the probe's cost. It may never GATE readiness either:
+`/dev/start` is not the only way a dev server comes to exist (the agent has been observed killing
+the supervisor's child and starting its own replacement), so a marker precondition would pin
+`ready` False over a live app forever.
+
+The same marker makes a SECOND dev server look healthy, which is the other rule. Next 13.4+ finds
+port 3000 taken, falls back to the next free port, prints its ready line there, and mints a child
+the in-container proxy never routes to. So the spawn guard asks whether the port is OCCUPIED — a
+TCP connect that completes — and never whether it ANSWERS: an incumbent that is merely
+mid-recompile answers nothing, and reading that as absent spawns the very duplicate the guard
+exists to prevent. Two bundler processes in a memory-capped container is how `exit_code 137` gets
+into the logs.
 """
 
 from __future__ import annotations

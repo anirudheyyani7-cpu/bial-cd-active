@@ -1,23 +1,20 @@
-"""Shared keyset (cursor) pagination helpers for the new project + admin lists (KD-1, R5–R7).
+"""Shared keyset (cursor) pagination for the platform's list endpoints.
 
-Keyset, NOT offset: the origin requires a stable cursor that returns the next page with
-no duplicates or skips under concurrent inserts (R5/AE3), which offset structurally cannot
-do. Every owned model has a time-sortable UUIDv7 PK (ADR-0006), so the cursor IS the last
-row's id and the page is `WHERE id < :cursor ORDER BY id DESC LIMIT :n+1` — the extra row
-tells us whether a next page exists. The envelope is `{items, nextCursor, hasMore}`; there
-is deliberately no `total`/`totalPages` (keyset does not cheaply provide them and they are
-not required, KD-1).
+Keyset, NOT offset: a page must come back with no duplicates and no skips while rows are
+inserted underneath it, which offset structurally cannot promise. Every owned model has a
+time-sortable UUIDv7 primary key, so the cursor IS the last row's id and a page is
+`WHERE id < :cursor ORDER BY id DESC LIMIT :n+1` — the extra row is how `hasMore` is known.
+The envelope is `{items, nextCursor, hasMore}`, with no `total`/`totalPages`: keyset does
+not cheaply provide them.
 
-This module governs the ADMIN ROSTER lists. It is no longer every list endpoint the API
-has: `GET /v1/projects` moved to OFFSET paging under #158, because §2 specifies
-`Showing 1-8 of 12` and `Page 1 of 2` and neither sentence is expressible without a `total`
-that keyset deliberately declines to compute. The argument for that deviation is written at
-`list_projects`, and it is NOT the marketplace's ("read-only and small") — the projects list
-is owner-scoped and effectively single-writer, so the skew this module guards against is one
-person's second tab rather than a shared table.
+TWO SURFACES PAGE BY OFFSET INSTEAD, and they are the only two — the marketplace catalog and
+the projects list, both because their designs specify numbered pages and a `Showing 1-8 of 12`
+count, which need the total keyset declines to compute. The helpers and the separate argument
+each deviation rests on live in `offset_pagination.py`; a third caller owes a third argument,
+not an import.
 
-It remains the single source of truth for the platform's page-size ceiling, which the offset
-callers import rather than redeclare.
+This module remains the single source of truth for the platform's page-size ceiling, which the
+offset callers import rather than redeclare.
 """
 
 from __future__ import annotations

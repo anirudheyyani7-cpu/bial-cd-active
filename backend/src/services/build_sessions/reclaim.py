@@ -14,6 +14,16 @@ would have caught both past ghosts.
 A FACT YOU CANNOT READ DOES NOT BECOME TRUE BY WAITING (R4). Every path out of here that stands for
 a signal which could not be read leads to `ESCALATE`. None of them defaults to destroy. A timeout
 is not a death certificate.
+
+ONE WORKSPACE PER USER, AND NOBODY TAKES IT BY FORCE — the rule this classifier serves, and the
+one the interactive paths obey too. The registry is keyed by user, so a live container belonging
+to another of that user's projects IS the reason theirs is not up. Reclaiming it is the citizen's
+call and never the platform's: a relaunch or a turn that would have to displace it REFUSES with a
+409 naming the project holding the slot (`manager.py::SandboxReclaimBlockedError`), and the portal
+offers to save that project's work and release it. Tearing the incumbent down silently inside the
+incoming request is how unsaved work went missing with nothing on screen to say so. The scheduled
+pass below applies the same principle from the other side: a container any signal still claims is
+spared, never collected.
 """
 
 from __future__ import annotations

@@ -1,15 +1,20 @@
 /**
- * THE APP PANE HOST (Plan A, U4) — one iframe for the whole workspace.
+ * THE APP PANE HOST — one iframe for the whole workspace.
  *
  * ═══ THE ONE IDEA ═══
  *
- * The pane used to be rendered BY THE ROUTE: it existed because `BuilderPage` was the page that
- * matched, and it was destroyed because a different page matched next. Here it is rendered BY THE
- * ADDRESS. No address, no element; the same address across every transition, the same element. R8
- * stops being a rule somebody has to remember and becomes a consequence of where the element lives.
+ * This component is a SIBLING of the shell's `<Outlet/>`, and that position is the whole mechanism:
+ * a route change replaces the outlet's content and cannot reach a sibling. So the pane is rendered
+ * BY THE ADDRESS rather than by whichever page happens to match — no address, no element; the same
+ * address across every transition, the same element. Mounting `LivePreview` anywhere else builds a
+ * SECOND host, which is the remount this file exists to forbid.
  *
- * This component is a SIBLING of the shell's `<Outlet/>`, which is the whole mechanism. A route
- * change replaces the outlet's content and cannot reach a sibling.
+ * The address deliberately OUTLIVES the surface that published it, which is what keeps leaving a
+ * build chat for the project screen from destroying a running app. What bounds it is therefore the
+ * project rather than a publisher's lifetime: a held address carries the project it belongs to and
+ * stops being this workspace's the moment a surface declares a different one, because a different
+ * project is a different app, a different address and a legitimate remount. An UNRESOLVED project
+ * is not a different project — see `useWorkspaceAddress`.
  *
  * ═══ WHAT IDENTIFIES THE FRAME, AND THE FAILURE THIS IS WRITTEN AGAINST ═══
  *
@@ -22,11 +27,6 @@
  * container that is gone, with nothing able to detect it. Continuity has to come from WHERE THE
  * ELEMENT LIVES, not from what identifies it — so the two legitimate re-frames stay exactly as they
  * are: a turn ending over a live preview, and the manual Reload control.
- *
- * A DIFFERENT PROJECT IS A DIFFERENT APP, so a different address, so a legitimate remount. That is
- * said here rather than left to be discovered, and the channel enforces it: a held address carries
- * the project it belongs to, and stops being this workspace's the moment a surface declares a
- * different one. An UNRESOLVED project is not a different project — see `useWorkspaceAddress`.
  *
  * ═══ HIDDEN IS NOT UNMOUNTED ═══
  *

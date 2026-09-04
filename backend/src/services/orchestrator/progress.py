@@ -8,12 +8,11 @@ signal (F8/U5); `error` carries a `BuildError` already de-noised + redacted by `
 U29 retired the `log` C7 member and its helper — no production path had ever called it, so the
 raw stdout/stderr egress it once redacted before relaying (C7 §3.2) never actually shipped.
 
-There is deliberately NO `ended` helper — the sixth member is SESSION-API's alone (R7). It emits
-the single terminal frame from `_do_finalize`, AFTER its C4 snapshot, continuing this run's stream
-at `last_seq + 1` (the emitter's final `last_seq` is handed over on `BuildResult.last_seq`), so the
-`seq` chain stays gap-free ACROSS the handoff. Withholding the helper is what makes "BRAIN cannot
-emit a terminal" structural: there is no method to call, so no BRAIN path can race SESSION-API's
-frame or ship a `snapshot_committed` that predates the snapshot.
+There is deliberately NO `ended` helper: the terminal frame is the build-session manager's, emitted
+from `_do_finalize` AFTER its snapshot and continuing this run's `seq` at `last_seq + 1` (handed
+over on `BuildResult.last_seq`), so the chain stays gap-free across the handoff. With no method to
+call here, nothing in this package can race that frame or ship a `snapshot_committed` that predates
+its snapshot: the value on the wire is always the manager's, never this engine's.
 
 The sink is contractually non-throwing (an unbounded `asyncio.Queue.put`, open-Q H); a raising
 sink is swallowed-and-logged so a lost frame never breaks the loop (KD-12).

@@ -5,6 +5,17 @@ that enqueues cron ticks — as two supervised asyncio tasks. A scheduler withou
 enqueue work nothing consumes, behind a container that looks healthy, so the receiver is the
 mandatory role and the scheduler rides along.
 
+WHAT IS ON A TIMER, AND WHAT IS NOT. This container holds the platform's only clock, and three
+passes are on it: deploy reconciliation every five minutes, the sandbox sweep that snapshots
+and reaps idle build containers every five, and the reclamation pass that classifies the Azure
+fleet against the coordination store every fifteen (report-only unless its destroy flag is on,
+and it is off everywhere today). Everything else that sweeps is OPERATOR-INVOKED and stays that
+way by decision — the object-store reconcile, the per-app-database reconcile and the full
+sandbox reconciliation endpoint each run only when a superadmin calls them. Two things are
+neither: `main.py`'s boot one-shot settles a deploy that straddled a restart before the first
+request is served, which no cron can do, and the in-process ended-session map is evicted
+opportunistically, being per-process state a shared scheduler could not reach anyway.
+
 WHY THIS EXISTS INSTEAD OF `taskiq worker` / `taskiq scheduler`
 ---------------------------------------------------------------
 Both CLI-based designs were tried on paper and both are broken:

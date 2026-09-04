@@ -1,27 +1,27 @@
-"""The Azure-side sandbox inventory — the view the reaper does not have (#83 follow-up).
+"""The Azure-side sandbox inventory — the view the reaper does not have.
 
-WHY THIS EXISTS. `sweep_all` enumerates from Redis: `scan_iter` over the registry namespace
-(`bial:{env}:sandbox:registry:*`), one pass per registered user. That is the right shape for its
-job — reconciling users whose session died — but it means the sweep can only ever collect a
-container it already has a record of. A sandbox whose registry entry is gone is invisible to it
-FOREVER:
+WHY THIS EXISTS. `sweep_all` enumerates from Redis, one pass per registered user, so it can only
+ever collect a container it already has a record of. A sandbox whose registry entry is gone is
+invisible to it FOREVER: the Redis it was registered in was flushed or replaced (every local dev
+stack is a different instance), or the container predates the registry hash, or a `reap_user`
+teardown failed after `delete_registry` — the one ordering where the record goes first. None of
+those are exotic: one container in the dev subscription ran for twelve days at ~$78/month, found
+only because a human went looking. For REGISTERED sandboxes the sweep collects automatically; this
+module is the other half.
 
-* the Redis it was registered in was flushed, or replaced, or is a different instance entirely
-  (every local dev stack is a different instance);
-* the container predates the registry hash;
-* a `reap_user` teardown failed after `delete_registry` — the one ordering where the record
-  goes before the container.
+AND WHY IT STAMPS AN AGE AZURE ALREADY REPORTS. Azure publishes `createdAt` and
+`systemData.createdAt` for every container and this platform trusts neither: their behaviour
+across a delete-and-recreate under the SAME name is undocumented, so neither says how old THIS
+container is. Every container provisioned here carries its own creation tag, stamped at birth and
+read back off the ARM record — so reading an age costs an ARM listing and a hot path does without.
+Backfill covers containers predating that stamping and errs toward WAITING: the age it writes is
+`now`, so one reads as brand new and serves its full tier clock. Believing an Azure timestamp
+would hand a nineteen-day-old ghost an instant death sentence on evidence already judged untrusted.
 
-None of those are exotic. One container in the dev subscription ran for twelve days, ~$78/month,
-found only because a human went looking. The reaper's changelog entry says a sweep "now collects
-it automatically", and for REGISTERED sandboxes it does; this module is the other half.
-
-REPORT-ONLY, deliberately, and for the same reason `reconcile_orphaned_app_databases` is: an
-inventory cannot tell "orphaned" from "provisioned four seconds ago by a start that has not
-written its registry hash yet". `_start_locked` takes the lock BEFORE it provisions the container
-that writes the registry, so that window reads exactly like an orphan — the same ambiguity
-`live_build._the_live_session_is_this_app` fails closed on. Telling an operator the names is
-enough to act; deleting on a guess is not something to hand a sweep.
+REPORT-ONLY, deliberately: an inventory cannot tell "orphaned" from "provisioned four seconds ago
+by a start that has not written its registry hash yet". `_start_locked` takes the lock BEFORE it
+provisions the container that writes the registry, so that window reads exactly like an orphan.
+Telling an operator the names is enough to act; deleting on a guess is not.
 """
 
 from __future__ import annotations
@@ -234,21 +234,13 @@ async def _app_names_to_owners(db: AsyncSession) -> dict[str, tuple[uuid.UUID, u
 
 
 def _backfill_tags(owner: tuple[uuid.UUID, uuid.UUID] | None) -> dict[str, str]:
-    """The tags to merge onto one pre-existing container (C10 §3.1, §3.2).
+    """The tags to merge onto one pre-existing container.
 
-    Two shapes, and the difference is the escalate-never-destroy invariant made concrete:
-
-    * **Owner recovered** — the full identity, with `created_at` set to NOW and a `backfilled_at`
-      marker beside it saying so. `now` errs toward WAITING: the container reads as brand new and
-      must serve its whole tier clock before it is eligible for anything. Azure's
-      `systemData.createdAt` is deliberately not used — it is the field R2 exists to distrust, and
-      believing it here would hand a nineteen-day-old ghost an instant death sentence on evidence
-      the platform has already decided is untrustworthy.
-    * **No matching app row** — `kind` and `backfilled_at` and NOTHING ELSE. No owner, no app, no
-      control plane. That container is escalate-forever by construction: `SandboxIdentity.
-      escalate_only` is true for it and stays true, so it is reported on every pass and destroyed
-      by none of them. Filling in a plausible owner here is the single change that would silently
-      make it destroy-eligible, which is why it is mutation-checked.
+    Two shapes, the difference being the escalate-never-destroy invariant made concrete. Owner
+    recovered: full identity, `created_at` set to NOW with a `backfilled_at` marker saying that age
+    is synthetic. No matching app row: `kind` and `backfilled_at` and NOTHING ELSE —
+    escalate-forever by construction, reported every pass and destroyed by none. Filling in a
+    plausible owner is the one change that would silently make it destroy-eligible.
     """
     stamped_at = dt.datetime.now(dt.UTC).isoformat()
     if owner is None:

@@ -5,12 +5,15 @@ consumption seam for every protected endpoint: it authenticates a request purely
 from the session cookie and returns the live `User`. This is AUTHENTICATION only
 (who you are) — no role/permission check (RBAC is a later phase).
 
-Object storage comes in TWO flavours, and which one a route takes is a contract decision, not
-a style choice. `Storage` raises `StorageUnconfiguredError` when the store is off;
-`OptionalStorage` hands back `None`. A route whose body maps a storage outage onto a status MUST
-take `OptionalStorage` — see that dependency's docstring. The attachments router keeps its OWN
-`storage_dependency` (overridden independently in tests): none of its routes documents a
-storage-unavailable status, so it stays on the raising flavour.
+A DEPENDENCY THAT CAN BE UNCONFIGURED HANDS BACK `None`; IT DOES NOT RAISE. Every `Depends` is
+solved before the route body's first statement, so a provider that raises there raises where no
+`except` of the route's can see it — and a route advertising 503 for an unavailable store,
+sandbox, deploy service or per-app database answers an undocumented 500 instead, in the
+catch-all's `{"detail": ...}` envelope rather than its own. Storage-off and Redis-off are
+supported postures outside production, so that break lands exactly where nobody is watching.
+Take a raising provider (`Storage`) only where an unset dependency genuinely IS a deploy bug;
+anything documenting an unavailable status takes the `| None` twin and maps `None` onto that
+status in its own body.
 """
 
 from typing import Annotated
@@ -108,14 +111,10 @@ def storage_or_none_dependency() -> ObjectStorage | None:
     None-tolerant twin of `storage_dependency`, and the same idiom as `container_store_dependency`
     below.
 
-    It still resolves EAGERLY (every `Depends` does); it just cannot FAIL eagerly. That is the
-    whole point: a route that advertises `503` and maps `StorageError → 503` in its body cannot
-    honour either promise if the store is resolved by a provider that raises during dependency
-    solving — the client gets an undocumented 500 with a DIFFERENT envelope (`{"detail": ...}`
-    from the catch-all, not `{"error": {"message": ...}}`). Storage-off is a supported posture
-    outside production (`_require_storage_in_production` only gates prod), so that contract break
-    is live in exactly the environments nobody watches. Full write-up:
-    `docs/solutions/design-patterns/eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`.
+    It still resolves EAGERLY (every `Depends` does); it just cannot FAIL eagerly, which is what
+    lets a route keep the 503 it advertises — see this module's header for the whole contract.
+    Storage-off is a supported posture outside production (`_require_storage_in_production` only
+    gates prod).
 
     Deliberately still a dependency rather than a bare `get_storage()` inside the route's `try`:
     that naive fix would read the accessor singleton while a test had wired a fake through

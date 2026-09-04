@@ -11,6 +11,24 @@
  * (each function's own 409) and no reachable one, so the banner it fed and that banner's force-end
  * button are gone too. `reattach` is the surviving entry point.
  *
+ * NOTHING IN THE BROWSER EXTENDS A SANDBOX'S DEADLINE. No keep-alive timer, no heartbeat, no lock
+ * renewal — the client functions and the routes behind them are both gone — so an open tab cannot
+ * hold a container up, and neither can tab visibility, a framed preview or an open feed. What does:
+ * the server renews the lock and heartbeat itself on every non-terminal progress envelope, so a
+ * build in flight renews as fast as it produces frames under a wall-clock lease a sweep in another
+ * process can read; and save / stop / relaunch / deploy extend as a side effect of the request they
+ * already make. A builder who reads for half an hour without acting does lose the container and
+ * gets it back on their next prompt behind a labelled wait — a bounded, deliberate cost.
+ *
+ * NOTHING IN THE BROWSER EXTENDS A SANDBOX'S DEADLINE. No keep-alive timer, no heartbeat, no lock
+ * renewal — the client functions and the routes behind them are both gone — so an open tab cannot
+ * hold a container up, and neither can tab visibility, a framed preview or an open feed. What does:
+ * the server renews the lock and heartbeat itself on every non-terminal progress envelope, so a
+ * build in flight renews as fast as it produces frames under a wall-clock lease a sweep in another
+ * process can read; and save / stop / relaunch / deploy extend as a side effect of the request they
+ * already make. A builder who reads for half an hour without acting does lose the container and
+ * gets it back on their next prompt behind a labelled wait — a bounded, deliberate cost.
+ *
  * KEY BEHAVIOURS (the plan's load-bearing decisions):
  *
  *  - **Status derivation** (C3 §1, from the envelope stream): the first non-terminal
@@ -24,12 +42,8 @@
  *  - **Force-end override**: the terminal transition comes from `ForceEndResponse.status`,
  *    overriding the envelope-derived status — a stuck-mid-`building` session may never emit a
  *    terminal `ended` (that is the whole reason force-end exists, C3 §3.4).
- *  - **There is no `reclaimed` flag, and this paragraph used to describe one.** It was raised by
- *    the blind keep-alive loop's failure arm — a renew `409 lock_lost`, a heartbeat `404` — and
- *    U13 deleted that loop, taking the only producer with it. The state, the banner it fed and
- *    the attention dot it lit all survived it, unreachable, which reads as coverage for the
- *    frozen-tab case rather than the absence it was. What actually covers that case now is the
- *    preview poll's `asleep` state in `LivePreview`, which has a live producer.
+ *  - **There is no `reclaimed` state.** Nothing on the client can tell that a container was taken
+ *    back; the frozen-tab case is covered by the preview poll's `asleep` state in `LivePreview`.
  *  - **Feed-disconnected** (KTD-1): a bounded `EventSource` reconnect exhaustion (or an admission
  *    failure) raises a distinct `feedDisconnected` flag with a manual `reconnect()` — heartbeat /
  *    renew may still be succeeding, so nothing else signals the dead feed.
@@ -178,30 +192,6 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     },
     [teardownTimers, closeFeed, setPhase],
   )
-
-  /**
-   * DELETED IN U13 — the blind keep-alive loop, and it is worth recording why rather than just
-   * why-not, because it was live code and not dead code.
-   *
-   * It ran `heartbeat` and `renewLock` on a bare `setInterval` for as long as the tab existed,
-   * with no interaction gate of any kind. That made AN OPEN TAB a keep-alive writer: a browser
-   * left on a project overnight renewed the lock and the heartbeat until morning, and the
-   * container behind it could never be reclaimed by anything. R13 names the writers that may
-   * extend a sandbox's deadline and this is not one of them — tab visibility, a framed preview
-   * and an open connection deliberately do NOT extend.
-   *
-   * Nothing replaces it here, and nothing needs to. A turn in flight is covered server-side by
-   * the R10 wall-clock lease (U12), which outranks every other writer and is legible to the
-   * sweep in another process — which this loop never was. Save / stop / relaunch / deploy each
-   * already call a project-scoped endpoint, so a builder acting extends the deadline as a side
-   * effect of the request they were making anyway. And an app actually being used reports
-   * itself (R14).
-   *
-   * A builder who reads for thirty-five minutes without acting does lose the container, and
-   * gets it back on their next prompt behind the labelled wait R16 guarantees. That is a
-   * bounded, designed-for cost, taken deliberately against the unbounded one of a signal that
-   * trickles in while nobody is working.
-   */
 
   const markIterating = useCallback(() => {
     if (statusRef.current !== 'ready') return

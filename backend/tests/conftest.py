@@ -156,6 +156,13 @@ async def client(app):
         yield c
 
 
+# THIS FIXTURE AND `fake_storage` BIND AN APP-LEVEL SINGLETON, so a test of the "dependency not
+# configured" branch must take NEITHER. With one bound, `get_redis()` / `get_storage()` always
+# answer and that branch is unreachable BY CONSTRUCTION — a test written for it proves nothing,
+# which is how a documented 503 stayed broken on every deployment that had the dependency switched
+# off. Redis, object storage, the sandbox and the per-app database are each genuinely optional
+# outside production, so every off-posture is a supported deployment that owes the caller a real
+# status; the tests pinning those statuses bind no fixture on purpose.
 @pytest.fixture
 async def fake_redis():
     # Deterministic in-process Redis (KTD-8): `fakeredis[lua]` runs the compare-and-delete

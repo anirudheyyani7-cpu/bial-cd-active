@@ -1,28 +1,20 @@
-"""The ONE hardened secret redactor — moved here from `services/orchestrator/errors.py` (U4)
-so non-orchestrator callers (the native message store's persistence seam) can reuse it without
-importing the orchestrator. The orchestrator keeps importing it from its historical path via a
-re-export; there is exactly one implementation (never write new redaction regexes — the ReDoS
-learning `security-issues/redos-secret-redaction-regex-2026-07-14.md` applies to every pattern
-here: LINEAR patterns only, and callers on synchronous event-loop paths cap input length BEFORE
-scanning).
+"""The ONE secret redactor: one pattern set, two consumers, and no second regex family anywhere.
 
-Since U2 (plan 2026-08-19-001) the module carries TWO consumers of one pattern set:
+`redact_secrets` is the masker, tuned to over-redact — a false positive costs nothing on an
+egress path. `detect_credentials` is the pre-publish scan over the same candidates: it reports a
+pattern family, a tier and a line number, NEVER the matched value, and Tier A stands in as the
+credentials answer when the model is unavailable, so its precision burden is absolute. Every
+pattern here must stay LINEAR — app-controlled text reaches them on the event loop — and a caller
+on a synchronous path caps input length before scanning.
 
-* `redact_secrets` — the masker. Tuned to over-redact; a false positive costs nothing on an
-  egress path.
-* `detect_credentials` — the pre-publish credential scan (R4a/P8). Reports the pattern FAMILY,
-  a Tier label, and a line number — NEVER the matched value. Tier A is value-shaped and
-  unambiguous (ported from the gitleaks / detect-secrets rule sets, patterns not dependency);
-  it stands in as the credentials answer when the model is unavailable, so its precision
-  burden is absolute. Tier B is a credential-shaped NAME with a hardcoded literal value —
-  a lead handed to the review, expected to be mostly noise, never binding.
-
-The masker's patterns are wrong for source code in both directions (ASM2): they miss
-`const password = "hunter2"` (quoted values, camelCase names) and fire on
-`password: z.string().min(8)` (any bare value). The shared `_NAME_LITERAL_RE` family widens
-the masker to quoted source literals while its post-filter keeps the DETECTOR off values that
-are identifiers, member accesses or call expressions. One candidate pattern, one classifier,
-two consumers — no second regex family to drift.
+STRIP THE ESCAPES, THEN REDACT, THEN SLICE — `scrub_untrusted` is that order in one function, and
+is what any caller holding sandbox-authored text wants. Both halves of the order are the security
+property. An escape sequence spliced into a credential splits the token so no pattern matches it,
+and stripping afterwards closes the text back up around a secret that already went out in the
+clear. Cutting first is the same failure at the other end: a credential straddling the cut
+becomes fragments matching none of these shapes, so what egresses is the head of a real token.
+Everything that shortens text — a capture window, a stored-detail cap — therefore cuts AFTER the
+mask, on whole lines; only the cap bounding how much work a hostile blob can demand runs first.
 """
 
 from __future__ import annotations

@@ -51,6 +51,32 @@ other one lets it propagate raw, and that is a decision, not an omission:
 
 So a Redis error from this module surfaces to its caller, and the HTTP layer maps it:
 `services/redis/errors.py` turns it into a 503 with user-facing copy (U3).
+
+WHY THIS EXISTS
+---------------
+Redis is the store this platform distrusts, and two properties of the production instance are
+why. Both are stated once, here; every other module that made a choice because of them says
+which half drove it and points back.
+
+ITS EVICTION POLICY IS UNVERIFIED. `maxmemory-policy` has never been confirmed on the deployed
+instance, and under any `allkeys-*` setting a key with no TTL is as evictable as one with a
+TTL — so a lock, a heartbeat, a stay, a liveness lease or a start-in-flight marker can vanish
+mid-operation with nothing said. Anything that must not evaporate under memory pressure is
+therefore kept elsewhere: the destructive reclamation pass single-flights on a Postgres
+advisory lock rather than a Redis one, and the record of whether a scheduled pass ran is a
+Postgres row, because a staleness alarm keyed on an evictable marker would fire spuriously and
+its absence could not be told apart from a real outage.
+
+IT IS SHARDED, WHICH ITS OWN CONFIGURATION DENIES. Production runs Azure Managed Redis
+(`Microsoft.Cache/redisEnterprise`), and on 2026-08-18 that instance reported
+`clusteringPolicy = EnterpriseCluster` — which reads as "not clustered" and is the trap. The
+policy governs only the client-facing protocol (one endpoint, no `MOVED` redirects); the
+database underneath is still sharded, and a multi-key command whose keys hash to different
+slots is rejected outright (`ClusterCrossSlotError`). No sandbox key carries a hash tag, so
+every command issued here is SINGLE-KEY: no `COPY` between two registry keys, no two-key
+`DEL`. A single-node dev Redis and fakeredis both hash everything to one slot and cannot
+reproduce any of it, so this cannot be found by running the tests — which is why it is written
+down instead of left to be discovered in production.
 """
 
 from __future__ import annotations
@@ -641,14 +667,10 @@ async def _adopt_a_pre_cutover_record(
     if not raw:
         return None
 
-    # SINGLE-KEY COMMANDS ONLY. This used to be `COPY legacy current`, which is elegant and
-    # unusable: the two keys carry no hash tag, so they hash to different slots, and a
-    # cross-slot multi-key command is REJECTED on a clustered Redis. The production instance
-    # is Azure Managed Redis Enterprise and its clustering policy is an explicitly unverified
-    # provisioning gate — and this very plan rejects `RedisScheduleSource` for exactly this
-    # reason. Getting it wrong fails on the path built to RESCUE the fleet: `read_registry` is
-    # deliberately unguarded, so every pre-cutover user's attach would 500 and no legacy record
-    # would ever migrate. fakeredis is single-instance and cannot catch it.
+    # SINGLE-KEY COMMANDS ONLY (module docstring, "IT IS SHARDED"): the tempting `COPY legacy
+    # current` is cross-slot and is rejected outright in production. Getting it wrong fails on
+    # the path built to RESCUE the fleet — `read_registry` is deliberately unguarded, so every
+    # pre-cutover user's attach would 500 and no legacy record would ever migrate.
     #
     # `hset(mapping=raw)` carries the identical field set, because `raw` is already the complete
     # hash from the HGETALL above. What COPY bought was server-side atomicity against a racing
@@ -718,11 +740,10 @@ async def delete_registry(redis: aioredis.Redis, user_uuid: uuid.UUID) -> None:
     permanent per-pass ARM call plus a log line that looks like real work. The legacy arm is
     removed in release B, once the inventory reports zero legacy-prefix records.
 
-    TWO SINGLE-KEY DELETES, not one two-key `DEL`. The keys carry no hash tag and hash to
-    different slots, so a multi-key command is rejected outright on a clustered Redis — and the
-    production clustering policy is an unverified provisioning gate. Issued current-first so an
-    interruption between them leaves only the legacy key, which the next read migrates rather
-    than the reverse (a surviving CURRENT key with the legacy one gone would be read as live).
+    TWO SINGLE-KEY DELETES, not one two-key `DEL` — the module docstring's sharding note is
+    why. Issued current-first so an interruption between them leaves only the legacy key, which
+    the next read migrates, rather than the reverse (a surviving CURRENT key with the legacy one
+    gone would be read as live).
 
     AND THE LEGACY DELETE IS CONDITIONAL, because the legacy prefix is the one namespace with no
     environment segment: `bial:sandbox:registry:{user}` names different containers in different

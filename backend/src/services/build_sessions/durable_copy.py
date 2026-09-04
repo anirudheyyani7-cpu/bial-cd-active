@@ -19,15 +19,14 @@ and parseable bundle counts as confirmed — otherwise a container that is alrea
 collected, which is the entire point of the exercise. If there is no parseable bundle either,
 escalate. The real comparison still happens in the normal case.
 
-"STORAGE IS OFF" IS NOT "THERE IS NO WORK TO PRESERVE" (Q4). `manager.py` returns `False` from its
-bundle-presence check on `StorageUnconfiguredError` and documents it as a *confirmed absent* —
-which is right for its caller, because on a storage-off deployment you must not offer a restore
-that cannot work. It is exactly wrong here: consumed by a destroy path, "confirmed no bundle" is
-"nothing to preserve, safe to delete", so the most natural misconfiguration in the system would
-produce a worker that deletes the entire fleet while believing it had verified every container.
-This module distinguishes a fact about the DEPLOYMENT (storage unconfigured → escalate; in truth
-the worker should never have started) from a fact about the CONTAINER (storage reachable, no
-bundle for this app).
+"STORAGE IS OFF" IS NOT "THERE IS NO WORK TO PRESERVE". An unset store is a fact about the
+DEPLOYMENT, an unreadable one is a fact about this moment, and only "the store answered and holds
+no bundle for this app" is a fact about the CONTAINER. Just that last one is a confirmed absent
+here; the other two are UNCONFIRMED, and the container is spared and reported. Folding "no store"
+into "no bundle" is right for a caller deciding whether to OFFER a restore — never offer one that
+cannot work — and exactly wrong on a destroy path, which reads a confirmed absent as "nothing to
+preserve, safe to delete": the most ordinary misconfiguration in the system would otherwise delete
+the whole fleet while believing it had verified every container.
 """
 
 from __future__ import annotations

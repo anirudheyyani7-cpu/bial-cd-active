@@ -9,7 +9,7 @@
  * it cannot, because the server writes while this tab may be reloading or closed, and a wrong
  * guess is not a visible error but a lost message. It re-seeds `seqRef` from what each append
  * reports it actually stored; the allocation itself is pinned in
- * `backend/tests/api/v1/conversations/test_seq_allocation.py`.
+ * `backend/tests/services/messages/test_store_roundtrip.py`.
  *
  * WHAT THE OUTCOME IS DERIVED FROM CHANGED (U5). A build is a Write TURN, so the terminal that
  * produces this card is a `turn_ended` FRAME — its `status`, `reason` and tri-state
@@ -23,7 +23,7 @@
  * CHAT-KIND MIGRATION (sfw-002). This page now renders ONLY a `build` chat, fixed at creation, so
  * `handleBuildIt`'s plan-options card no longer runs its build here — it creates a SECOND,
  * different build chat and navigates there. Every ordinary composer send on THIS page already
- * holds the write toolset (BuilderPage.tsx's routing-rule docblock), so `runBuild` below drives
+ * holds the write toolset (`ConversationSurface.tsx`'s routing-rule docblock), so `runBuild` drives
  * the outcome through a plain send rather than a card confirm — simpler, and the honest route now
  * that the card can't be it.
  *
@@ -31,7 +31,7 @@
  * (`watchBuildTurn`) took its `showBuildOutcome` call with it, and nothing on the new send path
  * replaced it — an ordinary send's terminal reached `sink.terminal`/`sink.reason`/
  * `sink.snapshotCommitted` and then just... stopped, never handing them to the card. Reported and
- * fixed in `BuilderPage.tsx`: both turn watchers on this page — `fireRelayTurn` (an ordinary
+ * fixed in `ConversationSurface.tsx`: both turn watchers on this page — `fireRelayTurn` (an ordinary
  * send) and `reattachToTurn` (a reload mid-turn, or the arrival after a Build-it handoff) — now
  * call `showBuildOutcome` once their stream settles, keyed on `sink.turnId` (set from the
  * `snapshot` frame's `turnId` first, the `turn_ended` frame's as a fallback). The tests below

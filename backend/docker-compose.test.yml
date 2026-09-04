@@ -2,7 +2,8 @@
 # (`uv run pytest -m integration`). Azurite serves Azure Blob — the only object
 # store the backend supports.
 #
-# No Redis this phase (ADR-0011 defers the task queue and its Redis dependency).
+# Azurite only: this file exists for the storage suite, and the tests it serves
+# need no broker. The worker's Redis is not part of that scope.
 #
 #   docker compose -f docker-compose.test.yml up -d
 #   uv run pytest -m integration

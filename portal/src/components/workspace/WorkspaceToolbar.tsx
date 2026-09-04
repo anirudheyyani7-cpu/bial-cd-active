@@ -317,8 +317,8 @@ export default function WorkspaceToolbar({
  * reading "Saved" over an unknown is the one thing this control must never say.
  *
  * WITH NO ACTION PUBLISHED IT IS A STATUS, NOT A BUTTON — a real `<span>`, so nothing invites a
- * press that would do nothing. That is today's project screen, whose surface deliberately has no
- * `onSave`; U11 gives it one and the same control becomes pressable there.
+ * press that would do nothing. Both surfaces publish `onSave` today, so the control is pressable
+ * on each; the status-only shape is what it falls back to when a surface does not.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save

@@ -80,9 +80,8 @@ class ConversationCreateResponse(CamelModel):
 
 
 class ActiveTurnOut(CamelModel):
-    """The in-flight turn, when one is running (U10 wires the real registry; until then the
-    route always answers null). `last_seq` is the turn's newest event seq — the cursor a
-    subscriber resumes the event stream from."""
+    """The in-flight turn, when one is running, read from the live turn registry. `last_seq` is
+    the turn's newest event seq — the cursor a subscriber resumes the event stream from."""
 
     turn_id: str
     last_seq: int

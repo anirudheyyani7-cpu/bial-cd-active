@@ -163,7 +163,7 @@ not exist, so the fix is a closed-world statement of what IS there. The legacy r
 own copy of this wording, which is the duplicate that made "single-sourced" worth saying; it went
 with the relay, and this is now the only one. The wording is the unified chat layout's, where the
 right pane is the APP and nothing else (R10).
-The surface list is verified against `portal/src/App.jsx`'s actual routes — extend it when the
+The surface list is verified against `portal/src/App.tsx`'s actual routes — extend it when the
 portal grows a surface, never before."""
 
 _DATA_INTEGRITY_RULE = """\

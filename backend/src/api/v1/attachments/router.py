@@ -3,7 +3,8 @@
 Byte-matches the Express `/api/attachments` contract (`server/attachments.js`): one base64
 file per request, server-side allowlist + magic-byte validation, a 4 MB per-file cap, a 50 MB
 per-user byte quota, owner-scoped object keys, and the `{error:{message}}` / `{ok:true}`
-envelopes. Text is never uploaded (it travels inline); office/deck branches land in U11.
+envelopes. Text is never uploaded (it travels inline); office and deck uploads take their own
+branches, rendered to a form the model can read before anything is stored.
 
 Identity is the authenticated caller; object keys are `att/{user_id}/{uuid}` (traversal-safe,
 UUID axes) and every read/delete is scoped by `user_id` AND re-guarded with `assert_owned`.

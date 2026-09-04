@@ -696,7 +696,7 @@ class PreviewState:
     slot" and "asleep" and "the registry read threw" indistinguishably. As a property it can
     only ever mean `state is ALIVE`, so there is no longer anywhere for an error to hide.
 
-    U13 adds `PreviewLifeState.STARTING` to the enum this wraps and needs NO new field for it:
+    `PreviewLifeState.STARTING` is in the enum this wraps and needs NO field of its own:
     a start in flight names no preview URL and offers no restore, so the existing defaults
     (`preview_url=None`, `restorable=None`) are already the right answer — `state` alone
     carries the new fact."""

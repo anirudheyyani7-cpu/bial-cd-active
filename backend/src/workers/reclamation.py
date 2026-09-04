@@ -1,4 +1,4 @@
-"""The scheduled reclamation pass — report-only until somebody flips a second flag (U11).
+"""The scheduled reclamation pass — report-only until somebody flips its destroy flag.
 
 WHAT THIS DOES TODAY: enumerates Azure (U9), reads the coordination store as a spare-list, runs the
 confidence-tier classifier (U10), **stamps the staging tag on first-sighting candidates**, writes a
@@ -76,7 +76,7 @@ def _off_duty_because() -> str | None:
     schedule=[{"cron": RECLAMATION_CRON, "schedule_id": RECLAMATION_SCHEDULE_ID}],
 )
 async def reclaim_abandoned_sandboxes() -> None:
-    """One reclamation pass. Reports; destroys nothing until U15 and a second flag.
+    """One reclamation pass. Reports; destroys nothing until the destroy flag is turned on.
 
     THE FLAG GATE COMES FIRST, before a single heavy import — the same contract
     `deploy_reconcile` set. A disabled task costs structlog, the broker and the settings profile

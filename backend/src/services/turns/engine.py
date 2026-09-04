@@ -3378,9 +3378,12 @@ class TurnEngine:
         self, state: _TurnState | None, *, items: list[DisplayItem] | None = None
     ) -> SnapshotFrame:
         """The consolidated catch-up frame. `items` (the turn's persisted rows, projected)
-        are resolved by the ROUTE before the stream commits — a mid-stream gap re-snapshot
-        carries the in-memory tail only (TODO(U12): persisted mid-turn step rows join when
-        Write turns ride this transport)."""
+        are resolved by the ROUTE before the stream commits.
+
+        KNOWN AND OPEN: a mid-stream gap re-snapshot carries the in-memory tail only. It is
+        the one path that never re-reads the database, so a step already evicted by the ring
+        cap cannot be recovered on it — a client that reconnects after a long gap sees the
+        tail and not the evicted middle."""
         if state is None:
             return SnapshotFrame(seq=0, turn_id=None, turn_status="idle")
         # THE ACK GOES FIRST, and this is the only place it can. It is emitted at `seq == 1`

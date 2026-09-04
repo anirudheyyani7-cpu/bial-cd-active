@@ -272,12 +272,11 @@ async def write_recovery_copy(
     THE NO-OP SKIP IS DECIDED ON THE BUNDLED SHA, AND THAT ORDERING IS THE WHOLE TRICK.
     `_COMMIT_SCRIPT` runs `git add -A && git commit` as step ONE inside the bundle below, so by
     the time there is a sha to compare, any uncommitted work has already become a commit. A naive
-    "skip when HEAD has not moved" reads the sha BEFORE that step, and today the agent's own
-    commits mask the difference — but once agent-side commits go away, "HEAD unchanged + dirty
-    tree" becomes the normal shape of EVERY building turn, and that version would silently discard
-    every turn's recovery copy. Data loss plus (per ASM24) containers nothing would ever reclaim,
-    both reading green to every health check. `test_a_dirty_tree_at_unchanged_head_still_writes_a_
-    recovery_copy` is the standing contract across that plan boundary.
+    "skip when HEAD has not moved" reads the sha BEFORE that step. The agent does not commit as
+    it works, so "HEAD unchanged + dirty tree" is the normal shape of EVERY building turn, and
+    that version would silently discard every turn's recovery copy. Data loss plus containers
+    nothing would ever reclaim, both reading green to every health check.
+    `test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy` is the standing contract.
 
     NEVER RAISES FOR A REFUSAL, and never fails the turn. A caller still has to catch the bundle
     or upload failing — that case is `failed`, and it is raised from the call site because only

@@ -429,7 +429,7 @@ class ContainerState:
 
     `head is None` means there is NO `.git` AT ALL — not "nobody has saved yet". A provisioned
     container is never commit-less: `client._INIT_REPO_SCRIPT` seeds `bial: golden template
-    baseline` at birth so the agent's own commits cannot fail on "not a git repository", and
+    baseline` at birth so a snapshot commit cannot fail on "not a git repository", and
     `_nothing_to_lose` says the same thing from the other side ("a check for 'no commits' is
     dead code that never fires"). So the only thing that produces `head is None` on a container
     this platform provisioned is a container running straight from its baked image — which is
@@ -451,7 +451,7 @@ class ContainerState:
     # to reason about — it is unambiguous evidence of real work.
     porcelain_truncated: bool
     # How many commits deep HEAD is. A FRESH PROVISION IS ALWAYS 1, never 0: the sandbox
-    # client seeds `bial: golden template baseline` so the agent's own commits never fail on
+    # client seeds `bial: golden template baseline` so a snapshot commit never fails on
     # "not a git repository" (`client.py`). So "no commit yet" is not a state that occurs on a
     # provisioned container, and anything asking "is there work in here?" has to compare
     # against the baseline rather than against nothing. 0 means we could not count.

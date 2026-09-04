@@ -191,7 +191,7 @@ _BUNDLE_B64_NAME: Final = "app.bundle.b64"
 #     whole first build into a single commit — the per-slice history is simply gone.
 #
 # So a container is made a working repo at BIRTH, with one baseline commit for the template.
-# The agent's commits are then real deltas against a known starting point. Idempotent
+# Every later commit is then a platform-driven snapshot against a known starting point. Idempotent
 # (`rev-parse` short-circuits), and `git config --system` in the image supplies the identity.
 _INIT_REPO_SCRIPT: Final = (
     "git rev-parse --git-dir >/dev/null 2>&1 || "
@@ -222,8 +222,8 @@ async def _make_it_a_repo(client: SandboxClient, handle: SandboxHandle) -> None:
     the thing being protected is a container that has already come up and serves the user's
     app. Failing the whole provision over one housekeeping exec would trade a working workspace
     for none at all, and `write_snapshot` still carries its own `git init` fallback for exactly
-    this case. Logged rather than swallowed: a repo that never got created explains a later run
-    of failed agent commits, and that trail has to exist somewhere."""
+    this case. Logged rather than swallowed: a repo that never got created explains a later
+    snapshot commit failing, and that trail has to exist somewhere."""
     run_command = client.exec  # alias keeps the call off the JS-oriented exec guard
     try:
         await run_command(handle, ["sh", "-c", _INIT_REPO_SCRIPT], timeout_s=60)

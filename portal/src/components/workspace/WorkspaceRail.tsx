@@ -96,9 +96,9 @@ export default function WorkspaceRail({ project, save, onProjectUpdate }: Worksp
 
       <div className="h-px flex-shrink-0 bg-bial-border" />
 
-      {/* R6's app status. THE SENTENCE ONLY — the action belongs to the pane (see the docblock).
-          Same computed value, so the two surfaces cannot say different things. U4 gives this
-          section its provenance rows, its colour-coded states and its own action button. */}
+      {/* The app status. Same computed value as the pane, so the two surfaces cannot say
+          different things. This section carries the provenance rows, the colour-coded states
+          and the action button. */}
       <section data-testid="rail-app-status" className="px-[18px] py-[15px]">
         {/* WHERE THE APP STANDS — publishing, approval and the citizen's own last save, from the
             one server-computed state. `AppStatusPanel` and the toolbar row's chip put that state

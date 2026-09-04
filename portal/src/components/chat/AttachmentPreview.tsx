@@ -28,8 +28,8 @@
  * ══ WHAT THE DIALOG BRINGS THAT THE OLD LIGHTBOX LACKED ══
  *
  * `AttachmentLightbox` is 55 lines, images only, hand-rolled: no focus trap, no `role="dialog"`,
- * no `aria-modal`, no scroll lock, and it closes on a backdrop click with nothing returning focus.
- * The Radix Dialog brings all of that, and U17 deletes the lightbox.
+ * no `aria-modal`, no scroll lock, and it closed on a backdrop click with nothing returning
+ * focus. The Radix Dialog brings all of that, and the old lightbox component is gone.
  *
  * ══ R47 — NOTHING BUT THE READER DISMISSES IT ══
  *

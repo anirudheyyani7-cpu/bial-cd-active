@@ -504,8 +504,8 @@ class DeployReconcileResponse(CamelModel):
     ONE number, and that is the honest shape rather than a thin one.
     `reconcile_stalled_deployments` returns how many abandoned rows it SETTLED; anything richer
     would have to be assembled from a second read of a table the pass has just changed — a report
-    that contradicts itself the moment two reconcilers overlap, which is exactly the window this
-    endpoint runs in while the in-process loop is still alive (removed in U7).
+    that contradicts itself the moment two reconcilers overlap — which they still can, since the
+    scheduled worker pass and the boot one-shot each run independently of this endpoint.
 
     A row ARM could not answer for is deliberately NOT in this count. It is not resolved, it is
     DEFERRED — left exactly as it was for the next pass — because a throttled request that read

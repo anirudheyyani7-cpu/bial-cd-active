@@ -18,10 +18,10 @@ MEMBERSHIP IS DERIVED, NEVER STORED. There is no `listed` flag and no owner opt-
 is in the catalog because it currently has a live deployment, and it leaves when an admin
 unpublishes it (#113/#120). Nobody has to remember to do anything.
 
-IT PAGINATES BY OFFSET, unlike every other list here. `MarketplaceListResponse`'s docstring
-carries the argument; the short version is that KD-1's keyset rule protects a list you are
-writing to, this catalog is read-only and small, and page numbers, totals and sort-by-name
-are all impossible without it.
+IT PAGINATES BY OFFSET, one of the two surfaces that do — the projects list is the other.
+`MarketplaceListResponse`'s docstring carries the argument; the short version is that the keyset
+rule protects a list you are writing to, this catalog is read-only and small, and page numbers,
+totals and sort-by-name are all impossible without it.
 """
 
 from __future__ import annotations

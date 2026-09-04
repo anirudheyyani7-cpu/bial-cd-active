@@ -66,7 +66,7 @@ class MarketplaceEntry(CamelModel):
 
 
 class MarketplaceListResponse(CamelModel):
-    """An OFFSET page envelope — deliberately NOT the keyset one every other list uses.
+    """An OFFSET page envelope — one of the two deliberate exceptions to the keyset default.
 
     `pagination.py` states the platform's position plainly: keyset, not offset, and no
     `total`/`totalPages` (KD-1), because offset cannot guarantee a page with no duplicates
@@ -86,8 +86,8 @@ class MarketplaceListResponse(CamelModel):
     endpoint shipped with: a relevance-ranked search could only ever return ONE page,
     because an id-cursor cannot continue a rank ordering.
 
-    The deviation is contained to this one endpoint and is argued in the PR rather than
-    assumed. Every other list on the platform stays keyset."""
+    The deviation is shared with the projects list, which needs page numbers for the same
+    reason; every other list on the platform stays keyset."""
 
     items: list[MarketplaceEntry]
     #: 1-based, echoed back so a client never has to infer which page it is looking at.

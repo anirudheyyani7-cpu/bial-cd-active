@@ -4,7 +4,8 @@ WHY THIS WORKLOAD FIRST. It cannot destroy anything. `reconcile_stalled_deployme
 database ROW and at most promotes it, and the type it is handed (`PublishedAppReader`) declares
 no delete method at all — so a wrong answer here costs a row that reads `failed` instead of
 `running`, never a container app. Everything else queued for this scheduler can delete an Azure
-resource, and none of that may run out-of-process until the R10 liveness lease lands (U12).
+resource, and already runs out-of-process here too: the sandbox sweep does almost all of the
+deleting today, gated by its own destructive-action flag rather than by any pending signal.
 
 AND ITS LIVENESS SIGNAL IS ALREADY OUT-OF-PROCESS. Staleness is `deployments.heartbeat_at`, a
 shared database column read under a `status = 'running'` guard — not an in-process set like the
@@ -16,17 +17,15 @@ WHAT IS DELIBERATELY NOT HERE
 `main.py`'s `_reconcile_interrupted_deploys` is a BOOT-PATH ONE-SHOT, not a loop. It settles a
 deploy that straddled a restart *before the first request is served*, which no cron can do — a
 five-minute tick would leave the citizen looking at a Deploy button that 409s in the meantime. It
-survives untouched. Its periodic twin `_reconcile_deploys_periodically` is what this module
-replaces, and that one is removed in **U7, not here**: until the worker is actually provisioned
-in Azure this replacement exists only in the repo, and deleting a live reconciler one unit ahead
-of its deployed replacement is the same mistake in deploy form that the plan forbids in file
-form. The two are easy to confuse and easy to delete symmetrically; they are not symmetric.
+survives untouched. Its periodic twin has already been deleted from `main.py`, and
+`reconcile_stalled_deploys` here is its sole replacement, running on the deployed worker. The two
+no longer coexist, so there is nothing left to confuse or to delete symmetrically.
 
-RUNNING BOTH AT ONCE IS SAFE, which is what makes that overlap affordable. Every terminal write
-goes through `store._finish`'s `WHERE status = 'running'` guard and returns its rowcount, so of
-two racing reconcilers exactly one settles a given row and the other learns it lost. The pass is
-idempotent for the same reason two schedulers during an ACA revision roll are survivable
-(ADR-0029 §9).
+RUNNING TWO PASSES AT ONCE IS STILL SAFE, which is what made that handover affordable. Every
+terminal write goes through `store._finish`'s `WHERE status = 'running'` guard and returns its
+rowcount, so of two racing reconcilers exactly one settles a given row and the other learns it
+lost. The pass is idempotent for the same reason two schedulers during an ACA revision roll are
+survivable (ADR-0029 §9).
 
 IMPORT DISCIPLINE. Module scope imports structlog, the broker, the settings front door and
 taskiq's own cron predicate — nothing else. The ORM, the ARM SDK and the reconciler itself are
@@ -116,8 +115,8 @@ def _off_duty_because() -> str | None:
     Two conditions, reported separately because they mean different things to whoever reads the
     log line. `unconfigured` is "this deployment does not publish apps at all" — the ordinary
     dev, test and not-yet-granted-the-registry-role posture. `flag_off` is "it does, and an
-    operator has the timer switched off", which is the state every environment ships in until U7
-    has watched a scheduled pass run in Azure.
+    operator has the timer switched off". The flag ships ON, so this is only ever reached when
+    someone has deliberately disabled it.
     """
     deploy = settings.deploy
     if deploy is None:

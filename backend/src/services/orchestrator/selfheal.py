@@ -793,9 +793,9 @@ async def _verify_once(
         fatal_client_reports=len(fatal_reports),
         served_status=served.status if served else None,
         baseline=baseline,
-        # THE RAW EVIDENCE BESIDE THE DERIVED VERDICT (the 2026-08-02 learning). Structlog is its
-        # home until the counters table lands with the operational surface; a reader asking "but
-        # what was it actually serving?" must not have to reproduce the run to find out.
+        # THE RAW EVIDENCE BESIDE THE DERIVED VERDICT (the 2026-08-02 learning). It also reaches
+        # the harness counters, which record `served_head` from this same verdict; a reader asking
+        # "but what was it actually serving?" must not have to reproduce the run to find out.
         served_head=served.head if served else None,
     )
     preview_url = handle.preview_url if dev_ready else None

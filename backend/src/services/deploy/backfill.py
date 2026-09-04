@@ -32,8 +32,6 @@ it at a container would be worse than leaving a stale note. The test for "ours" 
 per-row: the recorded host's first label is this app's own container name, which only the
 platform mints.
 
-AUDIT-2026-09-03 · verified-alive: intentionally retained pending verification — see the
-audit record.
 """
 
 from __future__ import annotations

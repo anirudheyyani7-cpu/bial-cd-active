@@ -1,24 +1,16 @@
-"""U13 — the canvas divergence on the sandbox in planning, asserted instead of described.
+"""`_pin_workspace` resolves one workspace, for both kinds of chat, with no branch.
 
-WHAT THIS PROVES, AND WHY A COMMENT COULD NOT. The `Removals` board removes "the sandbox in
-planning": a Plan chat is drawn as reading the latest copy of the app and no longer holding a
-container. The shipped code does the opposite — `_pin_workspace` resolves the project's LIVE
-container for BOTH kinds, with one arm and no branch — and that disagreement was settled in the
-CODE's favour, so the board is the stale artifact. A dated sentence saying so cannot fail, and a
-sentence that cannot fail is exactly how the last census of this method went wrong (see
-`test_no_prose_readers.py`, which exists because two docstrings disagreed about a count). This
-can fail: the day someone re-introduces the branch the board describes, this goes red and they
-have to reconcile the two before it lands.
+WHY THIS IS ASSERTED RATHER THAN WRITTEN DOWN. A sentence saying "there is one arm here"
+cannot fail, and a sentence that cannot fail is how the last census of this method went
+wrong — see `test_no_prose_readers`, which exists because two docstrings disagreed about a
+count. This can fail: the day someone reintroduces the branch, it goes red.
 
-IT IS A STRUCTURAL ASSERTION ON PURPOSE. The behavioural coverage already exists — the write-turn
-and turn-stream suites drive real turns of both kinds through the live container. What none of
-them can say is "there is ONE arm here": a branch that returned a live workspace on both sides
-would keep every one of those tests green while re-establishing the very shape R18 removed. So
-this reads the method's AST and asserts the absence of a fork, which is the property, rather than
-sampling the outcomes a fork would still produce.
-
-WHEN TO DELETE THIS FILE: when the board row is redrawn to match what ships. The marker in
-`_pin_workspace`'s docstring points here and goes with it.
+IT IS A STRUCTURAL ASSERTION ON PURPOSE. The behavioural coverage already exists — the
+write-turn and turn-stream suites drive real turns of both kinds through the live
+container. What none of them can say is "there is ONE arm here": a branch returning a live
+workspace on both sides would keep every one of those tests green while re-establishing the
+exact shape that was removed. So this reads the method's AST and asserts the absence of a
+fork, which is the property, rather than sampling outcomes a fork would still produce.
 """
 
 from __future__ import annotations
@@ -27,8 +19,6 @@ import ast
 import pathlib
 
 ENGINE = pathlib.Path(__file__).resolve().parents[3] / "src" / "services" / "turns" / "engine.py"
-
-MARKER_CLASS = "canvas-divergence"
 
 
 def _pin_workspace_node(source: str) -> ast.AsyncFunctionDef:
@@ -42,8 +32,7 @@ def _pin_workspace_node(source: str) -> ast.AsyncFunctionDef:
             return node
     raise AssertionError(
         "`_pin_workspace` is not in engine.py any more. If the turn-pinned read surface moved, "
-        "re-point this guard; if it was removed, the board row it contradicts may finally be "
-        "right and this file goes with the marker in its docstring."
+        "re-point this guard; if the single-workspace rule itself was retired, delete this file."
     )
 
 
@@ -77,21 +66,12 @@ def _returned_calls(node: ast.AST) -> list[str]:
 def test_pin_workspace_still_has_exactly_one_arm() -> None:
     node = _pin_workspace_node(ENGINE.read_text(encoding="utf-8"))
     assert _forks(node) == [], (
-        "`_pin_workspace` has grown a branch. The `Removals` board's 'the sandbox in planning' "
-        "row wants a Plan chat reading a saved copy; R18 removed that arm and R0 puts "
-        "architecture outside canvas authority. Reconcile the board before re-adding it."
+        "`_pin_workspace` has grown a branch. Both kinds of chat resolve the project's live "
+        "container through one arm; a Plan chat reading a saved copy instead is the shape this "
+        "guard exists to refuse."
     )
     assert _returned_calls(node) == ["LiveSandboxWorkspace"], (
         "`_pin_workspace` no longer resolves the project's live container as its single answer."
-    )
-
-
-def test_the_divergence_marker_travels_with_the_method() -> None:
-    """The marker is the grep entry point; losing it loses the pointer to the audit record."""
-    doc = ast.get_docstring(_pin_workspace_node(ENGINE.read_text(encoding="utf-8"))) or ""
-    assert MARKER_CLASS in doc, (
-        "the canvas-divergence marker is gone from `_pin_workspace`'s docstring while the "
-        "divergence itself is still here"
     )
 
 

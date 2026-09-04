@@ -193,9 +193,6 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     # It is READ, which is why the column stays: `services/projects/describe.py` pulls the
     # source out of it for the project-description generator, which 409s on a NULL. So a
     # project that predates the move still describes itself, and one that does not, cannot.
-    #
-    # AUDIT-2026-09-03 · verified-alive: intentionally retained pending verification — see
-    # the audit record.
     current_code: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     # The submission under review (APPROVAL R1/R4): `submit` copies the app's

@@ -8,22 +8,20 @@
 # becomes `[lint]`.
 #
 # py313 because the image now ships Python 3.13 (the Debian 13 base's python3, up from 3.11 on
-# bookworm). This target governs `test_app.py` AND `supervisor/app.py` (U29 dropped the
-# `extend-exclude` that used to sit here — see below) — which run under the backend's 3.14 env, a
-# superset. Verified zero delta when moving py311 -> py313: `ruff check` and `ruff format --check`
-# are clean on both.
+# bookworm). This target governs `test_app.py` AND `supervisor/app.py`, which run under the
+# backend's 3.14 env, a superset. Verified zero delta when moving py311 -> py313: `ruff check`
+# and `ruff format --check` are clean on both.
 target-version = "py313"
 line-length = 99
 
-# U29 REMOVED the `extend-exclude = ["supervisor/app.py"]` that used to sit here. Its "frozen,
-# forked verbatim from the proven spike" rationale had gone stale: the file had grown to ~1150
-# lines against the spike's 228, and it is the one file that runs on the shipped image ruff had
-# never linted (ASM33). The fix here was DELIBERATELY CAPPED to `ruff format` plus non-behavioural
-# lint fixes (imports, unused names, style) — any change to control flow, exception handling, or a
-# subprocess invocation was left alone for its own follow-up with its own review, because this file
-# spawns the dev server and builds the fail-closed child environment and no CI covers a bad autofix
-# here before it ships. `supervisor/test_app.py` staying green after the format pass is what proves
-# the changes made were the non-behavioural kind they claimed to be.
+# There is deliberately no `extend-exclude` for `supervisor/app.py`: it is linted like everything
+# else here. It had grown to ~1150 lines against the original spike's 228, and it is the one file
+# on the shipped image ruff had never linted. The fix was DELIBERATELY CAPPED to `ruff format`
+# plus non-behavioural lint fixes (imports, unused names, style) — any change to control flow,
+# exception handling, or a subprocess invocation was left alone for its own follow-up with its own
+# review, because this file spawns the dev server and builds the fail-closed child environment and
+# no CI covers a bad autofix here before it ships. `supervisor/test_app.py` staying green after the
+# format pass is what proves the changes made were the non-behavioural kind they claimed to be.
 
 [lint]
 select = ["E", "F", "I", "N", "W", "UP"]

@@ -2,8 +2,7 @@
 # BACKEND image of the split: the FastAPI control-plane. It mounts exactly ONE router
 # prefix, `/v1` (main.py's `app.include_router(v1_router)`), and no Node.
 #
-# THIS HEADER USED TO READ "API only (/v1, /apps, /preview). No SPA" and all three halves of
-# that had gone stale:
+# Three facts about that boundary, so it doesn't drift back:
 #   * `/apps` is not mounted here. The bare-/apps JSX runner was retired — deployed apps are
 #     served from the sandbox's own Caddy — and `main._RESERVED_ROOTS` is now `{"v1", "api"}`
 #     precisely because `/apps` no longer needs reserving.
@@ -19,7 +18,7 @@
 #   az acr build --image bial-backend:latest --file backend/Dockerfile backend
 #   (or:  docker build -t bial-backend backend/ )
 #
-# The production build runs on a Windows VM via `az acr build` (ADR-0015) — keep it
+# The production build runs on a Windows VM via `az acr build` — keep it
 # LF-only and cross-platform (the repo .gitattributes pins Dockerfile* to eol=lf).
 # Secrets (DATABASE_URL, AUTH__*, FOUNDRY__*, OBJECT_STORE__*, superadmin_emails, …)
 # are injected at runtime, never baked in.
@@ -37,8 +36,8 @@ FROM python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13
 # RUNTIME git — not a build convenience. The control plane SHELLS OUT to git to restore an
 # app's snapshot (`services/storage/snapshot_read.py` runs `git clone` over the bundle), and
 # that path carries the whole publish pipeline (`services/deploy/service.py`) and the admin
-# classification review (`services/classification/service.py`). It used to say "the Plan-mode
-# read" instead of the review; a Plan turn reads the LIVE container now and never extracts.
+# classification review (`services/classification/service.py`) — not a Plan turn, which reads
+# the live container directly and never extracts a bundle.
 # `python:3.14-slim` ships none — there is no `/usr/bin/git`
 # and no `/usr/lib/git-core` — so publish was broken in any environment running this image.
 #
@@ -65,7 +64,7 @@ WORKDIR /app
 # migrations are run out-of-band, never from this image.
 #
 # `--group worker` is not optional. ONE image serves both run targets, selected by start
-# command (ADR-0015 as amended): `fastapi run src/main.py` on App Service, and
+# command: `fastapi run src/main.py` on App Service, and
 # `python -m src.worker_main` on an ingress-less Container App. Omit the group and the image
 # ships no broker, so the worker container dies at start — AFTER the human-gated Azure
 # provisioning is already done, which is the worst possible moment to discover it.
@@ -80,7 +79,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-build --no-group dev --group api --group worker
 
 # Copy only the application package — narrows the image and avoids baking host
-# artifacts/secrets in (ADR-0015: secrets are injected at runtime, never baked).
+# artifacts/secrets in (secrets are injected at runtime, never baked).
 COPY src ./src
 
 # Least privilege: run as an unprivileged user that owns /app.

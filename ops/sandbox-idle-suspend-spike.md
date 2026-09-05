@@ -32,9 +32,9 @@ fix anything users hit today:
 - `_active_by_user` is `dict[UUID, UUID]` with 13+ single-valued call sites.
 - `reap_user` / `reconcile_user` / `sweep_all` all assume one sandbox per user.
 
-That is a coordination-layer rewrite of the most data-loss-sensitive code in the system, and with
-#83 fixed a switch is already safe. Raising N to 2 would only move the same eviction to the third
-project.
+That is a coordination-layer rewrite of the most data-loss-sensitive code in the system, and a
+project switch is already safe without it. Raising N to 2 would only move the same eviction to
+the third project.
 
 **Rule out ACA dynamic sessions.** Researched and rejected: no persistent storage, and WebSocket
 support is undocumented — so no HMR, which the whole preview depends on.
@@ -94,8 +94,8 @@ raising the slot count from 1 to 2–3 becomes nearly free, if it is even still 
 
 ## What already shipped, so this phase is not urgent
 
-- A project switch no longer destroys unsaved work (#83).
-- A reclaimed preview no longer pretends to be live (#83).
+- A project switch no longer destroys unsaved work.
+- A reclaimed preview no longer pretends to be live.
 - Containers nothing is tracking are now reportable (`POST /v1/admin/apps/reconcile-sandboxes`) —
   the twelve-day orphan class.
 - Every Write turn autosaves to a recovery slot.

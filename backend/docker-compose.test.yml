@@ -1,9 +1,10 @@
-# Local backend for the opt-in storage integration suite
-# (`uv run pytest -m integration`). Azurite serves Azure Blob — the only object
-# store the backend supports.
+# Local backend for the storage round-trip tests under `-m integration`
+# (Azurite serves Azure Blob — the only object store the backend supports).
 #
-# Azurite only: this file exists for the storage suite, and the tests it serves
-# need no broker. The worker's Redis is not part of that scope.
+# This file provisions Azurite only. The same `-m integration` marker also
+# covers the live sandbox/recovery suite, which needs its own separately
+# running Redis on 127.0.0.1:6379 (skipped when unreachable) — this compose
+# file does not provide that.
 #
 #   docker compose -f docker-compose.test.yml up -d
 #   uv run pytest -m integration

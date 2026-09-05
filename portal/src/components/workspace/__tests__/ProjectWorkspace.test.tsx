@@ -28,17 +28,23 @@ import ProjectWorkspace from '../ProjectWorkspace'
 import {
   useAppPaneVisible,
   usePublishAddress,
+  usePublishHeading,
   usePublishPaneView,
   useWorkspaceProject,
   type PaneView,
 } from '../workspaceChannel'
+import type { ReactNode } from 'react'
 import type { Project } from '../../../utils/projectApi'
+import type { DeploymentView, PublishState } from '../../../utils/deployApi'
+import { formatStamp } from '../../../utils/publishPresentation'
 
 const api = vi.hoisted(() => ({
   fetchPreviewState: vi.fn(),
   fetchSaveState: vi.fn(),
   relaunchPreview: vi.fn(),
+  saveProject: vi.fn(),
   listProjectConversations: vi.fn(),
+  getDeployment: vi.fn(),
 }))
 
 vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
@@ -46,9 +52,17 @@ vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
   fetchPreviewState: api.fetchPreviewState,
   fetchSaveState: api.fetchSaveState,
   relaunchPreview: api.relaunchPreview,
+  saveProject: api.saveProject,
+}))
+// THE PUBLISH READ IS PART OF THIS SCREEN, not a stub (#205). The rail's APP STATUS panel holds
+// one and the toolbar's chip holds another, and the LAST SAVED row this suite asserts about is a
+// FIELD OF THIS RESPONSE — so it is mocked at the wire, where a count of the reads is meaningful,
+// rather than at the hook, which is the seam the defect lived in.
+vi.mock('../../../utils/deployApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/deployApi')>()),
+  getDeployment: api.getDeployment,
 }))
 vi.mock('../../layout/Navbar', () => ({ default: () => <div data-testid="navbar" /> }))
-vi.mock('../../PublishStatusChip', () => ({ default: () => <span data-testid="publish-chip-stub" /> }))
 vi.mock('../../projects/ProjectDescriptionEditor', () => ({
   default: () => <div data-testid="description-editor" />,
 }))
@@ -74,6 +88,26 @@ const preview = (over: Record<string, unknown> = {}) => ({
   occupyingProjectName: null,
   occupyingProjectId: null,
   restorable: null,
+  ...over,
+})
+
+/** The publish read's empty envelope, in whichever state the scenario is about. */
+const deployment = (publishState: PublishState = 'draft', over: Partial<DeploymentView> = {}): DeploymentView => ({
+  deploymentId: null,
+  appId: 'app-1',
+  status: null,
+  step: null,
+  url: null,
+  headSha: null,
+  failureCode: null,
+  failureDetail: null,
+  startedAt: null,
+  finishedAt: null,
+  unpublishedAt: null,
+  approval: null,
+  publishState,
+  savedHead: null,
+  savedAt: null,
   ...over,
 })
 
@@ -165,6 +199,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   api.fetchPreviewState.mockResolvedValue(preview())
   api.fetchSaveState.mockResolvedValue({ appId: 'app-1', dirty: false, containerHead: null, savedHead: null })
+  api.saveProject.mockResolvedValue({ appId: 'app-1', headSha: 'ccc' })
+  api.getDeployment.mockResolvedValue(deployment())
 })
 
 afterEach(() => cleanup())
@@ -465,5 +501,172 @@ describe('a chat that declares no pane', () => {
     fireEvent.click(screen.getByText('to project'))
 
     expect(frame()).toBe(original)
+  })
+})
+
+/**
+ * ★ LAST SAVED TELLS THE TRUTH AFTER A SAVE (plan 001, U18 — issue #205).
+ *
+ * THE DEFECT. The rail's LAST SAVED row is drawn from `savedHead`/`savedAt`, which are fields of
+ * the DEPLOYMENT read — and Save wrote a new bundle without telling that read anything. The row
+ * went on naming the previous version, or "We could not tell" on a project that had never been
+ * saved, on a screen whose own chip had just changed to "Saved". Nothing looked broken, which is
+ * why it took a citizen reading the row to find it.
+ *
+ * WHY THESE RUN THROUGH THE SHELL. The row and the chip hold SEPARATE reads of the same endpoint
+ * and the fix is the `bial:deployment-changed` nudge that reconciles both. A suite that mocked
+ * `usePublishState` would be asserting against the very seam the defect lived in, and one that
+ * rendered the panel alone could not see the chip agree.
+ */
+const SAVED_ONE = '11ab22cd33ef44ab55cd66ef77ab88cd99ef00ab'
+const SAVED_TWO = '99ff88ee77dd66cc55bb44aa33998877665544ff'
+const AT_ONE = '2026-09-05T10:15:00Z'
+const AT_TWO = '2026-09-05T11:40:00Z'
+
+/**
+ * The route's own half, which `ProjectPage` performs. Only these scenarios need it: the toolbar
+ * reads `heading.projectId` before it will mount the publish chip at all, so a harness without a
+ * heading can never watch the chip and the rail's row agree.
+ */
+function WithHeading({ children }: { children: ReactNode }) {
+  usePublishHeading({ projectId: PROJECT.id, projectName: PROJECT.name, chatTitle: null, chatKind: null })
+  return <>{children}</>
+}
+
+function SavingWorkspace() {
+  return (
+    <MemoryRouter initialEntries={['/projects/pA']}>
+      <Routes>
+        <Route element={<WorkspaceShell />}>
+          <Route
+            path="/projects/:projectId"
+            element={
+              <WithHeading>
+                <Surface />
+              </WithHeading>
+            }
+          />
+        </Route>
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
+/** Running, with work the saved bundle does not have — the only state in which Save is pressable. */
+const dirtyAndAlive = () => {
+  api.fetchPreviewState.mockResolvedValue(
+    preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
+  )
+  api.fetchSaveState.mockResolvedValue({ appId: 'app-1', dirty: true, containerHead: 'aaa', savedHead: 'bbb' })
+}
+
+const savedRow = () => screen.getByTestId('status-row-saved')
+const pressSave = async () => fireEvent.click(await screen.findByTestId('save-project'))
+
+describe('★ the LAST SAVED row after a save (#205)', () => {
+  it('★ moves off "We could not tell" on the FIRST save a project ever has', async () => {
+    // A project with nothing saved yet: both halves of the row are null, so it says so in words.
+    dirtyAndAlive()
+    render(<SavingWorkspace />)
+    await waitFor(() => expect(screen.getByTestId('status-row-saved-unknown')).toBeTruthy())
+
+    api.getDeployment.mockResolvedValue(deployment('draft', { savedHead: SAVED_ONE, savedAt: AT_ONE }))
+    await pressSave()
+
+    await waitFor(() => expect(savedRow().textContent).toContain('11ab22c'))
+    expect(savedRow().textContent).toContain(formatStamp(AT_ONE))
+    // The "cannot tell" rendering is a different element, not merely different text — its absence
+    // is what says the row is now making a claim rather than declining to.
+    expect(screen.queryByTestId('status-row-saved-unknown')).toBeNull()
+  })
+
+  it('★ names the NEW version on the second save, not the one before it', async () => {
+    // THE ARM THAT LOOKS PLAUSIBLE WHILE STALE. A row that names a real commit and a real time
+    // reads as correct from across the desk; only the value tells you it is the previous save's.
+    // So this asserts what the row SAYS, and that what it said a moment ago is gone.
+    dirtyAndAlive()
+    api.getDeployment.mockResolvedValue(deployment('draft', { savedHead: SAVED_ONE, savedAt: AT_ONE }))
+    render(<SavingWorkspace />)
+    await waitFor(() => expect(savedRow().textContent).toContain('11ab22c'))
+
+    api.getDeployment.mockResolvedValue(deployment('draft', { savedHead: SAVED_TWO, savedAt: AT_TWO }))
+    await pressSave()
+
+    await waitFor(() => expect(savedRow().textContent).toContain('99ff88e'))
+    expect(savedRow().textContent).toContain(formatStamp(AT_TWO))
+    expect(savedRow().textContent).not.toContain('11ab22c')
+    expect(savedRow().textContent).not.toContain(formatStamp(AT_ONE))
+  })
+
+  it('★ keeps the row it already had when the re-read FAILS, rather than blanking the panel', async () => {
+    // THE RULE THE ISSUE DOES NOT GIVE. `usePublishState` sets `loadError` on any failure and the
+    // panel renders that branch FIRST — pill, every provenance row and the action all replaced by
+    // one line — so a 500 on the read that follows a save would blank the whole section on a
+    // screen that has just said "Saved". A stale row is worse than a fresh one and far better
+    // than no panel; the first read is still allowed to report its own failure.
+    //
+    // MUTATION RECEIPT: delete `if (everRead.current) return` from the hook's catch — restoring
+    // the blanking branch — and this goes red on the `status-row-saved` query, which finds
+    // nothing because the panel has become the error line.
+    dirtyAndAlive()
+    api.getDeployment.mockResolvedValue(deployment('draft', { savedHead: SAVED_ONE, savedAt: AT_ONE }))
+    render(<SavingWorkspace />)
+    await waitFor(() => expect(savedRow().textContent).toContain('11ab22c'))
+
+    api.getDeployment.mockRejectedValue(new Error('Failed to read the deployment'))
+    await pressSave()
+
+    await waitFor(() => expect(api.getDeployment).toHaveBeenCalledTimes(2))
+    expect(savedRow().textContent).toContain('11ab22c')
+    expect(screen.getByTestId('app-status-panel').getAttribute('data-publish-state')).toBe('draft')
+    expect(screen.queryByTestId('status-recheck')).toBeNull()
+    expect(screen.getByTestId('status-pill').textContent).toContain('Draft')
+  })
+
+  it('★ the toolbar chip and the rail row agree afterwards — one nudge reconciles both', async () => {
+    // Both surfaces are mounted here: the rail is collapsed, which is the state the toolbar mounts
+    // its chip in, and a collapsed rail is HIDDEN rather than unmounted so the panel keeps its own
+    // read. Two reads of one endpoint is the arrangement the nudge exists for.
+    dirtyAndAlive()
+    api.getDeployment.mockResolvedValue(deployment('live_current', { savedHead: SAVED_ONE, savedAt: AT_ONE }))
+    render(<SavingWorkspace />)
+    await waitFor(() => expect(savedRow().textContent).toContain('11ab22c'))
+
+    fireEvent.click(screen.getByRole('button', { name: /hide details/i }))
+    await waitFor(() => expect(screen.getByTestId('publish-chip').textContent).toContain('Live'))
+
+    // The save moves the app off `live_current`: what is live is now one version behind.
+    api.getDeployment.mockResolvedValue(
+      deployment('live_newer_work', { savedHead: SAVED_TWO, savedAt: AT_TWO }),
+    )
+    await pressSave()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('publish-chip').getAttribute('data-publish-state')).toBe('live_newer_work'),
+    )
+    expect(screen.getByTestId('publish-chip').textContent).toContain('newer work saved')
+    // …and the panel behind it says the same thing about the same app, off its own read.
+    expect(screen.getByTestId('app-status-panel').getAttribute('data-publish-state')).toBe('live_newer_work')
+    expect(screen.getByTestId('status-pill').textContent).toContain('newer work saved')
+    expect(savedRow().textContent).toContain('99ff88e')
+  })
+
+  it('★ issues exactly ONE deployment read per save — the nudge must not stampede', async () => {
+    // A window event with no origin is delivered to every listener, so the cost of getting this
+    // wrong is a fan-out that grows with the surfaces on screen — or, if a refresh could raise a
+    // nudge of its own, one that never settles. The rail is open here, so the panel is the only
+    // publish read in the tree and the arithmetic is exact.
+    dirtyAndAlive()
+    render(<SavingWorkspace />)
+    await waitFor(() => expect(api.getDeployment).toHaveBeenCalledTimes(1))
+
+    await pressSave()
+    await waitFor(() => expect(api.getDeployment).toHaveBeenCalledTimes(2))
+
+    // A second save, which is also what proves the count above was not a settling race: a
+    // stampede from the first press would have arrived by now and pushed this past three.
+    await pressSave()
+    await waitFor(() => expect(api.getDeployment).toHaveBeenCalledTimes(3))
+    expect(api.saveProject).toHaveBeenCalledTimes(2)
   })
 })

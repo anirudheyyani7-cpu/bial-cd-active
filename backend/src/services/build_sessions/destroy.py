@@ -13,7 +13,7 @@ FOUR PROTECTIONS, AND EACH ONE COVERS A FAILURE THE OTHERS DO NOT:
    start provisions into. In-process, the reaper and every start shared one event loop; out of
    process they do not. A trailing `delete_registry` can otherwise wipe a record written by a
    start that happened *after* the enumeration snapshot — manufacturing exactly the orphan class
-   this plan collects. The claim is the half a tag re-read cannot cover: a builder who RESUMES a
+   this system collects. The claim is the half a tag re-read cannot cover: a builder who RESUMES a
    staged container leaves its tags untouched (staged containers stay attachable by design) and
    changes only the lock, heartbeat, stay or liveness lease.
 3. **A per-pass ceiling.** A bounded blast radius, and a bounded runtime: ACA sends SIGTERM with a
@@ -52,9 +52,9 @@ Revalidate = Callable[[str], Awaitable[Mapping[str, str] | None]]
 #: when nothing claims it. Tags answer "is this still the resource we judged"; a claim answers
 #: "has its owner come back", and a resumed builder changes the second without touching the first.
 ClaimNow = Callable[[str], Awaitable[RegistryClaim | None]]
-#: A teardown REPORTS whether it deleted anything. It used to return `None`, so "I was asked" and
-#: "it is gone" were the same observation and a refusal — a durable-copy gate sparing the
-#: container, an ARM delete that would not take — was counted as a destruction in the pass record.
+#: A teardown REPORTS whether it deleted anything. "I was asked" and "it is gone" are different
+#: observations: a refusal — a durable-copy gate sparing the container, an ARM delete that would
+#: not take — must not be counted as a destruction in the pass record.
 Teardown = Callable[[str], Awaitable[bool]]
 
 _log = structlog.get_logger()

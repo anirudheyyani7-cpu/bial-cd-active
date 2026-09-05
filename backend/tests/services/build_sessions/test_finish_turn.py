@@ -4,11 +4,11 @@ The write this replaced was gated on `touched` alone — "a mutating tool ran", 
 changed" — and its `put` was unconditional. `RECOVERY_WRITE_DID_NOT_LAND_EVENT` carries why.
 
 THE TEST THIS FILE EXISTS FOR is `test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_
-copy`, named exactly that on purpose. It is the standing contract across a plan boundary: the
-companion plan deletes agent-side commits, at which point "HEAD unchanged + dirty tree" becomes
-the normal shape of EVERY building turn. A skip-on-HEAD-unchanged implementation would then
-silently discard every turn's recovery copy — data loss, plus containers nothing would ever
-reclaim, both reading green to every health check. If this test goes red, that has landed.
+copy`, named exactly that on purpose. It is the standing contract for once agent-side commits
+are removed, at which point "HEAD unchanged + dirty tree" becomes the normal shape of EVERY
+building turn. A skip-on-HEAD-unchanged implementation would then silently discard every turn's
+recovery copy — data loss, plus containers nothing would ever reclaim, both reading green to
+every health check. If this test goes red, that has landed.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ async def test_the_first_copy_for_an_app_just_proceeds(store: FakeStorage) -> No
 
 
 async def test_a_copy_we_cannot_compare_against_is_never_overwritten(store: FakeStorage) -> None:
-    """★★ THE ONE THIS FILE GOT WRONG FIRST, and an adversarial review reproduced the loss.
+    """★★ THE ONE THIS FILE GOT WRONG FIRST.
 
     A bundle written before the head stamp existed carries no claim — `durable_copy.py` documents
     that population — and the first version of this code read that as "nothing to protect" and
@@ -183,7 +183,7 @@ async def test_a_copy_we_cannot_compare_against_is_never_overwritten(store: Fake
 async def test_a_reverted_container_cannot_overwrite_the_copy_it_reverted_from(
     store: FakeStorage,
 ) -> None:
-    """★ AE4. The container reverted midway through the turn, so the tree in hand is not built on
+    """★ The container reverted midway through the turn, so the tree in hand is not built on
     the copy on record. The existing bundle must be byte-identical afterwards."""
     await _seed_recovery(store)
     before = await store.get(recovery_key(APP))

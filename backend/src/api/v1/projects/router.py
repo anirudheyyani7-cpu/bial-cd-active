@@ -257,7 +257,7 @@ async def list_projects(
     # a lifecycle one (#158). `PublishStatusChip` gets it from `getDeployment(projectId)`,
     # which is fine for one project page and is an N-way fan-out on a list — so the list
     # reads the same definition set-wise instead, via the shared `live_app_ids` collapse.
-    # SCOPED to this owner, and the scoping happens INSIDE the collapse (round-4 fix): an
+    # SCOPED to this owner, and the scoping happens INSIDE the collapse: an
     # unscoped `live_app_ids()` filtered afterward by `user.id` still evaluates the
     # `DISTINCT ON` over every deployment row the PLATFORM has, because the join here cannot
     # tell the collapse to narrow first. Measured at 25,245 apps / 112,045 deployments as a
@@ -330,8 +330,8 @@ async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsRespo
     is not three ad-hoc queries: the list's status column reads the same definition, so
     "3 in production" above a list showing two live apps is not expressible.
     """
-    # SCOPED to this owner inside the collapse — see `live_app_ids`'s docstring and
-    # `list_projects`'s identical fix; this route had the same unscoped-collapse cost.
+    # SCOPED to this owner inside the collapse, for the same reason as `list_projects` — see
+    # `live_app_ids`'s docstring.
     live = live_app_ids(owner_user_id=user.id).subquery()
 
     # PROJECTS, not `app_registry` rows. The product calls a project an application — the

@@ -5,10 +5,10 @@
  * WHETHER IT IS VISIBLE: the hide treatment is applied here and defined in `hiddenSubtree.ts`,
  * because the chat-panel collapse is its other caller and a page importing this slot would close a
  * cycle. THE DRAFT: both kinds share `utils/composerDraft.ts` — `sessionStorage`, keyed per
- * conversation, cleared only on a successful send, where the planning composer used to lose its
- * text on a reload. NOTHING ELSE: transport, transcript and attachments live on the surface, and
- * the router still decides which conversation is mounted — this slot keeps no stack alive, so a
- * project↔chat move unmounts the conversation and only the draft and the app pane survive it.
+ * conversation, cleared only on a successful send. NOTHING ELSE: transport, transcript and
+ * attachments live on the surface, and the router still decides which conversation is mounted —
+ * this slot keeps no stack alive, so a project↔chat move unmounts the conversation and only the
+ * draft and the app pane survive it.
  */
 import ConversationSurface from '../chat/ConversationSurface'
 import type { ChatKind } from '../../pages/ChatRoute'
@@ -28,10 +28,10 @@ interface Props {
   /** Passed through to the surface — see `ConversationSurfaceProps.onTitleDerived`. */
   onTitleDerived?: (title: string) => void
   /**
-   * Hide the conversation without discarding it. No caller in this plan sets it — the builder
-   * surface's own chat-panel collapse hides a panel, not the whole conversation, and Plan F's rail
-   * modes are the first real caller. It exists here so that when they arrive there is one hide
-   * with the reasoning already attached, rather than a second one invented next to it.
+   * Hide the conversation without discarding it. Nothing sets it yet — the builder surface's own
+   * chat-panel collapse hides a panel, not the whole conversation. It exists here so that the
+   * first caller needing a whole-conversation hide finds one, rather than inventing a second one
+   * next to it.
    */
   hidden?: boolean
 }

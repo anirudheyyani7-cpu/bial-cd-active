@@ -18,8 +18,8 @@ read, no new failure mode on the send path.
 
 WHAT IT COUNTS, and where it is deliberately imprecise:
 
-* Every string reachable from the messages, at four characters to the token — the same ratio
-  the retired client-side guardrail used, so the browser and the server describe one thing.
+* Every string reachable from the messages, at four characters to the token, so the browser
+  and the server describe one thing.
 * A `BinaryContent` at a flat nominal rather than its byte length. An image is worth roughly
   a thousand tokens however many megabytes it is; charging base64 length would read a 5 MB
   photo as 1.7 MILLION tokens and refuse every conversation that contained one.
@@ -52,9 +52,9 @@ from src.db.models.user_limit import UserLimit
 from src.services.usage.limits import SYSTEM_PROMPT_RESERVE, effective_context
 
 CHARS_PER_TOKEN: Final = 4
-"""The estimate's one constant. Four characters to the token is the ratio the retired
-`useClaudeAPI.ts` guardrail used against the same 200k window, kept so the browser's warning
-and the server's refusal are two readings of one scale rather than two different scales."""
+"""The estimate's one constant. Four characters to the token, against the same 200k window,
+kept so the browser's warning and the server's refusal are two readings of one scale rather
+than two different scales."""
 
 NOMINAL_BINARY_TOKENS: Final = 1_600
 """What one attached image or PDF is charged, regardless of its size.

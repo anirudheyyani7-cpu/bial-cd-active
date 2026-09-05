@@ -68,21 +68,21 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
-        {/* THE PROJECT LIST IS THE LANDING SCREEN (#158 §7). `/dashboard` used to be a
+        {/* THE PROJECT LIST IS THE LANDING SCREEN. `/dashboard` used to be a
             welcome page whose only job was a button to `/projects`; once the project list
             carries the summary numbers, that hop has nothing left to do. Both addresses
             still resolve so existing links, bookmarks and the navbar keep working — the
             welcome page is what went, not the URL. */}
         <Route path="/dashboard" element={<Navigate to="/projects" replace />} />
-        {/* Enterprise Space + Team Space were POC features, removed long ago. These
-            redirects outlived the welcome page they pointed at; they now land on the list
-            like everything else. Worth deleting once nothing links to them. */}
+        {/* Enterprise Space and Team Space are not features of this product. These two
+            addresses resolve only so old links and bookmarks land on the list rather than
+            on nothing; they are safe to delete once nothing points at them. */}
         <Route path="/enterprise" element={<Navigate to="/projects" replace />} />
         <Route path="/teamspace" element={<Navigate to="/projects" replace />} />
 
         {/* Project-first: a project is the thing you open, name, and return to. */}
         <Route path="/projects" element={<RequireAuth><ProjectsPage /></RequireAuth>} />
-        {/* Cross-user by design (#145): every signed-in BIAL user sees the same catalog. */}
+        {/* Cross-user by design: every signed-in BIAL user sees the same catalog. */}
         <Route path="/marketplace" element={<RequireAuth><MarketplacePage /></RequireAuth>} />
         {/* THE WORKSPACE. A pathless layout route wrapping both addresses inside a project, so
             the shell — and above all the running app it holds — is preserved across a move

@@ -1289,7 +1289,7 @@ async def test_a_turn_in_any_kind_refuses_to_reclaim_another_projects_unsaved_wo
 async def test_a_redis_outage_during_the_preflight_is_503_never_a_silent_reclaim(
     client, db_session, set_chat_model, fake_storage, app, monkeypatch
 ) -> None:
-    """#83 REVIEW, FINDING 5. The guard used to wrap its registry read in a bare
+    """The guard used to wrap its registry read in a bare
     `except Exception: return`, and every `return` in that function PERMITS the teardown — so
     a Redis blip was read as "no registry, nothing to lose" and the incumbent's container was
     destroyed. `locks.py` names that exact anti-pattern: swallowing in an answer-bearing
@@ -1331,12 +1331,8 @@ async def test_a_redis_outage_during_the_preflight_is_503_never_a_silent_reclaim
 
 
 # ==========================================================================================
-# R-18 (plan 006, U13) — THE WORKSPACE QUESTION COMES BEFORE ANYTHING DURABLE EXISTS
+# R-18 — THE WORKSPACE QUESTION COMES BEFORE ANYTHING DURABLE EXISTS
 # ==========================================================================================
-#
-# Closes issue #161's first half: observed on a BIAL desk with the client watching, a citizen
-# submitted a build in one project, watched it run for 1m 55s, and was then shown a modal asking
-# whether they wanted the workspace at all.
 #
 # The bug was an ORDERING. A first message committed its conversation row a round trip earlier, in
 # `POST /conversations`, whose only workspace awareness was a project-ownership check; nothing
@@ -1385,8 +1381,8 @@ async def test_a_first_message_refused_by_the_workspace_leaves_no_conversation_b
     """★ R-18, AND THIS IS THE SCENARIO THE BUG IS.
 
     Assert THE LIST, not the response. A 409 was always what came back; the defect was the titled,
-    empty conversation it deposited into the project — named, in the observed incident, after the
-    very text the platform had just refused."""
+    empty conversation it deposited into the project — named after the very text the platform had
+    just refused."""
     from src.api.v1.build_sessions.deps import sandbox_or_none_dependency
     from src.services.build_sessions.manager import SandboxReclaimBlockedError, SessionManager
     from tests.fakes import FakeSandboxClient

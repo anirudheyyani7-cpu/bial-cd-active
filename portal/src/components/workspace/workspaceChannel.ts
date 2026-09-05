@@ -71,17 +71,11 @@ const sameRail = (a: RailSlot, b: RailSlot) =>
  * what blanks the compile signal and leaves an error screen uncovered.
  */
 export interface PaneView {
-  /* NO TOOLBAR SLOTS ANY MORE (plan 002, U2). `toolbarLeading` and `toolbarTrailing` existed so a
-     surface could push chrome into the row `LivePreview` drew inside the pane. That row is gone —
-     the boards draw one toolbar for the whole workspace, above both columns — so the slots have no
-     row to fill and are removed rather than left pointing at nothing. Their two occupants (the
-     publish chip and, before it, a chat-panel toggle) are drawn by the row itself.
-
-     THE SAVE MODEL LEFT WITH THEM, for the same reason: Save is in the row now, reading the
-     channel's own `save` cell. Keeping a second copy here would give one control two publishers
-     that could disagree — and the pane spread would silently drop it, since JSX spread attributes
-     are exempt from excess-property checking. `UnacceptedPaneProps` below is what caught exactly
-     that when this field list was first trimmed. */
+  /* NO TOOLBAR SLOTS AND NO SAVE MODEL HERE. The boards draw one toolbar for the whole workspace,
+     above both columns, and Save is in that row, reading the channel's own `save` cell. Keeping a
+     second copy here would give one control two publishers that could disagree — and the pane
+     spread would silently drop it, since JSX spread attributes are exempt from excess-property
+     checking. `UnacceptedPaneProps` below is what catches that. */
   /** Chat-scoped: this conversation's own turn. */
   iterating: boolean
   reconnecting: boolean
@@ -103,12 +97,9 @@ export interface PaneView {
   /** The framed app's own error reporter, scoped to the framed URL by its caller. */
   onFrameMessage?: (data: unknown) => void
   /**
-   * R104's stop-clock. Plan E shipped the reveal mark in v1.6.20 and the mount it was passed at
-   * is the one this plan replaces — the in-file comment there says "THIS MOUNT IS LOAD-BEARING …
-   * Whoever re-hosts this pane carries the prop forward". It travels here rather than as a prop
-   * so it survived Plan D's deletion of the page that used to publish it. Without it the number stops
-   * being produced and nothing announces that, which is the one failure a measurement cannot
-   * detect.
+   * The reveal stop-clock. It travels on the channel rather than as a prop, so re-hosting the
+   * pane cannot silently drop it. Without it the number stops being produced and nothing
+   * announces that, which is the one failure a measurement cannot detect.
    */
   onRevealed?: () => void
 }
@@ -137,7 +128,7 @@ void _paneViewIsASubsetOfLivePreviewProps
 export interface ReclaimRequest {
   blocked: ReclaimBlocked
   /**
-   * The project being STARTED — issue #161's framing half. The refusal carries only the incumbent,
+   * The project being STARTED. The refusal carries only the incumbent,
    * so the name of the app the person is actually trying to open has to travel with the request:
    * the dialog leads with it, because "can I build THIS one?" is the question being asked.
    */
@@ -245,9 +236,8 @@ export const NO_SAVE: SaveSlot = { dirty: null, saving: false, error: null, canS
  * THE ROW'S HANDLERS, held apart from every compared value on purpose.
  *
  * Both are things a citizen PRESSES, so neither is needed at render time — which is what lets them
- * live in a cell nothing subscribes to. `rename` is here because the rail's header, which used to
- * own it, is replaced by the board's three sections; the capability had to move rather than be
- * dropped, and the row is where its name now lives.
+ * live in a cell nothing subscribes to. `rename` is here because the toolbar row is where a
+ * workspace's name is shown, so it is where renaming it belongs.
  */
 export interface WorkspaceActions {
   save: (() => void) | null
@@ -478,8 +468,8 @@ export function useWorkspaceActions(): () => WorkspaceActions {
 //                         it. Note what KEPT does NOT buy: after a move to a surface that
 //                         declares nothing, the cell still names the departed project, so
 //                         `belongsElsewhere` cannot fire. Every surface the shell mounts
-//                         declares one for exactly that reason, and whichever surface Plan F
-//                         teaches to SHOW the pane must keep doing so — declaring the project
+//                         declares one for exactly that reason, and any surface that SHOWS
+//                         the pane must keep doing so — declaring the project
 //                         before publishing an address is what stops it framing the previous
 //                         project's app with nothing able to detect it.
 //   pane       CLEARED  — chrome and props belonging to a surface that is gone. The frame needs

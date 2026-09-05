@@ -1,5 +1,5 @@
 /**
- * FOLLOWING THE NEWEST CONTENT, AND THE WAY BACK TO IT (R35a, R29a, R64).
+ * FOLLOWING THE NEWEST CONTENT, AND THE WAY BACK TO IT.
  *
  * The thread's own viewport ships auto-scroll with a bottom-proximity check, so nothing here pins
  * the transcript; what is left to test is the way back to the bottom.
@@ -64,8 +64,7 @@ describe('it is ABSENT at the bottom, not disabled', () => {
 describe('one control, three things to say', () => {
   it('names the offer above everything else (R29a)', () => {
     // When a pending offer has scrolled out of view this is how it stays reachable — which is what
-    // lets there be NO second Build button anywhere else on the screen. The canvas's `Removals`
-    // board is explicit that one never appears in the top bar.
+    // lets there be NO second Build button anywhere else on the screen.
     expect(scrollControlLabel(true, true)).toBe('Back to the plan waiting for you')
     expect(scrollControlLabel(false, true)).toBe('Back to the plan waiting for you')
   })

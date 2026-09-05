@@ -1,13 +1,6 @@
 /**
  * STOP, MOVED TO WHERE THE COMPOSER IS.
  *
- * Stop used to live inside `BuildProgress`, the pinned card this plan deleted. This component is
- * the same ability in a component of its own, mounted on the composer's chrome, and it shipped
- * BEFORE anything was removed so there was never a commit in which a build could be started and
- * not stopped. A test asserts a running turn is still stoppable now `BuildProgress.tsx` is gone.
- *
- * RELOCATED, NOT REDESIGNED. The better version of stop is its own work.
- *
  * ── THE TWO ARMS ARE NOT A MODE BRANCH ──
  *
  * They discriminate on whether a TURN ID EXISTS, which is a transport fact, not a kind of chat.
@@ -15,9 +8,9 @@
  * build session has no turn id and is stopped through the session. Nothing here asks what kind of
  * chat this is.
  *
- * FORCE-END DELIBERATELY DID NOT MOVE. `BuildProgress` recorded that a turn build has no
- * force-end equivalent, and a kill switch that confirms "this kills in-progress work" and then
- * does nothing is worse than no kill switch. It died with the card.
+ * FORCE-END DELIBERATELY DID NOT MOVE. A turn build has no force-end equivalent, and a kill
+ * switch that confirms "this kills in-progress work" and then does nothing is worse than no
+ * kill switch.
  *
  * THE ACCESSIBLE NAME IS STABLE. The old button's label flipped "Stop" → "Stopping…", which
  * renames the control mid-interaction. The word stays "Stop" in every state; the in-flight state

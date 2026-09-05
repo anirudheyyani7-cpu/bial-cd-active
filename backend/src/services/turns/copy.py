@@ -254,7 +254,7 @@ CANNOT_TELL_WHAT_REMAINS_TEXT: Final = (
 The finished half is agent-supplied: an agent that built all four pieces and marked none is
 indistinguishable, from the marks alone, from one that built nothing. Rendering "these four remain"
 in the platform's own voice would be a false fact the citizen has no reason to doubt — strictly
-worse than the agent's own recollection, which is what this whole unit exists to replace.
+worse than the agent's own recollection, which is what a platform-computed remainder replaces.
 
 So the claim is keyed on something the platform DOES hold: whether the workspace was touched. Marks
 and no touch, marks and touch, no marks and no touch are all answerable. No marks and work landed

@@ -76,13 +76,10 @@ function renderShell(child: ReactNode) {
  * EVERY SURFACE THE SHELL FRAMES, by path. The shell's two routes (`App.tsx`) plus the components
  * they render inside its outlet column. A new in-shell surface belongs on this list.
  */
-// The two chat PAGES are gone (Plan D U17) and one surface replaces them, so the list follows the
-// tree rather than being left naming files that no longer exist — a guard whose inventory has
-// rotted reads the same as a guard that passes.
-// The surfaces this plan ADDED are on the list too. The guard is a SOURCE scan, not a render
-// assertion — it reaches branches no test mounts — so a surface left off it is not covered by
-// "the tests pass". Leaving the new toolbar, rail, pane and handle off would have defeated the
-// guard for precisely the components the rebuild introduced.
+// The list follows the tree rather than being left naming files that no longer exist — a guard
+// whose inventory has rotted reads the same as a guard that passes.
+// The guard is a SOURCE scan, not a render assertion — it reaches branches no test mounts — so a
+// surface left off it is not covered by "the tests pass".
 const IN_SHELL_SURFACES = [
   'pages/ChatRoute.tsx',
   'components/chat/ConversationSurface.tsx',
@@ -165,7 +162,7 @@ describe('WorkspaceShell — one height model, one frame, one grid', () => {
 })
 
 describe('WorkspaceShell — the grid is the shell\'s own', () => {
-  /** Flip `stacked` from inside the outlet, the way Plan F's threshold will. */
+  /** Flip `stacked` from inside the outlet, the way a responsive threshold does. */
   function StackToggle() {
     const channel = useWorkspaceChannel()
     const [stacked, setStacked] = useState(false)
@@ -229,9 +226,8 @@ describe('WorkspaceShell — the reclaim dialog is mounted here, its handlers st
     // The refusal names the project standing in the way — the whole reason the state travels
     // rather than the shell inventing its own copy.
     expect(dialog.textContent).toMatch(/Other Project/)
-    // …and the STARTING project too, which travels for issue #161's framing half. The button copy
-    // moved with it (`Switch without saving` → a sentence that names whose changes are lost), so
-    // this assertion follows the copy rather than pinning the retired wording.
+    // …and the STARTING project too, so the dialog can name whose changes are lost. The assertion
+    // follows the project name rather than pinning the button's exact wording.
     expect(dialog.textContent).toMatch(/Visitor Log/)
 
     fireEvent.click(screen.getByRole('button', { name: /stop “Other Project” without saving/i }))
@@ -270,11 +266,10 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (U7, AE33\'s
   }
 
   it('warns on a definite `true`, and GOES ON warning after the conversation unmounts', () => {
-    // THE COVERAGE THAT DID NOT EXIST BEFORE THE HOIST, and the only user-visible consequence of
-    // this unit. The effect used to live on the builder page, so it disarmed the moment the
-    // citizen navigated from the chat to the project screen — which is precisely when they have
-    // stopped looking at the conversation that knows about the unsaved work, and exactly the
-    // moment they are most likely to close the tab.
+    // THE ONLY USER-VISIBLE CONSEQUENCE OF THE HOIST. Bound to the builder page instead, the
+    // effect disarmed the moment the citizen navigated from the chat to the project screen —
+    // which is precisely when they have stopped looking at the conversation that knows about the
+    // unsaved work, and exactly the moment they are most likely to close the tab.
     const view = render(<Workspace conversationMounted dirty />)
     expect(tryToLeave()).toBe(true)
 
@@ -293,7 +288,7 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (U7, AE33\'s
     // `null` is "could not check", never "clean", and the silence is deliberate rather than an
     // oversight: the browser renders fixed text the page cannot supply a "we could not check"
     // sentence to, so a prompt armed on an unknown is a prompt with nothing answerable behind it —
-    // which is how people learn to dismiss them. Plan F's in-app dialog is where that sentence
+    // which is how people learn to dismiss them. The in-app dialog below is where that sentence
     // lands. What must NOT happen is the other failure: claiming there is nothing unsaved.
     const { container } = render(<Workspace conversationMounted dirty={null} />)
 
@@ -303,8 +298,8 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (U7, AE33\'s
 
   it('says nothing when NOBODY has published, and asks nothing to find out', () => {
     // A project address with no conversation mounted. "Nobody has reported" is the same `null` as
-    // "the check failed", and this plan adds no caller of the save-state endpoint anywhere — the
-    // check costs two `git` executions inside the container and compares container-HEAD against
+    // "the check failed", and nothing here calls the save-state endpoint — the check costs two
+    // `git` executions inside the container and compares container-HEAD against
     // saved-bundle-HEAD, which a screen with no conversation has nothing to compare.
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     try {
@@ -415,7 +410,7 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
   it('keeps the ADDRESS and the SAVE STATE, and drops the pane view and the visibility declaration', () => {
     // Each of the four has its own reason and uniformity breaks one of them — the table in
     // `workspaceChannel.ts`. The save state is kept because the unsaved work is in the CONTAINER,
-    // not the component, which is the coverage hoisting the unload warning here exists to add.
+    // not the component.
     const view = render(<Workspace conversationMounted />)
     expect(probe()).toBe('https://app.example/|view|shown|true')
 
@@ -456,7 +451,7 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
 })
 
 /**
- * THE IN-PLACE GUARD, MOUNTED AT SHELL LEVEL (Plan F, U8).
+ * THE IN-PLACE GUARD, MOUNTED AT SHELL LEVEL.
  *
  * Two guards, one requirement pair, and the property that has to hold between them: `beforeunload`
  * covers leaving the TAB and stays armed only on a definite `true`; this one covers leaving the
@@ -512,8 +507,8 @@ describe('WorkspaceShell — the in-place unsaved-work guard (U8)', () => {
 
   it('★ there is exactly ONE guard, not two', async () => {
     // "Never two guards" is held by construction here rather than by remembering to delete one:
-    // Plan A hoisted the unload handler and this plan EXTENDS what A ships, adding no second
-    // `beforeunload` listener and no second hook.
+    // the hoisted unload handler is extended, never duplicated — no second `beforeunload`
+    // listener and no second hook.
     const added: string[] = []
     const original = window.addEventListener.bind(window)
     const spy = vi.spyOn(window, 'addEventListener').mockImplementation((type, ...rest) => {

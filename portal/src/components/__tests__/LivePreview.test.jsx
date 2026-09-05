@@ -103,7 +103,7 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
     expect(onFrameMessage).not.toHaveBeenCalled()
   })
 
-  // PR #93 review, security finding 4: new URL(url).origin is the STRING "null" for an
+  // new URL(url).origin is the STRING "null" for an
   // opaque-origin URL (a data: URL, about:blank, a sandboxed iframe without
   // allow-same-origin) — not the actual value null. That string is truthy, so without
   // originOf() specifically folding it to null, it would pass the `!previewOriginRef.current`
@@ -184,7 +184,7 @@ describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
     expect(container.textContent).toMatch(/no longer running|ended/i)
   })
 
-  // U4 (Plan F) — `showEmpty` IS GONE, and the empty-state copy this test used to look for
+  // U4 — `showEmpty` IS GONE, and the empty-state copy this test used to look for
   // ("...will appear here") went with it: it moved to `AppPane`'s `NoFrame`, which is also the
   // ONLY thing that can put a citizen in this exact state now — `AppPane` mounts this component
   // at all ONLY when the address resolver has a URL, and renders `NoFrame` instead when it does
@@ -251,13 +251,12 @@ describe('LivePreview — the pardoned preview: completed builds stay framed (#1
     expect(container.textContent).not.toMatch(/no longer running/i)
   })
 
-  // ★ U18 — THE RETRACTION REGRESSION, and the reason it belongs to this unit rather than to
-  // plan one's U4. U18 changes what the completion message IS (the harness now renders the
-  // agent's `done_summary` instead of its trailing prose) and this pane's chip is the other
-  // half of that claim: the frame plus "Build complete — your app is live below". Plan one's
-  // retraction is deliberately content-agnostic, so it survives the rendering change on its
-  // own — but only if the claim it retracts actually goes quiet, which is a fact about THIS
-  // file and nothing tested it.
+  // THE RETRACTION REGRESSION. U18 changes what the completion message IS (the harness now
+  // renders the agent's `done_summary` instead of its trailing prose) and this pane's chip is
+  // the other half of that claim: the frame plus "Build complete — your app is live below". The
+  // retraction is deliberately content-agnostic, so it survives the rendering change on its own
+  // — but only if the claim it retracts actually goes quiet, which is a fact about THIS file
+  // and nothing tested it.
   //
   // ASSERT-ABSENCE, PAIRED WITH LIVENESS. "The chip is gone" is also true of a pane that threw
   // on render, or of a `completedLive` prop that stopped arriving — so the retraction sentence
@@ -302,7 +301,7 @@ describe('LivePreview — the pardoned preview: completed builds stay framed (#1
 })
 
 describe('LivePreview — relaunch a torn-down preview (#43)', () => {
-  // R3/U4 (Plan F) — INERTNESS GUARD. This used to press "Relaunch preview" on the terminal
+  // R3/U4 — INERTNESS GUARD. This used to press "Relaunch preview" on the terminal
   // placeholder; that control moved to `components/workspace/StartAppControl.tsx`, rendered by
   // `AppPane` from the one computed workspace state (R3: exactly ONE control starts the app). The
   // copy this placeholder still owns is what LIVENESS checks below — the button is what INERTNESS
@@ -383,9 +382,9 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
 
   it('remounts the frame when the shell asks it to reload', () => {
     // "What I see is out of date" is a judgement only the person looking can make — a dev-server
-    // restart, an HMR socket that died quietly. The CONTROL is in the toolbar row now (plan 002,
-    // U2); what this pins is the half this component owns, that a change in the signal produces a
-    // genuinely new frame rather than a re-render of the same one.
+    // restart, an HMR socket that died quietly. The CONTROL is in the toolbar row now; what this
+    // pins is the half this component owns, that a change in the signal produces a genuinely new
+    // frame rather than a re-render of the same one.
     const view = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" reloadNonce={0} />)
     const before = view.container.querySelector('iframe')
 
@@ -412,7 +411,7 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
   })
 })
 
-// U4 (Plan F) — THIS WHOLE DESCRIBE BLOCK TESTED THE `showEmpty` ARM, and that arm is gone. Every
+// U4 — THIS WHOLE DESCRIBE BLOCK TESTED THE `showEmpty` ARM, and that arm is gone. Every
 // test here rendered `<LivePreview hasSavedBuild=... onRelaunch=... relaunchError=... />` with
 // NEITHER a previewUrl NOR a status — the exact no-frame, nothing-built condition `AppPane` now
 // owns outright. Two things moved together, not just the button:
@@ -479,7 +478,7 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
     expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
   })
 
-  // U4 (Plan F) — INERTNESS GUARD, AND A DOCUMENTED FINDING, NOT JUST A RE-POINT. This test used
+  // U4 — INERTNESS GUARD, AND A DOCUMENTED FINDING, NOT JUST A RE-POINT. This test used
   // to assert the transient `unavailable` copy inside `screen.getByRole('alert')` — but tracing
   // the current render arms shows `relaunchError` is read in exactly THREE places in
   // `LivePreview.tsx`, and every one of them special-cases ONLY `kind === 'not_found'`
@@ -490,7 +489,7 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
   // button restored for a retry", which no longer matches what renders: this looks like the U4
   // sweep took the message along with the button for these two kinds, not just the button, and
   // the docblock was never updated to match. Filed as a finding rather than silently reasserted as
-  // correct — see the session report. What is left to pin honestly is that the generic
+  // correct. What is left to pin honestly is that the generic
   // saved-build sentence still renders and still makes no button.
   it('INERTNESS GUARD: an `unavailable` relaunch error no longer gets its own alert copy — only the generic saved-build sentence survives', () => {
     const { container } = render(
@@ -923,7 +922,7 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
 // means UNKNOWN — no live workspace, or a bundle the server could not compare. Rendering
 // unknown as "Saved" tells the user their work is safe when nothing actually checked.
 
-/* THE SAVE CONTROL LEFT THIS COMPONENT (plan 002, U2). It lived in the toolbar row this pane
+/* THE SAVE CONTROL LEFT THIS COMPONENT. It lived in the toolbar row this pane
    drew inside itself, which meant it only existed once something was framed — so a project with
    nothing built had no Save at all. It is in the shell's row now, reading the channel's own save
    cell, and every one of the six scenarios that were here is in `WorkspaceToolbar.test.tsx`,
@@ -1049,7 +1048,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
 })
 
 describe('LivePreview — the device width it is told to frame at (#42)', () => {
-  // THE SWITCHER IS NOT IN THIS COMPONENT ANY MORE (plan 002, U2). It is in the shell's toolbar
+  // THE SWITCHER IS NOT IN THIS COMPONENT ANY MORE. It is in the shell's toolbar
   // row, above both columns, so the three `aria-pressed` scenarios that used to live here are in
   // `WorkspaceToolbar.test.tsx` — where the control is. What stays here is the half this
   // component still owns: that the width it is TOLD reaches the card's inline style.

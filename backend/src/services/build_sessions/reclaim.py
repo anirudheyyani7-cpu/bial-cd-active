@@ -1,4 +1,4 @@
-"""The confidence-tier classifier — fleet + spare-list in, tiered verdicts out (U10, ADR-0029 §3).
+"""The confidence-tier classifier — fleet + spare-list in, tiered verdicts out (ADR-0029 §3).
 
 PURE AND I/O-FREE, the same shape as `appdb/reconcile.py::classify_databases` and for the same
 reason: this function is the safety argument for every destructive unit downstream, so every
@@ -47,14 +47,12 @@ from src.services.sandbox.base import KIND_BUILD_SANDBOX, FleetMember
 #: window — so this is sized to the provisioning retry policy's own ceiling rather than guessed.
 PROVISIONING_GRACE = dt.timedelta(minutes=20)
 
-#: THE RECLAMATION PASS'S OWN CADENCE, and the qualifier is the correction. This read five
-#: minutes, which is the cadence of the *sweep* (`SANDBOX_REAP_CRON`) — a different worker doing
-#: different work. The reclamation pass runs on `RECLAMATION_CRON`, every fifteen. Anything
-#: derived from "the cadence" was therefore derived from the wrong one, and the two-independent-
-#: reads rule below was the derivation that mattered.
+#: THE RECLAMATION PASS'S OWN CADENCE. Five minutes is the cadence of the *sweep*
+#: (`SANDBOX_REAP_CRON`) — a different worker doing different work. The reclamation pass runs on
+#: `RECLAMATION_CRON`, every fifteen.
 #:
 #: Load-bearing in three places at once: the minimum staging age, the effective lifetime of an
-#: abandoned container, and the unit of U11's staleness threshold. `pass_history` derives its
+#: abandoned container, and the unit of the staleness threshold. `pass_history` derives its
 #: window from the cron string directly and a test pins the two together, so this cannot drift
 #: back out of agreement without something going red.
 PASS_CADENCE = dt.timedelta(minutes=15)
@@ -167,8 +165,7 @@ class RegistryClaim:
         The claim map is keyed by CONTAINER NAME and the signals are keyed by USER, so two
         records can name one container — a stale entry, or a crossed one. A plain assignment
         makes the scan's last writer win, and an unrelated user's empty record then erases a live
-        builder's claim. Observed against a real fleet: a container holding a lock, a live
-        heartbeat and a valid liveness lease was classified `claimed_but_expired` and staged.
+        builder's claim.
 
         NOT A FIELD-WISE `or`. OR-ing would let one record's lock and another record's heartbeat
         add up to a liveness nobody actually holds — a claim invented by the merge rather than
@@ -347,8 +344,7 @@ def classify_fleet(
     `claims` maps app name → what the coordination store says. A name ABSENT from it is
     unregistered; a name present with every signal lapsed is the fifth tier (F1), which runs
     through the identical durable-copy → staging → ceiling → destroy chain rather than sitting
-    outside the gates. Porting F1 forward *outside* them would have left the code that does almost
-    all of the deleting subject to none of the new safety.
+    outside the gates.
 
     `known_app_names` is the set of container names with a matching app record, or `None` when the
     product database could not be read — in which case the whole fleet escalates."""

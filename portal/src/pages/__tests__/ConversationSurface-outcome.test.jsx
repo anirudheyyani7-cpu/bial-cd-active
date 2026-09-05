@@ -168,8 +168,8 @@ describe('showing the outcome', () => {
     const card = await findOutcome()
     expect(card.textContent).toMatch(/build finished/i)
     // The per-build preview URL died with its sandbox the moment the build ended, so the record —
-    // permanent, and read again on every future open — must never surface it as a working link
-    // (F4). The live "Relaunch preview" affordance lives in the preview pane. The card that used
+    // permanent, and read again on every future open — must never surface it as a working link.
+    // The live "Relaunch preview" affordance lives in the preview pane. The card that used
     // to render this link conditionally is gone, so the guarantee is now structural: no link is
     // rendered because no renderer exists to render one.
     expect(card.querySelector(`a[href="${PREVIEW_URL}"]`)).toBeNull()

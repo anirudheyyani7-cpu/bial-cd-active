@@ -43,14 +43,14 @@ export function isActiveBuildStatus(status: BuildSessionStatus | null): boolean 
 // typed, and nothing else read them. The ROUTE is untouched — deleting a browser client says
 // nothing about it.
 
-/** `POST …/relaunch` body — restore a project's saved app into a fresh, ready sandbox (#43). */
+/** `POST …/relaunch` body — restore a project's saved app into a fresh, ready sandbox. */
 export interface RelaunchPreviewRequest {
   projectId: string
 }
 
 /**
- * `POST …/relaunch` → 200 (#43). NO `sessionId`/`createdAt`: relaunch registers no build session
- * (Decision 6 — it must not occupy the build slot), so there is nothing to poll or stop. It
+ * `POST …/relaunch` → 200. NO `sessionId`/`createdAt`: relaunch registers no build session
+ * (it must not occupy the build slot), so there is nothing to poll or stop. It
  * returns a live `previewUrl` synchronously (the server blocked on `wait_ready` before replying).
  */
 export interface RelaunchPreviewResponse {
@@ -219,7 +219,7 @@ export function formatDailyLimitMessage(limit: number, used: number): string {
  * (`ended` graceful | `failed` unrecoverable). `reason` is display copy (C7 §3.7 names
  * six values), typed loosely as `string` so a new BRAIN reason renders as text rather
  * than breaking the build — control decisions ride `status`, with ONE deliberate
- * exception: `reason === 'completed'` marks the pardoned preview (#13/R2 — the server
+ * exception: `reason === 'completed'` marks the pardoned preview (R2 — the server
  * keeps a completed build's container alive under an idle lease), which is what lets the
  * pane keep framing it. An unknown reason degrades to the placeholder, never to a crash.
  */

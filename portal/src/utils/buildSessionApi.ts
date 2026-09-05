@@ -225,7 +225,7 @@ async function postJson(url: string, body: unknown, fallback: string, deps: Auth
 // transaction. The ROUTE is untouched; deleting a browser client says nothing about it.
 
 /**
- * `relaunch` — restore a project's saved app into a fresh, ready sandbox and get its live URL (#43).
+ * `relaunch` — restore a project's saved app into a fresh, ready sandbox and get its live URL.
  * A mutating POST (carries CSRF). Project-scoped, not session-scoped: the torn-down session is gone.
  * `postJson` already turns a `409 build_session_already_active` into `BuildSessionAlreadyActiveError`
  * (a build is running); 404 = nothing to relaunch, 503 = transient/retryable.
@@ -349,7 +349,7 @@ export async function releaseProject(
 }
 
 /**
- * WHAT A STOP ACHIEVED — THREE NAMED STATES, never a boolean (plan 002, U9).
+ * WHAT A STOP ACHIEVED — THREE NAMED STATES, never a boolean.
  *
  * The boolean this replaces said the wrong thing twice over: the server hardcoded success on both
  * branches, while its own docstrings promised a timeout would read as "still running". So the one
@@ -467,7 +467,7 @@ const STOP_READ_TIMEOUT_MS = 15_000
  * the other project's turn — and the caller can simply ask again afterwards, because the stop
  * itself is running server-side and the state read is idempotent.
  *
- * BUT A DECIDED ANSWER IS NOT A BLIP, AND RETRYING ONE IS ITS OWN DEFECT (review #38). A session
+ * BUT A DECIDED ANSWER IS NOT A BLIP, AND RETRYING ONE IS ITS OWN DEFECT. A session
  * that expired mid-hand-over answers 401 to every read; `authFetch` attempts a refresh on each of
  * them, so the dialog sat on "Closing the other app…" for two minutes issuing a hundred reads and
  * a hundred refresh attempts — the very traffic the refresh path documents as tripping
@@ -524,7 +524,7 @@ export async function awaitStopSettled(
 }
 
 /** Hand the workspace over: STOP, then optionally SAVE, then RELEASE — the whole of what the
- *  #83 refusal dialog's buttons do to the server, in the one order that works.
+ *  refusal dialog's buttons do to the server, in the one order that works.
  *
  *  THE ORDER IS THE DESIGN, and it lives here rather than in each caller because it is an
  *  invariant of these three endpoints, not of any one surface. Save and release BOTH refuse
@@ -540,7 +540,7 @@ export async function awaitStopSettled(
  *  the other modes in the dead end this flow exists to remove: a dialog whose buttons the server
  *  declines. Stopping when nothing is running is free and says so.
  *
- *  AND IT WAITS FOR THE STOP TO GENUINELY FINISH (plan 002, U9). The ask returns immediately now;
+ *  AND IT WAITS FOR THE STOP TO GENUINELY FINISH. The ask returns immediately now;
  *  the state read is the authority, and this proceeds only on one of the two settled answers. A
  *  stop that times out is reported as still running and the transfer DOES NOT PROCEED — which is
  *  the difference between a clean stop and a timeout that this repo has shipped confused before.
@@ -562,7 +562,7 @@ export async function handOverWorkspace(
     // NOT AN ERROR OF OURS, AND NOT A REASON TO TAKE THE CONTAINER. Everything the citizen has is
     // still where it was; what failed is the wait, and asking again is the remedy.
     throw new ApiError(
-      // THE TRUE THING AT TWO MINUTES, which is not "that project failed" (review #45). The
+      // THE TRUE THING AT TWO MINUTES, which is not "that project failed". The
       // browser's ceiling is under the server's on purpose — see `STOP_CEILING_MS` — so arriving
       // here almost always means the other app is still putting its work away, and the wait is
       // what ran out rather than the stop. Nothing has been taken from either project, and asking
@@ -583,7 +583,7 @@ export async function handOverWorkspace(
 /**
  * What a hand-over is doing right now, so the dialog can say it rather than spin.
  *
- * IT STOPS AT `starting`, AND THAT IS THE WHOLE SEQUENCE (review #39/#82). There was an `opening`
+ * IT STOPS AT `starting`, AND THAT IS THE WHOLE SEQUENCE. There was an `opening`
  * member here for the chat being opened, with copy already written for it, and nothing could ever
  * produce it: the retry's last act is a navigate, which unmounts the surface publishing the dialog
  * in the very commit that would have carried the new step, so no render can reach it. The wait it
@@ -610,7 +610,7 @@ export interface ReclaimBlocked {
    *  runs `stopActiveBuild` first instead of offering them directly. */
   building: boolean
   /**
-   * AN AGENT IS MID-TURN IN THERE, OF ANY KIND (plan 002, U9) — deliberately wider than
+   * AN AGENT IS MID-TURN IN THERE, OF ANY KIND — deliberately wider than
    * `building`, and deliberately a SEPARATE field.
    *
    * `building` marks only turns whose toolset can WRITE, and the server records why: widening
@@ -626,7 +626,7 @@ export interface ReclaimBlocked {
   agentWorking: boolean
 }
 
-/** Narrow a thrown error to the #83 refusal, or `null` for anything else.
+/** Narrow a thrown error to the refusal, or `null` for anything else.
  *
  *  Branch on the CODE, never the 409 alone: the same status also carries
  *  `build_session_already_active`, which has no remedy the user can act on, and treating the
@@ -717,7 +717,7 @@ function asPreviewLifeState(value: unknown, alive: boolean): PreviewLifeState {
   return PREVIEW_LIFE_STATES.find((s) => s === value) ?? (alive ? 'alive' : 'unknown')
 }
 
-/** Is the preview this tab is framing still real — and if not, why? (#83, C3 §8.3.)
+/** Is the preview this tab is framing still real — and if not, why? (C3 §8.3.)
  *
  *  A reclaimed preview is visually IDENTICAL to a working one — the last render stays on
  *  screen, the iframe reports nothing, and a cross-origin pane cannot read a status code. Once

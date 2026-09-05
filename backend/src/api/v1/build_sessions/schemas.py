@@ -186,8 +186,7 @@ class PreviewLifeState(enum.StrEnum):
 class PreviewStateAction(enum.StrEnum):
     """What a citizen may be OFFERED in response to a `PreviewLifeState` — R5's readiness→action
     mapping (U13), written down here as data rather than left as a claim in a docstring, because
-    two of Plan F's units are hard-gated on it and this is the one path in the codebase with a
-    recorded data-loss incident
+    this is the one path in the codebase with a recorded data-loss incident
     (`docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02.md`).
 
     THREE BUCKETS, and `REMEDY` is the one that matters. `RETRY` is "press start/relaunch again" —
@@ -255,7 +254,7 @@ class StartBuildResponse(CamelModel):
 
 
 class RelaunchPreviewRequest(CamelModel):
-    """`POST /v1/build-sessions/relaunch` body (#43). Project-scoped, not session-scoped: the
+    """`POST /v1/build-sessions/relaunch` body. Project-scoped, not session-scoped: the
     old build session is long gone (~5 min after teardown), but `app_id` is durable and
     resolved from the project."""
 
@@ -269,8 +268,8 @@ class RelaunchPreviewRequest(CamelModel):
 
 
 class RelaunchPreviewResponse(CamelModel):
-    """`POST /v1/build-sessions/relaunch` → 200 (#43). No `session_id`/`created_at`: relaunch
-    registers NO in-process build session (Decision 6 — it must not occupy the build slot), so
+    """`POST /v1/build-sessions/relaunch` → 200. No `session_id`/`created_at`: relaunch
+    registers NO in-process build session (it must not occupy the build slot), so
     there is nothing to poll or stop.
 
     `preview_url` is always framable; `ready` says whether it is SERVING yet. The two came apart
@@ -285,7 +284,7 @@ class RelaunchPreviewResponse(CamelModel):
     # has not answered yet.
     preview_url: str
     status: BuildSessionStatus  # `ready`, or `provisioning` when the app is not serving yet.
-    # U6's "last saved version" signal (#43): True when the project's NEWEST recorded build
+    # U6's "last saved version" signal: True when the project's NEWEST recorded build
     # outcome was FAILED — `_do_finalize` snapshots pass and fail alike, so the restored
     # workspace is the last SAVED state, not that build's intent. The portal labels the
     # relaunched preview accordingly instead of presenting an unqualified "ready".
@@ -654,7 +653,9 @@ the rolled-back test session — the same substitution the conversation suites m
 
 
 class ParkedTree(CamelModel):
-    """One tree this plan set aside — a U2 quarantine or a U3 divert."""
+    """One tree set aside instead of promoted: a `quarantine` is what a restore was about to
+    write over, a `divert` is what the recovery guard refused to promote. Both live under
+    per-occurrence keys, so a later one never overwrites an earlier one."""
 
     key: str
     kind: Literal["quarantine", "divert"]
@@ -666,9 +667,9 @@ class ParkedTree(CamelModel):
 class ParkedTreesResponse(CamelModel):
     """`POST /v1/build-sessions/internal/apps/{app_id}/parked` → 200 (U25).
 
-    THE TREES THIS PLAN SETS ASIDE WOULD OTHERWISE BE WRITE-ONLY: no reader, no retention, no
+    THE TREES WOULD OTHERWISE BE WRITE-ONLY: no reader, no retention, no
     runbook. In a false-`REVERTED` case those objects hold the only copy of a citizen's newest
-    work, and this plan names exactly that shape as a defect elsewhere — so it must not reproduce
+    work — so it must not reproduce
     it. Newest first, because the useful one is almost always the last one."""
 
     trees: list[ParkedTree]
@@ -678,7 +679,7 @@ class PromoteParkedRequest(CamelModel):
     """`POST /v1/build-sessions/internal/apps/{app_id}/promote` — put one parked tree back.
 
     The key is named explicitly rather than "the newest": an operator promoting the wrong tree
-    over somebody's recovery slot is the failure this whole plan is about, and a request that
+    over somebody's recovery slot is the failure, and a request that
     cannot name what it means is one that can be misread."""
 
     key: str

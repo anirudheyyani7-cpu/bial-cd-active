@@ -63,7 +63,7 @@ function ChatSurface({
  * THE SAME SURFACE, MOUNTING COLD — and the distinction the suite above cannot make.
  *
  * `ChatSurface` takes its url as a constant prop, so a remount republishes the SAME address and the
- * return leg of a round trip is never actually exercised. The real `BuilderPage` has no constant:
+ * return leg of a round trip is never actually exercised. The real surface has no constant:
  * every arm of `resolvePreviewAddress` reads hook state or a ref that is fresh per mount, and the
  * URL only arrives after a hydrate/reattach round trip, so its FIRST commit resolves nothing.
  */
@@ -79,7 +79,7 @@ function ColdChatSurface({ projectId = 'pA', pane }: { projectId?: string; pane?
   return <div data-testid="chat-surface" />
 }
 
-/** The project screen before Plan F: it declares its project and asks for nothing. */
+/** The project screen: it declares its project and asks for nothing. */
 function ProjectSurface({ projectId = 'pA' }: { projectId?: string }) {
   useWorkspaceProject(projectId)
   return (
@@ -163,7 +163,7 @@ describe('AppPaneHost — the frame outlives a move between the two addresses (A
     const wrapper = paneWrapper()
     expect(wrapper).toBeTruthy()
     expect(frame()).toBeTruthy() // the liveness half: a host that threw would read as a pass
-    // AWAITED, because the departure is drawn rather than instant (plan 002, U6): the column holds
+    // AWAITED, because the departure is drawn rather than instant: the column holds
     // its size for one animation while the card slides out, then collapses. The reader is told it
     // is gone immediately, which is the assertion that needs no wait.
     expect(wrapper?.getAttribute('aria-hidden')).toBe('true')
@@ -243,10 +243,7 @@ describe('AppPaneHost — which column grows, and which one is sized', () => {
   // at `flex-1`, the workspace halves: the panel keeps its 288px inside a column twice its width
   // and the app loses half the screen it had. Nothing in the unit suite would have said a word.
   //
-  // REWRITTEN FOR PLAN F'S SETTLED WIDTHS, and the property is the same one. When Plan A shipped
-  // this, the rail had no width of its own, so "not `flex-1`" WAS the whole signal — the column
-  // fell back to its content. Plan F gives it two settled widths and a stacked crossing, both
-  // expressed as classes on this same element, so the honest assertion is now: at the two-column
+  // The honest assertion is: at the two-column
   // breakpoint the rail is the SIZED column (`lg:flex-none` plus a settled `lg:w-[…]`) and the
   // pane is the growing one. The `flex-1` that remains is the STACKED case, where the two share a
   // column and both must grow — asserting its absence would now be asserting that the layout below
@@ -255,7 +252,7 @@ describe('AppPaneHost — which column grows, and which one is sized', () => {
 
   /** The rail is the sized column: a settled width, and not the one that grows, at `lg`. */
   const expectRailIsSized = (className: string) => {
-    // ONE CLASS, ONE CUSTOM PROPERTY (plan 002, U7). The width was a literal per rail mode; it is
+    // ONE CLASS, ONE CUSTOM PROPERTY. The width was a literal per rail mode; it is
     // the citizen's own now, carried on `--rail-w` and consumed only above the stacking threshold.
     // The class no longer says WHICH width — that is the element's style — so the assertion is
     // that the rail is SIZED rather than growing.
@@ -278,7 +275,7 @@ describe('AppPaneHost — which column grows, and which one is sized', () => {
   })
 
   it('with nothing asking for the pane, the conversation column IS the whole surface', () => {
-    // Every planning conversation — which under Plan F is the one surface with no pane at all.
+    // Every planning conversation — which is the one surface with no pane at all.
     render(<Workspace chatSurface={<ChatSurface visible={false} />} />)
 
     expectRailIsEverything(outlet().className)
@@ -311,8 +308,8 @@ describe('AppPaneHost — a hidden pane is genuinely inert, at shell level', () 
   // ASSERTED HERE AND NOT IN `ProjectPage.test.tsx`, ON PURPOSE. That suite renders the project
   // page with no shell and stubs `LivePreview` to null, so its `queryByTestId('live-preview')`
   // assertions cannot observe anything the shell mounts and would stay green against a pane
-  // leaking onto the project screen. Its assertions still pass and stay Plan F's to invert
-  // deliberately; they are not evidence for this unit.
+  // leaking onto the project screen. Its assertions still pass; they are not evidence for this
+  // unit.
   it('is in the document, out of the tab order, out of the accessibility tree, and offers nothing', async () => {
     render(<Workspace chatSurface={<ChatSurface />} />)
     fireEvent.click(screen.getByText('to project'))
@@ -324,7 +321,7 @@ describe('AppPaneHost — a hidden pane is genuinely inert, at shell level', () 
 
     // `visibility:hidden` rather than `aria-hidden` alone: zero width and overflow:hidden clip a
     // subtree visually but leave its descendants in the tab order. Awaited because the pane draws
-    // its departure first (plan 002, U6) — `aria-hidden` is the half that lands immediately.
+    // its departure first (U6) — `aria-hidden` is the half that lands immediately.
     expect(wrapper.getAttribute('aria-hidden')).toBe('true')
     await waitFor(() => expect(paneWrapper()?.className).toMatch(/invisible/))
 
@@ -420,10 +417,10 @@ describe('AppPaneHost — identity is the address, and a different app is a real
 
 describe('AppPaneHost — a layout change does not remount the frame (AE37)', () => {
   it('flipping the shell\'s grid between side-by-side and stacked keeps the same iframe node', () => {
-    // The class comes from a fixture here; Plan F owns the threshold that produces it in the
-    // product. What is assertable NOW — and what makes the claim about this plan's own element
-    // rather than an arbitrary wrapper — is that the container whose class changes is the shell's
-    // grid, and the pane host is its sibling.
+    // The class comes from a fixture here; the real threshold that produces it in the
+    // product lives elsewhere. What is assertable NOW — and what makes the claim about this
+    // suite's own element rather than an arbitrary wrapper — is that the container whose class
+    // changes is the shell's grid, and the pane host is its sibling.
     function Flipper() {
       const channel = useWorkspaceChannel()
       const [stacked, setStacked] = useState(false)

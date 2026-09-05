@@ -1,7 +1,7 @@
-"""Stored native history → friendly display items (U6, plan 2026-07-22-002).
+"""Stored native history → friendly display items.
 
-ONE derivation, two consumers: the conversation read API (reload) now, and the turn engine's
-catch-up snapshot (live) in U10 — never a second source of truth. The input is the raw ROWS
+ONE derivation, two consumers: the conversation read API (reload) and the turn engine's
+catch-up snapshot (live) — never a second source of truth. The input is the raw ROWS
 (`store.load_rows(include_hidden=True)`), not validated dataclasses, deliberately:
 
 * No `ModelMessagesTypeAdapter.validate_python` here — a stored attachment-ref marker would
@@ -39,12 +39,12 @@ from src.services.messages.store import ATTACHMENT_REF_KIND
 PLAN_OPTIONS_TOOL: Final = "present_plan_options"
 
 TELL_THE_USER_TOOL: Final = "tell_the_user"
-"""The mid-work voice channel's wire name (U3 / R75). Named HERE, beside the parser both
+"""The mid-work voice channel's wire name (R75). Named HERE, beside the parser both
 emitters call, for the same reason `PLAN_OPTIONS_TOOL` is: the live emitter and this one must
 agree on the spelling or a spoken line renders on one side and not the other."""
 
 PROPOSE_SLICE_TOOL: Final = "propose_first_slice"
-"""The scope-negotiation tool's wire name (U10 / R83–R88). Named here for the same reason the
+"""The scope-negotiation tool's wire name (R83–R88). Named here for the same reason the
 other two are: the live emitter and this one must agree on the spelling, and the stored call is
 the record both of them read."""
 
@@ -59,10 +59,8 @@ visibility — has nothing of it to hand back to the model as words the model wr
 sentence lives in `meta.text` and the arm below renders it from there, which is why taking it
 out of the payload changes nothing the citizen sees.
 
-WHAT IT IS FOR NEXT is plan 009, which is building the durable, typed home for platform
-speech on the turn-terminal row. This is the marker that row adopts. Naming it here rather
-than inventing a second rendering now is deliberate: two homes would show the citizen the
-same sentence twice."""
+IT IS ALSO THE MARKER THE TURN-TERMINAL ROW ADOPTS. One rendering of platform speech and not
+two, because two homes would show the citizen the same sentence twice."""
 
 TURN_TERMINAL_KIND: Final = "turn_terminal"
 """`meta.kind` of the durable turn-terminal row. Named here, beside the arm that reads it, and
@@ -79,10 +77,10 @@ hold their own string literal are one typo away from a row nobody projects."""
 # a fact — the field is gone, so no future expander can reach it. See `test_projection.py`'s
 # field-set guard, which is where the guarantee actually lives.
 
-# Read-only commands (U8's guest list) render as VISIBLE inspection steps — same rule as the
-# structured read tools. They were hidden for as long as `hidden` meant "a read", which left a
-# build's activity opening on a write with no account of what the agent had looked at to get
-# there; looking at the app before changing it is work the citizen recognises.
+# Read-only commands render as VISIBLE inspection steps — same rule as the structured read
+# tools. Hiding them leaves a build's activity opening on a write with no account of what the
+# agent looked at to get there; looking at the app before changing it is work the citizen
+# recognises.
 _READ_ONLY_BINARIES: Final = frozenset({"ls", "cat", "head", "tail", "grep", "sed", "find", "wc"})
 
 # …EXCEPT WHEN THEY ARE ASKED TO WRITE. Two of the binaries above are read-only by default and
@@ -127,13 +125,13 @@ def _reads_without_writing(argv: list[str]) -> bool:
 # Housekeeping shell verbs — plumbing the citizen never needs to see, and one of the only two
 # things `hidden` still marks (the other is a write to a configuration file). Drawing these
 # prints a generic line that says nothing about the app; the model still gets the raw output,
-# and the chat stays quiet (F3/U3).
+# and the chat stays quiet.
 _HOUSEKEEPING_BINARIES: Final = frozenset({"mkdir", "mv", "cp", "touch", "echo", "cd"})
 
 _INSTALL_SUBCOMMANDS: Final = frozenset({"install", "i", "ci", "add"})
 _PACKAGE_MANAGERS: Final = frozenset({"npm", "pnpm", "yarn", "bun"})
 
-# Friendly command copy (F3/U3 pinned starting set — tunable in the UI). The classifier NEVER
+# Friendly command copy (a pinned starting set — tunable in the UI). The classifier NEVER
 # surfaces the raw command; the browser only ever receives one of these labels.
 _LBL_INSTALL: Final = "Setting up the tools your app needs"
 _LBL_DATA_SETUP: Final = "Setting up where your app stores information"
@@ -146,7 +144,7 @@ _LBL_PREVIEW: Final = "Getting your preview ready"
 # commands, so a recognized-only allowlist that leaked argv on the long tail is the bug we refuse.
 _LBL_FALLBACK: Final = "Working on your app"
 
-# U17/R24 — WHAT A LONG OPERATION SAYS WHILE IT IS STILL RUNNING.
+# R24 — WHAT A LONG OPERATION SAYS WHILE IT IS STILL RUNNING.
 #
 # EXTENDS the table above rather than adding a second one, and that is the whole design. Every
 # label this module produces — the command classes, `_LBL_FALLBACK`, and the file-area labels
@@ -243,7 +241,8 @@ class BannerItem(CamelModel):
 
 class BuildInProgressItem(CamelModel):
     """A build began here and no outcome closed it — mid-build (live) or lost to a crash.
-    U10's `active_turn` disambiguates; this item only states the durable truth."""
+    The catch-up snapshot's `active_turn` disambiguates; this item only states the durable
+    truth."""
 
     type: Literal["build_in_progress"] = "build_in_progress"
     seq: int
@@ -277,10 +276,9 @@ DisplayItem = (
 def _stringify(value: Any) -> str:
     """A stored tool-return value as a plain string, for COMPARISON — never for display.
 
-    Its display reader went with the Details expander; this one survives because the card's
-    resolution is stored as a tool return whose content has to be read back (`"build"` vs
-    anything else). It only flattens shape: dict content vs JSON-string content vs a structured
-    retry body."""
+    The card's resolution is stored as a tool return whose content has to be read back
+    (`"build"` vs anything else). It only flattens shape: dict content vs JSON-string content vs
+    a structured retry body."""
     if isinstance(value, str):
         return value
     try:
@@ -313,7 +311,7 @@ def _command_argv(args: dict[str, Any]) -> list[str]:
 
 
 def _classify_command(argv: list[str]) -> tuple[str, bool]:
-    """`run_command` argv → (friendly label, hidden). The pinned F3/U3 mapping. The RAW command is
+    """`run_command` argv → (friendly label, hidden). The pinned mapping. The RAW command is
     NEVER part of the label: an unrecognized command fails CLOSED to `_LBL_FALLBACK` (dropping the
     argv entirely), because the open sandbox runs arbitrary commands and a recognized-only
     allowlist that fell open would leak raw shell (`bash -c …`, `python -c …`) on the long tail."""
@@ -388,18 +386,18 @@ def _file_step_label(tool_name: str, path: str | None) -> tuple[str, bool]:
     `write_file` reads as *Building*, edits as *Updating*, a read as *Looking at*; the state
     glyph carries done-ness.
 
-    READS COME THROUGH HERE TOO (U16). The read arm used to build its own label as
-    `f"Read {path}"`, which contradicted three invariants stated in this module's own comments —
-    including `_friendly_area`, which exists precisely so a citizen sees an app AREA and never a
-    filename — and it reached BOTH feeds, live and reload. Routing it through the same helper the
-    writes use is what makes that structurally impossible to reintroduce on one side only."""
+    READS COME THROUGH HERE TOO. A read arm that built its own label — `f"Read {path}"`, say —
+    would contradict three invariants stated in this module's own comments, `_friendly_area`
+    among them, which exists precisely so a citizen sees an app AREA and never a filename; and it
+    would reach BOTH feeds, live and reload. Routing it through the same helper the writes use is
+    what makes that structurally impossible to reintroduce on one side only."""
     area, hidden = _friendly_area(path) if path else (_AREA_GENERIC, False)
     verb = {"write_file": "Building", "read_file": "Looking at"}.get(tool_name, "Updating")
     return (f"{verb} {area}", hidden)
 
 
 def _step_label(tool_name: str, args: dict[str, Any]) -> tuple[str, bool]:
-    """(label, hidden) for one tool call — the data-driven friendly mapping (U6/U15/F3)."""
+    """(label, hidden) for one tool call — the data-driven friendly mapping."""
     path = args.get("path") if isinstance(args.get("path"), str) else None
     if tool_name in _FILE_MUTATORS:
         return _file_step_label(tool_name, path)
@@ -415,14 +413,14 @@ def _step_label(tool_name: str, args: dict[str, Any]) -> tuple[str, bool]:
     if tool_name in ("list_files", "search_files"):  # fmt: skip
         return ("Looked through the app's files", False)
     if tool_name == "fetch_output_slice":
-        # U22. Inspection, and visible with the rest of the read class. It needs a branch of its
+        # Inspection, and visible with the rest of the read class. It needs a branch of its
         # own because the fallback below renders the RAW TOOL NAME ("Used fetch_output_slice")
         # into a citizen's feed, which is exactly the raw-machinery leak `_friendly_area` exists
-        # to prevent (F3/U3) — and that leak is the reason it cannot simply fall through now
-        # that it is drawn.
+        # to prevent — and that leak is the reason it cannot simply fall through now that it
+        # is drawn.
         return ("Looked at what a command printed", False)
     if tool_name == APPLY_SCHEMA_CHANGE_TOOL:
-        # U23. The composite runs `drizzle-kit generate` then `npm run db:migrate`, so it lands on
+        # The composite runs `drizzle-kit generate` then `npm run db:migrate`, so it lands on
         # the SAME friendly label the two raw commands already classified to — a citizen watching
         # a build must not be able to tell which spelling the agent reached for. Its own branch
         # rather than the fallback below, which renders the raw tool name ("Used
@@ -449,7 +447,7 @@ def classify_command(argv: list[str]) -> tuple[str, bool]:
 
 
 def command_needs_the_long_timeout(argv: list[str]) -> bool:
-    """Is this a command that LEGITIMATELY runs for minutes (F4)?
+    """Is this a command that LEGITIMATELY runs for minutes?
 
     Reuses the same `_classify_command` mapping the labels come from, rather than growing a
     second classifier that could disagree with the first about what a command is.
@@ -471,7 +469,7 @@ def command_only_inspects(argv: list[str]) -> bool:
     Read off the same predicate the classifier labels steps by, so there is one answer to "is
     this an inspection" and not two that can disagree.
 
-    U22's consumer is the output formatter (`orchestrator/tools`): a build log may have its
+    The consumer is the output formatter (`orchestrator/tools`): a build log may have its
     predictable dependency-manager chatter dropped, but an inspection's output IS file content,
     and a filter that silently removes a line from it hands the model a file that does not say
     what the file says. Fails CLOSED for the long tail — an unrecognized binary is treated as a
@@ -483,7 +481,7 @@ def command_only_inspects(argv: list[str]) -> bool:
 
 def long_operation_line(label: str) -> str:
     """A step's friendly label, restated for an operation that has outrun the stillness
-    threshold (U17/R24) — the harness's own words for "this is still running".
+    threshold (R24) — the harness's own words for "this is still running".
 
     FAILS CLOSED THE SAME WAY THE TABLE DOES. The input is always a label this module already
     produced, so it is already free of argv and file paths; an empty one degrades to
@@ -511,7 +509,7 @@ def classify_file_step(tool_name: str, path: str | None) -> tuple[str, bool]:
 def classify_tool_call(tool_name: str, args_json: str) -> tuple[str, bool]:
     """(friendly label, hidden) for a LIVE tool call, from the wire args JSON — the same
     `_step_label` mapping the reload projection uses, so live and reload can never drift
-    (U10's engine is the consumer). Unparseable args degrade to the argless label."""
+    (the engine is the consumer). Unparseable args degrade to the argless label."""
     try:
         parsed = json.loads(args_json) if args_json else {}
     except ValueError:
@@ -520,9 +518,9 @@ def classify_tool_call(tool_name: str, args_json: str) -> tuple[str, bool]:
 
 
 def _is_attachment_fence(text: str) -> bool:
-    """A client-built `<attachment …>…</attachment>` content block (U7): DATA riding in the
-    prompt, not prose. The bubble must show what the user TYPED — a 200 KB inlined CSV in the
-    bubble would bury it (chips represent attachments; full fence UX is U15's)."""
+    """A client-built `<attachment …>…</attachment>` content block: DATA riding in the prompt,
+    not prose. The bubble must show what the user TYPED — a 200 KB inlined CSV in the bubble
+    would bury it, and chips are what represent attachments."""
     stripped = text.strip()
     return stripped.startswith("<attachment ") and stripped.endswith("</attachment>")
 
@@ -530,7 +528,7 @@ def _is_attachment_fence(text: str) -> bool:
 def _user_text_and_refs(content: Any) -> tuple[str, list[str]]:
     """A stored user-prompt content value → (typed prose, attachment reference ids).
     Attachment fence blocks are excluded from the prose (they are attachment CONTENT — the
-    U7 wire shape carries them as their own string items, typed prose last)."""
+    wire shape carries them as their own string items, typed prose last)."""
     if isinstance(content, str):
         return (content, [])
     texts: list[str] = []
@@ -586,7 +584,7 @@ def _closed_sessions(rows: Sequence[Message]) -> set[str]:
 
 def _synthetic_resolutions(rows: Sequence[Message]) -> dict[str, tuple[str, int]]:
     """toolCallId → (stored choice, the ROW SEQ it was recorded at), for SYNTHESIZED
-    plan-options cards (U11's retry-cap fallback): no real tool call exists, so both the
+    plan-options cards (the retry-cap fallback): no real tool call exists, so both the
     pending card and its resolution live as system rows and never touch the wire history.
     The seq rides along so the merge in `project_rows` can order by recency."""
     resolutions: dict[str, tuple[str, int]] = {}
@@ -646,9 +644,8 @@ def _payload_text(payload: list[Any]) -> str:
 def _plan_options_state(
     stored: tuple[str, bool] | None,
 ) -> Literal["pending", "refine", "build"]:
-    """U11's three stored resolutions (+ pending). Anything unrecognized — including the U8
-    stub's wait-for-choice ack — reads as pending: the card must re-render actionable rather
-    than invent a resolution that was never stored."""
+    """The three stored resolutions (+ pending). Anything unrecognized reads as pending: the
+    card must re-render actionable rather than invent a resolution that was never stored."""
     if stored is None:
         return "pending"
     content, was_retry = stored
@@ -849,11 +846,11 @@ def finished_slice(messages: Sequence[Any]) -> set[str]:
     """Which pieces of the CURRENT agreement have already been marked finished, from the record.
 
     THE OTHER HALF OF `agreed_slice`, AND IT HAS TO EXIST FOR THE SAME REASON. The agreement is
-    re-derived from history on every turn, so it survives one; the marks were per-turn memory,
-    so they did not. A citizen who builds one piece per turn — which is the ordering this whole
-    plan asks for — would have turn two tell them that turn one's finished piece is still to do.
-    The platform asserting that finished work is outstanding is the exact false fact U12 exists
-    to prevent; it was simply arriving through the other door.
+    re-derived from history on every turn, so it survives one; per-turn memory of the marks does
+    not. A citizen who builds one piece per turn — the ordering this product asks for — would
+    otherwise have turn two tell them that turn one's finished piece is still to do, and the
+    platform asserting that finished work is outstanding is the false fact this whole path
+    exists to prevent.
 
     A NEW PROPOSAL CLEARS THEM, mirroring the live rule exactly. Marks made against a slice that
     has since been re-proposed are not evidence about the new one — the same reasoning
@@ -908,14 +905,12 @@ def _project_response_parts(
     parts = [p for p in message.get("parts", []) if isinstance(p, dict)]
     # EVERY TEXT PART REACHES THE CITIZEN, WHATEVER SAT BESIDE IT.
     #
-    # A response that also called a tool used to have its prose suppressed HERE, on the rule
-    # that text beside a tool call is the model narrating its way to the call. That threw away
-    # the explanation between the receipts and left a run of steps with nothing joining them,
-    # which is the opposite of the voice this product has. The rule is gone, and with it the
-    # gate on when the row was written: this is a render-time filter, so removing it also
-    # gives back the prose in transcripts already on disk — accepted deliberately, because
-    # persistence never dropped a word and every conversation older than that rule already
-    # renders this way.
+    # A response that also called a tool keeps its prose. Suppressing it here — on the rule
+    # that text beside a tool call is the model narrating its way to the call — throws away the
+    # explanation between the receipts and leaves a run of steps with nothing joining them,
+    # which is the opposite of the voice this product has. This is a render-time filter and not
+    # a gate on when the row was written, so it renders the prose in transcripts already on
+    # disk too: persistence never dropped a word.
     #
     # `thinking` parts fall through this loop untouched, and that is the guarantee rather than
     # an omission: reasoning is stored so the next turn can replay it, and it is never
@@ -1027,7 +1022,7 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
     closed = _closed_sessions(rows)
     first_steps = _first_step_rows(rows)
     synthetic = _synthetic_resolutions(rows)
-    # One call id can be answered TWICE — a system overlay (U12's build_failed record; a real
+    # One call id can be answered TWICE — a system overlay (a `build_failed` record; a real
     # card's failure is never a ToolReturnPart) and a payload return, in either order. The
     # merge is by ROW SEQ, newest wins, matching `plan_options._scan`'s rule: merging by
     # SOURCE meant a refine return that landed FIRST still overwrote the build-failure overlay
@@ -1052,7 +1047,7 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
                     items.append(BuildInProgressItem(seq=row.seq, session_id=session_id))
                 continue
             if kind == "plan_options_pending" and meta.get("synthesized"):
-                # The retry-cap fallback card (U11): hidden row, visible card — its state
+                # The retry-cap fallback card: hidden row, visible card — its state
                 # derives from the companion `plan_options_resolved` record.
                 call_id = meta.get("toolCallId")
                 if isinstance(call_id, str):

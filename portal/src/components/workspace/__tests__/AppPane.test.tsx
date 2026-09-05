@@ -1,13 +1,12 @@
 /**
- * THE APP PANE (Plan F, U4) — what it is called, how to get past it, and what it says instead.
+ * THE APP PANE — what it is called, how to get past it, and what it says instead.
  *
  * ═══ THE TRAP THIS FILE EXISTS FOR ═══
  *
- * U4 removes the four start affordances that lived inside `LivePreview`'s no-frame placeholders.
- * Those were, until this plan, the ONLY way to bring a stopped app back. An inertness-only
- * assertion — "the old strings are gone" — passes just as happily on a screen with no start control
- * at all, which would satisfy R3's "exactly one control starts it" with zero. So every no-frame
- * state that used to carry one is asserted here for the affordance's PRESENCE, not its absence.
+ * An inertness-only assertion — "the old strings are gone" — passes just as happily on a screen
+ * with no start control at all, which would satisfy R3's "exactly one control starts it" with
+ * zero. So every no-frame state that can carry a start control is asserted here for the
+ * affordance's PRESENCE, not its absence.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -208,8 +207,7 @@ describe('one author for every pane sentence', () => {
   it('★ draws the board\'s mark above the headline on the three states that have one', () => {
     // `NothingBuilt`, `PreviewOff` and `PreviewStarting` each put a 30px #9AA5B1 glyph directly
     // above the headline, and it is the only thing that makes a blank half-screen read as a
-    // deliberate state rather than as a page that failed to load. The card and the "YOUR APP"
-    // label landed; its contents were still headline + sentence + button.
+    // deliberate state rather than as a page that failed to load.
     const withGlyph: [string, PreviewState][] = [
       ['never-built', reading({ state: 'never_built', restorable: false })],
       ['not-running', reading({ state: 'asleep', restorable: true })],
@@ -259,12 +257,10 @@ describe('one author for every pane sentence', () => {
 })
 
 /**
- * ★ THE THREE DEFECTS AN EARLIER CUT OF THIS FILE SHIPPED, all caught by the suites that pin the
- * surfaces around this one rather than by review.
- *
- * The shared cause was reading `address.url` as the whole seam. It is not: the resolver also
- * returns a STATUS independent of the URL, and a held address can outlive the container behind
- * it — so a URL alone is neither necessary nor sufficient evidence that something is serving.
+ * The shared risk across these cases is reading `address.url` as the whole seam. It is not: the
+ * resolver also returns a STATUS independent of the URL, and a held address can outlive the
+ * container behind it — so a URL alone is neither necessary nor sufficient evidence that
+ * something is serving.
  */
 describe('the seam is the address AND the state, not the URL alone', () => {
   it('★ frames the LOADING state — a status with no URL yet, which is a first build coming up', () => {
@@ -332,11 +328,11 @@ describe('the seam is the address AND the state, not the URL alone', () => {
 })
 
 describe('the column a plan chat does not get (plan 002, U6)', () => {
-  // THE DEFECT THIS BLOCK IS WRITTEN AGAINST, found in a browser and not by any suite: `AppPane`
-  // read the report and the address but never the VISIBILITY, so its `flex-1` section claimed half
-  // the window on a plan chat — filled with the "Your app is saved / Launch Application" card,
-  // offering to start an app the citizen had not asked about. `AppPaneHost` hides itself correctly,
-  // but a plan chat never reaches it: with nothing to frame, `NoFrame` renders instead.
+  // THE DEFECT THIS BLOCK IS WRITTEN AGAINST: `AppPane` read the report and the address but
+  // never the VISIBILITY, so its `flex-1` section claimed half the window on a plan chat —
+  // filled with the "Your app is saved / Launch Application" card, offering to start an app the
+  // citizen had not asked about. `AppPaneHost` hides itself correctly, but a plan chat never
+  // reaches it: with nothing to frame, `NoFrame` renders instead.
   //
   // The knock-on was the visible half of the bug. `ConversationSurface` centres a plan chat with
   // `mx-auto max-w-3xl`, which does nothing inside a rail that is only half the screen — so the
@@ -412,10 +408,9 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
 
   it('★ slides out at full width and only then collapses', async () => {
     // `T2Sliding` is a whole artboard of this one moment — "the app card is sliding out to the
-    // right and fading as it goes … a moment later the app is gone" — and until now the keyframe
-    // existed, was suppressed under reduced motion, and was applied to nothing. Applying it to the
-    // collapsed arm would have changed nothing either: an element at `w-0 invisible` cannot be
-    // watched fading, which is why the column holds its size for the length of the animation.
+    // right and fading as it goes … a moment later the app is gone." Applying the keyframe to the
+    // collapsed arm would change nothing: an element at `w-0 invisible` cannot be watched fading,
+    // which is why the column holds its size for the length of the animation.
     const { container, channel } = renderPane(framed, true)
     expect(paneClasses(container)).not.toContain('animate-pane-leave')
 

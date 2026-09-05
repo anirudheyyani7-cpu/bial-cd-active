@@ -1,18 +1,17 @@
 /**
- * Turn frames → the C7 envelope shape, plus what the surface asks ABOUT a turn (U5, Plan D U17).
+ * Turn frames → the C7 envelope shape, plus what the surface asks ABOUT a turn.
  *
  * A build is a Write turn now, so its narrative arrives as `step` / `diagnostic` / `quota` turn
  * frames instead of C7 progress envelopes. ADAPTING rather than rewriting is deliberate: the two
  * transports must never tell different stories about what a build looks like, and one mapping is
  * how they agree by construction rather than by discipline.
  *
- * THE ENVELOPES NOW HAVE ONE READER, NOT TWO. `BuildProgress` — the pinned card that used to draw
- * them — is gone, and the transcript draws activity from the message parts themselves (Plan D's
- * `ActivityGroup`). What still needs the envelope shape is the legacy build-session feed and the
+ * THE ENVELOPES HAVE ONE READER. The transcript draws activity from the message parts themselves
+ * (`ActivityGroup`); what still needs the envelope shape is the legacy build-session feed and the
  * two questions the surface asks of a turn: what phase it is in (`turnPhase`, for the app pane)
- * and whether today's budget is spent (`atLimitSendState`, for the composer). Both moved here when
- * their old home was deleted, and both belong here for the same reason: envelopes are this
- * module's vocabulary, and neither the pane nor the composer should have to learn it.
+ * and whether today's budget is spent (`atLimitSendState`, for the composer). Both belong here for
+ * the same reason: envelopes are this module's vocabulary, and neither the pane nor the composer
+ * should have to learn it.
  *
  * The mapping is small because the two vocabularies already describe the same thing. The one
  * place they genuinely differ is `diagnostic` → `error`: on the turn stream a diagnostic is
@@ -116,18 +115,15 @@ export function narrativeEnvelopes(narrative: TurnNarrative): FeedEnvelope[] {
  * below is the honest one: an unavailable workspace is terminal for this turn no matter what else
  * arrived, and a live preview outranks "still provisioning" because the user can SEE it.
  *
- * ══ `narrativeStatus`'s `isBuild` IS GONE, AND THE FRAMES ANSWER INSTEAD ══
+ * ══ NOTHING HERE ASKS WHAT KIND OF CHAT THIS IS ══
  *
- * This used to be TOLD, by its caller, whether the turn was a build — because the surface knew the
- * chat's kind and the frames did not. There is ONE surface now and it consults no kind anywhere
- * (R72), so a parameter whose only honest source is "what sort of chat is this?" has no caller
- * left. It also arrived as the literal `true` at the one site that passed it, which made the
- * read-turn arm below unreachable in the shipped product.
+ * There is ONE surface and it consults no kind anywhere, so a parameter whose only honest source
+ * is "what sort of chat is this?" has no caller.
  *
  * The frames already carry the distinction. A turn that WORKED ON THE APP emits steps, or a
  * preview, or a diagnostic about one; a turn that only answered a question attaches the same live
- * container (U5b) and emits nothing else. So the question is read off the narrative, and the two
- * arms are the same two arms as before — reached by evidence rather than by declaration.
+ * container and emits nothing else. So the question is read off the narrative, and the two arms
+ * are reached by evidence rather than by declaration.
  */
 export function turnPhase(
   narrative: TurnNarrative,
@@ -174,9 +170,9 @@ export interface AtLimitSendState {
 /**
  * The SEND control's state while today's budget is spent — `null` when it is not.
  *
- * RE-HOMED FROM `BuildProgress.tsx`, which was deleted. It came HERE rather than to the composer
- * because it reads FEED ENVELOPES, which is this module's vocabulary and nothing a composer should
- * have to know about: the surface asks the question and hands the composer a finished sentence.
+ * IT LIVES HERE RATHER THAN IN THE COMPOSER because it reads FEED ENVELOPES, which is this
+ * module's vocabulary and nothing a composer should have to know about: the surface asks the
+ * question and hands the composer a finished sentence.
  *
  * IT DESCRIBES THE SEND CONTROL AND NEVER THE COMPOSER. A citizen refused mid-thought has usually
  * just typed something they want to keep, so the textarea stays live: they can select, copy and

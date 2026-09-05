@@ -58,8 +58,6 @@ def test_registry_key_format_is_byte_stable() -> None:
 
 
 def test_lease_key_format_is_byte_stable() -> None:
-    # Family 4, RESERVED: U12 writes it. The format is pinned now so U12 inherits a decision
-    # rather than re-opening one.
     assert lease_key(_U1) == f"bial:{_ENV}:sandbox:lease:{_U1}"
 
 
@@ -176,9 +174,9 @@ def test_ns_is_the_choke_point_every_builder_goes_through() -> None:
 
 
 def test_registry_fields_are_the_frozen_c5_set() -> None:
-    """A CHOKE POINT, and it earned its keep in U13: adding `stay_writer` turned it red on the
-    full run, which is the only reason C5's field table and this list did not drift apart. Update
-    the contract and this literal in the same change, never one of them."""
+    """A CHOKE POINT, and it earns its keep: adding `stay_writer` turns it red on the full run,
+    which is the only reason C5's field table and this list do not drift apart. Update the
+    contract and this literal in the same change, never one of them."""
     assert REGISTRY_FIELDS == frozenset(
         {
             "app_name",

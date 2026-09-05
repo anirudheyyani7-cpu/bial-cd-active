@@ -89,9 +89,7 @@ export default function AppPaneHost({ device, reloadNonce, leaving }: AppPaneHos
   //
   // These are the only two. Every other pane field that reaches the frame chain — `reconnecting`,
   // `previewState`, `compileState` — defaults to the permissive value, so losing it cannot unmount
-  // anything. (`relaunching` was a third such field and the one genuine counter-example: it
-  // defaulted permissively too, but only because it was never read. It is gone with the rest of the
-  // relaunch chain.) Adding a restrictive-by-default field to `PaneView` means adding it here too.
+  // anything. Adding a restrictive-by-default field to `PaneView` means adding it here too.
   //
   // Holding the last published value keeps the leave side inert. The RETURN side still re-frames
   // where it should, and that is correct and unchanged: a remounted surface publishes its own pane

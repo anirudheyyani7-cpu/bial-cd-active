@@ -5,10 +5,7 @@ supervisor HTTP API.
 
 Mirrors the `ObjectStorage` port (ADR-0009): an `abc.ABC`, NOT a `Protocol`, so
 nominal subtyping makes an IDE jump land on the concrete backend and an incomplete
-implementation fails at instantiation with a runtime `TypeError`. Stage 0 (U7)
-renders this frozen surface with empty bodies; Track SESSION-API supplies the
-concrete ACA/helper client in Wave 1, and Track BRAIN imports it READ-ONLY (calls
-a subset through an injected client — it never implements or edits this file).
+implementation fails at instantiation with a runtime `TypeError`.
 
 No vendor type crosses this port. Every supervisor call the client makes goes to
 `https://{handle.fqdn}/_sup/<endpoint>` with `Authorization: Bearer {handle.token}` (Caddy
@@ -110,7 +107,7 @@ TAG_USER_ID: Final = "bial-user-id"
 """The owning user's UUID, in plaintext. R1 requires judging a container without the store, which
 rules out an opaque reference needing a database lookup; a UUID is an identifier, not a secret
 (ADR-0006), and the resource group is internal-only. Signed off as ADR-0029 accepted risk (b) — it
-does surface in cost exports, and that was decided rather than overlooked."""
+does surface in cost exports."""
 
 TAG_APP_ID: Final = "bial-app-id"
 """The app UUID this container serves. Note the name is NOT a substitute: `app_name_for` keeps only
@@ -311,8 +308,7 @@ def control_plane_segment() -> str:
 
     Delegated to `src.core.runtime_env`, a leaf with no module-scope imports: `src.config` reaches
     `src.settings.api`, which reaches the sandbox config, so asking it directly at module
-    level here would close that cycle. The same workaround used to be spelled out here and in
-    `redis/keys.py`, twice.
+    level here would close that cycle.
 
     Kept as its own named function rather than calling the accessor at each site: what this
     answers is which control plane is entitled to JUDGE a container, which is a different question
@@ -379,7 +375,7 @@ class SandboxHandle:
     fqdn: str
     """The container's ACA ingress FQDN, host only, NO scheme (e.g. `app-xyz.westeurope.
     azurecontainerapps.io`). `/_sup/*` and `app_root_url` derive from it — `preview_url` does
-    NOT, and has not since apps moved behind the router. On an internal environment this name
+    NOT. On an internal environment this name
     has no public DNS at all, so it is a private address despite ACA calling it public."""
     token: str
     """The per-session supervisor bearer token, sent as `Authorization: Bearer
@@ -391,9 +387,6 @@ class SandboxHandle:
     """THE PUBLIC ADDRESS — `https://<apps-host>/a/<app_name>/`, the browsable preview the portal
     frames cross-origin (C8). Never carries the bearer token.
 
-    It used to be the container's own un-prefixed root, `https://{fqdn}/`. It is not that any
-    more, and the distinction is load-bearing rather than cosmetic: an internal Container Apps
-    environment publishes no public DNS, so the old value resolved for nobody outside the VNet.
     Use `app_root_url` for anything the CONTROL PLANE does — a probe pointed here would leave
     the VNet and traverse the public gateway."""
     ready: bool
@@ -528,8 +521,7 @@ its body — which is what a person answering "what was it actually serving?" re
 little to be worth streaming at.
 
 Sized against its consumer, not against HTML: this is the raw evidence stored beside U6's derived
-verdict, per the 2026-08-02 learning where a derived metric produced a false accusation the raw
-field disproved in one step."""
+verdict."""
 
 
 @dataclass(frozen=True)
@@ -610,10 +602,8 @@ FileOp = Annotated[
 
 
 class SandboxClient(abc.ABC):
-    """The complete async sandbox-client surface (C2). SESSION-API implements every
-    method (Wave 1); BRAIN calls the exec/files/dev subset through an injected
-    client. Documented poll/timeout/retry defaults are the frozen semantics a mock
-    must honor where observable.
+    """The complete async sandbox-client surface (C2). Documented poll/timeout/retry
+    defaults are the frozen semantics a mock must honor where observable.
 
     The one-per-user + rehydrate rule is a caller invariant (SESSION-API resolves it
     against the C5 registry + lock before any work): a returning user ATTACHES or
@@ -745,9 +735,7 @@ class SandboxClient(abc.ABC):
         rather than for convenience: every abstract method on this class mirrors one supervisor
         endpoint, and `test_abstractmethod_set_equals_the_c2_contract` pins that set so the C2
         surface cannot drift. This is not a supervisor call — it is an ordinary GET at the app's
-        own root through the same Caddy the citizen's iframe uses. That is also what makes the
-        serving half of the health verdict work against containers running an image that predates
-        this plan: no new endpoint, so nothing to rebuild.
+        own root through the same Caddy the citizen's iframe uses.
 
         WHY NOT `someone_has_to_go_first`. That method is contractually non-load-bearing (R6) —
         it gates nothing, and its docstring says no caller may make a preview conditional on what

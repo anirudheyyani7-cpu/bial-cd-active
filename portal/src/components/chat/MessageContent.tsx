@@ -62,8 +62,7 @@ function MarkdownStrong({ node: _node, ...props }: HTMLAttributes<HTMLElement> &
  *
  * PROSE ONLY. `partsToText` yields the text parts and nothing else; the attachment chips are
  * the THREAD's to draw, from its own `UserAttachments` slot (`ChatThread.tsx`), not this
- * component's. It used to render them here as well, which was one render of the same
- * descriptors in two places for as long as anything passed it an array.
+ * component's.
  *
  * BOTH SHAPES ARE REAL. The live call site — the thread's text-part slot — hands down a
  * plain string, and the parity cases in `MessageContent.test.tsx` hand down `TextPart[]`, so `partsToText`'s

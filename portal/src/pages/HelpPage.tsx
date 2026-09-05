@@ -7,9 +7,9 @@ import Navbar from '../components/layout/Navbar'
 // is `ApiSettings.SUPPORT_CONTACT_EMAIL`, but it is backend-only: it reaches a citizen
 // solely inside the server-rendered at-limit sentence that `TurnBanner` turns into a
 // mailto. No endpoint returns it, and the portal reads no VITE_* vars, so this page
-// cannot read it without the config endpoint filed under #157 B3. Until then a single
+// cannot read it without a config endpoint that does not exist yet. Until then a single
 // constant is the honest shape: one place to fix when the address is confirmed, instead
-// of two that can drift apart — which is the trap B3 removed one level down.
+// of two that can drift apart.
 const SUPPORT_EMAIL = 'citizen-developer-support@bialairport.com'
 
 const EXAMPLE_PROMPTS = [
@@ -56,8 +56,7 @@ const DONTS = [
 /** Exported for HelpPage.test.tsx. Asserting on the DATA rather than a render is
  *  deliberate: AccordionItem renders its answer as `{open && ...}`, so a collapsed
  *  accordion puts no answer text in the DOM at all and every "this false claim is
- *  gone" assertion would pass vacuously. That exact trap cost a round in the #157
- *  browser harness; the data cannot go vacuous the same way. */
+ *  gone" assertion would pass vacuously. The data cannot go vacuous the same way. */
 export const FAQS = [
   {
     q: 'What is the BIAL Citizen Developer portal?',

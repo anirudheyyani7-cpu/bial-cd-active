@@ -1,11 +1,6 @@
 /**
  * What the surface asks ABOUT a turn — the phase the app pane reads, and whether today's budget
- * is spent (Plan D U17).
- *
- * BOTH FUNCTIONS USED TO LIVE IN COMPONENTS THAT NO LONGER EXIST, and both were pinned only
- * through those components' render output. `atLimitSendState` and `formatResetTime` were exported
- * from `BuildProgress.tsx`, and their pure-function cases moved here with them rather than dying
- * with the card — a relocated function keeps its tests, or the move quietly costs the coverage.
+ * is spent.
  *
  * `turnPhase` REPLACES `narrativeStatus`, whose `isBuild` parameter had to be TOLD by a caller
  * that knew the chat's kind. One surface now serves both kinds and consults no kind anywhere

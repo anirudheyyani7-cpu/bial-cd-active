@@ -1,5 +1,5 @@
 /**
- * MarketplacePage — the behaviours a reader would most easily get wrong (#145).
+ * MarketplacePage — the behaviours a reader would most easily get wrong.
  *
  * The theme running through these: **anything that changes the result SET resets to page 1**.
  * A new query, a new page size, a new sort. Miss one and the user lands on page 4 of a
@@ -9,7 +9,7 @@
  * The empty state is also decided from the query that produced the CURRENT items, never the
  * input value, which runs ahead by the debounce window.
  *
- * Both dropdowns are Radix `<Select>`s, not native `<select>`s (#147 review: a native
+ * Both dropdowns are Radix `<Select>`s, not native `<select>`s (a native
  * option list is drawn by the OS and cannot be branded). That changes how tests drive them:
  * `fireEvent.change` on a `role="combobox"` button does not throw, it silently no-ops — so
  * a stale interaction here surfaces as a `waitFor` timeout rather than an obvious error.
@@ -129,9 +129,7 @@ describe('MarketplacePage', () => {
     // underline alone tells a sighted user which page they are on and nobody else.
     //
     // The highlight follows the RENDERED page (`data.page`), not the requested one — so a
-    // response saying "this is page 2" highlights 2. An earlier version of this test asserted
-    // the opposite, which quietly encoded the mismatch the review asked to fix: the control
-    // claiming page 1 while page 2's cards were on screen.
+    // response saying "this is page 2" highlights 2.
     h.listMarketplace.mockResolvedValue(
       page({ page: 2, pageSize: 10, total: 25, totalPages: 3 }),
     )
@@ -240,7 +238,7 @@ describe('MarketplacePage', () => {
   })
 
   it('does not claim the catalog is empty when the FIRST load failed', async () => {
-    // The reviewer's exact scenario, and it has to be the FIRST load: `loading` is false,
+    // It has to be the FIRST load: `loading` is false,
     // `error` is set, and `data` is still the EMPTY sentinel — so `items.length === 0` is
     // genuinely true and the empty-state copy renders right beside the error banner,
     // telling the reader the marketplace is empty when in fact we do not know.
@@ -258,11 +256,10 @@ describe('MarketplacePage', () => {
   })
 
   it('shows the error alone on a failed load, and lets the reader retry', async () => {
-    // Two defects pinned here, neither of which had ANY coverage before (#147 review): the
-    // failed page staying active over the PREVIOUS page's cards, and the retry being a
-    // no-op because `setPage(sameValue)` is a React bail-out, so the dispatcher never
-    // re-runs. (The empty-state guard is pinned by the test above, which fails the FIRST
-    // load — the only point at which `items` is genuinely empty.)
+    // Two defects pinned here: the failed page staying active over the PREVIOUS page's
+    // cards, and the retry being a no-op because `setPage(sameValue)` is a React bail-out,
+    // so the dispatcher never re-runs. (The empty-state guard is pinned by the test above,
+    // which fails the FIRST load — the only point at which `items` is genuinely empty.)
     h.listMarketplace.mockResolvedValue(page({ pageSize: 10, total: 25, totalPages: 3 }))
     renderPage()
     await screen.findByTestId('marketplace-page-2', {}, { timeout: 5000 })
@@ -366,13 +363,9 @@ describe('MarketplacePage', () => {
   })
 
   it('says rows and count disagree, rather than "empty" or "past the end"', async () => {
-    // THIS FIXTURE USED TO PIN THE BUG. `total` and the rows are two separate reads under
+    // `total` and the rows are two separate reads under
     // READ COMMITTED, so an unpublish landing between them returns zero items on PAGE 1
-    // with a stale non-zero `total`. Branching the copy on `total !== 0` showed "past the
-    // end" on page 1, which has nowhere to go back to; branching on `page > totalPages`
-    // fell through to "Nothing has been published yet" — and this test asserted exactly
-    // that, while the footer four lines below rendered "5 published apps" from the same
-    // payload. It pinned a page that contradicted itself (#147 round 3 review).
+    // with a stale non-zero `total`.
     //
     // The empty copy is the one thing we must not say here: a reader who believes it goes
     // and rebuilds an app that already exists. Nor is a second entry path a race at all
@@ -443,7 +436,7 @@ describe('MarketplacePage', () => {
   })
 
   it('offers a retry when the FIRST load fails, with no pagination mounted', async () => {
-    // The gap round 3 found: `reloadNonce` was only reachable through the pagination nav,
+    // The gap: `reloadNonce` was only reachable through the pagination nav,
     // and on a failed first load `data` is still the EMPTY sentinel — so `showSizer` and
     // `showPages` are both false, the nav never mounts, and the reader is stranded with a
     // banner and no control at all. Neither existing error test covers this: one only
@@ -468,8 +461,8 @@ describe('MarketplacePage', () => {
   })
 
   it('ignores a stale response that lands after a newer one', async () => {
-    // The `requestId` guard, which was previously deletable with the whole suite green
-    // (#147 review). The FIRST request resolves LAST here — exactly the interleaving a slow
+    // The `requestId` guard, which was previously deletable with the whole suite green.
+    // The FIRST request resolves LAST here — exactly the interleaving a slow
     // network produces — so an implementation without the guard commits the stale page-2
     // body over the page-3 one the user actually asked for.
     let resolveFirst: (value: Page) => void = () => {}

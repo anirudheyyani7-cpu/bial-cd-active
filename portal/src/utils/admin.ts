@@ -54,8 +54,7 @@ export interface UserLimitsOut {
  * because a real caller can get an envelope without it — the fallback below is
  * `{}` rather than a fabricated all-null object, so a types-only diff should
  * widen the type to match the real fallback rather than reshape the fallback to
- * match a narrower type. (Independently, release's own admin.js fallback
- * already reads `data.defaults || {}` too.) */
+ * match a narrower type. */
 interface UsersPage {
   defaults: Partial<LimitFields>
   users: UserLimitsOut[]
@@ -90,7 +89,7 @@ export async function fetchUsers(
   const query = params.toString()
   const res = await authFetch(`/api/admin/users${query ? `?${query}` : ''}`, { signal }, deps)
   if (!res.ok) throw await readApiError(res, 'Failed to load users')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   const data = body as Partial<UsersPage>
   return {
@@ -118,7 +117,7 @@ export interface FeedbackItem {
 export async function fetchFeedback(deps: AuthFetchDeps = {}): Promise<{ feedback: FeedbackItem[]; total: number }> {
   const res = await authFetch('/api/admin/feedback', {}, deps)
   if (!res.ok) throw await readApiError(res, 'Failed to load feedback')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   const data = body as { feedback?: FeedbackItem[]; total?: number }
   return { feedback: data.feedback || [], total: data.total ?? 0 }
@@ -149,7 +148,7 @@ export async function updateUserLimits(
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to update limits')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; limits: LimitFields; effectiveLimits: LimitFields }
 }
@@ -189,7 +188,7 @@ export async function bulkUpdateUserLimits(
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to apply the bulk limit')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { updatedCount: number }
 }
@@ -210,7 +209,7 @@ export async function deactivateUser(userId: string, deps: AuthFetchDeps = {}): 
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to deactivate user')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; suspendedAt: string | null }
 }
@@ -227,7 +226,7 @@ export async function reactivateUser(userId: string, deps: AuthFetchDeps = {}): 
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to reactivate user')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; suspendedAt: string | null }
 }
@@ -244,7 +243,7 @@ export async function resetUserUsage(userId: string, deps: AuthFetchDeps = {}): 
     deps,
   )
   if (!res.ok) throw await readApiError(res, 'Failed to reset usage')
-  // UNCHECKED (matches pre-migration behavior): the shape is asserted, not validated.
+  // UNCHECKED: the shape is asserted, not validated.
   const body: unknown = await res.json()
   return body as { userId: string; usageToday: number }
 }

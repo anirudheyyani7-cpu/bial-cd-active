@@ -1,4 +1,4 @@
-"""U1 — the C2 client's `/_sup/*` supervisor HTTP layer + accessor.
+"""The C2 client's `/_sup/*` supervisor HTTP layer + accessor.
 
 An `httpx.MockTransport` stands in for the C1 supervisor: no live container, every
 wire shape asserted against `sandbox/supervisor/app.py`.
@@ -328,13 +328,13 @@ async def test_a_malformed_supervisor_reply_does_not_fail_the_provision_either()
     await client_module._make_it_a_repo(_client(handler), _handle())
 
 
-# --- U3: the first-route warm request ----------------------------------------
+# --- the first-route warm request ----------------------------------------
 
 
 async def test_a_warm_request_that_times_out_is_swallowed() -> None:
-    """★ THE R6 GUARD, written first. A hung warm request holding the preview frame for the
-    whole turn is strictly WORSE than the blank card this unit exists to remove — the citizen
-    would wait longer and see less. Nothing escapes, and the caller gets `None`."""
+    """★ THE HUNG-WARM-REQUEST GUARD, written first. A hung warm request holding the preview
+    frame for the whole turn is strictly WORSE than the blank card this unit exists to remove —
+    the citizen would wait longer and see less. Nothing escapes, and the caller gets `None`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("the route is still compiling", request=request)
@@ -375,7 +375,7 @@ async def test_the_warm_request_goes_in_the_front_door() -> None:
 
 
 async def test_a_compile_error_comes_back_as_a_status_not_an_exception() -> None:
-    """A 500 is the SIGNAL, not a failure: it is what makes U4's `⨯` land in the dev log where
+    """A 500 is the SIGNAL, not a failure: it is what makes the `⨯` land in the dev log where
     self-heal reads it. Raising here would turn the most useful outcome into the one that
     suppresses the preview."""
 
@@ -464,7 +464,7 @@ async def test_the_warm_request_gives_up_on_an_app_that_simply_never_answers(
     `preview_ready`, relaunch and every self-heal iteration behind it.
 
     An app that never answers is not exotic: the response comes from unreviewed, agent-authored
-    code, and "hangs on the root route" is precisely the failure U4 exists to make visible.
+    code, and "hangs on the root route" is precisely the failure this call exists to make visible.
 
     Mutation check: drop `asyncio.timeout(_WARM_TIMEOUT_SECONDS)` from the `async with` tuple and
     this test hangs until the 10s handler sleep, then fails on the elapsed bound."""
@@ -506,7 +506,7 @@ async def test_the_warm_request_never_reads_the_apps_body() -> None:
     )
 
 
-# --- R17/R18: the compile-state transport ----------------------------------------------------
+# --- the compile-state transport ----------------------------------------------------
 #
 # The contract this section pins is one sentence: NO failure of this call may produce a
 # confidently-clean reading, and no failure may reach the caller as an exception.

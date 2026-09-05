@@ -1,5 +1,5 @@
 /**
- * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT (plan 002, U9) — issue #161.
+ * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT (U9).
  *
  * ═══ THE DEFECT, IN ONE SENTENCE ═══
  *
@@ -167,7 +167,7 @@ describe('the question arrives BEFORE anything moves', () => {
 
     const dialog = await screen.findByRole('dialog')
     const text = dialog.textContent ?? ''
-    expect(text).toContain('Visitor Log') // the one being started — issue #161's framing half
+    expect(text).toContain('Visitor Log') // the one being started
     expect(text).toContain('Car pool') // the one in the way
     for (const word of [/container/i, /sandbox/i, /workspace slot/i, /session/i, /409/]) {
       expect(text, String(word)).not.toMatch(word)

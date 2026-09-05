@@ -429,10 +429,9 @@ def test_no_module_builds_a_sandbox_key_by_hand() -> None:
         # F-STRINGS MUST BE REASSEMBLED BEFORE MATCHING, or this test is blind to the only key
         # shape anyone would write from now on. `f"bial:{env}:sandbox:lock:{u}"` parses to a
         # JoinedStr whose first Constant is exactly `"bial:"` — nothing follows the colon in that
-        # fragment, so `bial:\S` does not match it and the probe returns zero offenders. As
-        # originally written this test caught only the LEGACY spelling `f"bial:sandbox:…"`, i.e.
-        # precisely the one the cutover retired. Interpolations collapse to a non-space sentinel
-        # so the reassembled text reads like the key it will become at runtime.
+        # fragment, so `bial:\S` does not match it and the probe returns zero offenders.
+        # Interpolations collapse to a non-space sentinel so the reassembled text reads like the
+        # key it will become at runtime.
         interpolated: set[int] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.JoinedStr):

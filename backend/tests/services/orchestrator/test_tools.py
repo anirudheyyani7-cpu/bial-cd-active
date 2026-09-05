@@ -68,8 +68,7 @@ _TOOL_NAMES = {
     # is registered here, on the sandbox toolset, because Write is the only mode that runs
     # commands. `test_toolsets.py` asserts the mode half against `toolsets_for_kind` directly.
     "fetch_output_slice",
-    # U23: the composite is registered here too — one call for the generate + migrate sequence
-    # the DATABASE block used to dictate step by step.
+    # U23: the composite is registered here too — one call for the generate + migrate sequence.
     "apply_schema_change",
 }
 
@@ -197,7 +196,7 @@ async def test_read_file_minus_one_end_reads_to_end_of_file(sink: CollectingSink
 
 async def test_read_file_minus_one_end_is_still_budget_clamped(sink: CollectingSink) -> None:
     # -1 must not become an unbounded read: the VIEW_MAX_LINES clamp applies to it too
-    # (PR#33 #13 — previously only the end != -1 branch clamped).
+    # (previously only the end != -1 branch clamped).
     big = "\n".join(f"row-{i}" for i in range(1, 1001))  # 1000 lines
     fake = FakeSandbox(seed_files={"app/big.tsx": big})
     captured = await _run(
@@ -360,9 +359,9 @@ async def test_declare_done_tells_the_model_its_summary_is_the_last_word(
 ) -> None:
     """★ U18 — THE RETURN STRING MOVED WITH THE BEHAVIOUR TOO.
 
-    It used to say "The harness will now type-check the app and confirm it renders", which
-    reads as an invitation to stand by for a second act. It now says which of the two arms is
-    terminal and which is not — both truthfully.
+    `declare_done` is terminal on the passing arm, so its return must say which of the two arms
+    is terminal and which is not — both truthfully. Anything that reads as an invitation to stand
+    by for a second act makes a model hold its closing message back for a reply it never gets.
 
     Asserted on what the MODEL received back (the tool return in its next input), not on the
     function's return value, for the same reason as the description test above."""

@@ -53,7 +53,7 @@ _log = structlog.get_logger()
 # IST is a fixed offset with no daylight saving, so a constant tzinfo is always correct.
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
-# The stable machine code the SPA's interceptor keys on (useClaudeAPI.js) — byte-stable.
+# The stable machine code the SPA's interceptor keys on — byte-stable.
 DAILY_LIMIT_EXCEEDED_CODE = "daily_token_limit_exceeded"
 
 

@@ -93,7 +93,7 @@ def dev_died_error(
 ) -> BuildError:
     """The HONEST diagnostic for a dev child found dead at verify: name the process failure and
     its exit code instead of guessing at a rendering bug — the misattribution that sent the
-    build agent on a 3-run wild-goose chase (2026-07-30). Routed through `from_server` so the
+    build agent on a 3-run wild-goose chase. Routed through `from_server` so the
     dead child's last output is redacted like any other server tail."""
     exit_clause = f"exit code {exit_code}" if exit_code is not None else "exit code unknown"
     restart_clause = (
@@ -265,8 +265,8 @@ class VerifyOutcome:
     # The framable preview URL once the dev server is ready.
     preview_url: str | None
     # What the app's own root actually answered, and with what. RAW EVIDENCE kept beside the
-    # derived verdict, per the 2026-08-02 learning where a derived metric produced a false
-    # accusation that the raw field disproved in one step. `None` means the probe could not ask —
+    # derived verdict, because a derived metric once produced a false accusation that the raw
+    # field disproved in one step. `None` means the probe could not ask —
     # which is an INDETERMINATE input, never a broken app.
     served: ServedPage | None = None
     # Whether the app's root route is still byte-identical to the seeded baseline. `None` when the
@@ -275,14 +275,13 @@ class VerifyOutcome:
     baseline: BaselineIdentity | None = None
     # WHICH check could not be answered, on an INDETERMINATE verdict — `None` on every other.
     #
-    # THE THREE ARE NOT THE SAME KIND OF SILENCE, and collapsing them cost this a round of
-    # review. A serving probe that never came back, or a baseline with no root commit to compare
-    # against, describes an app that is up and answering: "we could not confirm this change went
-    # in" is true of it. A READINESS budget that ran out describes an app that is not serving at
+    # THE THREE ARE NOT THE SAME KIND OF SILENCE. A serving probe that never came back, or a
+    # baseline with no root commit to compare against, describes an app that is up and
+    # answering: "we could not confirm this change went in" is true of it. A READINESS budget
+    # that ran out describes an app that is not serving at
     # all — and once patience is spent, thirty seconds of not coming up, three times over, has
     # stopped being our impatience and become a fact about the app. Telling that citizen their
-    # app "looks like it's running" would be a new false claim, in the plan whose entire purpose
-    # is removing one.
+    # app "looks like it's running" would be a new false claim.
     unanswered: Unanswered | None = None
     # The browser crash reports this pass consumed. Carried on the outcome so `verify` can hand
     # them to a later pass rather than letting a discarded one take them to the grave — see
@@ -303,7 +302,7 @@ class VerifyOutcome:
         A PROPERTY rather than a field, for the reason `durable_copy.CopyVerdict.may_destroy`
         exists: `state is HealthState.HEALTHY` spelled out at every call site is a chance at each
         one to write `is not UNHEALTHY` instead — which would read an INDETERMINATE verdict as a
-        completion claim, the exact class of lie this plan removes."""
+        completion claim."""
         return self.state is HealthState.HEALTHY
 
 
@@ -653,8 +652,8 @@ async def _verify_once(
     # more than once — for its INDETERMINATE patience and for U9's re-check — so a report consumed
     # by a pass that is then discarded is gone from the pass that actually decides. That is a
     # browser crash flipping the verdict from UNHEALTHY to HEALTHY between two looks at the same
-    # app: the false green this plan exists to remove, reintroduced by the fix for a different
-    # one. "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER,
+    # app: a false green, reintroduced by the fix for a different one.
+    # "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER,
     # never about each attempt at it.
     client_reports = [*carried_reports, *drain_client_errors(handle.app_name)]
     # Only a CRASH gates the verdict — see `NON_FATAL_CLIENT_SOURCES`. Both lists are kept: the
@@ -761,7 +760,7 @@ async def _verify_once(
         fatal_client_reports=len(fatal_reports),
         served_status=served.status if served else None,
         baseline=baseline,
-        # THE RAW EVIDENCE BESIDE THE DERIVED VERDICT (the 2026-08-02 learning). It also reaches
+        # THE RAW EVIDENCE BESIDE THE DERIVED VERDICT. It also reaches
         # the harness counters, which record `served_head` from this same verdict; a reader asking
         # "but what was it actually serving?" must not have to reproduce the run to find out.
         served_head=served.head if served else None,

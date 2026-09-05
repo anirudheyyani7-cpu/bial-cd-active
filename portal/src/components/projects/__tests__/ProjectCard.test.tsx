@@ -1,5 +1,5 @@
 /**
- * ProjectCard — the open/delete affordances and the F-10 no-nested-interactive invariant.
+ * ProjectCard — the open/delete affordances and the no-nested-interactive invariant.
  *
  * The component is purely presentational (the page injects `onOpen`/`onDelete`), so these
  * render it with plain spies and no router. The point of the test is the *structure*: the
@@ -9,8 +9,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 
 /** Forces every element's clip measurement in one direction — jsdom's own scrollWidth and
- *  clientWidth are both always 0, which reads as never-clipped, so the tooltip branch (round-4
- *  finding 3) needs this to be reachable at all. */
+ *  clientWidth are both always 0, which reads as never-clipped, so the tooltip branch
+ *  needs this to be reachable at all. */
 function stubClip(clipped: boolean) {
   vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(clipped ? 200 : 100)
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(100)

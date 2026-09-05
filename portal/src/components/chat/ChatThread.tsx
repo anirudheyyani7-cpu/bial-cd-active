@@ -8,9 +8,13 @@
  *
  * ── WHAT IT MOUNTS INTO ──
  *
- * Plan A's `ConversationSlot` owns the slot's height and its hide treatment. This builds nothing
- * that positions itself against the viewport and adds no `calc(100vh - …)` — the one in
- * `ChatPage.tsx` was the only one in the repo, and it died with that file.
+ * `ConversationSlot` owns the slot's height and its hide treatment. This builds nothing
+ * that positions itself against the viewport and adds no `calc(100vh - …)`.
+ *
+ * THE RUNTIME IS NOT BUILT HERE — it is the SURFACE's, and provided by the surface, because the
+ * composer has to sit inside the same provider: the library's composer primitives all resolve
+ * against `useAui()`, and a provider wrapped around only the transcript leaves the composer
+ * outside it. One runtime per conversation, mounted above both — never a second one here.
  *
  * ── `MessageContent` IS RE-HOSTED, NOT REPLACED ──
  *
@@ -30,13 +34,6 @@ import ActivityGroup, { InterruptedMessagesContext, GroupSealedContext } from '.
 import ActivityRow from './ActivityRow'
 
 export interface ChatThreadProps {
-  /**
-   * THE RUNTIME IS NO LONGER BUILT HERE (plan 002, U5). It is the SURFACE's, and provided by the
-   * surface, because the composer needs to sit inside the same provider: the library's composer
-   * primitives all resolve against `useAui()`, and this component's own provider wrapped only the
-   * transcript. Nothing about the runtime changed — only where it is mounted, and it moved up
-   * rather than being duplicated, so there is still exactly one per conversation.
-   */
   /**
    * Messages whose turn ended on an interrupted terminal (R35c). Supplied by the surface because
    * it is a fact about the turn, not about any part.
@@ -62,8 +59,7 @@ const TextPart: ThreadComponents['TextPart'] = ({ text, isUser }) => (
 /**
  * THE WORKING STATUS — status only, never the reasoning content.
  *
- * The decision, taken by the product owner: render THAT the agent is working, never what it is
- * reasoning about. The reasoning text is technical and far too much for the people who read this,
+ * The reasoning text is technical and far too much for the people who read this,
  * so `useMessagePartReasoning` is not used and the group renders one plain line.
  *
  * This is a deliberate, narrow amendment to R35, recorded where it renders rather than left for an

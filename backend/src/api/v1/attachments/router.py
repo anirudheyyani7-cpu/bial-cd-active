@@ -177,8 +177,8 @@ async def _store_attachment_bytes(
 ) -> dict[str, Any]:
     """Enforce the per-user quota and store the bytes owner-scoped; return the Express file-part
     ref. Idempotent on a repeated id (reuses the row + key). Raises `AppApiError(413)` on an
-    over-quota write (was a sentinel return). NOTE: the quota check-then-store has a
-    concurrent-overspend window (as in the daily gate) — hardening deferred.
+    over-quota write. NOTE: the quota check-then-store has a concurrent-overspend window (as in
+    the daily gate) — hardening deferred.
 
     `conversation_id` is stamped on the CREATE branch. On an idempotent re-upload it re-links
     only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
@@ -237,7 +237,7 @@ async def _store_attachment_bytes(
 
 def _decode_bounded(b64: Any) -> bytes:
     """Decode a base64 body and enforce the 4 MB decoded cap (shared by office/deck).
-    Raises `AppApiError` (was a sentinel return)."""
+    Raises `AppApiError`."""
     if not isinstance(b64, str) or not b64:
         raise AppApiError(400, "Invalid attachment: missing bytes.")
     try:

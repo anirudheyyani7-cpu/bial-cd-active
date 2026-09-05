@@ -9,11 +9,9 @@ import { Info, Lock, AlertCircle } from 'lucide-react'
 import { getStoredUser } from '../utils/auth'
 
 /**
- * U15 — the channel every tab shares to report back to the admin. `AppRegistryPanel`'s
+ * The channel every tab shares to report back to the admin. `AppRegistryPanel`'s
  * `act()` sends both a submission's approval confirmation AND its raw failure text down
- * this ONE callback: before this type existed, both rendered as the same white/blue-info
- * card, so an administrator could not tell — without reading the words — whether the
- * action they just took had worked. `'ok'` is the default so the other panels (which only
+ * this ONE callback. `'ok'` is the default so the other panels (which only
  * ever call `onToast` with a confirmation today) need no call-site change.
  */
 type ToastSeverity = 'ok' | 'problem'
@@ -32,8 +30,7 @@ const TABS = [
 /**
  * Admin Console — App Registry (approve/reject/disable/delete/audit, backed
  * by the real /api/admin/apps endpoints), per-user usage limits, and feedback.
- * The old mock app vocabulary (active/under_review/flagged/archived) and its
- * empty local state are gone; each tab is a self-contained, API-backed panel.
+ * Each tab is a self-contained, API-backed panel.
  */
 export default function AdminPage() {
   const navigate = useNavigate()

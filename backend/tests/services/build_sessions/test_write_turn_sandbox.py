@@ -479,7 +479,7 @@ async def test_a_different_project_never_steals_the_container(
 async def test_a_clean_incumbent_is_asked_about_and_reported_clean(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """INVERTED DELIBERATELY (R94, plan 006 U5). This used to assert the opposite — "only unsaved
+    """INVERTED DELIBERATELY (R94). This used to assert the opposite — "only unsaved
     work earns an interruption; with A saved there is nothing to lose, so the switch stays silent".
 
     That was true about the WORK and wrong about the person. Their other project stopped with no
@@ -702,7 +702,7 @@ async def test_a_plan_only_project_does_not_block_a_real_one(
     client seeds `bial: golden template baseline` at birth, so a pristine container has exactly
     one and a no-commits check would never fire.
 
-    WHAT R94 CHANGED HERE, AND WHAT IT DID NOT (plan 006, U5). The switch is no longer SILENT —
+    WHAT R94 CHANGED HERE, AND WHAT IT DID NOT. The switch is no longer SILENT —
     it raises, because the platform now asks every time. What `_nothing_to_lose` still decides is
     the thing it was written for: the COPY. Its arm reports `dirty=False`, so the dialog offers a
     clean stop with no Save button and no unsaved-work claim, instead of telling a citizen their
@@ -1087,7 +1087,7 @@ async def test_a_read_only_turn_on_an_empty_project_refuses_as_clean_not_as_buil
     raising `building` above it meant a user who had typed a single question into an untouched
     template was locked out of the project holding their real app.
 
-    R94 (plan 006, U5) makes the refusal unconditional, so the old assertion — "no refusal at all"
+    R94 makes the refusal unconditional, so the old assertion — "no refusal at all"
     — is inverted. The regression it guarded is NOT inverted with it, and this is the distinction
     worth holding on to: the failure was never that a dialog appeared, it was WHICH dialog. The
     building arm shows a hammer icon and two Stop buttons the server then refuses; the clean arm
@@ -1265,7 +1265,7 @@ async def _a_container_that_is_already_up(
 async def test_a_redis_blip_seeding_the_heartbeat_spares_the_attached_container(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ #90. The window between taking the handle and `scope.adopt()` holds exactly one await
+    """The window between taking the handle and `scope.adopt()` holds exactly one await
     — the heartbeat seed, deliberately unguarded — so a single `RedisError` there used to run
     compensation against a container this request had merely borrowed.
 
@@ -1642,7 +1642,7 @@ async def test_a_recovery_write_that_fails_outright_is_alarmed_not_swallowed_sil
     call site can see.
 
     The swallow stays: a safety net that can fail a turn is not a safety net. What changes is
-    that it is no longer SILENT. That silence is exactly what made the 2026-08-18 reframe
+    that it is no longer SILENT. That silence is exactly what made the earlier reframe
     unfalsifiable — nobody could say afterwards whether the platform had failed to CHECK the
     workspace or failed to make it DURABLE, because a write that never landed left no trace an
     operator would ever look for.
@@ -1673,7 +1673,7 @@ async def test_a_recovery_write_that_fails_outright_is_alarmed_not_swallowed_sil
 
 
 # --------------------------------------------------------------------------------------
-# R94 (plan 006, U5) — the asking is unconditional, and EXACTLY TWO EXITS WIDENED
+# R94 — the asking is unconditional, and EXACTLY TWO EXITS WIDENED
 # --------------------------------------------------------------------------------------
 #
 # The unit's own framing: "an implementer who reads 'always ask' as 'delete the silent path'

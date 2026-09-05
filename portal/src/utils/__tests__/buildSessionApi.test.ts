@@ -181,7 +181,7 @@ describe('buildSessionApi — CSRF discipline (C3 §3, KTD-2)', () => {
     await stop('s', {}, { fetchImpl: stopImpl })
     expect(headerOf(stopImpl, 'X-CSRF-Token')).toBe(CSRF)
 
-    // `acquireLock` / `releaseLock` are gone (U28) — `forceEnd` is the one lock op left.
+    // `acquireLock` / `releaseLock` are gone — `forceEnd` is the one lock op left.
     const cases: Array<[(id: string, deps: { fetchImpl: FetchImpl }) => Promise<unknown>, unknown]> = [
       [forceEnd, { sessionId: 's', status: 'ended' }],
     ]
@@ -215,9 +215,9 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
     expect(JSON.parse(optsOf(noReason).body as string)).toEqual({})
   })
 
-  // Re-anchored onto `forceEnd` (U28): `acquireLock` / `releaseLock`, which this assertion
-  // used to run against, are gone — nothing called them. `forceEnd` is the surviving bodyless
-  // lock POST, and the "lock ops take no request body" contract still holds for it.
+  // Re-anchored onto `forceEnd`: `acquireLock` / `releaseLock`, which this assertion used to
+  // run against, are gone — nothing called them. `forceEnd` is the surviving bodyless lock
+  // POST, and the "lock ops take no request body" contract still holds for it.
   it('lock ops take NO request body (C3 §3) — forceEnd sends neither body nor Content-Type', async () => {
     const impl = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await forceEnd('s', { fetchImpl: impl })
@@ -233,10 +233,8 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
     expect((err as ApiError).code).toBe('build_session_forbidden')
   })
 
-  // The `renew` 409 and `heartbeat` 404 tests lived here and are gone with their functions. Both
-  // proved a real contract, and both proved it about code no caller could reach: U13 deleted the
-  // keep-alive loop that was the only consumer, so the assertions had been describing an unused
-  // module surface ever since. The backend routes keep their own tests.
+  // `renew`'s 409 and `heartbeat`'s 404 are not tested here — the keep-alive loop that called
+  // them is gone. The backend routes keep their own tests.
 
   it('a malformed success body fails at the boundary rather than corrupting state downstream', async () => {
     const fetchImpl = jsonFetch(200, { status: 'ready' }) // no sessionId
@@ -264,7 +262,7 @@ describe('asReclaimBlocked (#83)', () => {
       projectName: 'Lost & Found',
       dirty: true,
       building: false,
-      // ABSENT READS AS FALSE (plan 002, U9). An older backend that does not send the field
+      // ABSENT READS AS FALSE. An older backend that does not send the field
       // cannot have an agent to report, and defaulting the other way would tell every citizen
       // their other project is busy.
       agentWorking: false,
@@ -431,7 +429,7 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
       seen.push(new URL(url, 'http://x').pathname)
       if (url.endsWith('/save')) return res(200, { appId: 'a-1', headSha: 'deadbeef' })
       if (url.endsWith('/release')) return res(200, { released: true })
-      // THREE NAMED STATES, never a boolean (plan 002, U9) — see `StopState`. The old wire said
+      // THREE NAMED STATES, never a boolean — see `StopState`. The old wire said
       // `{stopped: true}` unconditionally, which is exactly the confusion this replaced.
       return res(200, { state: stopState })
     })
@@ -540,7 +538,7 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
   })
 
   /**
-   * THE POLL'S OWN FAILURE MODES (review #38, review #74).
+   * THE POLL'S OWN FAILURE MODES.
    *
    * `awaitStopSettled` retries a read that failed and abandons one that hangs, and both are
    * documented as load-bearing for the dialog not hanging forever — but every fetch above
@@ -641,7 +639,7 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
   })
 
   it('★ at the ceiling it says the other app is still saving, not that anything failed', async () => {
-    // THE OWNER'S DECISION ON REVIEW #45, pinned as copy. The server's stop budget is now a little
+    // PINNED AS COPY. The server's stop budget is now a little
     // over eight minutes — its derivation covers the snapshot a build's unwind writes — while the
     // browser's wait deliberately stays at two, because nobody should be held in front of a modal
     // for eight. That makes arriving here ORDINARY rather than alarming: the likeliest cause is a
@@ -664,9 +662,9 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
     // AND IT IS THE TWO-MINUTE WAIT THAT PRODUCED IT — two assertions, because those are two
     // separate decisions and only one of them is this test's business to hold.
     //
-    // HOW LONG A CITIZEN IS HELD is the owner's decision, and the one worth a fixed number:
-    // raising the ceiling to the server's eight-minute budget is exactly the change that must not
-    // pass, and it fails here by name rather than through an arithmetic nobody would read.
+    // HOW LONG A CITIZEN IS HELD is fixed, and worth a hard number: raising the ceiling to the
+    // server's eight-minute budget is exactly the change that must not pass, and it fails here
+    // by name rather than through an arithmetic nobody would read.
     expect(STOP_CEILING_MS).toBe(2 * 60 * 1000)
     // HOW OFTEN IT ASKS is a decision about traffic, and it must be free to move without this
     // going red for a reason that has nothing to do with the citizen. So the count is derived

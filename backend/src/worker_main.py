@@ -27,9 +27,8 @@ Both CLI-based designs were tried on paper and both are broken:
    on cancellation, shuts down the co-resident receiver's connection pool.
 
 2. **`taskiq worker` cannot give a single-scheduler guarantee anyway.** Its worker-count argument
-   defaults to **2**, so the CLI forks two children, each firing `WORKER_STARTUP`. An earlier
-   plan draft relied on `minReplicas = maxReplicas = 1` for that guarantee; the replica pin says
-   nothing about child processes inside one replica.
+   defaults to **2**, so the CLI forks two children, each firing `WORKER_STARTUP`. A replica pin
+   of `minReplicas = maxReplicas = 1` says nothing about child processes inside one replica.
 
 Owning the entrypoint makes "exactly one scheduler" true BY CONSTRUCTION. One interpreter also
 halves the memory the container is sized against, and a fatal error exits the process so ACA

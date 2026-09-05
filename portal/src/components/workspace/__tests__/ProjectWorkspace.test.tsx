@@ -77,7 +77,7 @@ const EMPTY_PANE: PaneView = {
 /**
  * A chat, publishing its own address — the OTHER publisher on this channel.
  *
- * `pane` is the one thing the two KINDS differ on here (plan 002, U6): a build chat asks for the
+ * `pane` is the one thing the two KINDS differ on here: a build chat asks for the
  * app to be seen, a plan chat does not. Everything else about a conversation is the same on both.
  */
 function ChatSurface({ projectId = 'pA', pane = true }: { projectId?: string; pane?: boolean }) {
@@ -181,22 +181,20 @@ describe('R3 — loading a project address frames the running app, with no chat 
     // No frame, because there is nothing to frame. There is a sentence.
     expect(paneRegion()).toBeTruthy()
     expect(screen.getByTestId('app-pane-empty').textContent).toMatch(/describe what you want to build/i)
-    // ★ ONE AUTHOR FOR THE WORKSPACE SENTENCE (plan 002, U4). It was rendered twice — by the
-    // pane and by the rail's status card — and the rail's APP STATUS section is the publish
-    // panel the boards draw now. `getAllByText` would tolerate a second renderer; counting is
-    // what forbids one.
+    // ★ ONE AUTHOR FOR THE WORKSPACE SENTENCE. `getAllByText` would tolerate a second
+    // renderer; counting is what forbids one.
     expect(screen.queryAllByText(/describe what you want to build/i)).toHaveLength(1)
     expect(frame()).toBeNull()
     expect(frameWrapper()).toBeNull()
   })
 
   it('★ AE1 — a saved, not-running project offers the ONE start control, on the project screen', () => {
-    // THE INVERSION THIS WHOLE PLAN TURNS ON, asserted where a citizen would meet it: through the
-    // real shell, at a project address, with no conversation in the story.
+    // Asserted where a citizen would meet it: through the real shell, at a project address,
+    // with no conversation in the story.
     //
     // It cannot live in `ProjectPage.test.tsx`. That suite renders the page WITHOUT the shell, so
     // there is no pane in its tree at all and no assertion it can make would go red if the control
-    // disappeared — which is exactly the vacuous shape U9 exists to replace.
+    // disappeared.
     //
     // Mutation receipt: stop rendering `state.action` in `AppPane`'s no-frame arm and this goes red,
     // along with eight scenarios in `AppPane.test.tsx`.
@@ -312,9 +310,7 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
     // `invisible` — out of the tab order and out of the accessibility tree — so the control that
     // would restore it would be unreachable, and nothing short of a reload could undo the press.
     //
-    // It was in the PANE for exactly that reason, and plan 002's U2 moved it one step further out,
-    // to the row above both columns. The reachability property is unchanged and still asserted; the
-    // row is simply the one surface that survives a collapse AND the pane going away, so the
+    // The row is the one surface that survives a collapse AND the pane going away, so the
     // control has one home in every state rather than appearing and disappearing with the frame.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
@@ -353,13 +349,11 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
   })
 
   it('★ is reachable on a project with NOTHING BUILT, where there is no frame to hang it on', async () => {
-    // THE BUG THIS CAUGHT, found by this suite rather than by review. The toggle was first
-    // published into the pane's toolbar slot — the same place the conversation surface puts its
-    // chat-panel toggle. That toolbar is rendered by `LivePreview`, which only mounts once there is
-    // something to frame, so a project with nothing built had NO toggle at all; and a rail
-    // collapsed while an app was running would have lost its way back the moment the container
-    // stopped. Its home has to be a surface that always renders — the pane's own outer shell then,
-    // the toolbar row now.
+    // The toggle does not belong in the pane's toolbar slot — the same place the conversation
+    // surface puts its chat-panel toggle. That toolbar is rendered by `LivePreview`, which only
+    // mounts once there is something to frame, so a project with nothing built would have NO
+    // toggle at all; and a rail collapsed while an app was running would lose its way back the
+    // moment the container stopped. Its home has to be a surface that always renders.
     api.fetchPreviewState.mockResolvedValue(preview({ state: 'never_built', restorable: false }))
     render(<Workspace project={{ ...PROJECT, appId: null, hasRelaunchableSnapshot: false }} />)
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
@@ -406,7 +400,7 @@ describe('the channel is left as the next surface needs to find it', () => {
 })
 
 /**
- * WHAT THE SHELL DOES FOR A CHAT THAT WANTS NO PANE (plan 002, U6).
+ * WHAT THE SHELL DOES FOR A CHAT THAT WANTS NO PANE.
  *
  * The SURFACE half — that the panel fills the rail, that a plan chat centres its column, that the
  * board's footer line appears on one kind and not the other — is `ConversationSurface-panel.test.tsx`'s,
@@ -429,7 +423,7 @@ describe('a chat that declares no pane', () => {
     expect(rail().className).not.toMatch(/lg:w-\[520px\]/)
     expect(frameWrapper()).toBeTruthy()
     expect(frame()).toBe(original)
-    // AWAITED, because the app is taken off the screen rather than snatched off it (plan 002, U6):
+    // AWAITED, because the app is taken off the screen rather than snatched off it:
     // the column holds its size for one animation while the card slides out, and only then does
     // the hide treatment land. The frame identity above is the assertion that must hold throughout.
     await waitFor(() => expect(frameWrapper()?.className).toMatch(/invisible/))

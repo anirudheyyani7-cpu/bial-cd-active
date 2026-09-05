@@ -8,20 +8,6 @@ THE ONE RULE: each name appears exactly ONCE in the codebase. An alert cannot be
 a string that exists in two spellings, and the second spelling is invisible until the day it is
 the only one firing. Import the constant, never retype the literal — tests included. Reasons that
 distinguish one firing from another belong in structured fields, not in the event name.
-
-WHY THIS EXISTS — the day these names were written for.
-
-On 2026-08-18, in front of a client, "Build complete — your app is live below" sat above the
-untouched starter template for nine minutes. Every server-side signal was green: types compiled,
-the dev server announced itself ready, the root route answered 200. All three answer "is a Next
-app running here". Not one answers "is it THEIR app", and nothing asked.
-
-Underneath, the turn-end autosave was destroying what it existed to protect: gated on "a mutating
-tool ran" rather than "the tree changed", with an unconditional upload, so a container that
-reverted mid-turn had its empty tree stamped in as the newest copy on top of a good bundle. That
-failure was SWALLOWED, which is the half that made the day unarguable — nobody could say whether
-the platform had failed to CHECK the workspace or failed to make it DURABLE. The swallow stays; a
-safety net that can fail a turn is not a safety net. What changed is that it is no longer silent.
 """
 
 from typing import Final
@@ -58,7 +44,10 @@ than by three event names — one operational question, one event, filterable by
 * `diverted` — same refusal, and the bundle was preserved under `divert_key` instead, so the tree
   is recoverable by the operator promote procedure rather than thrown away.
 * `failed` — the bundle or the upload itself did not complete. This is the swallowed case, and it
-  is raised from the CALL SITE, which is the only place that knows the write raised.
+  is raised from the CALL SITE, which is the only place that knows the write raised. THE SWALLOW
+  STAYS — a safety net that can fail a turn is not a safety net — so this event is the whole of
+  the trace such a failure leaves, and without it nobody can tell a platform that failed to CHECK
+  the workspace from one that failed to make it DURABLE.
 
 Fields: `app_id`, `reason`, and — where the guard formed an opinion — `recorded_head` and
 `bundled_head`, which together say WHY a tree was refused.

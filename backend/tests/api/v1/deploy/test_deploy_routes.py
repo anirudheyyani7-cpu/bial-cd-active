@@ -405,7 +405,7 @@ async def test_the_terminal_classification_refusal_is_gone(wire, client, db_sess
     assert resp.status_code != 403
     assert resp.json().get("error", {}).get("code") != "classification_below_threshold"
     # It ROUTED (the review is clean but the citizen's own weighted Yes stands, R9), so
-    # the pipeline was correctly not started — the old refusal's one true assertion.
+    # the pipeline was correctly not started.
     assert resp.status_code == 200
     assert resp.json()["outcome"] == "routed_for_review"
     assert wire.service.started == []

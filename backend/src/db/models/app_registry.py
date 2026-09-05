@@ -107,9 +107,8 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
 
     __table_args__ = (
         # ONE app per project: a project IS one tool = one codebase, so the app is
-        # project-scoped, not conversation-scoped. This replaced the old `(user_id,
-        # conversation_id)` uniqueness — provision reuses the project's single app (the
-        # continuity case) rather than minting one per builder session.
+        # project-scoped, not conversation-scoped. Provision reuses the project's single app
+        # (the continuity case) rather than minting one per builder session.
         sa.UniqueConstraint("project_id", name="uq_app_registry_project"),
     )
 
@@ -128,9 +127,9 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
     # the IP-restricted network — so nothing may treat holding this key as authorisation.
     app_key: Mapped[str] = mapped_column(sa.String(64), unique=True, index=True, nullable=False)
 
-    # Head pointer to the LAST builder session that touched this app. Repurposed from the
-    # old 1:1 `id == conversation_id` app↔conversation identity: the app is project-scoped
-    # and many sessions build against it over its life, so this tracks the most recent one.
+    # Head pointer to the LAST builder session that touched this app. The app is
+    # project-scoped and many sessions build against it over its life, so this tracks the
+    # most recent one.
     # A plain indexed UUID with NO ForeignKey — a soft link, and deleting a conversation
     # does not clear it, so a reader must tolerate an id whose row is gone.
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True, nullable=True)

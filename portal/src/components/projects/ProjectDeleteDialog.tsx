@@ -10,7 +10,7 @@
  *      the cascade WITHOUT a number ("all of its chats") — it must never flash
  *      "all 0 chats" from a count that simply has not resolved yet.
  *   2. It asks WHY, in 5-50 words, and the confirm button stays disabled until that
- *      reason is inside the bounds (#158 §13.1/§13.2).
+ *      reason is inside the bounds.
  *
  *      IT NAMES WHO, BUT DOES NOT ASK. The deletion is recorded against an account, and the
  *      dialog says which one — but the server stamps that from the session and ignores
@@ -23,11 +23,10 @@
  *      meant it — and it taught people to copy-paste past the warning they were meant to be
  *      reading. The reason is a better gate for the same purpose AND it is meant to still be
  *      useful a month later: it is kept on a `deleted_projects` tombstone. NOTHING READS THAT
- *      TABLE YET as of this PR — the admin read surface is tracked separately (#176) — so
- *      the helper text says only what is true today (kept with the record) rather than
- *      promising a reader that does not exist. Round-4 review caught this docblock saying
- *      the stronger thing a paragraph away from the copy that had already been walked back;
- *      say the same true thing in both places.
+ *      TABLE YET — the admin read surface is tracked separately (#176) — so the helper text
+ *      says only what is true today (kept with the record) rather than promising a reader
+ *      that does not exist. Say the same true thing in both places: the docblock and the
+ *      helper text must never claim more than the table actually supports.
  *
  *      Once #176 lands, this reverts to the stronger claim — someone writing a
  *      private-feeling note deserves to know an administrator sees it — in both the
@@ -37,11 +36,11 @@
  *      (`utils/words.ts` <-> `src/core/words.py`). The client keeps the person inside the
  *      limit; the server refuses independently.
  *
- * BUILT ON THE VENDORED RADIX `Dialog` (§12), not a hand-rolled `fixed inset-0`. This is the
+ * BUILT ON THE VENDORED RADIX `Dialog`, not a hand-rolled `fixed inset-0`. This is the
  * dialog that put a REQUIRED FREE-TEXT FIELD inside a destructive confirmation, so keyboard
  * and screen-reader users have real work to do in here — and the hand-rolled shell announced
  * itself as nothing, trapped no focus and could not be dismissed with Escape. Radix gives
- * `role="dialog"`, `aria-modal`, the focus trap, Escape and scroll lock. §9's softened
+ * `role="dialog"`, `aria-modal`, the focus trap, Escape and scroll lock. The softened
  * overlay is passed as an override rather than lost.
  *
  * The dialog does not delete anything itself — the page owns the optimistic removal
@@ -161,7 +160,7 @@ export default function ProjectDeleteDialog({
     >
       <DialogContent
         hideClose
-        // §9's softened overlay, unchanged — the values, the `-webkit-` prefix, and the
+        // The softened overlay, unchanged — the values, the `-webkit-` prefix, and the
         // overlay ONLY. Passed as an override because the vendored default is `bg-black/80`.
         overlayClassName="bg-slate-900/15 backdrop-blur-[3px] [-webkit-backdrop-filter:blur(3px)]"
         className="font-manrope bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 gap-0 border-0"

@@ -159,7 +159,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
             // repeating it in weaker words is noise over the top of it.
             throw new SendRefusal('the workspace is held by another project', { silent: true })
           }
-          // NOTHING SAVED TO BRING BACK IS NOT A FAILED SEND (review #1). Asking for the workspace
+          // NOTHING SAVED TO BRING BACK IS NOT A FAILED SEND. Asking for the workspace
           // is how this surface poses the one-workspace question, but a project that has never been
           // built has nothing to restore: the server's snapshot gate answers 404 by design — there
           // is no blank-template arm — and the first message is the very thing that provisions one,
@@ -175,8 +175,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
           //
           // THE QUESTION IS STILL ASKED FIRST, which is why this is a mapping and not a skipped
           // preflight. The server refuses a held workspace ABOVE the snapshot gate, so a brand-new
-          // project's first message still meets the dialog before any address changes — and issue
-          // #161's own reproduction is a submit in a project with nothing built yet.
+          // project's first message still meets the dialog before any address changes.
           if (err instanceof ApiError && err.status === 404 && err.code === 'no_saved_build') {
             open()
             return

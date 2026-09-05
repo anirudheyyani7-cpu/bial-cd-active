@@ -1,5 +1,5 @@
 /**
- * The marketplace — every app anyone on the platform has published (#145).
+ * The marketplace — every app anyone on the platform has published.
  *
  * The point of this page is that it is NOT scoped to you. Someone with a real need can see
  * what already exists instead of describing it into the builder and rebuilding a tool that
@@ -94,7 +94,7 @@ function EntryCard({ entry }: { entry: MarketplaceEntry }): React.JSX.Element {
       <div className="flex flex-col gap-1">
         <h3 className="text-sm font-bold text-tertiary">{entry.name}</h3>
         {/* Authorship is the reason to trust the entry, and the person to ask about it.
-            Display name only — never the builder's email or directory id (#145). */}
+            Display name only — never the builder's email or directory id. */}
         {entry.builderDisplayName && (
           <p className="text-[11px] text-neutral">Built by {entry.builderDisplayName}</p>
         )}
@@ -103,7 +103,7 @@ function EntryCard({ entry }: { entry: MarketplaceEntry }): React.JSX.Element {
       {entry.description ? (
         <p className="text-xs text-neutral leading-relaxed">{entry.description}</p>
       ) : (
-        // Descriptions are not guaranteed (#145 does not generate them). Say so plainly
+        // Descriptions are not guaranteed. Say so plainly
         // rather than rendering an empty gap that reads as a broken card.
         <p className="text-xs text-neutral/60 italic">No description yet.</p>
       )}
@@ -332,11 +332,10 @@ export default function MarketplacePage(): React.JSX.Element {
         )}
 
         {/* The retry lives HERE, not on the pagination nav, and that is the whole point.
-            `reloadNonce` was previously only reachable through `goTo` — but on a failed
-            FIRST load `data` is still the EMPTY sentinel, so `showSizer`/`showPages` are
-            both false, the nav never mounts, and the reader is left with a bare banner and
-            no way forward short of reloading the browser (#147 round 3). Bound to `error`
-            alone, it is present in exactly the states that need it. */}
+            On a failed FIRST load `data` is still the EMPTY sentinel, so
+            `showSizer`/`showPages` are both false, the nav never mounts, and the reader is
+            left with a bare banner and no way forward short of reloading the browser. Bound
+            to `error` alone, it is present in exactly the states that need it. */}
         {error && (
           <div role="alert" className="flex flex-col items-start gap-2 text-sm text-danger">
             <p>{error.message}</p>
@@ -376,7 +375,7 @@ export default function MarketplacePage(): React.JSX.Element {
                 THE DISAGREEMENT BRANCH exists because "nothing has been published" is the
                 one thing we must not say when the count says otherwise: a reader who
                 believes it goes and rebuilds an app that already exists, which is the
-                feature's whole pitch inverted (#147 round 3 review). Two ways in, and only
+                feature's whole pitch inverted. Two ways in, and only
                 the first needs a race: `total` and the rows are separate reads under READ
                 COMMITTED, and — with no race at all — a page whose only entry fails
                 `toEntry` yields zero items while `total` is carried through untouched. */}

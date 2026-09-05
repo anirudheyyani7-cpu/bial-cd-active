@@ -1,16 +1,14 @@
-"""Router-level tests for the two Save endpoints (issue #77): #82 shipped
-`POST /projects/{project_id}/save` and `GET .../save-state` with no cross-user 404, no
-same-user happy path, and the mutating POST absent from `test_csrf.py`'s
-`_MUTATING_POSTS` table.
+"""Router-level tests for the two Save endpoints: `POST /projects/{project_id}/save`
+and `GET .../save-state`.
 
-NOT "zero HTTP-level tests", which is what this docstring claimed until a later review
-checked: `test_control.py`'s build-ordering test already drives `POST .../save` over HTTP
+THIS FILE IS NOT THE SOLE HTTP COVERAGE FOR `save`. `test_control.py`'s build-ordering
+test already drives `POST .../save` over HTTP
 through the REAL manager mid-build and asserts the 409 plus its message. That makes
 `test_save_while_a_build_is_running_is_409` below the WEAKER of the two — it monkeypatches
 the manager, so it can only prove the router maps `BuildSessionConflictError` to a 409, not
 that the manager ever raises it. Kept because that mapping is this file's subject and the
-router arm deserves a test that fails for one reason; recorded here so nobody reads this
-file as the sole HTTP coverage for `save` and drops the other one as redundant.
+router arm deserves a test that fails for one reason; recorded here so nobody drops the
+other one as redundant.
 
 `save_project_snapshot`'s own mechanics (git state, the dirty ladder, session-conflict
 detection) already have deep coverage in `tests/services/build_sessions/test_write_turn_sandbox.py`

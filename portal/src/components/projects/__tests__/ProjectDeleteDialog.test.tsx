@@ -45,11 +45,9 @@ afterEach(() => cleanup())
 
 describe('ProjectDeleteDialog — confirm gating', () => {
   it('arms confirm on a VALID REASON, not on retyping the name (#158 §13.1)', async () => {
-    // FLIPPED, not deleted (§16.2). This used to assert the confirm button stayed disabled
-    // until the project's name was retyped exactly — trailing space and wrong case both
-    // refused. That gate is gone: retyping a name proves you can read, not that you meant
-    // it, and it taught people to copy-paste straight past the warning. The reason is the
-    // new gate, and unlike the name it is still worth something a month later.
+    // A retyped name is not required: retyping proves you can read, not that you meant it,
+    // and it taught people to copy-paste straight past the warning. The reason is the gate
+    // instead, and unlike a name it is still worth something a month later.
     h.listProjectConversations.mockResolvedValue([{}, {}])
     const onConfirm = vi.fn()
     render(<ProjectDeleteDialog project={project} onClose={() => {}} onConfirm={onConfirm} />)
@@ -79,9 +77,9 @@ describe('ProjectDeleteDialog — confirm gating', () => {
   })
 
   it('NAMES the account without asking for it, and cannot be edited', async () => {
-    // The field was briefly a required text input. A name this dialog can set is a name
-    // that can disagree with the account that acted, and that is the one question the
-    // stored name exists to answer — so it is shown, never collected.
+    // A name this dialog can set is a name that can disagree with the account that acted,
+    // and that is the one question the stored name exists to answer — so it is shown,
+    // never collected.
     h.listProjectConversations.mockResolvedValue([])
     render(<ProjectDeleteDialog project={project} onClose={() => {}} onConfirm={vi.fn()} />)
 
@@ -121,10 +119,10 @@ describe('ProjectDeleteDialog — confirm gating', () => {
   })
 
   it('says what happens to the reason, and does not overpromise who reads it', async () => {
-    // It used to say "An administrator can see this." Nothing reads `deleted_projects` — no
-    // route, no schema, no screen — so that was a promise to a user rather than an internal
-    // TODO. The copy now states what the platform actually does; the read surface is tracked
-    // separately, and this test is what stops the old claim coming back before it lands.
+    // Claiming "An administrator can see this" would be a promise to a user rather than an
+    // internal TODO — nothing reads `deleted_projects`: no route, no schema, no screen. The
+    // copy states what the platform actually does; the read surface is tracked separately,
+    // and this test is what stops that claim from coming back before it lands.
     h.listProjectConversations.mockResolvedValue([])
     render(<ProjectDeleteDialog project={project} onClose={() => {}} onConfirm={vi.fn()} />)
 
@@ -158,9 +156,9 @@ describe('ProjectDeleteDialog — confirm gating', () => {
   })
 
   it('is a real modal: labelled, and dismissable with Escape', async () => {
-    // WHAT MOVING ONTO THE VENDORED DIALOG BOUGHT (§12). The hand-rolled `fixed inset-0`
-    // announced itself as nothing and could not be closed from the keyboard — in the one
-    // dialog that asks for a required free-text answer before a destructive action.
+    // The hand-rolled `fixed inset-0` announced itself as nothing and could not be closed
+    // from the keyboard — in the one dialog that asks for a required free-text answer
+    // before a destructive action.
     h.listProjectConversations.mockResolvedValue([])
     const onClose = vi.fn()
     render(<ProjectDeleteDialog project={project} onClose={onClose} onConfirm={vi.fn()} />)
@@ -222,9 +220,9 @@ describe('ProjectDeleteDialog — the irreversible warning', () => {
   const WARNING = /the database and files behind the app are destroyed permanently/i
 
   it('warns about the database on the zero-chat branch, which names nothing else', async () => {
-    // The branch that matters most and used to say the least. A project owns its own
-    // database from creation — before an app, before a single chat — so a project with no
-    // chats can still be holding everything the tool has ever stored.
+    // The branch that matters most. A project owns its own database from creation —
+    // before an app, before a single chat — so a project with no chats can still be
+    // holding everything the tool has ever stored.
     h.listProjectConversations.mockResolvedValue([])
     render(<ProjectDeleteDialog project={project} onClose={vi.fn()} onConfirm={vi.fn()} />)
     expect(await screen.findByText(/This deletes the project and its app\./i)).toBeTruthy()

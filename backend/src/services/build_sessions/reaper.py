@@ -27,9 +27,9 @@ WHAT THE SWEEP STRUCTURALLY CANNOT SEE. It enumerates from Redis
 (`_scan_the_registry_namespace`), so it only ever reaches a container it already has a record of.
 A sandbox whose registry entry is gone
 — a flushed or replaced Redis, a container older than the registry, a teardown that failed after
-`delete_registry` — is invisible here FOREVER and bills until a human notices; one did, for
-twelve days. The Azure-side view that closes that gap is `inventory.take_sandbox_inventory`,
-surfaced at `POST /v1/admin/apps/reconcile-sandboxes`, and it REPORTS rather than deletes.
+`delete_registry` — is invisible here FOREVER and bills until a human notices. The Azure-side
+view that closes that gap is `inventory.take_sandbox_inventory`, surfaced at
+`POST /v1/admin/apps/reconcile-sandboxes`, and it REPORTS rather than deletes.
 
 Reaper ordering for one stale user (C5): mark-ending → teardown → clear registry →
 release lock (LAST). The reaper reclaims a possibly-drifted lock via the value-guarded
@@ -42,7 +42,7 @@ replica A is actively building in — and it bit precisely in the quiet stretche
 was written for, because the only other liveness signal here
 (`lock_is_held AND heartbeat_is_alive`) lapses at the heartbeat TTL between renews.
 
-**U12 (R10) closes that for the SWEEP.** The turn engine now renews a wall-clock liveness
+**THE R10 LEASE CLOSES THAT FOR THE SWEEP.** The turn engine renews a wall-clock liveness
 lease (C5 family 4) for the duration of every turn, and `reconcile_user` reads it before the
 lock/heartbeat pair — so a build in flight is legible to a sweep running anywhere, and
 `live_users` degrades from load-bearing to a fast in-process shortcut.
@@ -52,8 +52,8 @@ is "this is the only replica", and no second process can make it. So a worker ma
 `sweep_all` and may never pass `certified_dead=True` (pinned by
 `tests/services/build_sessions/test_reaper.py::test_no_worker_module_may_certify_death`).
 Raising the replica count is likewise still a deploy-time question, not a runtime guard — a
-process cannot detect its siblings, which is why the origin's Scope Boundaries reject a
-startup assertion — and the per-replica rate-limit store is the other blocker.
+process cannot detect its siblings — and the per-replica rate-limit store is the other
+blocker.
 """
 
 from __future__ import annotations
@@ -169,10 +169,11 @@ class _Reachable:
     """The container we are judging: attached, and whatever it said about itself.
 
     THE HANDLE IS CARRIED RATHER THAN RE-DERIVED, and that is the whole reason this is a record
-    and not a bare sha. U5 writes a recovery copy out of the very container whose `HEAD` the gate
-    just compared, and attaching a second time to do it would re-read the registry — the one input
-    on this path that changes underneath us. A builder starting a fresh sandbox between the two
-    reads would have the copy bundle a DIFFERENT container's tree into this app's recovery slot:
+    and not a bare sha. The copy step writes a recovery copy out of the very container whose
+    `HEAD` the gate just compared, and attaching a second time to do it would re-read the
+    registry — the one input on this path that changes underneath us. A builder starting a
+    fresh sandbox between the two reads would have the copy bundle a DIFFERENT container's
+    tree into this app's recovery slot:
     the exact loss the gate exists to prevent, performed by the code added to prevent it.
 
     `head` is `None` when the attach SUCCEEDED but the state probe did not answer. That is not the
@@ -199,10 +200,10 @@ async def _reach_the_container(
     THE DURABLE-COPY GATE IS ONLY A GATE IF THIS RUNS. `confirm_durable_copy` reads a `None` head
     as "the container could not be reached, so a present and parseable recovery copy stands in" —
     a deliberate fallback, because an orphan that is already dead can never answer and a gate
-    nothing can satisfy collects nothing. Passing `None` UNCONDITIONALLY, which this call site
-    used to do, turned that fallback into the only reachable branch: the `stamped == container_
-    head` comparison and the whole `STALE` verdict became dead code, so a container holding a
-    turn's worth of work newer than its last autosave read as "provably preserved" and died.
+    nothing can satisfy collects nothing. Passing `None` UNCONDITIONALLY turns that fallback into
+    the only reachable branch: the `stamped == container_head` comparison and the whole `STALE`
+    verdict become dead code, and a container holding a turn's worth of work newer than its last
+    autosave reads as "provably preserved" and dies.
 
     ATTACH, THEN ASK THE SAME LADDER THE SAVE INDICATOR ASKS. `attach_existing` is the one path
     that recovers the supervisor bearer (its durable home is the container's own ACA env, not this
@@ -210,8 +211,8 @@ async def _reach_the_container(
     reaper must not hold a second opinion about what HEAD means.
 
     A FAILED ATTACH IS `None`, and that is honest rather than permissive: the branch it feeds
-    still demands a parseable recovery bundle before anything is destroyed, and U5 refuses to take
-    a copy it has nowhere to take one from."""
+    still demands a parseable recovery bundle before anything is destroyed, and the copy step
+    refuses to take a copy it has nowhere to take one from."""
     try:
         handle = await sandbox_client.attach_existing(str(user_uuid))
     except SandboxError:
@@ -246,26 +247,23 @@ async def _take_the_copy_we_promised(
     fifteen minutes and looked, to anyone reading it, like the guard working correctly. ASM30
     found the platform in exactly that state.
 
-    THE COPY GOES THROUGH U3'S GUARDED WRITE, never a raw `put`: `write_recovery_copy` promotes a
+    THE COPY GOES THROUGH THE GUARDED WRITE, never a raw `put`: `write_recovery_copy` promotes a
     tree only when it is a descendant of the copy already on record, and diverts anything else to a
     per-occurrence key.
 
-    THAT ALONE WAS NOT ENOUGH, and an adversarial review proved it. The guard cannot run when
-    there is nothing comparable on record — an empty slot, or a bundle written before the head
-    stamp existed — and a reverted container has exactly that shape on exactly the population this
-    unit exists for. So the first version of this fix became the thing it was written to prevent:
-    the reverted tree was written in unguarded, this function read the WRITTEN as proof, and the
-    container holding the only real copy was deleted in the same call. A write with no comparison
-    behind it is now kept but does NOT authorise the destroy (`UNGUARDED`, below).
+    THAT ALONE IS NOT ENOUGH. The guard cannot run when there is nothing comparable on record —
+    an empty slot, or a bundle written before the head stamp existed — and a reverted container
+    has exactly that shape. A write with no comparison behind it is kept but does NOT authorise
+    the destroy (`UNGUARDED`, below).
 
     EVERY ARM THAT DOES NOT ESTABLISH A COPY SPARES, and every arm writes a record. The sparing is
     the pre-existing behaviour and is not up for negotiation on a destroy path; the record is what
     stops a permanently-spared container from being silent, which is the half of ASM30 that made
     the leak invisible rather than merely expensive."""
-    # IMPORTED HERE, NOT AT MODULE SCOPE, and for ONE accurate reason rather than two. There is
+    # IMPORTED HERE, NOT AT MODULE SCOPE, and the reason is weight rather than a cycle. There is
     # no import cycle — `src.workers.reclamation` imports the reaper function-scoped, so nothing
-    # closes a loop at module-import time, and an earlier version of this comment claimed
-    # otherwise. What is true is the weight: `pass_history` reaches `src.db.base`, which BUILDS
+    # closes a loop at module-import time. The weight is real: `pass_history` reaches
+    # `src.db.base`, which BUILDS
     # THE ORM ENGINE at import, so a module-level bind puts that (and `src.broker`, by way of
     # `src.workers.reclamation`) behind every import of the reaper — including the cold one
     # `test_the_reaper_imports_without_the_fastapi_app` performs.
@@ -293,8 +291,8 @@ async def _take_the_copy_we_promised(
         # container. `attach_existing` builds its handle from the record, so a builder who started
         # a fresh sandbox between the record read and the attach hands us their live container.
         # Bundling that tree into this app's recovery slot would overwrite one app's only copy
-        # with another app's work; U3's guard would probably divert it, but "probably caught one
-        # layer down" is not a reason to hand it the wrong tree.
+        # with another app's work; the guarded write would probably divert it, but "probably
+        # caught one layer down" is not a reason to hand it the wrong tree.
         _log.warning(
             "no copy taken: nothing to copy from, so this container is spared again",
             app_id=str(app_id),
@@ -324,8 +322,8 @@ async def _take_the_copy_we_promised(
         await record_durable_copy_attempt(CopyAttempt.FAILED)
         return False
     if written.outcome is RecoveryOutcome.DIVERTED:
-        # U3 refused to promote this tree and preserved it under `divert_key` instead. It has
-        # already raised the pinned "recovery write did not land" alarm with the two shas that
+        # The guarded write refused to promote this tree and preserved it under `divert_key`. It
+        # has already raised the pinned "recovery write did not land" alarm with the two shas that
         # explain why, so nothing is re-alarmed here — the container is simply spared, which is
         # the only answer available when the tree in hand cannot be shown to contain the work.
         await record_durable_copy_attempt(CopyAttempt.REFUSED)
@@ -335,12 +333,11 @@ async def _take_the_copy_we_promised(
         # `write_recovery_copy` took its first-write arm — which is right at a turn boundary,
         # where the container is alive and the tree is the citizen's, and wrong here.
         #
-        # A REVERTED CONTAINER HAS EXACTLY THIS SHAPE. An app whose every autosave failed — the
-        # ASM30 population this unit exists for — has an empty recovery slot, so a reverted
-        # container's empty tree becomes the first copy on record, `recoverable_work` ranks it
-        # newest by `last_modified`, and the citizen's next build is restored from the template
-        # over their saved app. Then this function would return True and delete the container
-        # holding the only real tree. An adversarial review reproduced exactly that.
+        # A REVERTED CONTAINER HAS EXACTLY THIS SHAPE. An app whose every autosave failed has an
+        # empty recovery slot, so a reverted container's empty tree becomes the first copy on
+        # record, `recoverable_work` ranks it newest by `last_modified`, and the citizen's next
+        # build is restored from the template over their saved app. Then this function would
+        # return True and delete the container holding the only real tree.
         #
         # So: keep the copy (it is strictly better than nothing), and spare. A later pass with a
         # comparable copy on record can destroy it properly.
@@ -384,15 +381,14 @@ async def reap_user(
     sandbox` frees the slot so another project can take it; if the container is still
     standing, the very next thing the client does is walk back into the reclaim refusal it
     was just told had been resolved. `strict=True` re-raises so that caller can answer 503
-    instead of reporting a release that did not happen (#83 review, blocker 2).
+    instead of reporting a release that did not happen.
 
     Either way the lock and registry are KEPT on failure so a later sweep retries — the
     strict arm changes who is told, never what is left behind.
 
-    THE DURABLE-COPY GATE (U14, R9/R11). `app_id` opts this call into it. Until U14 this function
-    called `teardown` with no such check at all — the F1 path, which does almost all of the
-    deleting, was the one path with none of the protection — so the gate had to be added HERE and
-    not only on the orphan path. It is optional rather than required for one reason: the two
+    THE DURABLE-COPY GATE (R9/R11). `app_id` opts this call into it, and the F1 path — which does
+    almost all of the deleting — is gated HERE rather than only on the orphan path. It is
+    optional rather than required for one reason: the two
     in-repo callers that reap a user's OWN stale state (reconcile-on-start, and the sweep) run
     where the builder is about to get a fresh container anyway, and a `None` keeps their behaviour
     byte-identical while the scheduled janitor — the process with no human watching it — passes
@@ -430,9 +426,8 @@ async def reap_user(
             container_head=reached.head if reached else None,
             container_dirty=reached.uncommitted if reached else None,
         )
-        # AND THEN TAKE THE COPY (U5, ADR-0029 §7), rather than sparing on the strength of the
-        # verdict alone. This branch used to end here with a log line, so a container whose
-        # autosave had failed was spared on this pass and on every pass after it.
+        # AND THEN TAKE THE COPY (ADR-0029 §7), rather than sparing on the strength of the
+        # verdict alone.
         if not await _take_the_copy_we_promised(
             sandbox_client,
             app_id=app_id,
@@ -507,7 +502,7 @@ async def reap_the_container_we_judged(
     # The container is only reachable THROUGH the registry — `attach_existing` builds its handle
     # from that record — so a container the store no longer claims can be judged on its recovery
     # copy alone. That is the gate's documented fallback, and it still demands a parseable bundle.
-    # It is also why U5 cannot take a copy for an unregistered orphan: there is no address to
+    # It is also why no copy can be taken for an unregistered orphan: there is no address to
     # bundle from, and the address we DO have belongs to somebody else's container.
     reached = await _reach_the_container(sandbox_client, user_uuid) if ours else None
     verdict = await confirm_durable_copy(
@@ -515,8 +510,7 @@ async def reap_the_container_we_judged(
         container_head=reached.head if reached else None,
         container_dirty=reached.uncommitted if reached else None,
     )
-    # AND THEN TAKE THE COPY (U5, ADR-0029 §7). The janitor is the caller with nobody watching it,
-    # so it is the one that was quietly sparing the same containers pass after pass.
+    # AND THEN TAKE THE COPY (ADR-0029 §7). The janitor is the caller with nobody watching it.
     if not await _take_the_copy_we_promised(
         sandbox_client,
         app_id=app_id,
@@ -574,8 +568,8 @@ async def reconcile_user(
     `honor_stay` is the ASYMMETRY between this function's two callers, and it is
     deliberate — do NOT "simplify" it to one behaviour:
 
-    * `sweep_all` (background timer) passes `honor_stay=True`. A relaunched preview (#43)
-      — and, identically, a COMPLETED build's pardoned preview (#13/R2) — holds no lock
+    * `sweep_all` (background timer) passes `honor_stay=True`. A relaunched preview
+      — and, identically, a COMPLETED build's pardoned preview (R2) — holds no lock
       and renews no heartbeat, so it trips the guard above the instant its heartbeat
       lapses; its bounded stay of execution is the ONLY thing standing between a preview
       the user is actively viewing and the sweep. Honoring it there is the entire point
@@ -599,7 +593,7 @@ async def reconcile_user(
       delete clears a lease left where there is no longer a registry to reap, and the
       read-guard survives a delete that a racing renewal immediately undoes.
 
-    `certified_dead` (#10/R3 — the 409 reap-through) is the second caller asymmetry:
+    `certified_dead` (R3 — the 409 reap-through) is the second caller asymmetry:
 
     * The sweep keeps the default `False`, so `lock_is_held AND heartbeat_is_alive` still
       shields what it was built to shield — an in-flight start's pre-adopt window (the
@@ -617,12 +611,12 @@ async def reconcile_user(
       `test_no_worker_module_may_certify_death` pins that no module under `src/workers/`
       spells it. Without the flag at all, a process that
       died mid-build left a lock+heartbeat lingering up to the heartbeat TTL, and every
-      start in that window 409ed on a build that no longer existed (walkthrough #10).
+      start in that window 409ed on a build that no longer existed.
       A genuinely live build still 409s — it is caught by the `_active_by_user` check
       BEFORE this function is ever reached, never by the Redis facade.
 
     `app_ids_by_name` is the THIRD caller asymmetry, and it is what puts the scheduled sweep
-    under the U14 durable-copy gate. `reap_user`'s gate is opt-in via `app_id`, so a caller that
+    under the durable-copy gate. `reap_user`'s gate is opt-in via `app_id`, so a caller that
     resolves no id reaps ungated — correct for reconcile-on-start, where a builder is standing
     right there about to be handed a fresh container, and wrong for a timer in another process
     with nobody watching. The worker passes the map (app name → owning app id, forward-matched
@@ -683,7 +677,7 @@ def _owning_app_id(
     record naming a container with no app row describes an app that no longer exists, so there is
     no recovery slot to compare against: the gate would return UNCONFIRMED forever and the
     container would be spared until it was deleted by hand, which is the leak this system exists
-    to close. Reaping it is the same behaviour every caller had before the gate existed."""
+    to close."""
     if app_ids_by_name is None:
         return None
     app_id = app_ids_by_name.get(reg.get(REGISTRY_FIELD_APP_NAME, ""))
@@ -722,7 +716,7 @@ async def sweep_all(
     `certified_dead=False` — a sweep holds none of the three facts that certification rests
     on, and the third of them (single replica) is exactly what a worker removes.
 
-    Passes `honor_stay=True`: a relaunched preview (#43) inside its bounded stay of
+    Passes `honor_stay=True`: a relaunched preview inside its bounded stay of
     execution is spared here, because a timer has no reason to kill a container the user
     is still looking at. Reconcile-on-start passes the opposite (see `reconcile_user`) —
     that build needs the slot, and sparing the preview there would orphan its container.
@@ -745,10 +739,10 @@ async def sweep_all(
         if user_uuid is None or user_uuid in live or user_uuid in seen:
             continue
         seen.add(user_uuid)
-        # ONE USER'S FAILURE IS ONE USER'S FAILURE. This loop used to be unguarded, so the
-        # first exception ended the whole cycle and every user later in SCAN order went
-        # unreconciled — silently, because SCAN order is not stable enough for anyone to
-        # notice the same victims twice. The reachable case is an ARM throttle: `reap_user`
+        # ONE USER'S FAILURE IS ONE USER'S FAILURE. Unguarded, the first exception would end
+        # the whole cycle and every user later in SCAN order would go unreconciled — silently,
+        # because SCAN order is not stable enough for anyone to notice the same victims twice.
+        # The reachable case is an ARM throttle: `reap_user`
         # deletes through a blocking ARM poller, and a sweep with real work to do issues
         # enough calls to earn a 429. Cancellation still propagates — a shutdown must stop
         # the sweep, not be logged and swallowed per user.

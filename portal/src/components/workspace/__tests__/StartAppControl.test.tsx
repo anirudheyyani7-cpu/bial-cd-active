@@ -1,13 +1,13 @@
 /**
- * THE ONE CONTROL THAT STARTS THE APP (Plan F, U3).
+ * THE ONE CONTROL THAT STARTS THE APP.
  *
  * ═══ WHAT A TEST IN THIS FILE CAN HONESTLY PROVE ═══
  *
  * That this component makes one request, discriminates the refusals correctly, and never names a
  * destructive verb. It CANNOT prove the endpoint is non-destructive — the component was never the
  * thing that could have destroyed a container. That proof is server-side, against L3's confirmation
- * triple, in `backend/tests/api/v1/build_sessions/test_preview_state.py`, and this plan added the
- * guard it was missing on the exact arm this button enters.
+ * triple, in `backend/tests/api/v1/build_sessions/test_preview_state.py`, on the exact arm this
+ * button enters.
  *
  * So there is deliberately NO test here shaped "no stop, release or restore call was made". It
  * would pass in the very state that loses work, and its greenness would be mistaken for evidence.
@@ -262,8 +262,8 @@ describe('★ the URL a successful start produced reaches the surface that frame
   it('hands the preview URL back before it reports the outcome', async () => {
     // WITHOUT THIS THE CONTROL DID NOTHING VISIBLE INSIDE A BUILD CHAT. That surface feeds the
     // address resolver's project-scoped arm with `null` — its own poll only runs over an ALREADY
-    // framed URL, by design — and its `relaunchedUrl` arm was fed by a Relaunch button this plan
-    // retired. So a fresh start had no arm left to populate: the app came up in a container
+    // framed URL, by design — and its `relaunchedUrl` arm was fed by a Relaunch button retired.
+    // So a fresh start had no arm left to populate: the app came up in a container
     // nothing framed, and the citizen saw a sentence where their app should have been.
     const report = reportSpy()
     api.relaunchPreview.mockResolvedValue({

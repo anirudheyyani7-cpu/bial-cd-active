@@ -20,12 +20,10 @@
  * decision somewhere it does not belong.
  *
  * THIS IS THE SINGLE FRONTEND SOURCE of what a kind is CALLED and what it DOES (R73). Its readers
- * are the toolbar row's kind pill and the rail composer's kind picker — the project page's chat
- * list was the original one and it is gone (plan 002, U3: nothing points back to a past chat).
- * Said plainly rather than as an aspiration, because one surface still spells the words itself:
- * the help page's prose, a named deferral rather than an oversight — the copy rides a later
- * release. When it does catch up, it should read the `description` this module already carries
- * rather than restating it.
+ * are the toolbar row's kind pill and the rail composer's kind picker. Said plainly rather than
+ * as an aspiration, because one surface still spells the words itself: the help page's prose, a
+ * named deferral rather than an oversight — the copy rides a later release. When it does catch
+ * up, it should read the `description` this module already carries rather than restating it.
  *
  * `kind` arrives as a plain `string` (`conversationApi` types it that way, and `ProjectPage`'s
  * `narrowChat` legitimately coerces a malformed row's kind to `''`), so the lookup is keyed on a

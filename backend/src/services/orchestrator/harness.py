@@ -113,8 +113,8 @@ class BuildSpec:
     instruction and the app being built. Keeps `run_build` frozen at 4 params and BRAIN free of a
     direct read of SESSION-API's build-session table."""
 
-    # R3 — MULTIMODAL: a bare `str` when the turn carried no attachments (byte-identical to the
-    # pre-R3 path), or `[*attachment_content, prompt_text]` when it did — each attachment first
+    # R3 — MULTIMODAL: a bare `str` when the turn carried no attachments, or
+    # `[*attachment_content, prompt_text]` when it did — each attachment first
     # as fenced text (office/csv) or `BinaryContent` (image/PDF vision), the instruction LAST.
     # That order is Anthropic's documented vision ordering (text after files), and it is what
     # both assemblers actually emit: `_live_session_spec` server-side, `attachmentStore.js`
@@ -401,7 +401,7 @@ class BuildOrchestrator:
             # outcome with no tsc/crash diagnostic means the dev server never became ready within
             # the poll budget — synthesize a server error so neither the repair prompt nor a
             # budget-exhausted escalation is ever left diagnostic-free. `error is None` does NOT
-            # imply green (open-Q F): only `CONTINUE_PROMPT` below may run on a truly green build.
+            # imply green: only `CONTINUE_PROMPT` below may run on a truly green build.
             # `verify` names its own defects now — every UNHEALTHY arm carries a diagnostic — so
             # what is left for this line is the INDETERMINATE verdict that outlasted `verify`'s
             # own patience, plus the belt against a red arm that somehow says nothing.
@@ -409,8 +409,7 @@ class BuildOrchestrator:
             # AND AT THAT POINT THE DIAGNOSIS IS HONEST, which is the whole reason INDETERMINATE
             # does not need a message class of its own. `verify` has by now spent its full
             # readiness budget three times over; "the dev server did not report ready" has stopped
-            # being our impatience and started being a fact about the app. What U6 removed is the
-            # repair run spent on the FIRST timeout, and it removed it inside `verify`.
+            # being our impatience and started being a fact about the app.
             # UNANSWERABLE IS NOT A DEFECT — the same rule as the live loop, in the loop
             # `selfheal` exists to keep honest as well. `verify` returns INDETERMINATE with no
             # error by construction, so a `not outcome.green` test here would fabricate a

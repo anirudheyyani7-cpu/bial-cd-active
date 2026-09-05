@@ -1,22 +1,15 @@
 /**
  * `/projects/:projectId` — the project screen IS the app now.
  *
- * ═══ THE PHASE-1 DECISION THIS REVERSES, AND WHY THE REVERSAL IS NOT A REGRESSION ═══
+ * ═══ WHAT THIS SCREEN SHOWS, AND WHAT IT NEVER STARTS ═══
  *
- * This page's previous docblock recorded a removal: "the passive 'View app' preview is HIDDEN in
- * Phase-1: a stored app is not a running sandbox". That decision was RIGHT ABOUT WHAT IT REMOVED.
- * What it took away was a passive view of stored code, plus a lifecycle badge and a reroute into a
- * chat — three things that told a citizen about an artefact rather than showing them their app.
+ * It shows the RUNNING SANDBOX, in a pane beside the rail, behind one control the person presses
+ * deliberately. Nothing starts a container because a screen was opened (R3): the pane reads a cheap
+ * state endpoint that makes no container call, and the only thing that starts anything is a press.
+ * There is no passive view of stored code, no lifecycle badge and no reroute into a chat, and the
+ * suite beside this file keeps asserting their absence.
  *
- * What arrives here is not that. It is the RUNNING SANDBOX, in a pane beside the rail, behind one
- * control the person presses deliberately. Nothing starts a container because a screen was opened
- * (R3): the pane reads a cheap state endpoint that makes no container call, and the only thing that
- * starts anything is a press. So the argument the removal rested on is answered rather than
- * overruled — a stored app is still not a running sandbox, and this screen no longer shows one a
- * stored app. The three things it removed stay removed, and the suite beside this file keeps
- * asserting their absence.
- *
- * ═══ WHAT THIS FILE OWNS AFTER THE SPLIT ═══
+ * ═══ WHAT THIS FILE OWNS ═══
  *
  * The route, the data, and the beacon. Everything visual moved down: `ProjectWorkspace` is the
  * project-scoped publisher on the workspace channel, and `WorkspaceRail` is what the rail renders.
@@ -64,7 +57,7 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  // WHAT THE TOOLBAR ROW NAMES, PUBLISHED FROM THE ROUTE (plan 002, U2) — above the early returns
+  // WHAT THE TOOLBAR ROW NAMES, PUBLISHED FROM THE ROUTE — above the early returns
   // below, for the same reason the project declaration is above them. The loading and load-error
   // branches are still this project's screen, and the row draws its back control and holds its own
   // height on both, rather than appearing once the fetch lands. `chatTitle`/`chatKind` are `null`
@@ -115,13 +108,13 @@ export default function ProjectPage() {
     }
   }, [projectId, goToProjects])
 
-  /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE GONE (plan 002, U3). They existed for
+  /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE DELIBERATELY ABSENT. They existed for
      one renderer, the rail's "Conversations · this project" list, which the client asked not to
-     have — and the ruling of 2026-09-02 is that nothing points back to a chat, running or
-     finished. Removing the list removed the only route back to an existing chat AND the only way
-     to delete one; both are the owner's decision, taken knowingly. Chats, their plans and their
-     uploaded files stay in the database. Said here as well as in the rail because this is where
-     the reads used to be, and an absent fetch explains itself to nobody. */
+     have — nothing points back to a chat, running or finished. Removing the list removed the only
+     route back to an existing chat AND the only way to delete one; both are the owner's decision,
+     taken knowingly. Chats, their plans and their uploaded files stay in the database. Said here
+     as well as in the rail because this is where the reads would be, and an absent fetch explains
+     itself to nobody. */
 
   if (loading) {
     return (

@@ -928,7 +928,7 @@ async def test_mark_deployed_refuses_a_self_publish_app(client, db_session) -> N
 
 
 async def test_historical_runbook_address_survives_the_lineage_change(client, db_session) -> None:
-    # The plan's edge case: an app runbook-deployed in its past life, later approved
+    # The edge case: an app runbook-deployed in its past life, later approved
     # through the review lineage. The recorded address (and its timestamp) stay
     # visible — the administrator sees both of the app's addresses, the older one
     # labelled by the SPA — while the runbook PROMPT stops: no deploy-needed flag

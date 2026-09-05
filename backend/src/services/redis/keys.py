@@ -69,8 +69,7 @@ def _environment() -> str:
     Delegated to `src.core.runtime_env`, which is a leaf with no module-scope imports: `src.config`
     reaches `src.settings.api`, which imports `src.services.redis.config` — which imports
     THIS package — so asking `src.config` directly at module level would close the cycle and make
-    `src.config` unimportable. That workaround used to be written out here AND in
-    `sandbox/base.py`, twice, in full.
+    `src.config` unimportable.
 
     Kept as its own named function rather than calling the accessor at each site: what this scopes
     is coordination state, which is a different question from which control plane may judge a
@@ -194,8 +193,7 @@ REGISTRY_FIELD_PREVIEW_STAY_UNTIL: Final = "preview_stay_until"
 # WHICH NAMED WRITER last moved the stay above (U13, R13). Provenance, not control flow:
 # nothing branches on it, and it exists so an operator staring at a container that refuses
 # to lapse can answer "what is holding this open?" without guessing. A deadline with no
-# attributable author is the state R13 exists to remove — the origin incident's containers
-# were held open by a writer nobody could name.
+# attributable author is the state R13 exists to remove.
 REGISTRY_FIELD_STAY_WRITER: Final = "stay_writer"
 
 # THIS PROCESS ADOPTED THIS RECORD FROM THE LEGACY PREFIX (R22 dual-read window). Written only by

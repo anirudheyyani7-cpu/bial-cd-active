@@ -1,44 +1,28 @@
 /**
- * ProjectPage: the project screen IS the app (Plan F, U9 — the deliberate inversion).
+ * ProjectPage: the project screen IS the app.
  *
- * ═══ WHAT CHANGED HERE, AND WHY IT IS AN INVERSION RATHER THAN A DELETION ═══
+ * ═══ THE TWO HALVES THIS SUITE PINS ═══
  *
- * This suite used to pin the app's ABSENCE from the project screen — the Phase-1 decision that "a
- * stored app is not a running sandbox". That decision was right about what it removed: a passive
- * view of stored code, a lifecycle badge, and a reroute into a chat. What arrives now is not that.
- * It is the RUNNING sandbox, in a pane beside the rail, behind one control a person presses. So
- * the assertions split in two rather than all flipping:
- *
- *   INVERTED — the app's presence. The start control exists on a saved-not-running project and does
- *     not exist on a project with nothing built. Nothing on the screen starts a container.
- *   KEPT AS INERTNESS GUARDS — "View app", "Continue building", "Open app" and the lifecycle badge
- *     stay gone. Those were the passive-artefact affordances, and none of them is coming back.
- *
- * ═══ THE ASSERTIONS THAT WERE VACUOUS, AND WHY THEY ARE NOT THE ONES TO INVERT ═══
- *
- * `queryByTestId('live-preview')` appeared three times and was worthless in both directions: no
- * product code has ever set that testid, and `LivePreview` is additionally stubbed to `() => null`
- * in this file. Those lines could not have gone red however the page changed. They are replaced by
- * assertions on things this suite can actually observe — the start control, and the absence of any
- * server call that would start something.
+ *   THE APP'S PRESENCE. The start control exists on a saved-not-running project and does not exist
+ *     on a project with nothing built. Nothing on the screen starts a container.
+ *   THE INERTNESS GUARDS — "View app", "Continue building", "Open app" and the lifecycle badge stay
+ *     gone. Those are the passive-artefact affordances, and none of them is coming back.
  *
  * ═══ WHAT THIS SUITE CAN AND CANNOT SEE ═══
  *
- * It renders the page WITHOUT the workspace shell, so there is no pane host, no iframe and — since
- * plan 002's U2 — no TOOLBAR ROW in the tree at all. The project's name, its status chip, its back
- * control and its rename control are all drawn by the shell above the Outlet now, which is why the
- * load barrier in every test below is the rail's own status section rather than the project's
- * heading. Those four things are covered by `WorkspaceToolbar.test.tsx`, where they live. That is deliberate: the pane's own behaviour — its identity across a navigation, the
- * stacked crossing, the framed URL — belongs to `ProjectWorkspace.test.tsx`, which renders through
- * the real shell, because a test that mounts this page alone cannot see any of it. What THIS file
- * owns is the page: its data, its beacon, its rail's contents, and the affordances that must and
- * must not be on it.
+ * It renders the page WITHOUT the workspace shell, so there is no pane host, no iframe and no
+ * TOOLBAR ROW in the tree at all. The project's name, its status chip, its back control and its
+ * rename control are all drawn by the shell above the Outlet, which is why the load barrier in
+ * every test below is the rail's own status section rather than the project's heading. Those four
+ * things are covered by `WorkspaceToolbar.test.tsx`, where they live. That is deliberate: the
+ * pane's own behaviour — its identity across a navigation, the stacked crossing, the framed URL —
+ * belongs to `ProjectWorkspace.test.tsx`, which renders through the real shell, because a test
+ * that mounts this page alone cannot see any of it. What THIS file owns is the page: its data, its
+ * beacon, its rail's contents, and the affordances that must and must not be on it.
  *
  * projectApi, conversationApi and buildSessionApi are mocked at the module boundary; the REAL
  * `ProjectWorkspace`, `WorkspaceRail`, `RailComposer` and `ProjectDescriptionEditor` render. A
- * LocationProbe on a catch-all route reports where navigation actually landed. The old stored-app
- * read (`getAppSource`) is retired from appRegistryApi entirely (owner surface gone; pinned by
- * appRegistryApi.test.js).
+ * LocationProbe on a catch-all route reports where navigation actually landed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { StrictMode } from 'react'
@@ -98,8 +82,7 @@ vi.mock('../../utils/buildSessionApi', async (importOriginal) => ({
   relaunchPreview: h.relaunchPreview,
 }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
-// ProjectPage no longer mounts LivePreview (the passive View-app preview is hidden, U6).
-// A null stub keeps the `queryByTestId('live-preview')` inertness assertions meaningful.
+// Nothing on this page frames a preview; the stub keeps a transitive import from mounting one.
 vi.mock('../../components/LivePreview', () => ({ default: () => null }))
 // THE BADGE'S WORDS COME FROM THE SERVER NOW (U16): `chatKindFor` reads the kind catalogue off
 // the cached bootstrap profile, so a suite that does not stand one up gets the honest fallback
@@ -199,9 +182,8 @@ describe('ProjectPage — the composer is unconditional', () => {
     await screen.findByTestId('rail-app-status')
     // NOT collapsed under an app card — this is the reverted regression the fold must avoid.
     expect(screen.getByPlaceholderText(/Describe the change you need/i)).toBeTruthy()
-    // INERTNESS GUARDS, kept through the inversion rather than deleted with it. What Phase-1
-    // removed was a passive view of stored code, a lifecycle badge and a reroute; none of the
-    // three comes back with the running sandbox.
+    // INERTNESS GUARDS. A passive view of stored code, a lifecycle badge and a reroute into a
+    // chat do not come back with the running sandbox.
     expect(screen.queryByRole('button', { name: /view app/i })).toBeNull()
     expect(screen.queryByText('draft')).toBeNull()
     expect(screen.queryByRole('button', { name: /continue building/i })).toBeNull()
@@ -211,20 +193,17 @@ describe('ProjectPage — the composer is unconditional', () => {
 
 describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, AE2)', () => {
   it('AE1: a saved, not-running project offers exactly one start control, and says what IS', async () => {
-    // THE INVERSION. This is the assertion the old suite could not have: it used to pin that the
-    // project screen offered no way to reach the app at all.
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1', hasRelaunchableSnapshot: true }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'asleep', restorable: true }))
     renderProjectPage()
 
     await screen.findByTestId('rail-app-status')
     await waitFor(() => expect(h.fetchPreviewState).toHaveBeenCalled())
-    // R-16's FORBIDDEN WORDS, which is the half this suite can still see. Its positive half —
-    // that the pane says "Your app is saved." with a start control under it — moved to
-    // `AppPane.test.tsx` and `ProjectWorkspace.test.tsx` when plan 002's U4 gave the sentence
-    // ONE author: it was rendered by the rail AND by the pane, and the rail's APP STATUS
-    // section is the publish panel the boards draw now. This file renders no pane at all, so
-    // asserting the sentence here would be asserting a renderer that is not in its tree.
+    // R-16's FORBIDDEN WORDS, which is the half this suite can see. Its positive half — that the
+    // pane says "Your app is saved." with a start control under it — is pinned in
+    // `AppPane.test.tsx` and `ProjectWorkspace.test.tsx`, because the sentence has ONE author and
+    // this file renders no pane at all: asserting it here would be asserting a renderer that is
+    // not in its tree.
     expect(document.body.textContent).not.toMatch(/not running/i)
     expect(document.body.textContent).not.toMatch(/\bstopped\b/i)
   })
@@ -240,9 +219,6 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
   })
 
   it('★ opening the screen STARTS NOTHING — the read is the only call it makes (R3)', async () => {
-    // The whole basis on which the Phase-1 removal is reversed. A screen that started a container
-    // by being opened would be the thing that decision was right to refuse.
-    //
     // Mutation receipt: make `ProjectWorkspace` call `relaunchPreview` on mount and this goes red.
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1', hasRelaunchableSnapshot: true }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'asleep', restorable: true }))
@@ -275,10 +251,10 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
     await screen.findByTestId('rail-app-status')
     const saved = await screen.findByTestId('rail-save-state')
     expect(saved.textContent).toMatch(/not saved yet/i)
-    // NO COMMIT HERE ANY MORE (plan 002, U4). This block answers the one question a RUNNING
-    // container can answer — whether it holds work the saved bundle does not — and the version
-    // it used to print duplicated the panel's own saved row, which states it properly, with a
-    // date, and on a project whose container is long gone.
+    // NO COMMIT HERE. This block answers the one question a RUNNING container can answer —
+    // whether it holds work the saved bundle does not — and printing the version would duplicate
+    // the panel's own saved row, which states it properly, with a date, and on a project whose
+    // container is long gone.
     expect(saved.textContent).not.toContain('abc1234')
   })
 
@@ -331,11 +307,10 @@ describe('ProjectPage — the description rail (R3, U7 pop-up editor)', () => {
   })
 })
 
-/* THE CHIP IS NOT ON THIS PAGE ANY MORE (plan 002, U2), so its three scenarios moved with it to
-   `WorkspaceToolbar.test.tsx`: that it names the project, that a project with nothing built still
-   gets one rather than an absence, and that it neither moves nor remounts. What SURVIVES here is
-   the half this page can still answer for — that the rail says nothing about publishing — because
-   the rail is what this file renders. */
+/* THE CHIP IS NOT ON THIS PAGE, and its three scenarios are pinned in `WorkspaceToolbar.test.tsx`:
+   that it names the project, that a project with nothing built still gets one rather than an
+   absence, and that it neither moves nor remounts. What this page can answer for is the other half
+   — that the rail says nothing about publishing — because the rail is what this file renders. */
 describe('ProjectPage — publishing is not in the rail (R37)', () => {
   it('keeps every word about publishing out of the description section', async () => {
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1' }))
@@ -376,12 +351,9 @@ describe('ProjectPage — an outlet child that owns its own scroller (Plan A, U3
   })
 
   it('★ builds NO second two-column frame of its own', async () => {
-    // REPLACES the sticky-offset assertion, which no longer describes anything: the description was
-    // a right-hand sticky `aside` beside a two-column grid inside the page, and the rail IS the
-    // left column now — there is no second grid for it to stick inside. What replaced that risk is
-    // this one, and it is bigger: an implementer who rebuilds rail-plus-pane in here produces a
-    // grid nested in the shell's own, and every "the app did not remount" assertion in this plan
-    // fails on the first navigation to a chat.
+    // THE RISK THIS GUARDS. An implementer who rebuilds rail-plus-pane in here produces a grid
+    // nested in the shell's own, and every "the app did not remount" assertion elsewhere fails on
+    // the first navigation to a chat.
     h.getProject.mockResolvedValue(makeProject())
     const { container } = renderProjectPage()
     await screen.findByTestId('rail-app-status')
@@ -393,23 +365,16 @@ describe('ProjectPage — an outlet child that owns its own scroller (Plan A, U3
 })
 
 /**
- * THE RECENTS LIST IS DELETED, AND ITS TWENTY-ODD ASSERTIONS WITH IT (plan 002, U3).
+ * NOTHING POINTS BACK TO A CHAT, running or finished. There is no recents list: not a hidden one,
+ * not an empty state — the list, its read, the prop chain that fed it and the delete handler are
+ * all absent. What pins that below is one assertion that the section is genuinely gone rather than
+ * merely unrendered, paired with a liveness check, plus a search over every piece of copy that
+ * would have offered it.
  *
- * What stood here characterised a section the client asked not to have: row anatomy, the kind
- * badge's screen-reader phrase, the fallback word for an unrecognised kind, the ⋮ menu's Open and
- * Delete, the optimistic removal, and the empty-state copy. The ruling of 2026-09-02 is that
- * nothing points back to a chat, running or finished — so the list, its read, the prop chain that
- * fed it and the delete handler are gone, and so are the tests that pinned them.
- *
- * THEY WERE READ BEFORE THEY WERE DELETED, which is the point of writing this down: two
- * capabilities went with the markup — the only route back to an existing chat, and the only way to
- * delete one — and both are the owner's decision rather than collateral. Chats, their plans and
- * their uploaded files all stay in the database.
- *
- * WHAT REPLACES THEM is one assertion that the list is genuinely gone rather than merely
- * unrendered, paired with a liveness check, plus the search below over every piece of copy that
- * offered it. `chatKindFor`'s own fallback behaviour — the part of the deleted block that was
- * about a module rather than about this list — is still pinned in `utils/__tests__/chatKind.test.ts`.
+ * TWO CAPABILITIES WENT WITH THE MARKUP — the only route back to an existing chat, and the only way
+ * to delete one — and both are the owner's decision rather than collateral. Chats, their plans and
+ * their uploaded files all stay in the database. `chatKindFor`'s own fallback behaviour is about a
+ * module rather than about this list, and is pinned in `utils/__tests__/chatKind.test.ts`.
  */
 describe('ProjectPage — nothing points back to a past chat', () => {
   it('★ renders no conversations section, and asks the server for no list', async () => {
@@ -458,12 +423,12 @@ describe('ProjectPage — nothing points back to a past chat', () => {
 })
 
 describe('ProjectPage — identity + guard rails carried over', () => {
-  /* THE RENAME GUARDS MOVED WITH THE CONTROL (plan 002, U2). The pencil is in the shell's
-     toolbar row and the editor is a dialog `ProjectWorkspace` owns, so a render of this page
-     alone can no longer reach either. Both halves are pinned where they now live:
-     `ProjectRenameDialog.test.tsx` keeps the empty-and-whitespace guard, and
-     `WorkspaceToolbar.test.tsx` keeps the press that opens it. Named here rather than deleted
-     silently, because "the tests went with the markup" is how a guard disappears. */
+  /* THE RENAME GUARDS LIVE WITH THE CONTROL. The pencil is in the shell's toolbar row and the
+     editor is a dialog `ProjectWorkspace` owns, so a render of this page alone reaches neither.
+     Both halves are pinned where they live: `ProjectRenameDialog.test.tsx` keeps the
+     empty-and-whitespace guard, and `WorkspaceToolbar.test.tsx` keeps the press that opens it.
+     Named here rather than left unsaid, because "the tests went with the markup" is how a guard
+     disappears. */
 
   it('redirects to /projects when the project 404s (deleted elsewhere)', async () => {
     h.getProject.mockRejectedValue(new ApiError('Project not found.', 404))

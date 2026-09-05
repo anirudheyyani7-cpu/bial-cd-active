@@ -148,12 +148,11 @@ function ShellFrame() {
   const mode = railModeFor(useLocation().pathname)
   const [collapsed, setCollapsed] = useState(false)
   usePublishRail(mode, collapsed)
-  // THE DEVICE WIDTH AND THE RELOAD NONCE ARE THE SHELL'S NOW (plan 002, U2) — both were private
-  // state inside `LivePreview`, chosen there because their controls lived in that component's own
-  // toolbar. Their controls are in the row above the grid, so the state comes up here with them,
-  // and the pane receives both as props down a chain of shell-owned siblings. Holding them here
-  // also means the chosen width survives a route change from the project screen to a chat, which
-  // it could not while it lived inside a component the pane host re-mounts around.
+  // THE DEVICE WIDTH AND THE RELOAD NONCE ARE THE SHELL'S. Their controls are in the row above
+  // the grid, so the state comes up here with them, and the pane receives both as props down a
+  // chain of shell-owned siblings. Holding them here also means the chosen width survives a route
+  // change from the project screen to a chat, which it could not while it lived inside a
+  // component the pane host re-mounts around.
   const [device, setDevice] = useState<DeviceName>('Desktop')
   const [reloadNonce, setReloadNonce] = useState(0)
   const heading = useWorkspaceHeading()
@@ -174,14 +173,14 @@ function ShellFrame() {
   // exactly the split the product has today. Leaving the outlet column at `flex-1` alongside a
   // `flex-1` pane splits the workspace in half and strands the panel in a column twice its width.
   //
-  // When nothing wants the pane — the project screen before Plan F, and every planning
-  // conversation — the outlet column grows instead, because then it IS the whole surface.
+  // When nothing wants the pane — every planning conversation — the outlet column grows
+  // instead, because then it IS the whole surface.
   //
-  // Plan F's rail supplies its own two settled widths the same way, so this stays one rule rather
+  // The rail supplies its own two settled widths the same way, so this stays one rule rather
   // than becoming a per-mode table here.
   const paneVisible = useWorkspacePaneVisible()
 
-  // THE IN-PLACE GUARD (U8), MOUNTED HERE AND NOT IN THE OUTLET CHILD. The exits it exists for —
+  // THE IN-PLACE GUARD, MOUNTED HERE AND NOT IN THE OUTLET CHILD. The exits it exists for —
   // the navbar's links, the breadcrumb — sit ABOVE the Outlet, so a guard mounted below it would
   // lose coverage of exactly the departing controls it was written for.
   //
@@ -208,9 +207,7 @@ function ShellFrame() {
   }, [paneVisible])
 
   // THE BACK CONTROL IS DERIVED FROM THE ADDRESS, and it goes through the same guard every other
-  // navigation in the workspace goes through. Two of the three exits a citizen actually uses — the
-  // navbar and this one — used to leave unsaved work behind in silence; the navbar was routed
-  // through the guard first, and this is the other one.
+  // navigation in the workspace goes through.
   const navigate = useNavigate()
   const back = useCallback(() => {
     // THE CHAT'S OWN PROJECT WHENEVER THERE IS ONE TO GO TO. Keyed on the rail mode rather than on

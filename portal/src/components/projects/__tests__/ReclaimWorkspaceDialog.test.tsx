@@ -17,9 +17,9 @@ const BUILDING = { ...BLOCKED, dirty: null, building: true }
 function setup(over = {}) {
   const props = {
     blocked: BLOCKED,
-    // Issue #161's framing half: the dialog leads with the app being STARTED. Every scenario in
-    // this file supplies one, because a dialog that cannot name it is a different case with its
-    // own test at the bottom of this file.
+    // The dialog leads with the app being STARTED. Every scenario in this file supplies one,
+    // because a dialog that cannot name it is a different case with its own test at the bottom
+    // of this file.
     startingProjectName: 'Visitor Log',
     onSaveAndSwitch: vi.fn().mockResolvedValue(undefined),
     onSwitchAnyway: vi.fn().mockResolvedValue(undefined),
@@ -75,10 +75,9 @@ describe('ReclaimWorkspaceDialog (#83)', () => {
 })
 
 /**
- * KEYBOARD, not clicks. Every test above fires `click`, which is exactly how #86 shipped a
- * dialog whose focus trap did not exist: a mouse never notices that Tab escapes, that Escape
- * does nothing, or that focus was never taken in the first place. These drive the dialog the
- * way a keyboard user does.
+ * KEYBOARD, not clicks. Every test above fires `click`, which cannot catch a missing focus
+ * trap: a mouse never notices that Tab escapes, that Escape does nothing, or that focus was
+ * never taken in the first place. These drive the dialog the way a keyboard user does.
  */
 describe('ReclaimWorkspaceDialog — focus and keyboard (#83 review, blocker 3)', () => {
   const card = (): HTMLElement => screen.getByRole('dialog').querySelector('[tabindex="-1"]')!
@@ -173,9 +172,9 @@ describe('ReclaimWorkspaceDialog — a project that is still being built', () =>
   })
 
   it('offers STOP, because save and release both refuse while the agent writes', () => {
-    // ISSUE #161's AMBIGUITY HALF applies here too, and this is the case where it costs most: a
-    // build is running, so "stop without saving" beside it genuinely does not say WHOSE work goes.
-    // Both buttons name the project being stopped.
+    // A "stop without saving" label beside a build is ambiguous about whose work is dropped,
+    // and this is the case where it costs most: a build is running, so it genuinely does not
+    // say WHOSE work goes. Both buttons name the project being stopped.
     setup({ blocked: BUILDING })
     expect(screen.getByRole('button', { name: /save “Lost & Found” and stop it/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /stop “Lost & Found” without saving/i })).toBeTruthy()
@@ -211,7 +210,7 @@ describe('ReclaimWorkspaceDialog — a project that is still being built', () =>
 })
 
 /**
- * THE CLEAN ARM — new, and it arrives because the SERVER changed (R94, plan 006 U5).
+ * THE CLEAN ARM — new; it arrives because the server changed.
  *
  * `dirty === false` could not reach this dialog before: the guard reclaimed a clean incumbent
  * silently. The old copy collapsed the tri-state — `dirty === true ? 'has unsaved changes' :
@@ -263,14 +262,10 @@ describe('ReclaimWorkspaceDialog — a CLEAN incumbent (AE50)', () => {
   })
 })
 
-/**
- * ISSUE #161 — observed live on a BIAL desk, with the client watching.
- */
 describe('ReclaimWorkspaceDialog — issue #161', () => {
   it('★ names the project being STARTED first, not the incumbent', () => {
     // ASSERT ORDER, NOT MERE PRESENCE: both names appear either way, and the bug was which one
-    // came first. The observed modal opened with "'Car pool apps' is still open" — the app the
-    // citizen was NOT working on — when the question they were asking was about the other one.
+    // came first.
     setup({ startingProjectName: 'Visitor Log' })
     const text = screen.getByRole('dialog').textContent ?? ''
 
@@ -279,9 +274,8 @@ describe('ReclaimWorkspaceDialog — issue #161', () => {
   })
 
   it('★ names whose changes are lost, on the control AND in the sentence above it', () => {
-    // "Switch without saving" beside a build was found genuinely ambiguous by a non-technical
-    // audience: it does not say whether the unsaved work being dropped belongs to the app they are
-    // starting or the one being stopped. This audience could not reason it out from context.
+    // "Switch without saving" beside a build is ambiguous: it does not say whether the unsaved
+    // work being dropped belongs to the app they are starting or the one being stopped.
     setup({ startingProjectName: 'Visitor Log' })
 
     const discard = screen.getByRole('button', { name: /stop “Lost & Found” without saving/i })

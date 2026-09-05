@@ -1,5 +1,5 @@
 /**
- * THE COMPOSER BOX — one control, on both screens, built on the library's primitives (plan 002, U5).
+ * THE COMPOSER BOX — one control, on both screens, built on the library's primitives.
  *
  * ═══ WHAT THE BOARDS ASK FOR ═══
  *
@@ -7,8 +7,6 @@
  * project screen and the chat draw the same control; only the placeholder and what sits above and
  * below it differ. Two independently hand-rolled boxes is how they drifted apart, and one shared
  * core is the fix.
- *
- * ═══ DECISION 1, SETTLED BY THE OWNER ON 2026-09-02: ADOPT THE LIBRARY COMPOSER ═══
  *
  * Adopted here: `ComposerPrimitive.Root` (the form, and its click-blank-space-to-focus),
  * `ComposerPrimitive.Input` (the textarea, its autosize, its paste-to-attach and its Enter
@@ -34,8 +32,7 @@
  *
  * `composer.send()` sets `_text = ""` BEFORE it awaits anything, and restores it only if the
  * ATTACHMENT tasks throw — never if the append does. That is exactly the defect that destroyed a
- * citizen's typed message and their staged files one day before this plan was written, and this
- * plan deliberately makes a send WAIT LONGER, which widens that window rather than narrowing it.
+ * citizen's typed message and their staged files.
  *
  * So this box reads the text and the attachments off the runtime at press time, performs the send
  * itself, and clears ONLY once the server has accepted. A refused send leaves everything exactly

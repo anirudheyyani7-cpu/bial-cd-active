@@ -1,4 +1,4 @@
-"""Build-sessions HTTP router — the C3 control surface (Wave 1).
+"""Build-sessions HTTP router — the C3 control surface.
 
 `start` / `stop` / `status` + `force-end` (the one surviving lock op) + the superadmin
 `internal/reap`, all owner-scoped by `user.id`. The one owner-asserted 403 in this file is
@@ -189,15 +189,14 @@ def _coordination_is_gone() -> AppApiError:
 async def parked_trees(
     app_id: uuid.UUID, admin: CurrentSuperadmin, db: DbSession
 ) -> ParkedTreesResponse:
-    """The trees this plan set aside for one app — U2 quarantines and U3 diverts (U25).
+    """The trees set aside for one app — U2 quarantines and U3 diverts (U25).
 
     WITHOUT THIS THEY ARE WRITE-ONLY: no reader, no retention, no runbook. In a false-`REVERTED`
-    case those objects hold the only copy of a citizen's newest work, and this plan names exactly
-    that shape as a defect elsewhere, so it must not reproduce it.
+    case those objects hold the only copy of a citizen's newest work.
 
     `CurrentSuperadmin`, and mounted beside `internal/reap` deliberately: this is an operator
-    action in the same category as the reaper, not the user-facing viewing surface the plan's
-    Scope Boundaries exclude. Audited, like every gated action (ADR-0005)."""
+    action in the same category as the reaper, not a user-facing viewing surface. Audited,
+    like every gated action (ADR-0005)."""
     trees = await list_parked_trees(app_id)
     await append_audit(
         db,
@@ -237,7 +236,7 @@ async def promote_parked_tree(
 
     THROUGH U3'S GUARD, never around it. A promotion whose tree is not a descendant of what the
     slot already holds is REFUSED and alarmed rather than forced — an operator recovering the
-    wrong tree over somebody's newest work is the precise failure this plan exists to stop, and
+    wrong tree over somebody's newest work is the precise failure the guard exists to stop, and
     "an operator asked for it" is not evidence that the tree is the right one.
 
     The key is named explicitly rather than "the newest": a request that cannot say what it means
@@ -417,7 +416,7 @@ async def relaunch_preview(
     sandbox: OptionalSandbox,
     manager: SessionManagerDep,
 ) -> RelaunchPreviewResponse | JSONResponse:
-    """Restore a torn-down app from its snapshot into a fresh, READY sandbox (#43).
+    """Restore a torn-down app from its snapshot into a fresh, READY sandbox.
 
     Not a build (Decision 6): no `RunBuildDep`, and the manager path never occupies the
     one-per-user build slot — it registers a ready handle in Redis, releases the lock, and
@@ -426,8 +425,7 @@ async def relaunch_preview(
     if sandbox is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
     # Same coordination seam as `start_build`, and relaunch needs it at least as badly:
-    # it takes the same per-user lock through the same `_holding_user_lock`, so before the
-    # split a Redis blip here told the user a build was already running.
+    # it takes the same per-user lock through the same `_holding_user_lock`.
     with build_coordination_or_503():
         try:
             relaunched = await manager.relaunch_preview(
@@ -437,8 +435,7 @@ async def relaunch_preview(
             # A build is currently running for this user — relaunch never pre-empts it (409).
             return _conflict_response(exc)
         except SandboxReclaimBlockedError as exc:
-            # #83 — another project holds the one slot and has unsaved work. Relaunch used to
-            # take it anyway and destroy that work silently; now the user decides.
+            # Another project holds the one slot and has unsaved work.
             return reclaim_blocked_response(exc)
         except NoSnapshotToRelaunchError as exc:
             # Confirmed-absent (or vanished) snapshot: nothing to relaunch, and there is no
@@ -447,7 +444,7 @@ async def relaunch_preview(
             # CODED, because this route answers 404 for TWO unrelated reasons and a client has to
             # tell them apart. `owned_project_or_404` fails a deleted or someone else's project
             # with the same status; the rail treats "nothing saved to bring back" as a normal
-            # first message and opens the chat anyway (review #1), which for the other 404 would
+            # first message and opens the chat anyway, which for the other 404 would
             # open a chat that dies a beat later instead of reporting the failure. Only this one
             # carries `no_saved_build`, so the rail's arm can be exact — the same reason
             # `sandbox_reclaim_blocked` names itself rather than letting a client match prose.
@@ -553,10 +550,8 @@ async def build_events(
 
 # --- lock ops: force-end (the operator/owner kill switch) ---------------------
 #
-# `acquire` / `renew` / `release` / `heartbeat` were retired, along with their shared
-# `_renew_and_state` helper. `force-end` is the one lock op still reachable from the UI (fed
-# by relaunch's 409) and it CARRIES NO REQUEST BODY, same as its four retired neighbours —
-# the surviving proof that this section's routes take none.
+# `force-end` is the one lock op still reachable from the UI (fed by relaunch's 409) and it
+# CARRIES NO REQUEST BODY.
 
 
 @router.post(
@@ -665,7 +660,7 @@ class SaveStateResponse(CamelModel):
     app_id: str | None = None
     dirty: bool | None = None
     container_head: str | None = None
-    # When the platform last autosaved (#83 follow-up). Lets the UI offer unsaved work back
+    # When the platform last autosaved. Lets the UI offer unsaved work back
     # after a reclaim instead of quietly forgetting it. Never a substitute for the user's own
     # save — `savedHead` is still the only thing a relaunch restores.
     recovery_at: datetime | None = None
@@ -742,7 +737,7 @@ async def stop_active_build(
 ) -> StopActiveBuildResponse:
     """ASK for the work in this project to stop. Returns as soon as the stop is under way.
 
-    THE FIRST OF THREE, and the only new one: stop → save → release. It exists because the
+    THE FIRST OF THREE: stop → save → release. It exists because the
     other two both refuse while a session is live, which used to make the reclaim dialog a dead
     end — a user switching away from a building project was offered Save and Switch, and the
     server declined both.
@@ -771,8 +766,8 @@ async def stop_active_build(
     to: "is THIS PROCESS running work for this user?" lives in `_active_by_user`, and the stop
     itself is a `task.cancel()` plus an await. Wrapping it produced a trailing
     `_coordination_is_gone()` that could never execute (verified: the body completes and
-    returns 200 with the Redis singleton unset), which is the dead-arm shape this PR's review
-    caught elsewhere. Worse, it would have been wrong on the path that matters — a live
+    returns 200 with the Redis singleton unset). Worse, it would have been wrong on the path
+    that matters — a live
     in-process build during a Redis outage is exactly when a user still needs to stop it."""
     if sandbox is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
@@ -834,7 +829,7 @@ async def release_project(
     manager: SessionManagerDep,
     sandbox: OptionalSandbox,
 ) -> ReleaseResponse | JSONResponse:
-    """Give up this project's workspace so another project can have the slot (#83).
+    """Give up this project's workspace so another project can have the slot.
 
     The counterpart to the reclaim refusal, and the only route that destroys a container on
     purpose. The start path used to do this silently, inside the request for a DIFFERENT
@@ -877,7 +872,7 @@ async def preview_state(
     db: DbSession,
     manager: SessionManagerDep,
 ) -> PreviewStateResponse:
-    """Is the preview this tab is framing still real — and if not, WHY? (#83, C3 §8.3.)
+    """Is the preview this tab is framing still real — and if not, WHY? (C3 §8.3.)
 
     A framed preview that has been reclaimed looks EXACTLY like a working app — the last render
     stays on screen, the iframe reports nothing, and a cross-origin pane cannot read a status
@@ -1043,10 +1038,9 @@ async def report_client_error(
     THE MISSING WITNESS. Every health signal the harness has runs against the SERVER — the
     type-check, the dev-server log tail, `/dev/status`, the root-route warm — and a Next app can
     satisfy all four and still throw before it paints anything. The only observer of that failure
-    is the browser, and the generated app has been relaying its own `window.onerror` /
-    `unhandledrejection` / `console.*` captures to the framing portal since Stage 0 with nothing
-    on the receiving end (`sandbox/template/components/bial/error-capture.tsx` says so in its own
-    header). This route is the receiving end: the portal validates the frame's origin and forwards
+    is the browser, and the generated app relays its own `window.onerror` /
+    `unhandledrejection` / `console.*` captures to the framing portal. This route is the receiving
+    end: the portal validates the frame's origin and forwards
     what it caught, and the report is parked for the next `selfheal.verify` to collect, where it
     makes the verdict not-green. That is the whole user-visible consequence — the completion claim
     does not appear — because the report's own text goes to the AGENT and to nobody else.

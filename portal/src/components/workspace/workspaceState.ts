@@ -1,5 +1,5 @@
 /**
- * ONE WORKSPACE STATE, COMPUTED ONCE, RENDERED TWICE (Plan F, U2).
+ * ONE WORKSPACE STATE, COMPUTED ONCE, RENDERED TWICE.
  *
  * ═══ WHAT THIS MODULE ANSWERS, AND THE QUESTION IT REFUSES ═══
  *
@@ -31,7 +31,7 @@
  * "this component made no restore call" would pass in the very state that loses work — the
  * component was never the thing that could have destroyed it.
  *
- * ═══ THE COPY RULE (R-16, client call 2026-08-31) ═══
+ * ═══ THE COPY RULE (R-16) ═══
  *
  * The pane says what IS, never what is not. The stopped state's headline is "Your app is saved."
  * — full stop. Not "saved but not running", not "stopped". `not running` survives as an INTERNAL

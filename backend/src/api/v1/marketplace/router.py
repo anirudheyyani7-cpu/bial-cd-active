@@ -114,7 +114,7 @@ def _live_catalog(search: str | None) -> tuple[sa.Select[Any], type[Deployment]]
         # generic plan cannot prove `status = $1` implies `ix_deployments_success_collapse`'s
         # `status = 'succeeded'` predicate, so it drops the index and falls back to a Seq
         # Scan — measured at 5.2k apps / 52k rows as 13-15ms for executions 1-5 and 27-30ms
-        # from execution 6 (#147 round 3). `deploy/store.py`'s `_IN_FLIGHT_PREDICATE` renders
+        # from execution 6. `deploy/store.py`'s `_IN_FLIGHT_PREDICATE` renders
         # a literal too, but for a DIFFERENT reason: it is only ever an `index_where=` on an
         # ON CONFLICT, and arbiter inference is a compile-time syntactic match, so it faces
         # no plan-cache risk at all. Same remedy, different cause — neither one is evidence
@@ -164,11 +164,10 @@ def _tsquery(search: str) -> sa.Function[Any]:
 
 
 def _entry(row: sa.Row[Any]) -> MarketplaceEntry:
-    # `row._tuple()`, not attribute access — but be precise about what that buys, because
-    # this comment is the module's stated defence and the previous version overclaimed it
-    # (#147 round 3). On an `Any`-parameterised `Row`, `_tuple()` is itself typed `Any`, so
-    # NEITHER the arity nor the order below is checked statically; swapping two same-typed
-    # columns in `with_only_columns` passes mypy clean.
+    # `row._tuple()`, not attribute access — but be precise about what that buys: on an
+    # `Any`-parameterised `Row`, `_tuple()` is itself typed `Any`, so NEITHER the arity nor
+    # the order below is checked statically; swapping two same-typed columns in
+    # `with_only_columns` passes mypy clean.
     #
     # What it does buy is still worth having, and it is runtime + tests rather than types:
     # an arity change raises a loud `ValueError` here instead of a silent `AttributeError`

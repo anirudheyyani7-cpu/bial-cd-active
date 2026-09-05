@@ -15,15 +15,14 @@
  *
  * ══ THE LABELS ══
  *
- * `Build this plan` and `Keep planning`, both a client call. NOT "Build it", NOT
- * "Keep refining" (which the client found confusing), and NOT the canvas's older
+ * `Build this plan` and `Keep planning`. NOT "Build it", NOT "Keep refining", and NOT
  * "Not yet — keep talking". Each names the mode the press puts you in, which is why they read as a
  * pair. The internal resolution values stay `build` and `refine` — wire values nobody reads, and
  * renaming them would be churn with a migration attached.
  *
  * The SAME two words appear in the model-facing copy, or the agent will tell a citizen to press a
  * button that does not exist — the offer tool's docstring and the plan prompt both carry them.
- * This unit owns only what is drawn.
+ * This file owns only what is drawn.
  *
  * ══ A SPENT STRIP STAYS, AND STAYS PRESSABLE ══
  *
@@ -87,9 +86,7 @@ export const OFFER_GATE_NOTE = 'Choose one of the two above to carry on…'
  *
  * The boards draw TWO sentences, not one. The gate note above sits in the box and says the box is
  * not where the answer goes; this one sits under it, centred and in the strip's own teal, and says
- * that neither answer is the wrong answer. Only the first of the two had been written, as a small
- * grey note below the box, which put the "you cannot type here" half where the reassurance goes
- * and left the reassurance out — and reassurance is the half someone just handed a decision
+ * that neither answer is the wrong answer. Reassurance is the half someone just handed a decision
  * actually needs.
  */
 export const OFFER_LOCKED_NOTE =
@@ -99,10 +96,9 @@ export const OFFER_LOCKED_NOTE =
  *
  * The board's annotation is the requirement, and it is about register rather than decoration:
  * "this teal strip is not text the agent typed — it is a control the interface draws". Two bare
- * buttons at the right of the box read as chrome; nothing distinguished them from Send, and
- * nothing said what pressing one would DO. A citizen pressed "Build this plan" with no statement
- * anywhere on the screen that it opens a second chat and leaves this one alone — which is the one
- * thing they would want to know before pressing it.
+ * buttons at the right of the box read as chrome: nothing distinguishes them from Send, and
+ * nothing says what pressing one would DO — that it opens a second chat and leaves this one
+ * alone, which is the one thing a citizen wants to know before pressing it.
  */
 export const OFFER_HEADLINE = 'This looks ready to build.'
 export const OFFER_EXPLANATION =
@@ -122,7 +118,7 @@ const OfferStrip: FC<OfferStripProps> = ({
   // Minted once per PRESS-SESSION and held in a ref, so a double press and a retry carry the
   // same id. `ProjectBuilder` mints through the same shared `uuidv7` but does it INLINE inside
   // `navigate()` with no ref — that site mints on every press by design, which is the opposite of
-  // what this needs, so the lifetime here is new work rather than a pattern lifted from it.
+  // what this needs.
   const mintedRef = useRef<string | null>(null)
 
   const handleBuild = useCallback(async () => {

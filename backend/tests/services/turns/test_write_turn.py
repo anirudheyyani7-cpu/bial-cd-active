@@ -1,9 +1,5 @@
 """U5 — a WRITE turn on the chat engine: the convergence, tested at the engine seam.
 
-Write used to be a build: its own agent, its own harness, its own SSE feed, its own metering.
-It is now an ordinary turn that happens to hold the sandbox six, and these tests pin the four
-properties that were easiest to lose in the move.
-
 - THE SAVE. `finish_write_turn` runs on every terminal arm, including the cancelled one.
   Without it a Write turn reports success and the reaper deletes the work.
 - THE METER. The cap is enforced before EVERY model request, in its own session, and each
@@ -1766,13 +1762,10 @@ async def test_an_unanswerable_verdict_does_not_wear_the_failure_label_in_the_li
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ The plan's "does not produce a 'Not green yet' failure label either" scenario, in THIS
-    loop — the legacy harness has its own test and the two spinners are separate code.
-
-    "Not green yet" over a check that could not be REACHED tells the citizen their app is broken
-    on the strength of our own timeout: the platform blaming the app for its own silence, which is
-    the same shape of untruth as claiming a build finished when it did not. The spinner resolves
-    neutrally instead.
+    """★ "Not green yet" over a check that could not be REACHED tells the citizen their app is
+    broken on the strength of our own timeout: the platform blaming the app for its own silence,
+    which is the same shape of untruth as claiming a build finished when it did not. The spinner
+    resolves neutrally instead.
 
     Mutation check: delete the INDETERMINATE arm of `_emit_verify_step`'s three-arm block and this
     goes red on both the label and the state."""

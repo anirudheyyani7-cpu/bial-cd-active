@@ -1,17 +1,17 @@
 /**
- * THE SHARED COMPOSER BOX (plan 002, U5) — one control, on both screens.
+ * THE SHARED COMPOSER BOX — one control, on both screens.
  *
  * ═══ WHAT THIS SUITE IS FOR ═══
  *
- * The owner settled Decision 1 on 2026-09-02: adopt the library's composer. What that costs is
- * three properties this codebase held by hand, each of which had to be re-established inside the
- * library's flow rather than assumed to survive it. Each is a scenario here, and each is written
- * against a specific way the library gets it wrong on its own:
+ * Adopting the library's composer costs three properties this codebase held by hand, each of
+ * which had to be re-established inside the library's flow rather than assumed to survive it.
+ * Each is a scenario here, and each is written against a specific way the library gets it wrong
+ * on its own:
  *
  *   1. THE BOX CLEARS ONLY ONCE THE SERVER HAS ACCEPTED. `composer.send()` sets `_text = ""`
  *      before it awaits anything and restores it only if the ATTACHMENT tasks throw — never if the
  *      append does. That is the defect that destroyed a citizen's typed message and their staged
- *      files one day before this plan was written, in the library's own code.
+ *      files, in the library's own code.
  *   2. NO INTERACTIVE CONTROL RENDERS A REAL `disabled`. `ComposerPrimitive.Send` is built by
  *      `createActionButton`, which renders `<button disabled={…}>`, and `useComposerSend` returns
  *      no callback for the whole of every turn. `disabled` on the focused element blurs it to
@@ -517,11 +517,11 @@ describe('★ the attachment pipeline stays ours', () => {
   })
 
   it('★ holds the cap across two gestures a MICROTASK apart, not only inside one', async () => {
-    // THE HOLE THE FIRST FIX LEFT. The claim list was dropped at the end of the tick that made it,
-    // on the reasoning that a later gesture is a later task by which time everything that landed
-    // has been published. Nothing is published until `fileToBase64` resolves, and `FileReader`
-    // resolves on a TASK — so a second gesture one microtask later saw an empty staged list AND an
-    // empty claim list, and a sixth file went in past a cap of five with nothing said.
+    // The claim list was dropped at the end of the tick that made it, on the reasoning that a
+    // later gesture is a later task by which time everything that landed has been published.
+    // Nothing is published until `fileToBase64` resolves, and `FileReader` resolves on a TASK —
+    // so a second gesture one microtask later saw an empty staged list AND an empty claim list,
+    // and a sixth file went in past a cap of five with nothing said.
     //
     // A FAST REPEATED PASTE OF A LARGE IMAGE IS EXACTLY THIS. The bigger the file, the longer the
     // read, and the wider the window — so the failure got MORE likely as the cap mattered more.
@@ -562,7 +562,7 @@ describe('★ the attachment pipeline stays ours', () => {
   })
 
   it('★ counts against the per-message cap across a batch, not one file at a time', async () => {
-    // The cap bypass R57 records: a check that sees only the arriving file lets a sixth through.
+    // The cap bypass: a check that sees only the arriving file lets a sixth through.
     // The adapter reads the LIVE staged list rather than a closure, which is what makes the sixth
     // drop see five already there. Mutation receipt: pass `staged: () => []` and this goes red.
     const onUrgent = vi.fn()

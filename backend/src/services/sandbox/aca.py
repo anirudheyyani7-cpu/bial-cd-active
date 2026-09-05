@@ -365,10 +365,8 @@ class AcaControlPlane:
         registry and so can only ever collect containers it already holds a record of; this is
         the one reader that can still see a container whose record is gone.
 
-        ONE ENUMERATION, NOT THREE. It replaces a name-only lister and a name→tags lister that
-        walked the same page set and threw away different halves of it. Every caller now reads the
-        same projection, so no two of them can disagree about the fleet, and the fleet is walked
-        once per pass instead of once per question.
+        ONE ENUMERATION, NOT ONE PER QUESTION. Every caller reads the same projection, so no two
+        of them can disagree about the fleet, and the fleet is walked once per pass.
 
         PAGING IS THE SDK'S JOB, not ours. `list_by_resource_group` returns an
         `ItemPaged[ContainerApp]` and follows `nextLink` itself; iterating it to exhaustion inside

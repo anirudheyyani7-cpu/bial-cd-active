@@ -97,10 +97,9 @@ function deps() {
 
 // BUILD-IT IS A HANDOFF (U5/U12), not a flip: the atomic transition creates a SECOND, brand-new
 // build chat seeded with the plan and starts the turn THERE, and the click navigates the browser
-// to it — the plan chat (`'build-X'`, this suite's default) is left exactly as it was. So "the
-// build's conversation" this whole file used to mean `'build-X'` is now this id, and every place
-// that used to assert `readTurnStream`/`buildFromPlan` against the plan chat's id for the SECOND
-// (post-handoff) call has to name this one instead.
+// to it — the plan chat (`'build-X'`, this suite's default) is left exactly as it was. So the
+// build's conversation is THIS id, not `'build-X'`: every assertion about the SECOND
+// (post-handoff) call names this one.
 const LIVE_CHAT_ID = 'build-X-live'
 
 /**
@@ -189,10 +188,8 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     // The build starts through the ATOMIC TRANSITION — a SECOND, brand-new build chat, created,
     // seeded with the plan, and started, server-side (U5/U12) — and the page NAVIGATES there and
     // subscribes to the TURN the handoff returns. The C3 door stays shut: `getStatus` is never
-    // called, so there is no session to join at all. (`start` was asserted here too until the
-    // client wrapper was deleted; a mock wired to nothing proves nothing, and what took its place
-    // is the member-set guard in `utils/__tests__/buildSessionApi.test.ts`, which fails if a start
-    // wrapper reappears on the client at all.)
+    // called, so there is no session to join at all. (A start wrapper reappearing on the client
+    // is caught by the member-set guard in `utils/__tests__/buildSessionApi.test.ts`.)
     // Third arg is the client-minted id of that new chat (a real `uuidv7()`, so only its shape is
     // pinned, not its value).
     expect(h.buildFromPlan).toHaveBeenCalledWith('build-X', PLAN_CARD_ID, expect.any(String))
@@ -207,15 +204,12 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     )
 
     await turn.frame(T_STEP('Scaffolding your app…'), T_STEP('Installing dependencies', { id: 'call-2', seq: 3 }))
-    // FLIPPED, AND THE FLIP IS THE FEATURE (Plan D U6). This used to assert that only the MOST
-    // RECENT step was visible — the card showed one row and replaced it in place, so a build that
-    // did nine things showed one at a time and kept none. The activity group KEEPS them and
-    // collapses them to a count, which is what makes "what did it actually do?" answerable after
-    // the fact instead of only in the second it happened.
+    // THE GROUP KEEPS EVERY STEP rather than replacing one row in place. A build that did nine
+    // things holds nine, collapsed to a count, which is what makes "what did it actually do?"
+    // answerable after the fact instead of only in the second it happened.
     const group = await screen.findByTestId('activity-group')
-    // WHILE IT RUNS the trigger names what is happening NOW — the same one-line-at-a-time reading
-    // the old card gave. What changed is underneath: BOTH steps are held, one glyph each, and the
-    // reader can open the group and see them. The old card kept only the newest.
+    // WHILE IT RUNS the trigger names what is happening NOW, one line at a time. Underneath,
+    // BOTH steps are held, one glyph each, and the reader can open the group and see them.
     await waitFor(() => expect(group.textContent).toMatch(/Installing dependencies/i))
     expect(within(group).getByTestId('activity-glyphs').children).toHaveLength(2)
     // Collapsed by default, so the earlier label is not on screen yet…
@@ -257,9 +251,9 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     // ONE working indicator, ONE way to interrupt it: a build has no separate stop any more, so
     // this is the same `stopTurn` an ordinary reply uses, addressed by the live chat + turn id —
     // the chat the page is actually ON after the handoff, not the one Build-it was pressed in.
-    // Addressed by test id: `stop-turn` is the RELOCATED control on the composer (R55, Plan D
-    // U3). The build card's own Stop is still mounted beside it for now and does the same thing;
-    // this is the one that survives the card's deletion.
+    // Addressed by test id: `stop-turn` is the control on the composer. The build card's own
+    // Stop is still mounted beside it for now and does the same thing; this is the one that
+    // survives the card's deletion.
     fireEvent.click(screen.getByTestId('stop-turn'))
     await waitFor(() => expect(h.stopTurn).toHaveBeenCalledWith(LIVE_CHAT_ID, BUILD_TURN_ID))
     expect(h.stop).not.toHaveBeenCalled() // never the C3 session stop
@@ -307,11 +301,10 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
 
     await turn.frame(T_STEP('Scaffolding your app…'), T_DIAGNOSTIC('Type error in app/page.tsx'))
 
-    // RE-POINTED, AND THE NARRATIVE MOVED RATHER THAN GOING AWAY (Plan D U17). The deleted card
-    // drew a diagnostic as its own amber "trying another way" block that VANISHED at the terminal;
-    // it is a failed row inside the activity group now, so the group's own label carries it — and
-    // a citizen reading a build that has already finished can still see it hit something, which
-    // the vanishing block could never tell them.
+    // RE-POINTED, AND THE NARRATIVE MOVED RATHER THAN GOING AWAY. A diagnostic is a failed row
+    // inside the activity group, so the group's own label carries it — and a citizen reading a
+    // build that has already finished can still see it hit something, which a block that
+    // vanished at the terminal could never tell them.
     const group = await screen.findByTestId('activity-group')
     // ONE FAILED GLYPH, and the group is still RUNNING — which is the whole "not a failure" point.
     // The count-and-problems label is what a SEALED group says; a running one names what is
@@ -332,9 +325,8 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     const rows = within(await screen.findByTestId('activity-group-rows'))
     expect(rows.getByText(/We hit a problem finishing that change\./i)).toBeTruthy()
 
-    // The repair succeeds and the turn completes. The problem STAYS on the record — that is the
-    // deliberate difference from the old card, which erased its own retry block at the terminal
-    // and left a finished build looking as though nothing had gone wrong.
+    // The repair succeeds and the turn completes. The problem STAYS on the record: a finished
+    // build must never look as though nothing had gone wrong.
     await turn.frame(T_BUILD_END())
     await turn.end()
     expect(glyphs().getAllByText(/^failed$/i).length).toBe(1)
@@ -373,10 +365,9 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     // enough that the client formats the numbers itself rather than parsing a sentence.
     await turn.frame(T_QUOTA(), T_BUILD_END({ status: 'failed', reason: 'quota_exceeded' }))
     await turn.end()
-    // RE-POINTED AT THE CONTROL THAT ACTUALLY WAITS (U24, Plan D U17). "Resets at midnight IST"
-    // was the deleted card's own row. The cap is a fact about SENDING, so it is stated where
-    // sending happens: the composer's gate note names the moment it works again, and Send carries
-    // the same sentence in its accessible name.
+    // RE-POINTED AT THE CONTROL THAT ACTUALLY WAITS: the cap is a fact about SENDING, so it is
+    // stated where sending happens — the composer's gate note names the moment it works again,
+    // and Send carries the same sentence in its accessible name.
     await waitFor(() =>
       expect(screen.getByTestId('composer-gate-note').textContent).toMatch(/you can send again after/i),
     )
@@ -508,23 +499,16 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
   })
 
   it('AN INERTNESS GUARD (L8): no mode control appears at the terminal, and a stray legacy `mode` field is ignored', async () => {
-    // This used to prove Write STAYS after a build rather than flipping back — the inversion that
-    // `restore_conversation_mode` was DELETED, not merely disarmed, because every mode accepting a
-    // send made "Write is a dead end to rescue a thread out of" simply false. That whole axis is
-    // gone now (U1/U19): `ModeSwitcher` is deleted, a chat's kind is fixed at creation, and the
-    // HEADER RE-READ this test used to defend against reintroducing (`getBuild(activeId).then(saved
-    // => setChatMode(saved.mode))`) is gone from `BuilderPage.tsx` too — there is no server-side
-    // answer left to go fetch, and nothing left to undo. What survives, restated as an absence: no
-    // build terminal ever renders a mode control, and a `getBuild` row still carrying a legacy
-    // `mode` field (an old, pre-migration row) is simply ignored rather than read.
+    // Restated as an absence: no build terminal ever renders a mode control, and a `getBuild`
+    // row still carrying a legacy `mode` field (an old, pre-migration row) is simply ignored
+    // rather than read.
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt('first build')
     await awaitBuildTurn()
-    // LIVENESS FIRST: the page is genuinely on the live build, not merely missing the retired
-    // control because it rendered nothing. RE-POINTED at the composer's stop (Plan D U17): the
-    // card that used to answer "is a build running here?" is deleted, and the stop control is the
-    // element whose presence now means exactly that.
+    // LIVENESS FIRST: the page is genuinely on the live build, not merely missing a mode
+    // control because it rendered nothing. The stop control is the element whose presence
+    // proves that.
     expect(screen.getByTestId('stop-turn')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /^Mode:/ })).toBeNull()
 
@@ -591,14 +575,12 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     // Typing and attaching stay live over the live build; only SEND waits.
     expect(textarea.disabled).toBe(false)
     expect(screen.getByTitle(/Attach images/i).disabled).toBe(false)
-    // AN INERTNESS GUARD, not the frozen-pill assertion it replaces (L8). This used to prove the
-    // mode pill froze during a live build rather than let a mid-run switch retroactively mislabel
-    // it (KTD-4) — `ModeSwitcher` and the axis it drove are BOTH gone (U1/U19), so there is no
-    // pill left to freeze, mid-build reload or otherwise.
+    // AN INERTNESS GUARD, not a frozen-pill assertion: there is no mode pill to freeze or thaw,
+    // mid-build reload or otherwise.
     expect(screen.queryByRole('button', { name: /^Mode:/ })).toBeNull()
-    // …and the transcript stops lying in the past tense: the past-tense anchor row is gone. It is
-    // no longer SUPERSEDED by a live bubble — `build_in_progress` maps to no rendered part at all
-    // now (see `convertMessage`), so the sentence cannot appear whether a build is live or not.
+    // …and the transcript stops lying in the past tense: the past-tense anchor row is gone.
+    // `build_in_progress` maps to no rendered part at all (see `convertMessage`), so the
+    // sentence cannot appear whether a build is live or not.
     expect(document.querySelector('[data-kind="build-in-progress"]')).toBeNull()
     expect(screen.getByTestId('stop-turn')).toBeTruthy()
 
@@ -800,12 +782,11 @@ describe('BuilderPage — the "come back later" relaunch entry point (#43)', () 
   })
 
   it('a fresh mount with a persisted outcome and no live session offers the way back; pressing it starts the app', async () => {
-    // RE-POINTED, NOT INVERTED (Plan F, U4). The journey is unchanged and is still the subject:
-    // reload a project whose build once ran, find a way back to the app, press it, and watch the
-    // restored preview frame. What moved is the CONTROL. Four start buttons lived inside
-    // `LivePreview`'s placeholders, each with its own label; R3 says exactly one starts the app,
-    // and the client settled on `Launch Application` — "preview" is the developer's word for the
-    // thing, and the person's word is their app.
+    // The journey is unchanged and is still the subject: reload a project whose build once ran,
+    // find a way back to the app, press it, and watch the restored preview frame. What moved is
+    // the CONTROL — R3 says exactly one control starts the app, and the client settled on
+    // `Launch Application`: "preview" is the developer's word for the thing, and the person's
+    // word is their app.
     //
     // It is also no longer inside the terminal card: `AppPane` draws it, because the pane is what
     // renders whether or not there is something to frame.
@@ -853,9 +834,9 @@ describe('BuilderPage — the "come back later" relaunch entry point (#43)', () 
     expect(screen.queryByRole('button', { name: /bring it back/i })).toBeNull()
   })
 
-  // U4 (Plan F) — RE-POINTED, NOT AN INERTNESS GUARD. This pane's empty-state copy is not
-  // `LivePreview`'s any more — `showEmpty` is gone, and `AppPane` mounts `NoFrame` (drawn from
-  // `workspaceState.ts`'s state map) whenever the address resolver has no URL, which is exactly
+  // RE-POINTED, NOT AN INERTNESS GUARD. This pane's empty-state copy is not `LivePreview`'s any
+  // more — `AppPane` mounts `NoFrame` (drawn from `workspaceState.ts`'s state map) whenever the
+  // address resolver has no URL, which is exactly
   // this scenario (no transcript, no build, nothing to frame). The specific sentence rendered
   // here is `couldNotRead()`'s honest "nothing decided yet" copy — this file never mocks
   // `fetchPreviewState`, so the poll's real, unmocked fetch fails and the pane says so rather than
@@ -880,17 +861,9 @@ describe('BuilderPage — the "come back later" relaunch entry point (#43)', () 
   })
 })
 
-// N12 (U2) used to live here as five tests narrowing a mode-switch failure per HTTP status (a
-// 409 keeps "finish the current step", a 401 names the session, a 500/network drop get a generic
-// failure) plus a sixth pinning that a failed switch re-arms the pill rather than wedging it dead.
-//
-// AN INERTNESS GUARD NOW (L8), not five deletions. There is no mode to fail switching INTO:
-// `ModeSwitcher`, `switchMode` (client and the `/api/conversations/{id}/mode` route it posted to),
-// `chatMode`/`switchingMode`/`handleModeSelect` are ALL gone (U1/U19) — a chat's kind is fixed when
-// it is created, so the entire failure taxonomy above describes a request that can no longer be
-// made. What replaces it is the one claim that subsumes all six: the control is not on the
-// surface, ⌥P opens nothing, and this is true at every point in a build's life the old suite
-// checked it — idle, and mid-build.
+// AN INERTNESS GUARD: there is no mode to fail switching INTO — a chat's kind is fixed when it
+// is created, so a mode-switch failure can no longer occur. The control is not on the surface,
+// ⌥P opens nothing, and that is true at every point in a build's life: idle, and mid-build.
 describe('a failed mode switch says what actually failed (N12) — RETIRED, now an inertness guard', () => {
   it('no mode pill exists idle, and ⌥P opens no menu — the whole surface this suite exercised is gone', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
@@ -919,29 +892,17 @@ describe('a failed mode switch says what actually failed (N12) — RETIRED, now 
   })
 })
 
-// A READ turn attaches the very same container a build does (U5b), so it emits the very same
-// `workspace` frame — which the build bubble used to read as a build's signature, because until
-// then only Write ever had a container. Left inferred, an Ask question announced "Building your
-// app…" while it ran and left an empty assistant bubble under the answer when it finished.
+// A read turn attaches the very same container a build does, so it emits the very same
+// `workspace` frame. This page always renders a build chat, so `isBuild` is hardcoded `true`
+// here; the test below asserts what still holds regardless: a build turn narrates the
+// container wait FIRST and only THEN claims to be building.
 //
-// THE FIRST TEST BELOW IS REWRITTEN, NOT DELETED, AND THE REASON IS ARCHITECTURAL (U1). `isBuild`
-// used to be `chatMode === 'write'` — a real per-turn fact this page could ask, because a
-// conversation's mode could be ask/plan/write. `BuilderPage.tsx` hardcodes it `true` now: "This
-// page renders a build chat and a build chat has no other kind of send" (the comment on the call
-// site). There is no more a per-send setting that could make a turn on THIS PAGE a read turn, so
-// "the page can narrate a read turn without claiming to build" asserts a state the page can no
-// longer be in — asserting it through this page would mean asserting `isBuild: false` behaviour
-// nothing here can produce any more.
+// The `isBuild: false` arm of `narrativeStatus` (`turnNarrative.ts`) is unchanged and still
+// correct, but it has no direct unit test anywhere in the repo — `src/utils/__tests__/` carries
+// no `turnNarrative.test.ts` — and adding one is out of this file's scope.
 //
-// What is still true, and what the rewritten test asserts instead: a build turn narrates the
-// container wait FIRST and only THEN claims to be building — the ORDERING survives even though
-// the "might not be a build" branch of the choice does not. The `isBuild: false` arm itself is
-// unchanged and still correct in `turnNarrative.ts` (`narrativeStatus`'s own `if (!isBuild)`
-// branch) — it has no direct unit test anywhere in the repo (`src/utils/__tests__/` carries no
-// `turnNarrative.test.ts`), and adding one is out of this file's scope.
-//
-// The remaining two tests are UNCHANGED in substance: they were always about the TERMINAL leaving
-// no empty bubble behind, which `headline()` still resolves to `null` for regardless of `isBuild`.
+// The remaining two tests are about the TERMINAL leaving no empty bubble behind, which
+// `headline()` still resolves to `null` for regardless of `isBuild`.
 describe('a read turn reads the live container without becoming a build (2026-07-30) — the live half is rewritten for U1', () => {
   /** An open read-turn socket: the workspace frame lands first, the answer arrives later. */
   function scriptReadTurn() {
@@ -960,15 +921,12 @@ describe('a read turn reads the live container without becoming a build (2026-07
   }
 
   it('says a reply is coming for the whole container wait, with no phase headline (rewritten for U6)', async () => {
-    // REWRITTEN A SECOND TIME, and the change is deliberate rather than incidental. The previous
-    // version asserted an ORDER between two phase headlines — "Setting up your sandbox" then
-    // "Building your app…" — drawn by the progress card. R35 removes that whole register: no
-    // headline, no elapsed timer, no "step 3 of 9", because the screen should read as an app
-    // being built rather than as an agent being watched.
+    // NO PHASE HEADLINE: no "Setting up your sandbox" then "Building your app…", no elapsed
+    // timer, no "step 3 of 9" — the screen should read as an app being built rather than as an
+    // agent being watched.
     //
-    // WHAT IT MUST STILL DO IS NOT GO SILENT, and that claim survives verbatim. The composer says
-    // a reply is on its way for the entire 30-60 second wait, and it keeps saying it after the
-    // container reports ready — which is the property the two-headline sequence was really about.
+    // WHAT IT MUST STILL DO IS NOT GO SILENT. The composer says a reply is on its way for the
+    // entire 30-60 second wait, and it keeps saying it after the container reports ready.
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
     const turn = scriptReadTurn()
     renderBuilder({ deps: deps().deps })
@@ -981,7 +939,7 @@ describe('a read turn reads the live container without becoming a build (2026-07
     expect(screen.getByTestId('stop-turn')).toBeTruthy()
     // NO PHASE NARRATION IN THE CHAT — scoped to the panel, because the APP PANE still narrates
     // the workspace phase and should: that is a cover over the app being prepared, which is where
-    // a phase belongs. What R35 removes is the second, competing copy inside the conversation.
+    // a phase belongs. The chat itself must never carry a second, competing copy of it.
     const chat = within(screen.getByTestId('chat-panel'))
     expect(chat.queryByText(/Setting up your sandbox/i)).toBeNull()
     expect(chat.queryByText(/Building your app…/i)).toBeNull()
@@ -993,11 +951,11 @@ describe('a read turn reads the live container without becoming a build (2026-07
     expect(chat.queryByText(/Setting up your sandbox/i)).toBeNull()
   })
 
-  // Both terminals, because the reported symptom was the FAILED one: the `turn_ended` frame is
-  // what makes the difference between "still thinking" (bubble suppressed for its own reason) and
-  // a settled turn, and a settled read turn is exactly when the empty bubble appeared. UNCHANGED
-  // by U1: `headline()` returns `null` for 'ended'/'failed' regardless of `isBuild`, and no step
-  // frame ever arrived, so the wrapper still has nothing left to say once the answer lands.
+  // Both terminals: the `turn_ended` frame is what makes the difference between "still thinking"
+  // (bubble suppressed for its own reason) and a settled turn, and a settled read turn is exactly
+  // when the empty bubble would appear. `headline()` returns `null` for 'ended'/'failed'
+  // regardless of `isBuild`, and no step frame ever arrived, so the wrapper still has nothing
+  // left to say once the answer lands.
   for (const status of ['completed', 'failed']) {
     it(`leaves no empty bubble behind once a ${status} answer has landed`, async () => {
       h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
@@ -1014,19 +972,18 @@ describe('a read turn reads the live container without becoming a build (2026-07
       await turn.end()
 
       expect(await screen.findByText(/Gate Cleaning Log — T1/)).toBeTruthy()
-      // The answer IS the whole reply. AN INERTNESS GUARD now (L8): the bubble that used to sit
-      // under it — an avatar wrapped around nothing — cannot appear for any turn state, because
-      // there is no such element. Paired with the liveness assertion above, so this cannot pass
-      // against a transcript that rendered nothing at all.
+      // The answer IS the whole reply. AN INERTNESS GUARD: the bubble that used to sit under it
+      // — an avatar wrapped around nothing — cannot appear for any turn state, because there is
+      // no such element. Paired with the liveness assertion above, so this cannot pass against a
+      // transcript that rendered nothing at all.
       expect(screen.queryByTestId('build-bubble')).toBeNull()
       expect(screen.queryByTestId('activity-group')).toBeNull() // a read turn ran no tools
     })
   }
 })
 
-// The other half of the same emptiness rule, on the side it was written for: a WRITE turn whose
-// container never came up is terminal with no steps and no headline, so the transcript has no
-// activity to draw — and the wrapper used to render around that nothing.
+// The other half of the same emptiness rule: a WRITE turn whose container never came up is
+// terminal with no steps and no headline, so the transcript has no activity to draw.
 describe('a build that dies before its first step shows no empty bubble (2026-07-30)', () => {
   it('renders the failure, not an empty assistant bubble', async () => {
     const turn = scriptedBuild({ opening: [T_WORKSPACE('unavailable', 1, 'The workspace service is not available right now.')] })
@@ -1042,7 +999,7 @@ describe('a build that dies before its first step shows no empty bubble (2026-07
   })
 })
 
-// U2 — the platform's own sentences about the workspace, and the slot they share.
+// The platform's own sentences about the workspace, and the slot they share.
 describe('what the platform says about the workspace itself (U2)', () => {
   function scriptReadTurn() {
     const live = { emit: null, close: null }
@@ -1081,13 +1038,10 @@ describe('what the platform says about the workspace itself (U2)', () => {
   // Reading those as platform speech would post an empty banner on every message — and worse,
   // `ready` would wipe a sentence that is still true the moment the container came up.
   //
-  // THE LIVENESS SIGNAL IS REWRITTEN FOR U1, the claim about the banner is not. This used to prove
-  // liveness by the build BUBBLE disappearing on `ready` — true only while `isBuild` could be
-  // `false` (a plain read turn's bubble had nothing left to narrate once its container was up).
-  // `isBuild` is unconditional now (see the describe block above), so the bubble does not
-  // disappear — it moves on to "Building your app…", which is itself the liveness proof: the
-  // headline text changing is what shows the page reacted to the `ready` frame, not a component
-  // that froze on the first one.
+  // THE LIVENESS SIGNAL: `isBuild` is unconditional (see the describe block above), so the
+  // bubble does not disappear on `ready` — it moves on to "Building your app…", which is itself
+  // the liveness proof: the headline text changing is what shows the page reacted to the `ready`
+  // frame, not a component that froze on the first one.
   it('is not posted or cleared by the ordinary lifecycle frames', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
     const turn = scriptReadTurn()
@@ -1102,11 +1056,10 @@ describe('what the platform says about the workspace itself (U2)', () => {
 
     await turn.frame(T_WORKSPACE('ready', 3))
 
-    // LIVENESS, AND IT HAD TO CHANGE SHAPE. The old proof that the page reacted to the `ready`
-    // frame was a phase headline moving; there is none in the chat any more (R35), and a READ turn
-    // produces no pane cover either — `turnPhase` reads the frames, and a turn that has touched
-    // nothing has nothing to say about the app. So the liveness is that the surface is still
-    // running this turn at all, which a component that had thrown could not be.
+    // LIVENESS: a READ turn produces no phase headline and no pane cover — `turnPhase` reads the
+    // frames, and a turn that has touched nothing has nothing to say about the app. So the
+    // liveness proof is that the surface is still running this turn at all, which a component
+    // that had thrown could not be.
     expect(screen.getByTestId('stop-turn')).toBeTruthy()
     // THE CLAIM ITSELF, and it is the sharp one: the `ready` frame carries the ordinary lifecycle
     // MESSAGE ("Getting your workspace ready…"), and routing that to the banner would post phase

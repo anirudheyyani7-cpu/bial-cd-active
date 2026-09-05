@@ -1,10 +1,8 @@
 /**
- * THE APP STATUS PANEL (plan 002, U4) — every state, drawn open.
+ * THE APP STATUS PANEL — every state, drawn open.
  *
  * The boards make this the fuller of the two publishing surfaces: a coloured pill, three
- * provenance rows with dates and short build ids, one sentence, one action. None of it existed —
- * the rail said nothing about publishing at all, and everything a citizen could learn lived
- * inside a popover, one row at a time.
+ * provenance rows with dates and short build ids, one sentence, one action.
  *
  * WHAT THIS FILE OWNS AND WHAT IT DOES NOT. The words, the colour and the action come from
  * `utils/publishPresentation.ts`, which the chip reads too — so a copy assertion here would be a
@@ -120,8 +118,8 @@ describe('the state pill', () => {
 
 describe('the provenance rows', () => {
   it('★ shows published, approved and the citizen\'s own saved version together', () => {
-    // THE BOARD'S THREE ROWS. The third is the one that needed a server field: the saved head
-    // and its timestamp did not reach this client at all before U4.
+    // THE BOARD'S THREE ROWS. The third needed a server field: the saved head and its
+    // timestamp.
     wire({
       deployment: view('live_current', {
         finishedAt: '2026-08-20T09:14:00Z',

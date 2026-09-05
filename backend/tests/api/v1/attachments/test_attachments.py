@@ -1,5 +1,5 @@
 """POST/GET/DELETE /v1/attachments — validation, magic bytes, quota, owner-scoped
-keys, rate limit (U10). Byte-stable with the Express `/api/attachments` contract.
+keys, rate limit. Byte-stable with the Express `/api/attachments` contract.
 """
 
 from __future__ import annotations
@@ -258,7 +258,7 @@ async def test_delete_cross_user_is_noop_and_preserves_owner_data(
 
 
 async def test_deck_upload_disabled_is_501(client, db_session) -> None:
-    # Deck is gated off (GOTENBERG_URL unset in test) → 501 envelope (migrated _error).
+    # Deck is gated off (GOTENBERG_URL unset in test) → 501 envelope.
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
@@ -274,7 +274,7 @@ async def test_deck_upload_disabled_is_501(client, db_session) -> None:
 
 
 async def test_malformed_base64_rejected(client, db_session) -> None:
-    # Exercises the fixed tuple-except branch in _validate_attachment_bytes (U1).
+    # Exercises the tuple-except branch in _validate_attachment_bytes.
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",
@@ -297,7 +297,7 @@ def test_attachments_openapi_documents_codes() -> None:
     assert {"400", "429", "401", "500"} <= delete
 
 
-# --- conversation link (U9) ---------------------------------------------------
+# --- conversation link --------------------------------------------------------
 
 
 async def test_upload_links_owned_conversation(client, db_session, fake_storage) -> None:
@@ -403,7 +403,7 @@ async def test_upload_malformed_conversation_id_400(client, db_session, fake_sto
 async def test_upload_rejected_parse_stores_no_object_with_conversation_id(
     client, db_session, fake_storage
 ) -> None:
-    # The store-after-parse invariant holds through the U9 change: a corrupt office file is
+    # The store-after-parse invariant holds: a corrupt office file is
     # rejected 400 and leaves no orphaned object, even with a valid conversationId in the body.
     headers, user = await _auth(db_session)
     conv = await ConversationFactory.create(db_session, user.id)
@@ -481,7 +481,7 @@ async def test_rate_limit_enforced(client, db_session) -> None:
     }
 
 
-# --- office / deck branches (U11) ---------------------------------------------
+# --- office / deck branches ---------------------------------------------------
 
 
 async def test_office_upload_extracts_markdown(client, db_session) -> None:

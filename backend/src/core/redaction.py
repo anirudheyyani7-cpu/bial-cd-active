@@ -429,9 +429,7 @@ def leaves_a_credential_value_open(text: str) -> bool:
     boundaries does not help, because the value legitimately contains newlines.
 
     That is exactly how the orchestrator's head+tail output cap leaked: the middle was dropped and
-    the retained tail began part-way through a private key with nothing left to identify it. The
-    old head-only cap never showed that text at all, which is what made retaining the tail a
-    regression rather than an improvement.
+    the retained tail began part-way through a private key with nothing left to identify it.
 
     So a chunker asks this about everything preceding the chunk it is about to emit, and declines
     to emit when the answer is yes. `True` on an unscannably large input, because an unestablished

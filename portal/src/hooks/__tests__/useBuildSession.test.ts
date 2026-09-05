@@ -177,9 +177,9 @@ describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', 
   })
 
   it('a RECLAIMED terminal settles with a NULL reason — it must not claim a live preview', async () => {
-    // Reclaim now arrives from the server's own verdict on the feed rather than from a failed
-    // browser heartbeat (U13 deleted that loop), but the pane's contract is unchanged: a
-    // container taken back does not get to say "completed" and keep its preview on screen.
+    // Reclaim arrives from the server's own verdict on the feed, never from a browser heartbeat,
+    // and the pane's contract holds either way: a container taken back does not get to say
+    // "completed" and keep its preview on screen.
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
     act(() => { fake.open() })
@@ -220,9 +220,8 @@ describe('useBuildSession — stop / force-end (C3 §2.2/§3.4)', () => {
 
 describe('useBuildSession — an open tab is NOT a keep-alive writer (U13, R13)', () => {
   /*
-   * The old keep-alive suite went with the loop it characterised. useBuildSession.ts carries why
-   * nothing in the browser extends a deadline; what is pinned here is that this hook makes no such
-   * call, however long a tab sits.
+   * useBuildSession.ts carries why nothing in the browser extends a deadline; what is pinned here
+   * is that this hook makes no such call, however long a tab sits.
    */
 
   it('a live session with an untouched tab makes NO keep-alive calls, however long it sits', async () => {
@@ -292,7 +291,7 @@ describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
 
   it('unmount WHILE reattach() is in flight wires NO feed and NO timers (FIX 1 — no zombie heartbeat)', async () => {
     vi.useFakeTimers()
-    // RE-POINTED off `start`. The guard is `mountedRef`, and `reattach` carries the identical bail.
+    // The guard is `mountedRef`, and `reattach` carries the identical bail.
     vi.useFakeTimers()
     let resolveStatus!: (v: BuildSessionStatusResponse) => void
     const statusGate = new Promise<BuildSessionStatusResponse>((res) => { resolveStatus = res })

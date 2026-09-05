@@ -1,4 +1,4 @@
-"""The native message store (U4, plan 2026-07-22-002) — append, load, repair, mark.
+"""The native message store (U4) — append, load, repair, mark.
 
 The `messages` table holds NATIVE pydantic-ai batches (one row per persisted batch). Files
 are the ONLY transcript transformation: everything else round-trips byte-faithfully between
@@ -499,9 +499,7 @@ async def load_history(
     payload in seq order, references rehydrated, validated, dangling calls repaired.
     Owner-scoped (ADR-0004).
 
-    HIDDEN ROWS ARE INCLUDED, and the reason is not the one that used to be written here. It
-    said "the model must see where the mode changed" — there are no mode changes any more. The
-    reason it still holds is different and stronger: a hidden row can carry the `ToolReturnPart`
+    HIDDEN ROWS ARE INCLUDED. A hidden row can carry the `ToolReturnPart`
     that ANSWERS a deferred call (the plan-options resolution overlay is exactly that), and
     dropping it would hand the model a call with no return. Hiddenness is a RENDER predicate;
     it was never a statement about what the model may see.
@@ -580,9 +578,8 @@ async def load_rows(
 ) -> Sequence[Message]:
     """The conversation's rows in seq order — the projection/audit read (U6 builds on this).
     Hidden rows are excluded unless asked for: hiddenness is this SQL predicate, never a payload
-    property. (The example that used to be named here was the mode-switch marker, which is gone;
-    the build-started overlay, the plan-options resolution and the turn-terminal row are the
-    ones this predicate covers today.)"""
+    property. (The build-started overlay, the plan-options resolution and the turn-terminal row are
+    the ones this predicate covers today.)"""
     query = (
         sa.select(Message)
         .where(Message.conversation_id == conversation_id, Message.user_id == user_id)
@@ -663,8 +660,5 @@ async def append_batch(
     )
 
 
-# THE MODE-SWITCH MARKER IS GONE, and nothing replaced it. It was a hidden `[mode changed: …]`
-# row written so the model could see where in the history its toolset changed. A chat's kind is
-# fixed at creation now (R14/R17), so there are no mode boundaries for a marker to name;
-# revision 0035 deleted every such row and the `mode_switch` entry kind went with the endpoint
-# that wrote them.
+# THE MODE-SWITCH MARKER IS GONE. A chat's kind is
+# fixed at creation now (R14/R17), so there are no mode boundaries for a marker to name.

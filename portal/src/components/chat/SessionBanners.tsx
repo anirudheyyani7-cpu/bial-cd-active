@@ -1,8 +1,7 @@
 /**
- * The two per-user session lifecycle banners — relocated from the retired SessionControls
- * cockpit row to just above the composer, where the operator is already looking when they
- * need to act on one. Presentational: every decision is `useBuildSession` state; every
- * action is one of its callbacks.
+ * The two per-user session lifecycle banners — just above the composer, where the operator is
+ * already looking when they need to act on one. Presentational: every decision is
+ * `useBuildSession` state; every action is one of its callbacks.
  *
  * ASSERTIVE IS FOR THINGS THAT WENT WRONG. Both of these interrupt the operator
  * (`role="alert"` / `aria-live="assertive"`) because something is genuinely blocked or

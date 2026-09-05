@@ -203,7 +203,7 @@ async def test_happy_start_provisions_launches_and_ends(
 async def test_finalize_runs_the_liveness_detector_while_the_container_is_up(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The #46 detector (plan U1) hooks the end sequence: its workspace collect must run at
+    # The #46 detector hooks the end sequence: its workspace collect must run at
     # finalize, BEFORE teardown — the only moment the workspace still exists to scan.
     user, project_id = await _mk(db_session, "m40@rvaiglobal.com")
     manager = SessionManager()
@@ -2690,8 +2690,8 @@ async def test_dev_start_failing_on_the_restore_arm_still_fails_the_relaunch(
 ) -> None:
     # The fail-open above is scoped to ATTACH, deliberately. A freshly restored container has
     # nothing serving on it, so swallowing `dev_start` there would return 200 with a preview
-    # URL that 404s — the exact "successful build, blank page" failure this plan is fixing
-    # elsewhere. Widen the guard to both arms and this goes red.
+    # URL that 404s — the exact "successful build, blank page" failure. Widen the guard to
+    # both arms and this goes red.
     user, project_id = await _mk(db_session, "r18@rvaiglobal.com")
     manager = SessionManager()
 

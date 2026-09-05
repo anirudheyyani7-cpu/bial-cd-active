@@ -13,11 +13,10 @@ turn boundaries; the saved bundle is the user's explicit click. R11 asks for "th
 change", which is the former — a builder who never pressed Save still has work worth keeping, and
 that is the population most likely to be reclaimed.
 
-THE FALLBACK ORDER IS DELIBERATE, and its shape comes from a round-1 wording that made the gate
-unsatisfiable: recover the token → read `HEAD` → compare. If TOKEN RECOVERY ITSELF fails, a present
-and parseable bundle counts as confirmed — otherwise a container that is already dead can never be
-collected, which is the entire point of the exercise. If there is no parseable bundle either,
-escalate. The real comparison still happens in the normal case.
+THE FALLBACK ORDER IS DELIBERATE: recover the token → read `HEAD` → compare. If TOKEN RECOVERY
+ITSELF fails, a present and parseable bundle counts as confirmed — otherwise a container that is
+already dead can never be collected, which is the entire point of the exercise. If there is no
+parseable bundle either, escalate. The real comparison still happens in the normal case.
 
 "STORAGE IS OFF" IS NOT "THERE IS NO WORK TO PRESERVE". An unset store is a fact about the
 DEPLOYMENT, an unreadable one is a fact about this moment, and only "the store answered and holds
@@ -122,8 +121,8 @@ async def confirm_durable_copy(
 
     if container_head is None:
         # TOKEN RECOVERY OR THE CONTAINER READ FAILED. A present, parseable bundle counts as
-        # confirmed here — deliberately. Requiring the live comparison in this branch is what made
-        # the round-1 wording unsatisfiable: a container that is already dead can never answer,
+        # confirmed here — deliberately. Requiring the live comparison in this branch would make
+        # the gate unsatisfiable: a container that is already dead can never answer,
         # so the gate would have spared every genuinely-dead container forever and collected
         # nothing at all.
         return CopyVerdict(

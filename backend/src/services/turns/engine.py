@@ -244,13 +244,9 @@ ACK_TEXT = "Getting started on that…"
 # The reserved tool name the acknowledgement rides under, so it is identifiable as the
 # harness's own row rather than a step the agent took.
 #
-# THE FILTERING IS ENTIRELY ON THIS SIDE, and the comment here used to say otherwise — it
-# claimed the portal keyed on the same string in `BuildProgress.tsx` to keep the ack out of a
-# finished build's step history. `BuildProgress.tsx` was deleted with the two-page era, and no
-# portal-side constant of that name ever existed in this repo. Nothing is missing: the ack is
-# held in `_TurnState.acknowledgement` rather than in `steps`, so it never reaches the
-# persisted rows, and it is cleared by the first real step. A reader who went looking for the
-# client-side half would have found nothing and reasonably concluded a filter had been lost.
+# THE FILTERING IS ENTIRELY ON THIS SIDE, and there is no client-side half to look for. The
+# ack is held in `_TurnState.acknowledgement` rather than in `steps`, so it never reaches the
+# persisted rows, and it is cleared by the first real step.
 ACK_TOOL = "__ack__"
 ACK_TOOL_CALL_ID = "__ack__"
 
@@ -266,13 +262,13 @@ LONG_OPERATION_THRESHOLD_MS = 8_000
 # screen-reader announcement. The portal caps announcements at one per 10s on top of that.
 LONG_OPERATION_REFRESH_MS = 5_000
 
-# U18/R22 — WHAT A FINISHED BUILD SAYS WHEN THE AGENT HANDED US NOTHING TO SAY.
+# WHAT A FINISHED BUILD SAYS WHEN THE AGENT HANDED US NOTHING TO SAY.
 #
 # `declare_done` is terminal now, so the summary it carries is the whole of the completion
 # message — and a model that calls it with an empty string would otherwise end a working build
 # in silence. The fallback is never the model's own text: the alternative to a summary is a
 # sentence the harness wrote, not a scrape of whatever prose happened to precede the tool call,
-# because that prose is exactly the register this plan removes.
+# because that prose is exactly the register a completion message must not use.
 #
 # It says the two things a completion has to: the app is ready, and what the reader can do next.
 # Checked against the same no-jargon bar as `services/turns/copy.py` — no file, no command, no
@@ -318,9 +314,9 @@ def plan_argument_of(part: ToolCallPart) -> str | None:
 
     SPLIT OUT SO THE REFUSAL COPY CAN ASK THE QUESTION RATHER THAN INFER THE ANSWER.
     `transition._refusal_for` has to tell "there is no plan here" from "the plan is too long",
-    and it used to do that by reverse-engineering which of `plan_from_call`'s branches returned
-    `None` — correct only while there are exactly two. A third rejection reason added below
-    would have silently reported itself as "too long" to the one person it is not true for."""
+    and reverse-engineering which of `plan_from_call`'s branches returned `None` is correct only
+    while there are exactly two. A third rejection reason added below would silently report
+    itself as "too long" to the one person it is not true for."""
     try:
         args = part.args_as_dict()
     except Exception:
@@ -433,7 +429,7 @@ every reader defaults it to zero rather than requiring it."""
 def _citizen_output_tokens(usage: RunUsage | RequestUsage) -> int:
     """The output tokens that are the CITIZEN's, with the platform's thinking taken back out.
 
-    THE OWNER'S RULING (2026-09-02): the meter shows what they spent on their app, not what the
+    The meter shows what they spent on their app, not what the
     platform spent thinking about it. Reasoning is a choice this platform made on their behalf —
     they did not ask for it, cannot see it, and cannot turn it off — so charging their daily
     allowance for it would make their own budget move for a reason they have no way to act on.
@@ -459,7 +455,7 @@ def _run_spend(usage: RunUsage) -> int:
     verified against the Anthropic mapper, where 10 fresh input tokens plus a 90k cache read
     arrive as `input_tokens == 90_010`. A bound reading that raw number prices a cached prefix
     at full rate on every step, which is precisely the mistake `billable_spend` records as a
-    2026-07-30 production incident: one calculator build booked 956k of a 1M daily cap on 68
+    production incident: one calculator build booked 956k of a 1M daily cap on 68
     tokens of real fresh input. A per-run bound repeating it would end honest builds early, and
     would measure how many steps a build took rather than how much work it did — the very thing
     `RUN_TOKEN_BUDGET`'s own docstring says the bound must not do.
@@ -1177,10 +1173,7 @@ class TurnEngine:
                     ] = [(persistable, self._pending_meta(deferred), MessageEntryKind.TURN)]
 
                     # NO SECOND MODEL REQUEST IS ISSUED HERE, and none is issued anywhere as a
-                    # consequence of what the model wrote. The forced retry that used to sit at
-                    # this point re-ran the turn with the offer tool as the only thing the model
-                    # could reach, on the strength of a prose heuristic — see the note where
-                    # that heuristic used to be defined.
+                    # consequence of what the model wrote.
 
                     # WRITE-BEFORE-DONE (U5 policy): the reply must be durable before the
                     # turn may claim success. A failure of the persist seam is DISTINCT from
@@ -1218,10 +1211,10 @@ class TurnEngine:
                             # did before — the citizen's transcript is unchanged; only the
                             # model's copy is gone.
                             #
-                            # NO SECOND LIVE HOME. Plan 009 is building the durable, typed home
-                            # for platform speech on the turn-terminal row; when it lands this
-                            # is the row it adopts. Routing the sentence to a live-only banner
-                            # in the meantime would give the citizen the same words twice.
+                            # NO SECOND LIVE HOME. A durable, typed home for platform speech is
+                            # coming to the turn-terminal row; when it lands this is the row it
+                            # adopts. Routing the sentence to a live-only banner in the meantime
+                            # would give the citizen the same words twice.
                             await append_batch(
                                 db,
                                 user_id=state.user_id,
@@ -1401,7 +1394,7 @@ class TurnEngine:
         coherence question ("does Ask see what Write just did?") stops being something we
         have to keep getting right.
 
-        A NEW PROJECT GETS THE CONTAINER TOO (user, 2026-07-30). An earlier cut of this
+        A NEW PROJECT GETS THE CONTAINER TOO. An earlier cut of this
         withheld it until a snapshot existed, on the grounds that a fresh project's container
         is the golden template and Ask might describe scaffolding as the user's work. That is
         the wrong trade: Plan writing the FIRST build is exactly when the agent most needs to
@@ -1573,10 +1566,9 @@ class TurnEngine:
             # never reach the numerator. That gap is precisely what R103 exists to expose, so
             # excluding these from the denominator would hide it.
             #
-            # No duration row here, restating Plan E's reasoning rather than reversing it: a
-            # 15-second attach budget and a 120-second cold budget averaged together produce a
-            # number that describes neither. R102 asks how long a COLD start takes, and that is
-            # E's seam.
+            # No duration row here: a 15-second attach budget and a 120-second cold budget
+            # averaged together produce a number that describes neither. R102 asks how long a
+            # COLD start takes, and that is a separate concern.
             state.started_a_container = True
             await count(HarnessCounter.APP_START_ATTEMPTED, app_id=session.app_id)
         if session.news is RecoveryNews.UNRECOVERABLE:
@@ -1829,11 +1821,11 @@ class TurnEngine:
                 # outstanding there is nothing for it to gate and the loop carries on as
                 # before. Nothing here spends a repair attempt on it.
                 if not outcome.green and outcome.state is not HealthState.INDETERMINATE:
-                    # U25/R32 — THE HEADLINE NUMBER: how often the platform would have told a
+                    # THE HEADLINE NUMBER: how often the platform would have told a
                     # citizen their app was finished when it was not. Counted only on a POSITIVE
                     # verdict of "not finished" — an unanswerable one blocked nothing, it merely
-                    # asked again, and folding the two together would make the number that
-                    # measures this plan's whole point unreadable.
+                    # asked again, and folding the two together would make the number this
+                    # counter exists to produce unreadable.
                     #
                     # Fire-and-forget by construction (`count` owns its own session and swallows
                     # everything), because a counter that can fail the turn it is counting is
@@ -1888,12 +1880,12 @@ class TurnEngine:
                         ),
                     )
                 if error is not None:
-                    # U13 / R17 — A CLIENT-CLASS REPORT IS AGENT INPUT, NOT NARRATIVE. The whole
+                    # A CLIENT-CLASS REPORT IS AGENT INPUT, NOT NARRATIVE. The whole
                     # user-visible consequence of a browser-side crash is that the completion
                     # claim does not appear; the report itself was written by code inside the
-                    # generated app, and this plan removes developer surfaces rather than adding
-                    # one. It still repairs — `build_repair_prompt` below is reached exactly as
-                    # for any other source — it just does not narrate.
+                    # generated app, and the citizen is shown no developer surfaces. It still
+                    # repairs — `build_repair_prompt` below is reached exactly as for any other
+                    # source — it just does not narrate.
                     #
                     # THE TRAP, and it is why this guard is here and not in `verify`: making
                     # `verify` return `green=False, error=None` for this class would look like

@@ -101,9 +101,8 @@ class AdminAppOut(CamelModel):
     declaration: dict[str, Any] | None
     # On-disk size of the project's own database (ADR-0028), or null when it has none —
     # never provisioned, not yet ready, or the cluster was unreachable when the page
-    # rendered. STRICTLY ADVISORY: it replaced the retired `dataBytes` counter as an
-    # observation, and nothing anywhere reads it as a quota or a gate. Null means "no
-    # number to show", never "zero" and never "over limit".
+    # rendered. STRICTLY ADVISORY: nothing anywhere reads it as a quota or a gate. Null
+    # means "no number to show", never "zero" and never "over limit".
     database_bytes: int | None
     rejection_note: str | None
     created_at: datetime
@@ -182,9 +181,9 @@ class BundleUrlResponse(CamelModel):
 
 
 class MarkDeployedRequest(CamelModel):
-    """The optional deployed-URL payload. The whole BODY is optional (the endpoint
-    shipped without one and the admin SPA already posts `{}`), and so is the field:
-    an admin who ran the runbook but has no URL to hand still records the marker.
+    """The optional deployed-URL payload. The whole BODY is optional (the admin SPA
+    already posts `{}`), and so is the field: an admin who ran the runbook but has no
+    URL to hand still records the marker.
 
     OMITTING `deployedUrl` means "leave the recorded URL as it is" — a defined,
     documented meaning (fail-first's optional-knob exception), and the right one: a
@@ -644,17 +643,16 @@ class HarnessCounterRow(CamelModel):
 class HarnessCountersResponse(CamelModel):
     """`GET /v1/admin/harness-counters` → 200 — the build-harness outcomes, totalled.
 
-    THE QUESTION THIS ANSWERS, in the words the plan's success criteria use: did the verdict block
-    a false claim, how often did we restore, and did any turn fail to reach a durable copy. After a
-    week in production those are answerable from this one response.
+    THE QUESTION THIS ANSWERS: did the verdict block a false claim, how often did we restore, and
+    did any turn fail to reach a durable copy. After a week in production those are answerable
+    from this one response.
 
     NO METRICS DEPENDENCY, deliberately. There is no metrics system in this deployment (this
     module says so elsewhere at length), so the shape is a `GROUP BY` over a small append-only
     table — the same trade `worker_passes` already makes.
 
     Rows are whatever names have been WRITTEN, not the enum's members: the vocabulary is open by
-    design, and a counter the companion plan adds at the tool boundary shows up here with no
-    change to this file."""
+    design, and a counter added at the tool boundary shows up here with no change to this file."""
 
     counters: list[HarnessCounterRow]
     since: datetime

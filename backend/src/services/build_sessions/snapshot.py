@@ -133,10 +133,7 @@ class Destination:
     or divert key carries the instant it was taken, so it cannot be a bare constant. Keeping the
     key-building here (rather than exposing `_write_snapshot_locked`, which is private for a
     reason) means every writer in the system names its destination in the same vocabulary, and
-    nothing outside this module has to know that a key is a string at all.
-
-    This replaces a two-way `recovery: bool`. That boolean was fine while there were two answers;
-    with four, the next reader of `write_snapshot(..., True)` would have had to guess which."""
+    nothing outside this module has to know that a key is a string at all."""
 
     key: str
 
@@ -148,18 +145,19 @@ class Destination:
     @classmethod
     def recovery(cls, app_id: uuid.UUID) -> Destination:
         """The platform's autosave. Prefer `write_recovery_copy`, which guards the promotion —
-        this is the raw destination, for the operator promote path (U25) that has already
+        this is the raw destination, for the operator promote path that has already
         decided."""
         return cls(recovery_key(app_id))
 
     @classmethod
     def quarantine(cls, app_id: uuid.UUID, taken_at: datetime) -> Destination:
-        """A tree U2 is about to restore over. Never overwritten by a later occurrence."""
+        """A tree a restore is about to write over. Never overwritten by a later occurrence."""
         return cls(quarantine_key(app_id, taken_at))
 
     @classmethod
     def divert(cls, app_id: uuid.UUID, taken_at: datetime) -> Destination:
-        """A tree U3 refused to promote. Never overwritten by a later occurrence."""
+        """A tree the recovery guard refused to promote. Never overwritten by a later
+        occurrence."""
         return cls(divert_key(app_id, taken_at))
 
 
@@ -445,7 +443,7 @@ class ParkedTreeNotOursError(Exception):
 
 @dataclass(frozen=True)
 class ParkedTree:
-    """One bundle this plan set aside, as an operator needs to see it."""
+    """One bundle the recovery guard set aside, as an operator needs to see it."""
 
     key: str
     kind: Literal["quarantine", "divert"]
@@ -461,7 +459,7 @@ class Promotion:
 
 
 async def list_parked_trees(app_id: uuid.UUID) -> list[ParkedTree]:
-    """Every quarantine and divert object for one app, newest first (U25).
+    """Every quarantine and divert object for one app, newest first.
 
     NEWEST FIRST because the useful one is almost always the last one, and an operator scrolling
     to the bottom of a list to find the tree they are looking for is an operator who will
@@ -511,22 +509,22 @@ async def list_parked_trees(app_id: uuid.UUID) -> list[ParkedTree]:
 
 
 async def promote_parked(app_id: uuid.UUID, *, key: str) -> Promotion:
-    """Copy one parked tree into the recovery slot, THROUGH the guard (U25).
+    """Copy one parked tree into the recovery slot, THROUGH the guard.
 
     THE GUARD IS THE WHOLE POINT and it is why this is not a two-line blob copy. A promotion whose
-    tree is not a descendant of what the recovery slot already holds is exactly the shape U3
-    refuses at the end of every turn — an operator asking for it is not evidence that the tree is
+    tree is not a descendant of what the recovery slot already holds is exactly the shape the
+    turn-end guard refuses — an operator asking for it is not evidence that the tree is
     the right one, and forcing it would destroy the newest copy of somebody's work in the name of
     recovering it.
 
-    THE ANCESTRY QUESTION CANNOT BE ASKED HERE, and that changes what the guard can be. U3 asks a
-    live container `git merge-base --is-ancestor`; this runs against two objects in a store with
-    no container in sight. So the check is the one that IS answerable: refuse when the slot
-    already holds the same tree (nothing to do), and otherwise require the promotion to be
-    explicit about replacing it — which the audit row records, with the operator's name on it.
-    That is weaker than U3's guard and it is stated rather than dressed up: the compensating
-    control is that this route is superadmin-only, audited, and per-occurrence keys mean the
-    replaced object is still there."""
+    THE ANCESTRY QUESTION CANNOT BE ASKED HERE, and that changes what the guard can be. The
+    turn-end guard asks a live container `git merge-base --is-ancestor`; this runs against two
+    objects in a store with no container in sight. So the check is the one that IS answerable:
+    refuse when the slot already holds the same tree (nothing to do), and otherwise require the
+    promotion to be explicit about replacing it — which the audit row records, with the operator's
+    name on it. That is weaker than the turn-end guard and it is stated rather than dressed up:
+    the compensating control is that this route is superadmin-only, audited, and per-occurrence
+    keys mean the replaced object is still there."""
     store = get_storage()
     if not key.startswith((quarantine_prefix(app_id), divert_prefix(app_id))):
         # THE KEY COMES FROM A REQUEST BODY. It names an object to READ and an app to write it

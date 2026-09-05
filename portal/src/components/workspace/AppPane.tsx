@@ -64,13 +64,13 @@ export interface AppPaneProps {
 function AppPane({ device, reloadNonce }: AppPaneProps) {
   const address = useWorkspaceAddress()
   const report = useWorkspaceReport()
-  // THE COLUMN ITSELF ANSWERS TO THE VISIBILITY, NOT ONLY THE FRAME INSIDE IT (plan 002, U6).
+  // THE COLUMN ITSELF ANSWERS TO THE VISIBILITY, NOT ONLY THE FRAME INSIDE IT.
   //
   // `AppPaneHost` hides itself when no surface declares a pane — but the host is only reached when
   // there is something to frame. A plan chat is the opposite case: nothing to frame AND no pane
   // declared, so `frameIt` is false, `NoFrame` renders instead of the host, and this section's
   // `flex-1` went on claiming half the window for a card offering to start an app the citizen did
-  // not ask for. That is exactly the layout `PlanChat` forbids and U6 promises: the board draws one
+  // not ask for. That is exactly the layout `PlanChat` forbids: the board draws one
   // centred column across the full width, and `ConversationSurface`'s `mx-auto max-w-3xl` cannot
   // centre inside a rail that is only half the screen.
   //
@@ -127,9 +127,9 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
         visible
           ? 'flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden'
           : leaving
-            ? // ON ITS WAY OUT (plan 002, U6). The column keeps its size for one animation while
-              // the card slides right and fades — `w-0` here instead would make the keyframe
-              // unobservable, which is why the utility existed unused. The rail beside it is
+            ? // ON ITS WAY OUT. The column keeps its size for one animation while the card
+              // slides right and fades — `w-0` here instead would make the keyframe
+              // unobservable. The rail beside it is
               // already growing, which is the board's "the conversation is already settling
               // towards the middle of the window".
               'flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden animate-pane-leave'
@@ -146,12 +146,6 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
       >
         Skip past your app
       </button>
-
-      {/* THE COLLAPSE CONTROL IS NOT HERE ANY MORE (plan 002, U2). It moved to the toolbar row,
-          which is drawn once above the two-column grid. Here it was already better than living
-          inside the rail it hides — a collapsed rail is invisible and untabbable, so a toggle in
-          it is a one-way door — but it still appeared and disappeared with the pane. In the row it
-          has one home in every state, beside the title that now also survives a collapse. */}
 
       {frameIt ? (
         // THE FRAME IS THE HOST'S, from the frame inward. The device width is passed through
@@ -181,10 +175,8 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
 /**
  * WHAT THE PANE SAYS WHEN THERE IS NOTHING TO FRAME — one author, and it is the state map.
  *
- * These arms used to live inside `LivePreview` as a six-prop placeholder precedence spelled at the
- * pane's edge (`showRestoring` / `showTerminal` / `showReconnecting` / `showUnavailable`). They are
- * removed there and drawn here from one computed value, so a pane sentence has exactly one author
- * and a state nobody is in cannot have chrome drawn for it.
+ * They are drawn here from one computed value, so a pane sentence has exactly one author and a
+ * state nobody is in cannot have chrome drawn for it.
  */
 function NoFrame({ report }: { report: ReturnType<typeof useWorkspaceReport> }) {
   // NOBODY HAS COMPUTED A STATE. A surface mounted outside a workspace, or one still resolving its
@@ -202,8 +194,7 @@ function NoFrame({ report }: { report: ReturnType<typeof useWorkspaceReport> }) 
       // THE INTERNAL STATE NAME, EXPOSED FOR TESTS AND NEVER RENDERED. `not-running` is the one to
       // watch: it is a state name here and on the wire, and the exact phrase R-16 forbids on
       // screen. It is an attribute rather than text for that reason — and it gives a suite a handle
-      // on WHICH state the pane reached without pinning the copy, which the client has changed
-      // twice and may change again.
+      // on WHICH state the pane reached without pinning the copy, which may change again.
       data-workspace-state={state.name}
       className="flex flex-1 items-center justify-center p-8"
     >

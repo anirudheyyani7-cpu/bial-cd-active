@@ -90,8 +90,8 @@ export async function authFetch(
     if (refreshed) {
       res = await call()
       // The retry gets the same gate as the first attempt. A suspension that only surfaces on
-      // the second response would otherwise reach the caller as a bare 403 — the streaming path
-      // re-checks too, and the asymmetry was a latent hole rather than a deliberate choice.
+      // the second response would otherwise reach the caller as a bare 403. The streaming path
+      // re-checks for the same reason.
       await bounceIfSuspended(res)
     }
   }

@@ -86,7 +86,7 @@ def _header_dict(conv: Conversation) -> dict[str, Any]:
     fields are omitted when unset (matching the raw Cosmos doc the SPA normalizes)."""
     header: dict[str, Any] = {
         "_id": str(conv.id),
-        # The parent project (R2/KD-4) — the SPA resolves it to the breadcrumb
+        # The parent project — the SPA resolves it to the breadcrumb
         # ("ProjectName / chat title"); the chat itself stays addressed flat by its own id.
         "projectId": str(conv.project_id),
         "kind": conv.kind.value,
@@ -120,7 +120,7 @@ async def list_conversations(
     query = sa.select(Conversation).where(Conversation.user_id == user.id)
     if kind is not None:
         query = query.where(Conversation.kind == ChatKind(kind))
-    # Optional project scope (R6). Already user-scoped, so a cross-user project_id simply
+    # Optional project scope. Already user-scoped, so a cross-user project_id simply
     # returns nothing — no leak, no separate ownership check needed.
     if project_id is not None:
         query = query.where(Conversation.project_id == project_id)
@@ -129,7 +129,7 @@ async def list_conversations(
     return JSONResponse(content={"conversations": [_header_dict(c) for c in rows]})
 
 
-# --- 003-U1: the project's ONE canonical builder thread -----------------------
+# --- the project's ONE canonical builder thread -------------------------------
 
 
 @router.post(
@@ -147,11 +147,10 @@ async def list_conversations(
 async def create_conversation(
     body: ConversationCreateRequest, user: CurrentUser, db: DbSession
 ) -> JSONResponse:
-    """Create a conversation row BEFORE its first turn (U7).
+    """Create a conversation row BEFORE its first turn.
 
-    The stateless-turn relay 404s an unknown conversation (there is no longer a row-appears-
-    on-first-append upsert — that died with the legacy message API), so the SPA creates the
-    row it just minted, then streams. Idempotent per owner: re-POSTing the same id with the
+    The stateless-turn relay 404s an unknown conversation, so the SPA creates the row it just
+    minted, then streams. Idempotent per owner: re-POSTing the same id with the
     same parentage answers 200 with the existing header (a retry, a second tab), while an id
     that exists under ANYONE else or under different parentage is a 409 — one arm, one
     message, so existence under another owner is not distinguishable (ADR-0004)."""
@@ -194,9 +193,7 @@ async def create_conversation(
 async def _load_owned(db: DbSession, user_id: uuid.UUID, conversation_id: str) -> Conversation:
     """Resolve a caller-owned conversation from a path id, or RAISE the matching error:
     400 for a malformed id token, 404 for a well-formed id that resolves to nothing the
-    caller owns (owner-scoped — a cross-user id is indistinguishable from a missing one).
-    Raising (vs the old sentinel return) lets the callers drop their isinstance guards
-    while keeping the exact status/body."""
+    caller owns (owner-scoped — a cross-user id is indistinguishable from a missing one)."""
     if not _ID_RE.match(conversation_id):
         raise AppApiError(400, "Invalid conversation id.")
     try:
@@ -224,11 +221,11 @@ async def _load_owned(db: DbSession, user_id: uuid.UUID, conversation_id: str) -
     ),
 )
 async def get_conversation(conversation_id: str, user: CurrentUser, db: DbSession) -> JSONResponse:
-    """The conversation header + the display projection (U6) — everything a reopened chat
+    """The conversation header + the display projection — everything a reopened chat
     needs, in one read. The projection is THE derivation (`services/messages/projection.py`);
-    U10's live catch-up snapshot reuses it, so reload and live can never disagree.
+    the live catch-up snapshot reuses it, so reload and live can never disagree.
 
-    `activeTurn` (U10): the in-process turn registry's answer — `{turnId, lastSeq}` while a
+    `activeTurn`: the in-process turn registry's answer — `{turnId, lastSeq}` while a
     turn runs (the cursor a subscriber resumes `GET /events` from), null when settled.
     """
     owned = await _load_owned(db, user.id, conversation_id)
@@ -294,7 +291,7 @@ async def patch_conversation(
     return JSONResponse(content={"ok": True})
 
 
-# --- U9: delete with cleanup --------------------------------------------------
+# --- delete with cleanup ------------------------------------------------------
 
 
 @router.delete(
@@ -313,7 +310,7 @@ async def delete_conversation(
 
     # Delete the rows (attachments + conversation + cascaded messages) INSIDE the txn,
     # commit, and only THEN best-effort sweep the object-store blobs — so a rolled-back
-    # delete never destroys a blob a restored row still points at (KD-3 rollback safety).
+    # delete never destroys a blob a restored row still points at (rollback safety).
     blob_keys = await gather_and_delete_conversation(db, owned, user_id=user.id)
     await db.commit()
     await sweep_blobs(storage, blob_keys)

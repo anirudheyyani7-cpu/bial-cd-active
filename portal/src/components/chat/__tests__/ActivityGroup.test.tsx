@@ -104,8 +104,8 @@ describe('sealing is adjacency, and there is no seal logic', () => {
 
 describe('a sealed group collapses to a count, and opens where it sits', () => {
   it('AE13: is collapsed at rest, and pressing it lists the rows in place', () => {
-    // The client's decision, 2026-09-01: sealed means collapsed, including the last group of a
-    // turn. Vercel's AI Elements auto-open completed tools; we deliberately do not.
+    // Sealed means collapsed, including the last group of a turn. Vercel's AI Elements
+    // auto-open completed tools; we deliberately do not.
     mount([
       stepPart(1, 'Reading your visitor screen'),
       stepPart(2, 'Adding the Out column'),
@@ -125,8 +125,7 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
   })
 
   it('★ is a bordered chip on the board\'s own ground, not bare text in the transcript', () => {
-    // AN EARLIER PASS READ `BuildChat` AS DRAWING NO CHROME AT ALL and said so at length in the
-    // component. `ActivityAnatomy` is the artboard that specifies this component, and it draws
+    // `ActivityAnatomy` is the artboard that specifies this component, and it draws
     // `border:1px solid #E2E8F0; background:#FCFDFD; border-radius:10px`. Without it the group was
     // a line of text with nothing to say it was a receipt rather than a sentence.
     mount([stepPart(1, 'Reading your visitor screen'), textPart('Done.')])
@@ -217,9 +216,8 @@ describe('R34 — a group that hit a problem opens by itself, but never mid-turn
 
 describe('R31 — a live group names what is happening NOW and grows in place', () => {
   it('★ stays COLLAPSED while it runs, with the current step on one quiet line beneath it', () => {
-    // THE OWNER'S RULING OF 2026-09-02, which amends `ActivityAnatomy` panel 2 in place. The board
-    // draws a live group OPEN with the current step named inside it; the owner does not want the
-    // working detail on screen. So the row is a count with icons accumulating in it, and the
+    // `ActivityAnatomy` panel 2 draws a live group OPEN with the current step named inside it;
+    // the working detail does not belong on screen. So the row is a count with icons in it, and the
     // sentence moves to a line underneath. Mutation receipt: return `facts.currentLabel` from
     // `groupLabel`'s running arm again and the first two assertions go red together.
     mount([
@@ -287,7 +285,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
   })
 
   it('★ a glance inside a RUNNING group closes itself when the TURN ends', () => {
-    // "A glance inside is temporary, not a new resting state" (owner ruling, 2026-09-02). Cleared
+    // "A glance inside is temporary, not a new resting state." Cleared
     // to "the reader has not decided" rather than to closed, so a group that also FAILED still
     // opens itself afterwards. The turn ending is the event — `isRunning` going false — not the
     // group's own steps settling; see the next test for why the difference is the whole finding.

@@ -303,17 +303,15 @@ class FakeSandboxClient(SandboxClient):
         marks the registry `ending` BEFORE it tears down, so the real client refuses a container
         the reaper has already committed to destroying. A fake without that guard happily
         attaches to it, which makes reap-ordering bugs invisible and makes code paths look
-        reachable that production refuses outright — it already cost one investigation a false
-        positive.
+        reachable that production refuses outright.
 
         DELIBERATELY NOT MODELLED: a check that the registry's `app_name` matches
         `attach_handle`. The real client has no such concept — it BUILDS the handle from the
         registry rather than comparing against one it was handed — so a fake that refuses on a
         mismatch invents a `SandboxGoneError` production never raises. That is not a harmless
         extra strictness: `_refuse_if_reclaim_would_destroy_work` reads a confirmed-gone
-        container as "nothing to lose" and reclaims silently, which is precisely the #83 bug.
-        A double that is stricter than the real thing hides bugs just as effectively as one
-        that is laxer.
+        container as "nothing to lose" and reclaims silently. A double that is stricter than
+        the real thing hides bugs just as effectively as one that is laxer.
         """
         reg = await get_redis().hgetall(registry_key(uuid.UUID(user_id)))
         if reg and reg.get(REGISTRY_FIELD_STATE) == REGISTRY_STATE_ENDING:

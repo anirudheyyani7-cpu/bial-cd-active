@@ -1,15 +1,9 @@
 /**
- * THE APP STATUS PANEL (plan 002, U4) — the rail section the boards draw, always visible.
- *
- * ═══ WHAT IT REPLACES ═══
- *
- * Two sentences and a hidden popover. The rail showed the workspace's headline ("Your app is
- * saved.") and nothing about publishing at all; everything a citizen could learn about where
- * their app stood — which version is live, when it was approved, what they last saved — lived
- * inside a popover behind a chip, one row at a time, and had to be clicked for.
+ * THE APP STATUS PANEL — the rail section the boards draw, always visible.
  *
  * The boards draw it open: a coloured state pill, three provenance rows with dates and short
- * build ids, one sentence, and one action. That is what this renders.
+ * build ids, one sentence, and one action. That is what this renders — nothing about where an app
+ * stands is behind a popover a citizen has to click for.
  *
  * ═══ THE PANEL AND THE CHIP CANNOT DISAGREE, AND THIS IS HOW ═══
  *
@@ -25,8 +19,8 @@
  * cost is one extra read per project screen: the poll runs only while a publish is in flight, so
  * a settled app costs one request per mount and nothing after it.
  *
- * THE NUDGE RECONCILES THE READ, NOT THE OUTSTANDING QUESTION, and the difference is the whole of
- * why this unit retires one. The server's unsaved-work question is per-mount state that no read
+ * THE NUDGE RECONCILES THE READ, NOT THE OUTSTANDING QUESTION, which is why the question is
+ * retired when the rail closes. The server's unsaved-work question is per-mount state that no read
  * returns and the nudge does not carry, so a question raised HERE is invisible to the chip. Hide
  * details keeps this panel mounted and merely invisible — see `hiddenSubtree.ts` — which left the
  * question alive behind a rail nobody could see while the chip, mounted fresh, offered "Send for
@@ -34,12 +28,11 @@
  * declaration they have to re-enter, which is the smaller cost than two surfaces contradicting
  * each other and a stale question with a live button waiting when the rail reopens.
  *
- * ═══ THE SAVED ROW IS WHY THIS UNIT NEEDED A SERVER FIELD ═══
+ * ═══ WHERE THE SAVED ROW COMES FROM ═══
  *
  * Every other row comes from a column the status read already selects. The citizen's own last
- * save did not reach the browser at all — the server took its one object-store metadata HEAD,
- * computed the drift, and returned the verdict without the head. It returns the head and its
- * timestamp now, from the SAME read, with no container in the request path: the row has to
+ * save comes from that same read — the server's one object-store metadata HEAD and its timestamp,
+ * returned alongside the drift verdict, with no container in the request path: the row has to
  * render on a project whose workspace is stopped, which is precisely where `save-state` — which
  * attaches to a container first — has nothing to say.
  */

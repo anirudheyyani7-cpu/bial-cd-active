@@ -176,7 +176,7 @@ router = APIRouter(prefix="/admin/apps", tags=["admin"])
 # route's `responses=` alongside that route's own explicit 4xx.
 #
 # The tuple itself now lives in `src/schemas/responses.py` beside `AUTH_401`, because
-# `deploy/router.py`'s `unpublish` (#113) is gated by the same dependency and a second
+# `deploy/router.py`'s `unpublish` is gated by the same dependency and a second
 # copy would be free to drift. Aliased under the module-private name the routes below
 # already spread, so the shared definition costs no churn at any of the call sites in this file.
 # (A count stood here and had drifted from 24 to 26; a number in a comment cannot go red.)
@@ -626,7 +626,7 @@ async def reject(
     # The gap is RECOVERY: only the OWNER can re-submit, so an app whose owner has left
     # BIAL stays running-but-invisible with no admin path back. `approve` is the only
     # thing that lowers `rejection_standing`, and it needs a pending submission to act on.
-    # Use `unpublish` if the intent is to actually take the app down (#147 round 3 review).
+    # Use `unpublish` if the intent is to actually take the app down.
     moved = await _transition(
         db,
         app_id,
@@ -668,7 +668,7 @@ async def patch_app(
         )
     await db.commit()
     # Re-read the row joined to its project + owner so the response name is project-sourced
-    # (#48) and every column reflects the committed state; the joined scalars are non-null by
+    # and every column reflects the committed state; the joined scalars are non-null by
     # the FK invariants, and `.one()` fails closed if the row vanished under us.
     app, project_name, owner_email = (
         await db.execute(
@@ -1304,7 +1304,7 @@ async def reconcile_sandboxes(
     admin: CurrentSuperadmin, db: DbSession, sandbox: OptionalSandbox
 ) -> SandboxReconcileResponse:
     """Diff the sandbox containers Azure is billing for against the ones the registry tracks,
-    and REPORT the ones nothing is tracking (#83 follow-up).
+    and REPORT the ones nothing is tracking.
 
     THE GAP THIS CLOSES. `sweep_all` walks `bial:sandbox:registry:*`, so it reaches exactly the
     containers it already has a record of. A sandbox whose registry entry is gone — a flushed or
@@ -2252,7 +2252,7 @@ async def harness_counters(
 ) -> HarnessCountersResponse:
     """The build-harness outcomes, totalled — R32's "counter to watch" (U25).
 
-    WHAT IT IS FOR, in the words of the plan's success criteria: did the verdict block a false
+    WHAT IT IS FOR: did the verdict block a false
     claim, how often did we restore, and did any turn fail to reach a durable copy. There is no
     metrics system in this deployment, so if these are not readable here they are not readable
     anywhere — and an outcome nobody can count is an outcome nobody will notice regressing.

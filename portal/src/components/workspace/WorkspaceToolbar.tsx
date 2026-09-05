@@ -1,5 +1,5 @@
 /**
- * THE TOOLBAR ROW (plan 002, U2) — one 54px row under the navbar, on both workspace screens.
+ * THE TOOLBAR ROW — one 54px row under the navbar, on both workspace screens.
  *
  * ═══ WHY IT IS DRAWN BY THE SHELL AND NOT BY THE RAIL ═══
  *
@@ -15,7 +15,7 @@
  * from the project screen to one of its chats — its contents change, its position never does, and
  * nothing in it remounts.
  *
- * ═══ WHICH CHANNEL CELLS FEED IT, WHICH THE PLAN ASKED TO HAVE RECORDED ═══
+ * ═══ WHICH CHANNEL CELLS FEED IT ═══
  *
  * The heading comes from `heading`, published by the ROUTES rather than by the surfaces, so a cold
  * open of a chat address renders the row at its full height with its back control working while
@@ -201,11 +201,9 @@ export default function WorkspaceToolbar({
         </span>
       )}
 
-      {/* RENAME SURVIVES THE REBUILD, and it had to be moved rather than dropped. It lived in the
-          rail's header, which U3 replaces with the board's three sections — none of which is a
-          project name. No board draws a rename control anywhere, but the origin's rule is not to
-          delete a shipped capability because an older board omits it, so it comes here, next to
-          the name it edits, at the smallest weight the row has. */}
+      {/* RENAME IS HERE ON PURPOSE. No board draws a rename control anywhere, but a shipped
+          capability is not deleted because a board omits it, so it lives next to the name it
+          edits, at the smallest weight the row has. */}
       {!isChat && heading.projectId && (
         <button
           type="button"
@@ -280,12 +278,11 @@ export default function WorkspaceToolbar({
 
         <SaveControl save={save} readActions={readActions} />
 
-        {/* THE COLLAPSE, ON THE ROW RATHER THAN ON THE PANE. It was drawn by `AppPane`, which was
-            already an improvement on living inside the rail it hides — a collapsed rail is
-            invisible and untabbable, so a toggle in it is a one-way door. The row is better still
-            for the same reason it holds the title: it survives the collapse AND it survives the
-            pane going away, so the control has one home in every state instead of appearing and
-            disappearing with the pane. */}
+        {/* THE COLLAPSE, ON THE ROW RATHER THAN ON THE PANE OR IN THE RAIL. A collapsed rail is
+            invisible and untabbable, so a toggle inside the rail it hides is a one-way door. The
+            row is right for the same reason it holds the title: it survives the collapse AND it
+            survives the pane going away, so the control has one home in every state instead of
+            appearing and disappearing with the pane. */}
         {paneVisible && (
           <button
             type="button"
@@ -308,8 +305,8 @@ export default function WorkspaceToolbar({
  * THE SAVE CONTROL, in the board's three states.
  *
  * Clean is an outlined chip reading "Saved". Dirty is a TEAL OUTLINE on a pale teal ground with a
- * 6px amber dot — not a filled teal button, which is what the code had: a permanently loud control
- * is one people learn to ignore, and the dot is what the eye actually catches. That dot is one of
+ * 6px amber dot — not a filled teal button: a permanently loud control is one people learn to
+ * ignore, and the dot is what the eye actually catches. That dot is one of
  * exactly two places the whole canvas uses the accent colour.
  *
  * `dirty === null` MEANS "COULD NOT TELL" AND RENDERS NOTHING. It is not clean. The check costs two

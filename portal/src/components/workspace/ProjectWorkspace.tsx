@@ -1,14 +1,7 @@
 /**
- * THE PROJECT SURFACE (Plan F, U1) — the rail's contents, and the project-scoped publisher.
+ * THE PROJECT SURFACE — the rail's contents, and the project-scoped publisher.
  *
  * ═══ THE HEADLINE BEHAVIOUR THIS FILE EXISTS FOR ═══
- *
- * Before this, the workspace channel had exactly ONE publisher in the whole tree: the conversation
- * surface, which mounts only when a chat is open. The project page subscribed and never published,
- * so on a fresh load of a bare `/projects/:id` the pane host hit its own "no pane and no address"
- * early return and rendered NOTHING. R3's whole point — the app is there, behind one deliberate
- * press, on the project screen — was unreachable, and no test could see it because the project
- * page had no pane to assert about.
  *
  * This is the symmetric counterpart: the project-scoped publisher. Exactly one of the two is ever
  * mounted for a given address, so there is no contest — only continuity across the hop, which the
@@ -230,7 +223,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   }, [project.id, saving, workspace])
 
   usePublishSaveState(workspace.save?.dirty ?? null)
-  // SAVE IS REACHABLE FROM THE PROJECT SCREEN (plan 002, U11), and it was not.
+  // SAVE IS REACHABLE FROM THE PROJECT SCREEN, and it was not.
   //
   // The only writer of the bundle lived on the conversation surface, so a citizen who had built
   // something, gone back to the project screen and then closed the tab lost it — with the rail

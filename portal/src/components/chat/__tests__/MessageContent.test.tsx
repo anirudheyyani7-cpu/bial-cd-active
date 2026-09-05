@@ -1,16 +1,11 @@
 /**
- * MessageContent renders assistant text via Streamdown (react-markdown's replacement, A2) —
+ * MessageContent renders assistant text via Streamdown (react-markdown's replacement) —
  * now hosted by the one conversation surface. Covers markdown rendering, the link-safety /
  * img-blocking XSS defenses, isStreaming, and (below) Streamdown-specific coverage upstream
  * didn't need: code-block/Shiki chrome, and react-markdown's removal from package.json.
  *
- * AMENDMENT TO THE PARITY CHECKLIST, STATED RATHER THAN MADE QUIETLY. Plan 004 names two of the
- * 21 cases as exposed to open decisions and forbids editing either without saying so: `:98`
- * (`isStreaming`) and the `compact` case that used to sit below it. `compact` sized the two-page
- * era's narrow rail and had no caller once one surface absorbed both pages, so the prop and its
- * case went together — 21 cases became 20, 44 assertions became 43. `isStreaming` did NOT go: its
- * decision is still parked under plan 004's *Deferred to Implementation*, to be settled with a
- * measurement on a long reply rather than from principle.
+ * `isStreaming`'s exact rendering behaviour is a deliberately open decision — to be settled
+ * with a measurement on a long reply rather than from principle. Do not firm it up without one.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'

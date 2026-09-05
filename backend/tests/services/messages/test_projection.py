@@ -190,8 +190,8 @@ async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
 
     # The closed session anchors nothing; a step carries a friendly label and a state, and
     # that is the whole of what it carries — the expander material it used to ship beside them
-    # is gone from the wire (U14; the field-set guard at the bottom of this file is where that
-    # is pinned).
+    # is gone from the wire (the field-set guard at the bottom of this file is where that is
+    # pinned).
     assert not any(isinstance(item, BuildInProgressItem) for item in items)
     steps = [item for item in items if isinstance(item, StepItem)]
     assert [step.state for step in steps] == ["ok", "ok"]
@@ -260,14 +260,12 @@ def _rendered(item: StepItem) -> str:
 
 
 async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_session) -> None:
-    """★ U5 (plan 2026-09-02-001) — THIS TEST USED TO PIN THE OPPOSITE FLAG.
-
-    `hidden` meant "a read" while reads were the only class it marked, which bought a build whose
-    activity opened on a write with no account of what the agent had looked at to get there. The
-    whole read class is drawn now, and `hidden` marks plumbing only: a write to a configuration
-    file, and a housekeeping shell command. That RAISES the stakes on the second half — a `grep`
-    over the citizen's own app returns the citizen's own data, and the only thing keeping it off
-    the screen is its absence from the item."""
+    """`hidden` marks plumbing only: a write to a configuration file, and a housekeeping shell
+    command. The whole read class is drawn, because marking every read hidden bought a build
+    whose activity opened on a write with no account of what the agent had looked at to get
+    there. That RAISES the stakes on the second half — a `grep` over the citizen's own app
+    returns the citizen's own data, and the only thing keeping it off the screen is its absence
+    from the item."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
     await _step(
@@ -312,7 +310,7 @@ async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_sessio
     items = project_rows(await _rows(db_session, user, conversation))
     steps = [item for item in items if isinstance(item, StepItem)]
     assert [step.hidden for step in steps] == [False, False]
-    # U16 — THIS ASSERTION USED TO PIN THE LEAK. It read `== "Read app/page.tsx"`, which made
+    # THIS ASSERTION USED TO PIN THE LEAK. It read `== "Read app/page.tsx"`, which made
     # the raw path the EXPECTED output of a helper whose two neighbours exist to guarantee the
     # opposite. Flipped, not deleted: the absence is asserted, and paired with the liveness half
     # (a real friendly area still renders) so a read arm that started returning "" would not
@@ -330,8 +328,8 @@ async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_sessio
 
 
 async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db_session) -> None:
-    """★ U5's headline scenario, on the reload path. Three reads and a write are four things the
-    agent did, and the citizen sees four rows where the same turn used to show one.
+    """Three reads and a write are four things the agent did, and the citizen sees four rows
+    where the same turn used to show one.
 
     THE FLAGS ARE THE CLAIM, not the item count: the projection always emitted four items, and a
     feed that draws only the visible ones is what turned that into a single row. So the flags are
@@ -569,9 +567,6 @@ async def test_a_plan_turn_that_only_reads_has_a_non_empty_activity_group(db_ses
 
 
 async def test_hidden_rows_render_nothing_but_stay_auditable(db_session) -> None:
-    # The mode-switch marker used to be the third hidden row here. It is gone with the switch
-    # that wrote it (`tests/api/v1/conversations/test_mode_switch.py` is its inertness guard);
-    # the `build_started` overlay carries the same property and is still written today.
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
     await write_build_started(
@@ -596,8 +591,7 @@ async def test_hidden_rows_render_nothing_but_stay_auditable(db_session) -> None
     items = project_rows(rows)
     # The (closed) started row renders nothing; only the outcome banner shows.
     assert [item.type for item in items] == ["banner"]
-    # …but the audit read still has it. Two rows, one of them hidden — three and two before
-    # the mode-switch marker was retired along with the switch that wrote it.
+    # …but the audit read still has it: two rows, one of them hidden.
     assert len(rows) == 2
     hidden = [row for row in rows if row.visibility is MessageVisibility.HIDDEN]
     assert len(hidden) == 1
@@ -705,7 +699,7 @@ async def test_retry_refusal_projects_a_failed_step(db_session) -> None:
 
 
 async def test_plan_options_states_have_no_third_member(db_session) -> None:
-    """U8 — `build_failed` is retired without a caller, so a resolution recorded before its
+    """`build_failed` is retired without a caller, so a resolution recorded before its
     retirement must not read back as a still-actionable third state. `_plan_options_state`'s
     catch-all reads ANYTHING it does not recognise — including a stray `build_failed:<reason>`
     overlay — as `refine`: the build behind it never happened, and the card is spent. The fixture
@@ -1227,7 +1221,7 @@ async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to
 
 
 def test_the_portal_fallback_copy_and_the_server_last_resort_are_the_same_sentence() -> None:
-    """The committed fallback is spelled in TWO codebases — `BuildProgress.tsx` renders it when
+    """The committed fallback is spelled in TWO codebases — the portal renders it when
     a frame carries no pair, and the server sends it for a class its table does not know. If the
     two drift, a citizen reads a different sentence depending on which side happened to supply
     it, and nothing anywhere would notice.
@@ -1242,13 +1236,13 @@ def test_the_portal_fallback_copy_and_the_server_last_resort_are_the_same_senten
     )
 
 
-# --- U1 (plan 2026-09-02-001): the agent's prose reaches the citizen, in order ---------------
+# --- The agent's prose reaches the citizen, in order ------------------------------------------
 #
-# The live browser run of 2026-08-24 is still the fixture underneath these. A build that hit a
-# compile error made the model narrate its own debugging into the citizen's chat — ~1900 words
-# naming Drizzle, HMR, `globalThis`, React Server Components, and the platform's own word
-# "harness" — and the answer was a render-time drop of every text part that shared a response
-# with a tool call. It bought that quiet by throwing away the explanation between the receipts,
+# A build that hits a compile error can make the model narrate its own debugging into the
+# citizen's chat at length — naming implementation details like Drizzle, HMR, `globalThis`, React
+# Server Components, and the platform's own word "harness" (the fixtures below are lifted from a
+# real over-narrating run). A render-time drop of every text part that shares a response with a
+# tool call is not the fix: it buys quiet by throwing away the explanation between the receipts,
 # leaving a run of step labels with nothing joining them, which is the opposite of the voice this
 # product has.
 #
@@ -1261,9 +1255,8 @@ def test_the_portal_fallback_copy_and_the_server_last_resort_are_the_same_senten
 # The plain-language guarantee did not move here to compensate. What the PLATFORM says is still
 # held to the product's register by `assert_speaks_product_language` above, and the platform's
 # own emitters are the only ones that can promise it: a step label carries no argv and a tool
-# result is never transmitted. The model's own words are the model's, and a run that talks like
-# the 2026-08-24 one is now a prompt problem and a model problem, not something the renderer
-# hides on the way out.
+# result is never transmitted. The model's own words are the model's, and an over-narrating run
+# is a prompt problem and a model problem, not something the renderer hides on the way out.
 
 
 async def test_build_prose_beside_a_tool_call_renders_ahead_of_that_step(db_session) -> None:
@@ -1327,9 +1320,8 @@ async def test_build_text_with_no_tool_call_survives(db_session) -> None:
     never calls `declare_done` — this prose IS the answer, and losing it would leave them
     staring at nothing.
 
-    It used to be the one shape the drop deliberately spared, keyed on "no tool call beside
-    it"; now it is simply the ordinary case, and it is kept because the shape is worth pinning
-    on its own — a regression here loses the whole of an Ask turn's reply."""
+    It is kept because the shape is worth pinning on its own: a regression here loses the whole
+    of an Ask turn's reply."""
     user, _project, conversation = await _thread(db_session)
     await _step(
         db_session,
@@ -1389,7 +1381,7 @@ async def test_a_plan_chat_renders_prose_beside_a_tool_call_exactly_as_a_build_c
     assert step_item.tool == "read_file"
 
 
-# --- Decision 3: the change reaches BACKWARDS over rows already on disk ---------------------
+# --- The change reaches BACKWARDS over rows already on disk ---------------------------------
 #
 # The suppression was a RENDER-TIME filter — persistence never dropped a word — so deleting it
 # gives the prose back in rows that were written while the rule was in force. A `schema_version`
@@ -1726,7 +1718,7 @@ async def test_the_terminal_row_is_invisible_to_the_model(db_session) -> None:
     assert [type(m).__name__ for m in history] == ["ModelRequest", "ModelResponse"]
 
 
-# --- U6 (plan 2026-09-02-001): the renderer's own ceilings are gone -------------------------
+# --- The renderer's own ceilings are gone ----------------------------------------------------
 #
 # Two numbers used to be enforced twice: once in the tool body, which teaches the model where a
 # bound is, and once HERE, which decided what a transcript was allowed to draw. The second copy

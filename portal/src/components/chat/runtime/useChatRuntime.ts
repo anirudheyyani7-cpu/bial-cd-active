@@ -3,9 +3,9 @@
  * rendered element.
  *
  * `useExternalStoreRuntime`, deliberately, and not `useLocalRuntime` or the AI-SDK runtime: those
- * two OWN the message array and mint ids. The reverted migration's lesson stands — the library is
- * a render model, and the hydrated server transcript is the truth for ordering, identity and
- * history. Everything this hook passes is read-only from the library's point of view.
+ * two OWN the message array and mint ids. The library is a render model, and the hydrated
+ * server transcript is the truth for ordering, identity and history. Everything this hook
+ * passes is read-only from the library's point of view.
  *
  * ══ EVERY CAPABILITY IS OFF BY OMISSION, EXCEPT THREE ══
  *

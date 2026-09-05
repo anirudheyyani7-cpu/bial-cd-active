@@ -277,7 +277,7 @@ describe('the gate waits for the adopt round-trip (G1)', () => {
 
   it('a NON-404 failure leaves send shut AND renders a Retry that re-runs the check', async () => {
     // The one arm that stays closed, because the page genuinely could not ask. Leaving it closed
-    // with only a vanishing toast would recreate the dead-end class this plan exists to remove.
+    // with only a vanishing toast would recreate the dead-end class.
     h.getBuild.mockResolvedValue(withAnchor())
     h.getStatus.mockRejectedValue(new ApiError('upstream exploded', 500))
     const { deps: d } = deps()
@@ -503,7 +503,7 @@ describe('a finished build offers no canned follow-ups (2026-07-30)', () => {
     await turn.end()
     await waitFor(() => expect(screen.queryByTestId('composer-gate-note')).toBeNull())
 
-    // THE CANNED CHIPS NEVER COME BACK (2026-07-30) — no button offers a follow-up the model was
+    // THE CANNED CHIPS NEVER COME BACK — no button offers a follow-up the model was
     // never asked about.
     expect(screen.queryByRole('button', { name: /dark mode|data table|mobile layout/i })).toBeNull()
     // The composer is how the next change gets asked for — proven by actually asking for one,

@@ -64,13 +64,12 @@ class FleetLister(Protocol):
     ABC, which is a frozen cross-track contract (C2) — the capability lives on the concrete
     client and the route checks for it at runtime.
 
-    ONE ENUMERATION FOR EVERY QUESTION (U9). This used to be two methods — one returning names,
-    one returning name→tags — which walked the same ARM pages and discarded different halves.
-    Collapsing them means no two callers can hold different beliefs about the fleet, and the fleet
-    is walked once per pass rather than once per question. `FleetMember.tags` is normalized to
-    `{}` for a container ARM returned with no `tags` key at all: absent FROM the list means the
-    container does not exist, an empty `tags` means it exists carrying no identity, and the
-    backfill below depends on that difference."""
+    ONE ENUMERATION FOR EVERY QUESTION. One method rather than a names-only and a names→tags
+    pair walking the same ARM pages: no two callers can hold different beliefs about the fleet,
+    and the fleet is walked once per pass rather than once per question. `FleetMember.tags` is
+    normalized to `{}` for a container ARM returned with no `tags` key at all: absent FROM the
+    list means the container does not exist, an empty `tags` means it exists carrying no
+    identity, and the backfill below depends on that difference."""
 
     async def list_sandbox_fleet(self) -> list[FleetMember]: ...
 
@@ -99,10 +98,9 @@ class FleetDestroyer(FleetTagger, Protocol):
     """`FleetTagger` plus the one capability only a DESTROY path needs: re-reading a single
     container's tags immediately before acting on it.
 
-    THREE PROTOCOLS, NOT TWO, for the same reason there were two rather than one. The backfill
-    lists and stamps and never re-reads; demanding the capability of it 503'd nine of its tests
-    the first time this was written as a widening of `FleetTagger`. Capability protocols earn
-    their keep by being narrow.
+    THREE PROTOCOLS, NOT TWO, for the same reason there are two rather than one. The backfill
+    lists and stamps and never re-reads; widening `FleetTagger` to demand the capability of it
+    503s nine of its tests. Capability protocols earn their keep by being narrow.
 
     `get_app_tags` returns `None` when ARM says the container does not exist — a DIFFERENT answer
     from `{}` (it exists, carrying no identity). The destroy path depends on the difference:
@@ -171,10 +169,11 @@ async def take_sandbox_inventory(
 
 # --- the C10 tag backfill ----------------------------------------------------------------
 #
-# Everything created from U8 onward carries its identity from birth. This is the other half: the
-# containers that already exist. Until they are stamped, the whole fleet is un-judgeable without
-# Redis, which is why running this is a RELEASE PREREQUISITE and not a follow-up — the destroy flag
-# must not be flipped while the fleet still reports untagged sandboxes (C10 §3.5).
+# Every container provisioned since identity stamping shipped carries its identity from birth.
+# This is the other half: the containers that already exist. Until they are stamped, the whole
+# fleet is un-judgeable without Redis, which is why running this is a RELEASE PREREQUISITE and not
+# a follow-up — the destroy flag must not be flipped while the fleet still reports untagged
+# sandboxes (C10 §3.5).
 
 
 @dataclass(frozen=True)

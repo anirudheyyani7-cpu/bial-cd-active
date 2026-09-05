@@ -1744,7 +1744,7 @@ def test_the_deployed_model_takes_adaptive_thinking_and_refuses_a_budget() -> No
     with warnings.catch_warnings():
         # This model's profile also strips sampling settings — `temperature` is dropped and a
         # UserWarning is raised saying so. Silenced rather than asserted: it is the library's
-        # policy about a knob this plan does not touch, and pinning it here would turn a profile
+        # policy about a knob, and pinning it here would turn a profile
         # change into a red test about reasoning.
         warnings.simplefilter("ignore", UserWarning)
         prepared, _ = model.prepare_request(

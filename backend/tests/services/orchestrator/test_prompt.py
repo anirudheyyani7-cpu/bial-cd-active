@@ -86,8 +86,8 @@ def test_system_prompt_reflects_the_open_sandbox_model() -> None:
 
 def test_system_prompt_forbids_seeded_dummy_data() -> None:
     """R4 — the build agent must never seed invented records; it builds honest empty/loading/error
-    states and lets real data arrive by upload or user entry. This rule existed in the POC prompt,
-    was lost in the open-sandbox rewrite, and is a client-collateral promise."""
+    states and lets real data arrive by upload or user entry. This is a client-collateral
+    promise."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
     assert "data integrity" in lowered
     # The prohibition names the whole family of invented-record words the model reaches for.
@@ -102,11 +102,11 @@ def test_system_prompt_forbids_seeded_dummy_data() -> None:
 
 
 def test_data_integrity_is_truthful_and_carries_the_never_mutate_rule() -> None:
-    """U1/R1 (#12) — the walkthrough's prompt findings: the old "ships with NO data" claim was
-    FALSE for a change build against a live database (it licensed the model to treat rows as
-    disposable), and no rule forbade improvised mutations. The rewrite must state the truthful
-    may-hold-records reality, the never-mutate verification rule, and the feature-removal
-    condition for drops (migrations are the sanctioned channel — no additive-only gate)."""
+    """U1/R1 — the old "ships with NO data" claim was FALSE for a change build against a live
+    database (it licensed the model to treat rows as disposable), and no rule forbade
+    improvised mutations. The rewrite must state the truthful may-hold-records reality, the
+    never-mutate verification rule, and the feature-removal condition for drops (migrations
+    are the sanctioned channel — no additive-only gate)."""
     from src.services.orchestrator.prompt import DATA_INTEGRITY_RULES
 
     lowered = BUILD_SYSTEM_PROMPT.lower()
@@ -123,7 +123,7 @@ def test_data_integrity_is_truthful_and_carries_the_never_mutate_rule() -> None:
 
 
 def test_system_prompt_carries_the_generated_app_quality_rules() -> None:
-    """U1/U11 (#46/#47/#45) — the additive rules the generated apps inherit: AFTER A WRITE (the
+    """U1/U11 — the additive rules the generated apps inherit: AFTER A WRITE (the
     user sees their own mutation without a reload), HONEST UI (no false "live"/"shared" claims
     without a real refetch), REMOVE SCAFFOLDING (ship only the requested feature), and RESPONSIVE
     (no horizontal overflow at 390px). Coarse marker check — the copy is a probabilistic nudge,
@@ -131,13 +131,13 @@ def test_system_prompt_carries_the_generated_app_quality_rules() -> None:
     lowered = BUILD_SYSTEM_PROMPT.lower()
     # AFTER A WRITE (U11): the unconditional own-mutation refetch, hoisted out of HONEST UI.
     assert "after a write" in lowered
-    # HONEST UI (#46): names the no-realtime reality and the required refetch remedy.
+    # HONEST UI: names the no-realtime reality and the required refetch remedy.
     assert "honest ui" in lowered
     assert "no realtime channel" in lowered
     assert "refetch" in lowered
-    # REMOVE SCAFFOLDING (#47): the model must ship only what the user asked for.
+    # REMOVE SCAFFOLDING: the model must ship only what the user asked for.
     assert "remove scaffolding" in lowered
-    # RESPONSIVE (#45): the concrete phone-width target, not a vague "make it responsive".
+    # RESPONSIVE: the concrete phone-width target, not a vague "make it responsive".
     assert "responsive" in lowered
     assert "390px" in lowered
 
@@ -152,8 +152,8 @@ def test_system_prompt_tells_the_agent_who_is_reading() -> None:
 
     `== 1`, NOT `in` AND NOT `<=`. The failure mode here is a count of ZERO — the block lifted
     out of `BUILD_WORKING_RULES_TAIL` and never named at this site, which silently deletes the
-    audience contract from a live prompt and reinstates the 2026-08-18 defect it was written
-    for. An `in` assertion catches that; a `<= 1` does not, and the pair also catches the
+    audience contract from a live prompt and reinstates the defect it was written for. An `in`
+    assertion catches that; a `<= 1` does not, and the pair also catches the
     opposite slip of naming it twice."""
     from src.core.prompt_blocks import NARRATION_VOICE
 
@@ -278,9 +278,9 @@ def test_completion_never_makes_type_checking_the_agents_job() -> None:
 
 
 def test_prompt_has_no_stale_app_records_demo_reference() -> None:
-    """U11/R16 — the `app/records` demo route was removed from the template (commit d51ebfa), so
-    the prompt must no longer tell the model to hunt for and delete it. Only the stale REMOVE
-    SCAFFOLDING parenthetical ever referenced it, and it is gone."""
+    """U11/R16 — the `app/records` demo route was removed from the template, so the prompt must
+    no longer tell the model to hunt for and delete it. Only the stale REMOVE SCAFFOLDING
+    parenthetical ever referenced it, and it is gone."""
     assert "app/records" not in BUILD_SYSTEM_PROMPT
 
 
@@ -718,8 +718,9 @@ async def _the_drift_check() -> None:
     generated = await render_tool_surface(ChatKind.BUILD)
     assert WRITE_TOOL_SURFACE == generated, (
         "the TOOL SURFACE block in `core/prompt_blocks.py` no longer matches the tools the Write "
-        "arm registers. Regenerate it with the one-liner in `services/agent/toolsets.py`'s U20 "
-        f"comment and paste the result over `WRITE_TOOL_SURFACE`.\n\ngenerated:\n{generated}"
+        "arm registers. Regenerate it with the one-liner under `Regenerate the snapshot with:` "
+        f"in `services/agent/toolsets.py` and paste the result over `WRITE_TOOL_SURFACE`."
+        f"\n\ngenerated:\n{generated}"
     )
 
 
@@ -751,7 +752,7 @@ async def test_the_harness_arm_is_told_about_four_tools_it_does_not_register() -
       twelve on every request. The four extra get the runtime's unknown-tool rejection if called.
 
     WHY THIS IS A TEST AND NOT A FIX. Both fixes are behaviour changes to a live agent, and the
-    harness plus its route are already scheduled for deletion (plan 009, unit 1). So the
+    harness plus its route are already scheduled for deletion. So the
     divergence is recorded where it will be tripped over: this goes RED when the harness is
     deleted, when it gains the missing toolsets, or when the prompt learns to render a
     harness-specific surface — each of which is someone deliberately settling it.
@@ -903,8 +904,7 @@ def test_the_harness_never_grants_edit_permission_over_the_platform_config() -> 
       2. the manifest's own line for the file
       3. the WRITE SURFACE paragraph's categorical "the WHOLE workspace is editable"
 
-    A test that only checked one would go green against a half-fix, which is exactly how the
-    original review missed the third.
+    A test that only checked one would go green against a half-fix.
     """
     prompt = BUILD_SYSTEM_PROMPT
 

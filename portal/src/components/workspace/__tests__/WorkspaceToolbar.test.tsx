@@ -1,5 +1,5 @@
 /**
- * THE TOOLBAR ROW (plan 002, U2) — one row, drawn once, above both columns.
+ * THE TOOLBAR ROW — one row, drawn once, above both columns.
  *
  * ═══ WHAT THIS SUITE IS FOR ═══
  *
@@ -288,9 +288,9 @@ describe('what the row names on each address', () => {
   })
 
   it('no history control is rendered anywhere', () => {
-    // Four boards draw a clock in this row and the drawer behind it is a later feature by the
-    // owner's decision. Not built, and not stubbed either — a control that implies a drawer
-    // nobody can open is worse than its absence.
+    // Four boards draw a clock in this row and the drawer behind it is a later feature. Not
+    // built, and not stubbed either — a control that implies a drawer nobody can open is worse
+    // than its absence.
     render(<Workspace />)
     expect(screen.queryByRole('button', { name: /history/i })).toBeNull()
     expect(screen.queryByRole('link', { name: /history/i })).toBeNull()
@@ -492,9 +492,9 @@ describe('the Save control', () => {
   })
 
   it('★ with NO action published it is a status, not a button', () => {
-    // Today's project screen: its surface deliberately publishes no `onSave`, and U11 gives it
-    // one. Until then the state is worth showing and a press would do nothing, so nothing invites
-    // one. Mutation receipt: render a `<button>` unconditionally and this goes red.
+    // Today's project screen deliberately publishes no `onSave`. The state is worth showing and
+    // a press would do nothing, so nothing invites one. Mutation receipt: render a `<button>`
+    // unconditionally and this goes red.
     withSave({ dirty: false, saving: false, error: null }, null)
     expect(screen.queryByTestId('save-project')).toBeNull()
     expect(screen.getByTestId('save-state').textContent).toContain('Saved')

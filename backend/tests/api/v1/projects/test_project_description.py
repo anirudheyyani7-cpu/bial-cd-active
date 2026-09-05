@@ -1,4 +1,4 @@
-"""Project description generation (U7, R15-R20, KD-5/KD-8).
+"""Project description generation.
 
 Foundry-only agent path (a TestModel/FunctionModel stands in): fresh project rejects with
 409, code-bearing project generates + persists, regenerate feeds the current description in,
@@ -109,7 +109,7 @@ async def test_regenerate_feeds_current_description(client, db_session, set_chat
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
-    # The current description was fed to the model so it revises rather than discards (R19).
+    # The current description was fed to the model so it revises rather than discards.
     assert "An old, stale description the author wrote." in captured["prompt"]
     # ...and the result overwrites.
     assert resp.json()["description"] == "A revised, sharper description."
@@ -155,7 +155,7 @@ async def test_generated_result_is_length_capped(client, db_session, set_chat_mo
 
 
 async def test_generation_bills_usage(client, db_session, set_chat_model) -> None:
-    # Generation is a normal billed turn (Q5): a successful run MUST fold its tokens into
+    # Generation is a normal billed turn: a successful run MUST fold its tokens into
     # today's usage — dropping record_usage would otherwise keep the suite green.
     set_chat_model(TestModel(custom_output_text="Billed description."))
     headers, user = await _auth(db_session)
@@ -176,7 +176,7 @@ async def test_generation_bills_usage(client, db_session, set_chat_model) -> Non
 async def test_blank_generation_clears_to_null_not_empty_string(
     client, db_session, set_chat_model
 ) -> None:
-    # KD-8: the empty string is never persisted — a blank generation lands as NULL,
+    # The empty string is never persisted — a blank generation lands as NULL,
     # matching the schema-boundary normalization on the author path.
     set_chat_model(TestModel(custom_output_text="   "))
     headers, user = await _auth(db_session)
@@ -272,7 +272,7 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
     # runs first (a project deleted before it just 409s). The flush's description UPDATE then
     # matches zero rows (StaleDataError). The loser must get the same non-leaking 404 a PATCH
     # one second later would — never a 500 — AND the usage row generation billed rides the same
-    # rolled-back commit, so nothing is charged for the lost turn (KD-5 billing note).
+    # rolled-back commit, so nothing is charged for the lost turn.
     import importlib
 
     from src.services.projects import generate_project_description as real_generate
@@ -328,11 +328,9 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
     assert billed["n"] == 1
 
 
-# --- U8: description injected as shared chat context (R16) ---------------------
+# --- WHAT THIS FILE DOES NOT COVER, AND WHERE IT LIVES -------------------------
 #
-# MOVED, not dropped. These four tests posted to the retired `POST /v1/claude` relay and
-# asserted its `_compose_system` output. The property — a turn is grounded in its project's
-# description, and never in another user's — now lives at the surface that actually sends:
-# `tests/api/v1/conversations/test_project_grounding.py`. What stays in this file is the
-# `description:generate` ENDPOINT, which is a different thing from where a description is
-# later read.
+# This file owns the `description:generate` ENDPOINT. Whether a turn is GROUNDED in its project's
+# description — and never in another user's — is a property of the surface that SENDS, which is a
+# different thing from where a description is written. It is pinned in
+# `tests/api/v1/conversations/test_project_grounding.py`; do not re-add it here.

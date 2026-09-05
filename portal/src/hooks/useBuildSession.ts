@@ -20,7 +20,7 @@
  * already make. A builder who reads for half an hour without acting does lose the container and
  * gets it back on their next prompt behind a labelled wait — a bounded, deliberate cost.
  *
- * KEY BEHAVIOURS (the plan's load-bearing decisions):
+ * KEY BEHAVIOURS:
  *
  *  - **Status derivation** from the envelope stream: the first non-terminal envelope moves
  *    `provisioning → building`, `preview_ready` moves it to `ready`, and which terminal an
@@ -72,7 +72,7 @@ export interface UseBuildSessionResult {
    * WHY the session reached its terminal, from the `ended` envelope's `reason` (or the local
    * action that settled it): 'completed' | 'stopped_by_user' | 'quota_exceeded' | … — null while
    * live, and null when the terminal arrived without a reason (reclaim, force-end, reattach onto
-   * an already-ended session). 'completed' is the one the preview pane cares about (#13/R2): the
+   * an already-ended session). 'completed' is the one the preview pane cares about (R2): the
    * server PARDONS a completed build's container (it stays up under an idle lease), so
    * `ended` + 'completed' + `previewUrl` means "done, preview live" — not "no longer running".
    */
@@ -307,7 +307,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
       if (settledRef.current) return true // a concurrent SSE-ended / reclaim already finished it — don't paint a stale error
       setError(e instanceof ApiError ? e.message : 'Could not stop the build.')
       setStopping(false)
-      return false // the session is STILL LIVE — a caller must not start over it (finding #19)
+      return false // the session is STILL LIVE — a caller must not start over it
     }
   }, [client, finishSession])
 
@@ -342,7 +342,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     // feed was dead for a while and the fresh EventSource on a LIVE session starts
     // live-from-now, so a `preview_ready` (or a status hop) that fired during the gap would
     // otherwise be lost. Best-effort — a failed reseed leaves the resubscribed live stream.
-    // RESIDUAL (finding #18): the missed feed ROWS need a backend narrative-backfill
+    // RESIDUAL: the missed feed ROWS need a backend narrative-backfill
     // endpoint to recover; that is deliberately not built here.
     void client.getStatus(sid).then(
       (st) => {

@@ -1,4 +1,4 @@
-"""The shared read-only tool surface (U8 / R6 / plan 2026-07-22-002).
+"""The shared read-only tool surface.
 
 Four tools — bounded `read_file`, `list_files`, `search_files`, and an allowlisted
 read-only `run_command` — built as a `FunctionToolset` factory over a `ReadOnlyWorkspace`
@@ -45,7 +45,7 @@ emptiness signal never arrives and the workspace that used to produce it is gone
 why no segment promises the model one (U20; pinned by
 `test_no_segment_promises_an_emptiness_signal_that_never_arrives`).
 
-`psql` is never on this allowlist (plan, locked).
+`psql` is never on this allowlist (locked).
 """
 
 from __future__ import annotations
@@ -75,8 +75,7 @@ if TYPE_CHECKING:
     from src.services.orchestrator.deps import SandboxSession
 
 # ---------------------------------------------------------------------------------------
-# Bounds. The plan defers exact tuning ("tuned during implementation against real traces")
-# — these mirror the orchestrator's proven values where a twin exists.
+# Bounds — these mirror the orchestrator's proven values where a twin exists.
 # ---------------------------------------------------------------------------------------
 
 READ_MAX_LINES = 400
@@ -621,7 +620,7 @@ _PATH_BEARING_FLAG_REASON = (
 # The guest list: POSIX read-only classics, present on any Linux/macOS server
 # runtime (verified against POSIX; the extraction runs SERVER-side, not in the sandbox
 # image — when U12 routes to the live workspace these same names exist in the
-# debian-based sandbox). `psql` is NEVER listed (plan, locked). `sh`/`bash`/`node`/`npm`
+# debian-based sandbox). `psql` is NEVER listed (locked). `sh`/`bash`/`node`/`npm`
 # are absent by design: no shell, no runtime, no package manager on a read-only surface.
 _GUEST_LIST: dict[str, CommandPolicy] = {
     "ls": CommandPolicy(),

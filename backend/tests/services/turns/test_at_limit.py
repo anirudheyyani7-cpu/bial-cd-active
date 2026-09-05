@@ -384,7 +384,7 @@ async def test_a_second_send_at_the_limit_is_refused_before_any_turn_exists(
 
 
 async def test_the_route_level_refusal_body_stays_byte_stable(client, db_session) -> None:
-    """The SPA's interceptor reads all five keys (`useClaudeAPI.js`), and this unit touches the
+    """The SPA's interceptor reads all five keys, and this unit touches the
     module that renders them. Flattening the body into the plain error envelope — or renaming the
     code — breaks the client's handling of the one response it most needs to recognise.
 

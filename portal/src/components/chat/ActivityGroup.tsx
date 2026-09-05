@@ -15,8 +15,8 @@
  *
  * ══ WHY THIS IS NOT THE REGISTRY'S `tool-group` ══
  *
- * The registry's `tool-group.aui.tsx` was fetched and read, and porting it would have shipped
- * nothing usable: the variant we would pass, `ghost`, is LITERALLY THE EMPTY STRING, and its
+ * Porting the registry's `tool-group.aui.tsx` would have shipped nothing usable: the variant we
+ * would pass, `ghost`, is LITERALLY THE EMPTY STRING, and its
  * `outline` default is a `rounded-lg border py-3` card whose proportions are not the board's. Every
  * visible property below is authored here against `ActivityAnatomy`, which is a whole artboard
  * about exactly this component.
@@ -24,20 +24,19 @@
  * What the port would genuinely have brought is kept: `useScrollLock`, so expanding does not throw
  * the reader somewhere else, is imported from the library directly.
  *
- * ══ IT HAS A CONTAINER NOW, AND THAT IS THE BOARD'S (plan 002, U8) ══
+ * ══ IT HAS A CONTAINER, AND THAT IS THE BOARD'S ══
  *
- * An earlier pass read `BuildChat` as drawing the group with no border and no background, and said
- * so at length here. `ActivityAnatomy` is the artboard that actually specifies it, and it draws a
- * bordered chip: `border:1px solid #E2E8F0; background:#FCFDFD; border-radius:10px`, opening into
- * a bordered panel with a header rule. A group with no chrome at all was bare text sitting in the
- * transcript with nothing to say it was a receipt rather than a sentence.
+ * `ActivityAnatomy` is the artboard that specifies it, and it draws a bordered chip:
+ * `border:1px solid #E2E8F0; background:#FCFDFD; border-radius:10px`, opening into a bordered
+ * panel with a header rule. A group with no chrome at all reads as bare text sitting in the
+ * transcript, with nothing to say it is a receipt rather than a sentence.
  *
- * ══ ALWAYS COLLAPSED — INCLUDING WHILE IT RUNS (owner ruling, 2026-09-02) ══
+ * ══ ALWAYS COLLAPSED — INCLUDING WHILE IT RUNS ══
  *
- * This AMENDS the board in place. `ActivityAnatomy` panel 2 draws a live group open, with a label
- * naming the current step inside it; the owner does not want the working detail on screen. So a
- * running group is ONE COLLAPSED ROW — icons accumulating in it as steps complete — with a single
- * quiet line beneath it naming what is happening right now. Nothing expands on its own.
+ * This AMENDS the board in place: `ActivityAnatomy` panel 2 draws a live group open, with a label
+ * naming the current step inside it. A running group is instead ONE COLLAPSED ROW — icons
+ * accumulating in it as steps complete — with a single quiet line beneath it naming what is
+ * happening right now. Nothing expands on its own.
  *
  * PRESSING IT IS A GLANCE, NOT A NEW RESTING STATE. Opening shows the rows; pressing again closes
  * them; and a group opened WHILE RUNNING returns to collapsed by itself WHEN THE TURN ENDS, because
@@ -90,7 +89,7 @@ export const UNRECOGNISED_STEP = 'Working on your app'
 /**
  * Which messages ended on an interrupted turn (R35c).
  *
- * A group cannot know this by itself — it is a fact about the TURN, carried by Plan B's durable
+ * A group cannot know this by itself — it is a fact about the TURN, carried by the durable
  * turn-terminal row — so the surface supplies it. Without it a count from a build somebody stopped
  * reads exactly like a count from one that finished, which is the specific misreading R35c names.
  */
@@ -148,12 +147,11 @@ function pluralSteps(n: number): string {
 }
 
 /**
- * WHAT THE ROW SAYS, running or sealed — and since plan 002's U8 it is a COUNT either way.
+ * WHAT THE ROW SAYS, running or sealed — it is a COUNT either way.
  *
- * It used to name the running step here, which is what `ActivityAnatomy` panel 2 draws. The owner's
- * ruling of 2026-09-02 moves that sentence OUT of the row and onto one quiet line beneath the
- * collapsed group, so the row is the receipt and the line is the commentary. The count is what
- * belongs on a receipt.
+ * It used to name the running step here, which is what `ActivityAnatomy` panel 2 draws. That
+ * sentence now lives OUT of the row, on one quiet line beneath the collapsed group, so the row is
+ * the receipt and the line is the commentary. The count is what belongs on a receipt.
  *
  * No headline, no elapsed timer, no "step 3 of 9" — the screen reads as an app being built, not an
  * agent being watched. The suffixes are sealed-only: a count of problems while the run is still
@@ -259,7 +257,7 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
   const open = readerOpen ?? failOpen
 
   /**
-   * A GLANCE INSIDE A RUNNING GROUP IS TEMPORARY (owner ruling, 2026-09-02).
+   * A GLANCE INSIDE A RUNNING GROUP IS TEMPORARY.
    *
    * Opening one while it runs is about watching it, so when the turn ends the peek is over and the
    * group returns to its resting state — collapsed. Cleared to `null` rather than to `false`, so
@@ -331,9 +329,9 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
       <div
         data-testid="activity-group-container"
         data-problem={problem || undefined}
-        // A BORDERED CHIP, which is what `ActivityAnatomy` actually draws — see the docblock for
-        // the earlier reading that said otherwise. `w-fit` so the container hugs its contents
-        // when collapsed and is not a full-width bar across the transcript.
+        // A BORDERED CHIP, which is what `ActivityAnatomy` actually draws. `w-fit` so the
+        // container hugs its contents when collapsed and is not a full-width bar across the
+        // transcript.
         className={`w-fit max-w-full overflow-hidden rounded-[10px] border ${
           problem ? 'border-problem-edge' : 'border-bial-border'
         }`}
@@ -410,10 +408,10 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
         )}
       </div>
 
-      {/* ONE QUIET LINE, BENEATH THE COLLAPSED ROW, naming what is happening right now (owner
-          ruling, 2026-09-02). The board puts this sentence INSIDE an open group; the owner does
-          not want the working detail on screen, so the group stays shut and the sentence moves
-          here. Running only: a sealed group's steps are in the receipt, one press away. */}
+      {/* ONE QUIET LINE, BENEATH THE COLLAPSED ROW, naming what is happening right now. The
+          board puts this sentence INSIDE an open group; here the working detail stays off
+          screen, so the group stays shut and the sentence moves here. Running only: a sealed
+          group's steps are in the receipt, one press away. */}
       {facts.running && (
         <p data-testid="activity-group-now" className="mt-1.5 ps-1 text-[11px] text-neutral">
           {facts.currentLabel}

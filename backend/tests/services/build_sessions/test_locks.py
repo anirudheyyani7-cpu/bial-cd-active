@@ -1,4 +1,4 @@
-"""U3 — the C5 lock / heartbeat / registry-state primitives (deterministic fakeredis)."""
+"""The C5 lock / heartbeat / registry-state primitives (deterministic fakeredis)."""
 
 from __future__ import annotations
 
@@ -81,10 +81,10 @@ async def test_reap_lock_reclaims_a_drifted_lock(fake_redis: aioredis.Redis) -> 
 async def test_acquire_fails_closed_on_redis_error(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """U3 — fail CLOSED, but SAY WHICH KIND of closed.
+    """Fail CLOSED, but SAY WHICH KIND of closed.
 
-    The fail-closed half is unchanged and non-negotiable: a Redis error never hands out a
-    token. What changed is the signal. `None` is reserved for the one certain answer —
+    The fail-closed half is non-negotiable: a Redis error never hands out a
+    token. `None` is reserved for the one certain answer —
     "the lock is genuinely held" — because the caller turns that into a 409 naming a live
     build session. Folding an outage into the same `None` is what made every Redis blip
     surface as "a build session is already active" for a user who had none.
@@ -106,7 +106,7 @@ async def test_acquire_fails_closed_on_redis_error(
 async def test_acquire_none_is_reserved_for_a_lock_that_is_genuinely_held(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The other half of the U3 split, pinned at the same seam: with a HEALTHY Redis, a
+    # The other half of the split, pinned at the same seam: with a HEALTHY Redis, a
     # refused acquire still returns `None` — so the 409 the manager builds from it always
     # describes a real holder. Without this, "raise on error" could be satisfied by raising
     # on everything.
@@ -164,7 +164,7 @@ async def test_every_primitive_but_acquire_still_surfaces_redis_errors(
     lets a concurrent attach reconnect to a container the reaper is about to delete.
 
     `release_lock_as_holder` and `write_heartbeat` are here for a DIFFERENT reason, and it
-    is the one that is easy to get wrong (it was, once): they look like compensation paths
+    is the one that is easy to get wrong: they look like compensation paths
     that deserve a guard, but every caller that wants one already guards at the call site
     (`manager.py:365`, `:1046`, `:873`), and at `manager.py:398` / `:554` the raise is
     precisely what triggers the container teardown. See the two
@@ -193,7 +193,7 @@ async def test_registry_state_helpers(fake_redis: aioredis.Redis) -> None:
     assert await locks.read_registry(fake_redis, USER) is None
 
 
-# --- U13: the start-in-flight marker ------------------------------------------------
+# --- the start-in-flight marker -----------------------------------------------------
 # `write_starting_marker` / `read_starting_marker` / `clear_starting_marker` are the
 # primitives `_holding_user_lock` (manager.py) builds the `starting` fact from; this section
 # pins them in isolation, the way `read_registry`/`mark_registry_ending` are pinned above.

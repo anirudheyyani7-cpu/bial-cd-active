@@ -233,11 +233,11 @@ describe('the draft follows its own chat', () => {
   })
 
   it('★ a send that lands after a switch clears ITS chat, not the sibling’s live words', async () => {
-    // THE LEAK THIS IS WRITTEN AGAINST, and it is a leak the first attempt at the guard could not
-    // catch: the box performs a send from its PRESS-TIME closure, so the completion callback and
-    // the conversation it compared itself against came from the same render. The comparison was a
-    // value against itself, always true, and chat-1's accepted send therefore wrote whatever stood
-    // in the box — chat-2's half-typed sentence — over chat-1's stored draft.
+    // THE LEAK THIS IS WRITTEN AGAINST: the box performs a send from its PRESS-TIME closure, so
+    // the completion callback and the conversation it compared itself against came from the same
+    // render. The comparison was a value against itself, always true, and chat-1's accepted send
+    // therefore wrote whatever stood in the box — chat-2's half-typed sentence — over chat-1's
+    // stored draft.
     let release = () => {}
     const gate = new Promise<void>((r) => { release = r })
     const onSubmit = vi.fn().mockReturnValue(gate)

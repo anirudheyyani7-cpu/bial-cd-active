@@ -309,13 +309,12 @@ async def has_ever_been_built(app_id: uuid.UUID) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────────────────
 # WHAT THE CONTAINER STILL HOLDS.
 #
-# The container-state primitives below were `manager.py`'s. They moved because `_resolve_sandbox`
-# consults the workspace verdict before every turn, and a verdict that imported `state_script`
-# back from `manager` would be a module-level cycle — and broken in-function it would still
-# drag `api.v1.build_sessions.schemas` and `pydantic_ai` into
+# `_resolve_sandbox` consults the workspace verdict before every turn, and a verdict that
+# imported `state_script` back from `manager` would be a module-level cycle — and broken
+# in-function it would still drag `api.v1.build_sessions.schemas` and `pydantic_ai` into
 # everything that asks, including the reaper, which goes out of its way not to load them
 # (`test_the_reaper_imports_without_the_fastapi_app`). `manager.py` and `reaper.py` import them
-# from here now.
+# from here.
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
 # One round trip for every half of the question. `|| true` keeps a repo-less tree from

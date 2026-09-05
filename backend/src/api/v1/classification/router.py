@@ -106,8 +106,8 @@ _review_limiter = rate_limit(
     ),
 )
 
-# R19's "unavailable" is five distinct citizen-facing states (the plan's failure
-# taxonomy) plus the drift code U6 added. The CITIZEN sentence for each stored bucket
+# R19's "unavailable" is five distinct citizen-facing states plus the drift code U6
+# added. The CITIZEN sentence for each stored bucket
 # lives here — U7 owns the copy, the stored `failure_code` stays the stable, greppable
 # operator string — and an unknown code fails loudly at the subscript rather than
 # rendering a sentence nobody wrote.

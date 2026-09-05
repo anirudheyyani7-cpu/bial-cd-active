@@ -1,4 +1,4 @@
-"""POST /v1/admin/apps/reconcile-sandboxes — the Azure-side fleet reconcile (#83 follow-up).
+"""POST /v1/admin/apps/reconcile-sandboxes — the Azure-side fleet reconcile.
 
 The mechanics of the diff are pinned service-side in
 `tests/services/build_sessions/test_inventory.py`; this file pins the ROUTE: who may call it,
@@ -140,9 +140,9 @@ async def test_a_clean_fleet_reports_nothing(client, app, db_session, fake_redis
     await _register(fake_redis, user_id, name)
 
     body = (await client.post(_RECONCILE, headers=admin)).json()
-    # R20 (U11): the fleet numbers cannot say whether the WORKER is alive — every alarm the
-    # reclamation pass raises is emitted by the pass, so a dead scheduler looks like a quiet
-    # fleet. `reclamationStale` is true here because no pass has ever run in this test.
+    # The fleet numbers cannot say whether the WORKER is alive — every alarm the reclamation
+    # pass raises is emitted by the pass, so a dead scheduler looks like a quiet fleet.
+    # `reclamationStale` is true here because no pass has ever run in this test.
     assert body == {
         "live": 1,
         "registered": 1,
@@ -212,10 +212,10 @@ async def test_a_client_that_cannot_enumerate_is_503_not_500(
 
 
 async def test_no_redis_is_the_declared_503_not_a_500(client, app, db_session) -> None:
-    """BLOCKER 1 REGRESSION (#83 review). `build_coordination_or_503` SKIPS its body on an
-    unconfigured Redis and resumes after it, so a route whose `return` lives inside the block
-    falls off the end and returns None against a non-optional response model — FastAPI's
-    response validation then raises, and the route that documents a 503 answered 500.
+    """`build_coordination_or_503` SKIPS its body on an unconfigured Redis and resumes after it,
+    so a route whose `return` lives inside the block falls off the end and returns None against
+    a non-optional response model — FastAPI's response validation then raises, and the route
+    that documents a 503 answered 500.
 
     Deliberately takes no `fake_redis` fixture: with the singleton unset, `get_redis()` raises
     `RedisNotConfiguredError` exactly as it would on a deployment with no Redis configured.

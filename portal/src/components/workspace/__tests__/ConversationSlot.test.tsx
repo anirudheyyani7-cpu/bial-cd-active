@@ -1,9 +1,8 @@
 /**
- * The conversation slot (Plan A, U5).
+ * The conversation slot.
  *
  * The slot's job is small and its claims are correspondingly narrow: one home for the conversation body
- * mount, and the hide-not-unmount treatment carried over from the builder surface's chat panel
- * so it survived Plan D's rewrite of the surface around it.
+ * mount, and the hide-not-unmount treatment.
  *
  * WHAT IS PROVEN ELSEWHERE, AND DELIBERATELY NOT RE-ASSERTED HERE:
  *  - the shared draft, and its behaviour across a reload and a sibling round trip —
@@ -27,9 +26,9 @@ import ConversationSlot, { type MountedConversation } from '../ConversationSlot'
 import { HIDDEN_BUT_MOUNTED } from '../hiddenSubtree'
 
 // ONE STUB, because there is one body. It reports the props it was handed INCLUDING the kind: a
-// stub that printed only `chatId` could not tell "not passed" from "passed and ignored", and after
-// Plan F's U6 the kind IS passed — for one declaration (does this surface want the app pane seen?)
-// rather than for a body.
+// stub that printed only `chatId` could not tell "not passed" from "passed and ignored". The
+// kind IS passed — for one declaration (does this surface want the app pane seen?) rather than
+// for a body.
 vi.mock('../../chat/ConversationSurface', () => ({
   default: (props: Record<string, unknown>) => (
     <div data-testid="conversation-body" data-kind={String(props.kind)}>
@@ -60,11 +59,8 @@ const slot = () => screen.getByTestId('conversation-slot')
 afterEach(() => cleanup())
 
 describe('ConversationSlot — one body, whatever the kind (R72)', () => {
-  // FLIPPED, NOT DELETED (Plan D U17). These three cases used to assert the OPPOSITE: that a
-  // builder resolution mounted one component and a planning resolution mounted another, and the
-  // third said out loud that Plan A moved the branch rather than deleting it. Plan D deleted it,
-  // so the same three situations now assert that the branch is gone — which is the mechanical
-  // form of R72's surface half, and is worth more than the three deletions would have been.
+  // FLIPPED, NOT DELETED. These three cases assert that the per-kind branch is gone — the
+  // mechanical form of R72's surface half — which is worth more than deleting them would be.
   it('mounts the same body for both kinds', () => {
     renderSlot({ kind: 'build' })
     expect(screen.getByTestId('conversation-body')).toBeTruthy()
@@ -75,15 +71,12 @@ describe('ConversationSlot — one body, whatever the kind (R72)', () => {
   })
 
   it('hands the resolved conversation through, INCLUDING its kind (Plan F, U6)', () => {
-    // INVERTED DELIBERATELY. This used to assert `data-kind === 'undefined'` — the surface cannot
-    // branch on what it is never given — and that was the right shape while nothing needed the
-    // kind. R11/R12 need exactly one thing from it: a Plan chat has no app pane, a Build chat shows
-    // it, and only the route knows which this is.
+    // INVERTED DELIBERATELY — the surface cannot branch on what it is never given. R11/R12 need
+    // exactly one thing from it: a Plan chat has no app pane, a Build chat shows it, and only the
+    // route knows which this is.
     //
-    // WHAT DID NOT COME BACK is the thing the old assertion was really protecting, and the two
-    // scenarios either side of this one are what still hold it: one BODY for both kinds, and the
-    // same DOM node across a kind change. The retired branch picked a whole page; this picks a
-    // visibility declaration.
+    // The two scenarios either side of this one hold the rest: one BODY for both kinds, and the
+    // same DOM node across a kind change. This one only proves a visibility declaration.
     renderSlot({ kind: 'build', chatId: 'build-7' })
     const body = screen.getByTestId('conversation-body')
     expect(body.textContent).toContain('build-7')

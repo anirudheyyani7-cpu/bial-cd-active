@@ -1,21 +1,21 @@
-"""The eight sandbox tools — the model's ENTIRE action surface (KD-4 / KD-5 / KD-9 / KD-10 / R1).
+"""The eight sandbox tools — the model's ENTIRE action surface.
 
 Five file tools go through the C2 `files()` op; `run_command` runs a general shell command over
 the C2 `exec` transport — the vibe-coding pivot, so the model can `npm install`, run linters, and
-drive its own build (R1). `run_command`'s containment is NOT a tool-level allowlist (it can write
+drive its own build. `run_command`'s containment is NOT a tool-level allowlist (it can write
 anywhere the workspace allows): it is the demoted `appuser`, the supervisor's fail-closed
-child-env, and secret-redacted + length-capped output (R3/R13) — plus the destructive-SQL
-sentinel (`sql_guard.you_shall_not_pass`, U1/#12) that refuses improvised DML/DDL against the
+child-env, and secret-redacted + length-capped output — plus the destructive-SQL
+sentinel (`sql_guard.you_shall_not_pass`) that refuses improvised DML/DDL against the
 app's real database BEFORE the transport ever sees it. A non-zero command exit is a
 NORMAL return the model reads and fixes; a transport failure (incl. an install-timeout 504) is
-converted to a `ModelRetry` so the loop self-heals rather than hard-crashing (R11) — only a
+converted to a `ModelRetry` so the loop self-heals rather than hard-crashing — only a
 `SandboxGoneError` escalates. The three file mutators share one fail-closed write guard
-(absolute/`..` escape + `.git/` deny) applied BEFORE any `files()` call (KD-9). A `str_replace`
-that fails to match exactly once is enriched into a `ModelRetry` so the model self-corrects in-run
-(KD-5). Reads are bounded to `VIEW_MAX_LINES` and refuse the ignore set (KD-10). No tool ever
-renders `session.handle` / `handle.token` into a result or an error (KD-9 secret-safety).
+(absolute/`..` escape + `.git/` deny) applied BEFORE any `files()` call. A `str_replace`
+that fails to match exactly once is enriched into a `ModelRetry` so the model self-corrects in-run.
+Reads are bounded to `VIEW_MAX_LINES` and refuse the ignore set. No tool ever
+renders `session.handle` / `handle.token` into a result or an error.
 
-`fetch_output_slice` (U22/R28) is the seventh, and it exists because the output cap used to be
+`fetch_output_slice` is the seventh, and it exists because the output cap used to be
 HEAD-ONLY: a truncated failure lost the assertion at the bottom, and recovering the middle cost a
 re-run. Output is now cut to head AND tail under an exit-code-conditional budget, and the notice
 between them names a handle the model reads the elided middle back through. The buffer behind
@@ -30,8 +30,8 @@ by step. It reports a per-step outcome read from what each step PRINTED, refuses
 successful when any step failed, and says which step failed and what state that left the workspace
 and the database in.
 
-EVERY TOOL DOCSTRING BELOW IS PROMPT COPY (U20 / R26). pydantic-ai sends it to the model as the
-tool's description at registration, and since U20 the build prompt's `TOOL SURFACE` block is
+EVERY TOOL DOCSTRING BELOW IS PROMPT COPY. pydantic-ai sends it to the model as the
+tool's description at registration, and the build prompt's `TOOL SURFACE` block is
 GENERATED from these same strings (`agent/toolsets.render_tool_surface`) — so a docstring edit
 here is a prompt edit, and `test_prompt.py`'s drift check goes red until the snapshot in
 `core/prompt_blocks.WRITE_TOOL_SURFACE` is regenerated. Write the FIRST SENTENCE as the line you
@@ -39,7 +39,7 @@ want in the prompt; the rest is detail the model reads on the tool schema. Two s
 particular are load-bearing beyond their own tool and must survive any trim: `run_command`'s
 don't-start-or-restart-the-dev-server rule (the only thing covering a second `next dev` started
 through `/exec`, which the supervisor's child env cannot tell from the real one) and
-`declare_done`'s terminal-on-a-passing-check statement (U18 — a model promised a follow-up
+`declare_done`'s terminal-on-a-passing-check statement (a model promised a follow-up
 round-trip withholds its closing message from `summary`, and there is no reply to put it in).
 
 They are built as a `FunctionToolset` FACTORY over a `sandbox_of` accessor — mirroring
@@ -106,7 +106,7 @@ from src.services.sandbox import (
 )
 
 # ---------------------------------------------------------------------------------------
-# U22 / R28: output the model can act on — head AND tail, and a handle to the middle
+# Output the model can act on — head AND tail, and a handle to the middle
 # ---------------------------------------------------------------------------------------
 #
 # MIRRORED, DELIBERATELY, in `agent/read_tools.py` (`_is_predictable_noise` / `_redacted_lines` /
@@ -151,7 +151,7 @@ FRAME: an upgrade notice for npm itself, a funding request, a pnpm resolution co
 spinner frame, an ASCII progress bar. None of them is actionable by a model building an app, and
 all of them recur on every install.
 
-WHAT IS DELIBERATELY NOT HERE, since the plan left the boundary to implementation and being wrong
+WHAT IS DELIBERATELY NOT HERE, since being wrong
 in this direction is the expensive one: driver and runtime deprecation warnings
 (`(node:1) [DEP0040] DeprecationWarning: …`) stay. They read like noise because they recur, but
 telling the deprecation a model can act on (a package IT just installed) from one it cannot needs
@@ -216,8 +216,7 @@ def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
     egressed in the clear. Whole lines in, whole lines out: a line is scanned entire or dropped
     entire, and a single line longer than the window is therefore dropped rather than truncated.
 
-    THAT IS NOT THE WHOLE OF IT, and this docstring used to claim it was ("head-only hid the
-    fragment; only the retained tail is new exposure"). It is false for the quoted arms, which
+    THAT IS NOT THE WHOLE OF IT. It is false for the quoted arms, which
     span newlines on purpose: a value that OPENS in the head and closes past the cut is not
     masked-with-its-key-present, it matches nothing at all and renders verbatim — a line-boundary
     cut does not help, because the value legitimately contains the newlines it is cut on. Both
@@ -350,7 +349,7 @@ def _elision_notice(
 
 
 def _render_output(lines: list[str], *, budget: int, handle: str | None) -> str:
-    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL (ASM13).
+    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL.
 
     Head-only was the defect: a stack trace puts its message at the top and the failing assertion
     at the bottom, so a head cap loses the error and a tail cap loses the cause. The budget is
@@ -429,7 +428,7 @@ documented lifetime, not a mistake it made."""
 
 
 async def _count_at_the_tool_boundary(counter: HarnessCounter, session: SandboxSession) -> None:
-    """Record one adoption counter for this build (U22 / U25's surface).
+    """Record one adoption counter for this build.
 
     Imported INSIDE the function on purpose: `services.build_sessions.__init__` reaches this
     module through the session manager, so a module-level import closes a real cycle. Same shape
@@ -449,7 +448,7 @@ async def _format_command_result(
     budget: int | None = None,
 ) -> str:
     """Render an `ExecResult` for the model: the exit code plus redacted stdout/stderr, capped by
-    what the exit code says the output is WORTH (ASM13) — a success is summarised, a failure is
+    what the exit code says the output is WORTH — a success is summarised, a failure is
     dumped. Empty streams are omitted so a clean run reads tersely.
 
     A stream that does not fit its budget is HELD under its own handle before it is cut, so the
@@ -610,7 +609,7 @@ def _the_command_lied(result: ExecResult, markers: tuple[str, ...]) -> bool:
 
 
 def _still_doing_it_the_hard_way(argv: list[str]) -> bool:
-    """Is this a raw `drizzle-kit generate` — the two-step sequence driven BY HAND (U23/R29)?
+    """Is this a raw `drizzle-kit generate` — the two-step sequence driven BY HAND?
 
     The adoption question, and the head of the sequence is what answers it. A lone
     `npm run db:migrate` is NOT counted: re-applying an existing migration is legitimate work the
@@ -694,7 +693,7 @@ async def _step(
 
 
 def _require_writable(path: str) -> None:
-    """Fail-closed write gate (KD-9). Raises `ModelRetry` — never touching `files()` — for the two
+    """Fail-closed write gate. Raises `ModelRetry` — never touching `files()` — for the two
     remaining denials in the open-sandbox model: a path that escapes the workspace (absolute or
     `..`) or a write into `.git/` (snapshot-history integrity). Every other workspace-relative path
     is writable — config, `package.json`, and the data client included."""
@@ -708,13 +707,13 @@ def _require_writable(path: str) -> None:
 
 async def _reanchor(session: SandboxSession, path: str) -> str:
     """Build the enriched retry message for a failed exact-replace: the current file, line-
-    numbered, plus guidance to add unique context or fall back to a whole-file write (KD-5)."""
+    numbered, plus guidance to add unique context or fall back to a whole-file write."""
     try:
         result = await session.sandbox_client.files(
             session.handle, FileView(path=path, view_range=[1, VIEW_MAX_LINES])
         )
     except SandboxGoneError:
-        raise  # a gone sandbox is terminal — escalate, never re-anchor (KD-11)
+        raise  # a gone sandbox is terminal — escalate, never re-anchor
     except SandboxError:
         current = "(the current file could not be read)"
     else:
@@ -761,7 +760,7 @@ def sandbox_toolset[DepsT](
                 "workspace-relative path is readable, including root config like `package.json`, "
                 "`next.config.ts`, and `tsconfig.json`."
             )
-        # Bound the view so a huge file can't blow the context window (KD-10). The -1 end-of-file
+        # Bound the view so a huge file can't blow the context window. The -1 end-of-file
         # spelling is bounded by the SAME budget: it becomes an explicit start+VIEW_MAX_LINES-1
         # window (the supervisor clamps to the real file length), so "-1 = end of file" holds for
         # any file within budget and a huge file is capped instead of read whole.
@@ -778,7 +777,7 @@ def sandbox_toolset[DepsT](
                 session.handle, FileView(path=path, view_range=bounded)
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not read `{path}`: {exc}. Check the path.") from exc
         # `content` is a contractually-required C1 `view` field (C2) — a missing/non-str value is a
@@ -801,7 +800,7 @@ def sandbox_toolset[DepsT](
                 session.handle, FileCreate(path=path, file_text=file_text)
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not write `{path}`: {exc}.") from exc
         session.workspace_touched = True
@@ -820,7 +819,7 @@ def sandbox_toolset[DepsT](
                 session.handle, FileStrReplace(path=path, old_str=old_str, new_str=new_str)
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             # A files() error from a tool → enrich into a ModelRetry so the model self-corrects
             # in-run.
@@ -843,7 +842,7 @@ def sandbox_toolset[DepsT](
                 FileInsert(path=path, insert_line=insert_line, insert_text=insert_text),
             )
         except SandboxGoneError:
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not insert into `{path}`: {exc}.") from exc
         session.workspace_touched = True
@@ -859,8 +858,7 @@ def sandbox_toolset[DepsT](
         do with their app, a handful of plain sentences in the everyday words they used to ask
         for it, with no file names, commands, libraries or frameworks in it. Do not hold that
         message back for a reply afterwards — on the passing path there is no reply to write it
-        in. If the app does NOT check out you receive the diagnostic and carry on fixing it
-        (KD-6)."""
+        in. If the app does NOT check out you receive the diagnostic and carry on fixing it."""
         session = sandbox_of(ctx)
         session.done_requested = True
         session.done_summary = summary
@@ -884,17 +882,17 @@ def sandbox_toolset[DepsT](
         notice in the middle names a handle — pass that handle to `fetch_output_slice` to read
         what was cut, instead of running the command again.
         Do NOT start or restart the dev server (`next dev`); it is
-        already running and the harness reads it for you (KD-6)."""
+        already running and the harness reads it for you."""
         session = sandbox_of(ctx)
         # alias keeps the call off the JS-oriented exec guard
         transport = session.sandbox_client.exec
-        # The FRIENDLY label is the only thing the browser ever sees for this command (F3/U3): the
+        # The FRIENDLY label is the only thing the browser ever sees for this command: the
         # classifier maps argv → citizen-plain copy (or a fail-closed "Working on your app"), so
         # the raw command / `$ argv` never reaches a visible step. `redacted_cmd` stays MODEL-only
         # — it rides the retry messages the model reads, never a StepEvent.
         friendly, hidden = classify_command(command)
         redacted_cmd = redact_secrets(" ".join(command)[:REDACT_INPUT_MAX_CHARS])
-        # The data-safety sentinel (U1 / #12) runs BEFORE the transport: improvised destructive
+        # The data-safety sentinel runs BEFORE the transport: improvised destructive
         # SQL never reaches the sandbox. The blocked attempt is emitted as a failed step so
         # route-around behaviour stays observable in BRAIN traces (the iteration-2 tripwire).
         refusal = you_shall_not_pass(command)
@@ -927,12 +925,12 @@ def sandbox_toolset[DepsT](
         # composite is being used" from "nobody is changing the schema at all".
         if _still_doing_it_the_hard_way(command):
             await _count_at_the_tool_boundary(HarnessCounter.SCHEMA_CHANGE_BY_HAND, session)
-        # No `started` emit: run_command collapses to ONE terminal row per command (F3/U3). The
+        # No `started` emit: run_command collapses to ONE terminal row per command. The
         # build headline spinner already conveys "working", and two emits sharing a friendly label
         # would otherwise render as two identical rows — this matches the reload projection's
         # one-row shape.
         try:
-            # F4: the bound depends on WHAT the command is. A wedged command used to get the
+            # The bound depends on WHAT the command is. A wedged command used to get the
             # full 600s, and the 1800s wall-clock deadline is only evaluated BETWEEN self-heal
             # iterations, so nothing could interrupt a churning one.
             timeout_s = (
@@ -949,11 +947,11 @@ def sandbox_toolset[DepsT](
                 state="failed",
                 hidden=hidden,
             )
-            raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+            raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             # A transport failure (supervisor 504 incl. an install timeout, or a blip) → enrich
             # into a ModelRetry so a command/install failure re-enters the loop instead of
-            # hard-crashing the build (R11). Only SandboxGoneError escalates. The message is
+            # hard-crashing the build. Only SandboxGoneError escalates. The message is
             # redacted defensively.
             await _step(
                 session,
@@ -1100,7 +1098,7 @@ def sandbox_toolset[DepsT](
                     state="failed",
                     hidden=hidden,
                 )
-                raise  # terminal infra failure — propagate to the sandbox_gone escalation (KD-11)
+                raise  # terminal infra failure — propagate to the sandbox_gone escalation
             except SandboxError as exc:
                 await _step(
                     session,
@@ -1139,7 +1137,7 @@ def sandbox_toolset[DepsT](
         # THE OVERRIDE REACHES THE CAP TOO, not just the wording. `output_budget_for_exit` is
         # asked about the OPERATION's verdict rather than any command's exit code, so a step that
         # failed while exiting 0 is DUMPED like the failure it is — sizing it from the underlying
-        # zero would let the lie decide how much of the truth the model gets to read (U22/ASM13).
+        # zero would let the lie decide how much of the truth the model gets to read.
         return await _render_the_schema_change_report(
             session, outcomes, budget=output_budget_for_exit(0 if succeeded else 1)
         )

@@ -204,10 +204,10 @@ async def build_it(
     # THE SAME PER-CONVERSATION GUARDRAIL THE SEND ROUTE ENFORCES, on the second door into a
     # conversation turn. A build chat starts EMPTY and its whole prompt is the plan, so in
     # practice it passes — the plan is length-capped well below the window. It is here anyway,
-    # and through the one shared preflight rather than a second copy, because the failure this
-    # unit is fixing is precisely a bound that existed on one path: wire only the send route
-    # and "Build this plan" is a way around the administrator's number rather than a route that
-    # happens to fit under it. If the plan cap ever moves, this is already correct.
+    # and through the one shared preflight rather than a second copy, because leaving the check
+    # on the send route alone would make "Build this plan" a way around the administrator's
+    # number rather than a route that happens to fit under it. If the plan cap ever moves, this
+    # is already correct.
     try:
         await enforce_context_limit(db, user.id, history=[], prompt=plan)
     except ContextWindowExceededError as exc:
@@ -304,9 +304,9 @@ async def build_it(
     # --- ONLY NOW: the one write in the Plan chat -------------------------------------------
     #
     # ANYONE MOVING THIS WRITE, OR ADDING A COMMIT BETWEEN THE FLUSH ABOVE AND THE TURN
-    # STARTER, REINTRODUCES ISSUE #72. `append_batch` owns its commit and both conversations
-    # share one session, so a write here before the turn started would make the flushed Build
-    # chat durable, and a later failure would strand it empty.
+    # STARTER, STRANDS AN EMPTY BUILD CHAT. `append_batch` owns its commit and both
+    # conversations share one session, so a write here before the turn started would make the
+    # flushed Build chat durable, and a later failure would strand it empty.
     #
     # ITS CONTENT IS THE CHOICE AND NOTHING ELSE — never the new chat's id, never its url,
     # never a count. That is what makes "no stored field references both conversations" a fact

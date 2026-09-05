@@ -164,7 +164,7 @@ async def test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted(
     """★ THE INERTNESS GUARD, and it is worth more than it looks.
 
     `FakeSandboxClient.exec` used to answer every unrecognised command with an empty stdout at
-    exit 0, which `parse_state` reads as `head=None` — and under U1 a repo-less container with a
+    exit 0, which `parse_state` reads as `head=None` — and a repo-less container with a
     recovery bundle present is a CONFIRMED REVERSION. So without a default arm for the state
     probe, every pre-existing turn test that happened to seed a bundle would silently have
     exercised the quarantine-and-restore branch while asserting something else entirely.
@@ -216,7 +216,7 @@ async def test_the_sentence_arrives_before_the_restore_runs(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ AE1, and the ordering IS the unit.
+    """★ The ordering IS the unit.
 
     Putting an app back is a full bundle of the reverted tree plus a complete restore — tens of
     seconds during which the screen would otherwise say nothing at all, which is indistinguishable
@@ -359,7 +359,7 @@ async def test_a_restore_that_fails_still_tells_the_citizen(
 async def test_confirmed_loss_with_nothing_to_restore_says_so_and_restores_nothing(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ AE3. Neither a recovery copy nor a saved bundle. The one thing that must not happen is
+    """★ Neither a recovery copy nor a saved bundle. The one thing that must not happen is
     presenting the empty template as their app."""
     user, project_id = await _mk(db_session, "u2i@rvaiglobal.com")
     manager = SessionManager()
@@ -429,7 +429,7 @@ async def test_a_poisoned_recovery_slot_is_stepped_over(
 async def test_a_check_that_times_out_touches_nothing(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★★ AE2(a). `REVERTED` is the only state that may destroy anything, and the entire safety
+    """★★ `REVERTED` is the only state that may destroy anything, and the entire safety
     argument collapses if an unanswerable check can reach a teardown. The container stays running,
     attached and untouched; the turn fails as retryable."""
     user, project_id = await _mk(db_session, "u2l@rvaiglobal.com")
@@ -504,7 +504,7 @@ async def test_the_slot_is_freed_even_when_the_gate_refuses(
 
 
 # =============================================================================
-# U4 — the reversion that happens while nobody is sending messages
+# The reversion that happens while nobody is sending messages
 # =============================================================================
 
 

@@ -1,10 +1,10 @@
-"""The marketplace catalog's wire shape (#145).
+"""The marketplace catalog's wire shape.
 
 THIS IS THE EXPOSURE BOUNDARY, and it is the reason these models are hand-written rather
 than derived from the ORM rows. Every other list on the platform is scoped by `user_id`
 (ADR-0004: cross-user access is normally an explicit, role-gated, audited action); the
-marketplace is a DELIBERATE, REASONED DEVIATION from that default, argued in full in PR
-#147 rather than an oversight — an enterprise platform where no app is a private document.
+marketplace is a DELIBERATE, REASONED DEVIATION from that default rather than an
+oversight — an enterprise platform where no app is a private document.
 There is no separate ADR document to amend for this (ADR-0004 has no standalone file in
 this repo, only inline citations); what a caller may see about someone else's app is
 instead enumerated in one place a reviewer can check at a glance, here.
@@ -51,10 +51,9 @@ class MarketplaceEntry(CamelModel):
     #: will be republished verbatim to everyone in the org and made searchable by it. It is
     #: the owner's own text and the enterprise-catalog framing is settled, but "the sentence
     #: I typed to orient the assistant" and "my app's public listing copy" are different acts
-    #: of writing sharing one field with no notice (#147 round 3). THAT NOTICE NOW EXISTS:
+    #: of writing sharing one field with no notice. THAT NOTICE NOW EXISTS:
     #: `ProjectDescriptionEditor` states, at the write surface, that a published app's
-    #: description becomes its Marketplace listing and is searchable org-wide. It ships in
-    #: this PR rather than after it, because THIS is the change that makes the field public
+    #: description becomes its Marketplace listing and is searchable org-wide
     #: — deferring the notice would leave a window where descriptions go org-wide with no
     #: warning where they are written.
     description: str | None

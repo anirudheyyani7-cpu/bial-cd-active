@@ -1,18 +1,17 @@
 /**
- * THE RAIL'S COMPOSER (Plan F, U1) — the mint-and-navigate protocol and R15's kind picker.
+ * THE RAIL'S COMPOSER — the mint-and-navigate protocol and R15's kind picker.
  *
  * Two things are under test and they fail differently.
  *
- * THE PROTOCOL is inherited from a component this plan deletes, and the deletion is exactly how it
+ * THE PROTOCOL is inherited from a now-deleted component, and the deletion is exactly how it
  * gets lost: the id's version, the query/state split, and the `freshlyMinted` flag are all invisible
  * in a render and only wrong later — a v4 id becomes a badly-ordered primary key, a kind carried in
  * router state dies on reload, and a missing flag costs four guaranteed-404 requests per new chat.
  * Nothing about the screen looks different in any of those cases.
  *
  * THE PICKER is new, and it is what makes half the product reachable: a chat's kind is fixed at
- * creation, the retired composer hardcoded the build kind, and its own docstring called the control
- * for the other kind "a picker nobody has designed yet". Without it this rail can only mint Build
- * chats.
+ * creation, and the retired composer hardcoded the build kind. Without it this rail can only mint
+ * Build chats.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
@@ -80,10 +79,9 @@ afterEach(() => {
 
 describe('the mint-and-navigate protocol, carried through the deletion', () => {
   it('mints a UUIDv7, not a v4 — this id becomes a primary key', () => {
-    // ADR-0006 wants a sortable primary key. The retired composer's own comment records what
-    // happens without a shared mint: two sites each kept a private `crypto.randomUUID()` and both
-    // went on producing v4 long after the store's mint moved on. Nothing about the screen looks
-    // different when this is wrong.
+    // ADR-0006 wants a sortable primary key. Two sites each kept a private `crypto.randomUUID()`
+    // and both went on producing v4 long after the store's mint moved on. Nothing about the screen
+    // looks different when this is wrong.
     renderComposer()
     send()
 
@@ -234,7 +232,7 @@ describe("R15's picker — the control that makes the other half of the product 
   })
 
   it('reads its one line of explanation from the catalogue, never from this file', () => {
-    // R73: one source for what a kind IS. A second wording here would drift the first time the
+    // One source for what a kind IS. A second wording here would drift the first time the
     // server's changed, and nothing would notice.
     renderComposer()
     expect(screen.getByTestId('kind-description').textContent).toBe('Change the live app.')

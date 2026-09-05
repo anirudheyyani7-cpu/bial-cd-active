@@ -11,9 +11,8 @@
  * with its `ShimmerLabel` and reaching for the package is the obvious move. DO NOT INSTALL IT: it
  * declares `peerDependencies: { tailwindcss: ">=4.0.0-0" }` and ships `@property`, `@theme inline`
  * and `@utility`, none of which 3.4.17 understands — so its CSS would pass through this build as
- * dead text, the label would not animate, and nothing would say so. A hand-written keyframe was
- * carried here instead and then deleted unused, because no label in this thread ever wore it; if
- * one needs a shimmer, it is a keyframe to write, not a dependency to add.
+ * dead text, the label would not animate, and nothing would say so. If one needs a shimmer, it is
+ * a keyframe to write, not a dependency to add.
  *
  * ══ ONLY WHAT RENDERS WAS PORTED ══
  *
@@ -117,10 +116,8 @@ export const Thread: FC<{ components: ThreadComponents }> = ({ components }) => 
  * ONE SCROLL CONTAINER, and it is this viewport.
  *
  * `ConversationSlot` owns the slot's height; nothing here positions itself against the viewport
- * and there is no `calc(100vh - …)` anywhere in this file. What the old surface had — four
- * nested scrollers on the planning page and another on the builder — is exactly what this
- * rebuild deleted, so this must stay the only `overflow-y-auto` inside the chat slot. A test
- * asserts it.
+ * and there is no `calc(100vh - …)` anywhere in this file. This must stay the only
+ * `overflow-y-auto` inside the chat slot. A test asserts it.
  */
 const ThreadRoot: FC = () => {
   const { ViewportFooter } = useThreadComponents()

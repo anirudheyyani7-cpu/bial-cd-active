@@ -347,8 +347,7 @@ async def test_a_long_update_renders_whole_on_reload_too(db_session: AsyncSessio
     """★ U6's OTHER EMITTER, because a rendering checked on only one of them is checked
     nowhere. The same four-hundred-character update that reaches the live feed whole is read
     back off the stored CALL and drawn whole, so a citizen who reloads gets the sentence they
-    watched arrive rather than a shorter one — or, as it used to be, nothing at all where the
-    agent had spoken.
+    watched arrive rather than a shorter one.
 
     THE STEP BESIDE IT IS THE LIVENESS HALF: a projection that crashed on the row would also
     produce no truncated text."""
@@ -478,7 +477,7 @@ async def test_prose_and_a_spoken_line_in_one_response_both_land_in_the_order_wr
 #
 # THIS CHECKS OUR OWN STRINGS, NOT THE MODEL'S VOCABULARY, and that distinction is the one R82
 # and L1 both turn on. A denylist over what the agent wrote would be a word filter over model
-# text, which this plan rejects everywhere. A denylist over what the PLATFORM wrote is
+# text. A denylist over what the PLATFORM wrote is
 # legitimate precisely because we own both ends: we know exactly what we sent, so we can say
 # exactly what must not come back.
 #
@@ -510,11 +509,10 @@ _PRIVATE_NOTES = {
     "the continue nudge": "you ended your turn without calling `declare_done`",
     "declare_done's acknowledgement": "Acknowledged — that summary is now the closing message",
     "the voice channel's acknowledgement": "Shown to the user. Carry on with the work.",
-    # THE REFUSALS ARE PRIVATE NOTES TOO, and U8's Approach names them alongside the workspace
-    # note. They are written to steer the AGENT — "use `read_file`, `list_files`, and
-    # `search_files` instead" is advice about a toolset the citizen cannot see and has no way
-    # to act on. A refusal quoted into a reply reads as the platform telling the person who
-    # asked for a visitor list that their package manager is unavailable.
+    # THE REFUSALS ARE PRIVATE NOTES TOO. They are written to steer the AGENT — "use `read_file`,
+    # `list_files`, and `search_files` instead" is advice about a toolset the citizen cannot see
+    # and has no way to act on. A refusal quoted into a reply reads as the platform telling the
+    # person who asked for a visitor list that their package manager is unavailable.
     "the guest-list refusal": "is not on the guest list",
     "the guest-list refusal's advice to the agent": "Use `read_file`, `list_files`",
     "a denied-flag refusal": "is not available to a read-only `run_command`",
@@ -570,10 +568,9 @@ async def test_a_note_the_model_quotes_back_reaches_the_citizen_like_any_other_p
 
 
 async def test_the_live_emitter_shows_the_same_quoted_note_in_the_same_place() -> None:
-    """The other emitter, on the same shape. Two emitters that disagree is the split this
-    plan's whole rendering design exists to make impossible, and a rendering checked on only
-    one of them is a rendering checked nowhere. The quote reaches both, as one block, before
-    the step it was written beside.
+    """The other emitter, on the same shape. Two emitters that disagree is impossible, and a
+    rendering checked on only one of them is a rendering checked nowhere. The quote reaches
+    both, as one block, before the step it was written beside.
 
     ASYNC BECAUSE A VISIBLE STEP ARMS A NARRATOR. A read is no longer hidden, and opening a
     step the citizen can see starts the stillness narrator as a task — so this needs a loop to
@@ -674,9 +671,9 @@ async def test_no_note_the_platform_wrote_is_rendered_from_the_result_it_rides_o
 
 def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
     """★ ON A TURN THAT ENDS BADLY, THE MODEL'S REGISTER IS NOT LOAD-BEARING, because the model
-    wrote none of what the citizen reads. Every ending this plan introduces or touches resolves
-    by IDENTITY to a constant in `copy.py` — asserted by identity rather than by inspecting
-    words, so it cannot pass because a sentence happened to sound right.
+    wrote none of what the citizen reads. Every ending resolves by IDENTITY to a constant in
+    `copy.py` — asserted by identity rather than by inspecting words, so it cannot pass because
+    a sentence happened to sound right.
 
     WHAT THIS IS NOT: it asserts over constants we wrote, so nothing the model produced can fail
     it, and the guards in `test_mode_prompts.py` are not evidence that the contract holds."""

@@ -57,10 +57,8 @@ _CONTEXT = PromptContext(
     project_description="Tracks visitors at the airport office.",
 )
 
-# The segment header each kind's composition must carry, and only its own. The Build arm still
-# reads "WRITE MODE" because the segment's own wording is Plan C's to rewrite, not this change's
-# — what matters here is that the two compositions are distinct and that neither leaks the
-# other's segment.
+# The segment header each kind's composition must carry, and only its own — what matters here
+# is that the two compositions are distinct and that neither leaks the other's segment.
 _SEGMENT_HEADERS = {
     ChatKind.PLAN: "PLAN MODE",
     ChatKind.BUILD: "WRITE MODE",
@@ -98,8 +96,7 @@ def test_composition_is_base_plus_exactly_its_own_segment(kind: ChatKind) -> Non
 def test_every_kind_carries_the_truthful_portal_self_description(
     kind: ChatKind,
 ) -> None:
-    """R5's other half. It lives in BASE, so neither kind can be missing it — the
-    walkthrough's invented-portal-features fix does not depend on which segment is selected."""
+    """It lives in BASE, so neither kind can be missing it."""
     composed = compose_kind_prompt(kind, _CONTEXT)
     assert PORTAL_SURFACES in composed
     # The two clauses that do the actual work: the closed world, and honesty over invention.
@@ -127,18 +124,15 @@ def test_base_survives_an_undescribed_project() -> None:
 
 
 def test_build_composes_like_the_other_kind() -> None:
-    """A Build chat has a segment like any other (KTD-5/KTD-5a). This used to raise, and that
-    refusal was read as architecture when it was an unfinished seam: no `_WRITE_SEGMENT` had
-    been authored, to avoid duplicating `orchestrator/prompt.py`. A shared import solves that."""
+    """A Build chat has a segment like any other (KTD-5/KTD-5a)."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert "WRITE MODE" in composed
     assert 'on "Visitor Log"' in composed  # the same BASE both kinds carry
 
 
 def test_the_write_segment_and_the_build_prompt_come_from_one_source() -> None:
-    """The original objection to a Write segment — "it could only drift from the build prompt" —
-    is true of a copy and false of a shared import. Assert they genuinely share the blocks, so a
-    future edit to either cannot silently fork the two Write prompts."""
+    """Assert they genuinely share the blocks, so a future edit to either cannot silently fork
+    the two Write prompts."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert BUILD_WORKING_RULES_HEAD in composed
     assert BUILD_WORKING_RULES_TAIL in composed
@@ -207,7 +201,6 @@ def test_write_speaks_to_the_person_who_asked_for_the_app() -> None:
     assert NARRATION_VOICE in composed
     lowered = composed.lower()
     assert "talking to the user" in lowered
-    # The SAME register Plan already speaks — U15 matched a voice rather than inventing a second.
     assert "plain, everyday words" in lowered
     assert "keep the how-it's-built details behind the scenes" in lowered
     assert "the file and folder names, the commands you run" in lowered
@@ -256,10 +249,9 @@ def test_the_name_the_files_instruction_went_with_the_segment_that_carried_it() 
 def test_both_kinds_inherit_the_one_audience_contract() -> None:
     """The two kinds are told the same thing about their reader.
 
-    A Plan chat used to carry its OWN plain-language paragraph, saying what the audience block
-    says in different words, and an earlier version of this test enforced that split. The one
-    per-kind sentence it turned on was about length, and it has gone with the rest of the caps.
-    What is left is a contract with no per-kind half at all."""
+    ONE CONTRACT, WITH NO PER-KIND HALF AT ALL: the audience block lives in BASE, neither kind
+    carries a plain-language paragraph of its own beside it, and neither carries a length clause.
+    A per-kind half drifting back in alone is the failure this catches."""
     plan = compose_kind_prompt(ChatKind.PLAN, _CONTEXT)
     build = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert NARRATION_VOICE in plan
@@ -287,9 +279,6 @@ def test_both_kinds_inherit_the_one_audience_contract() -> None:
 
 # --- U19 / R25: the version control the agent no longer does ---------------------------------
 #
-# THESE THREE REPLACE `test_write_teaches_the_commit_discipline_as_a_capability`, WHICH IS FLIPPED
-# RATHER THAN DELETED. It used to assert `COMMIT AS YOU WORK`, `git diff` and `git add -A` were
-# all present, because the Write segment taught the agent to stage and commit each coherent slice.
 # The commit the platform takes instead is `build_sessions/snapshot._COMMIT_SCRIPT`.
 #
 # TWO INERTNESS GUARDS AND ONE LIVENESS GUARD, and the third is not decoration: an inertness pair
@@ -337,12 +326,12 @@ def test_neither_write_prompt_instructs_the_agent_in_git(prompt_name: str) -> No
 
 
 def test_the_write_prompt_still_says_not_to_restart_the_dev_server() -> None:
-    """★ THE LIVENESS GUARD, and the one rule this unit must not take with it.
+    """★ THE LIVENESS GUARD, and the one rule a prompt trim must not take with it.
 
     The agent can start a dev server of its own through `run_command` — the supervisor's child
     env carries no marker that would tell the harness's flag apart from the real one — so this
     sentence is the whole of what stops a second `next dev` racing the one the harness reads to
-    verify the build. It survives every prompt trim in this plan."""
+    verify the build."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     lowered = composed.lower()
     assert "the dev server (`next dev`) is already running" in lowered
@@ -360,8 +349,8 @@ def test_the_composer_takes_no_approved_plan_at_all() -> None:
 
 
 def test_a_plan_chat_stays_lean() -> None:
-    # Template facts / working rules are the BUILD prompt's business (plan decision): a Plan
-    # chat never carries the build environment blocks.
+    # Template facts / working rules are the BUILD prompt's business: a Plan chat never carries
+    # the build environment blocks.
     composed = compose_kind_prompt(ChatKind.PLAN, _CONTEXT)
     assert BUILD_WORKING_RULES_HEAD not in composed
     assert "declare_done" not in composed
@@ -391,9 +380,7 @@ def test_the_plan_segment_never_speaks_of_forbidden_fruit() -> None:
 
 
 def test_the_plan_still_says_nothing_technical_even_with_its_shape_freed() -> None:
-    """The pass that freed the plan's SHAPE deliberately did not free its AUDIENCE.
-
-    A plan is read by someone who asked for an app, and naming the file it lives in tells them
+    """A plan is read by someone who asked for an app, and naming the file it lives in tells them
     nothing they can act on. Asserted per category rather than in general: a sentence that
     dropped "a command" while keeping the other four would still read as a no-jargon rule.
 
@@ -587,7 +574,7 @@ def test_no_prompt_surface_names_a_button_the_interface_does_not_draw() -> None:
     THE TOOL DESCRIPTIONS ARE CHECKED TOO. `present_plan_options`' docstring is prompt copy —
     pydantic-ai sends it on the tool schema of every request — but it never appears in any
     composed prompt string, so a guard over prompts alone reads clean while the model is being
-    told the old labels. That is the site that survived the previous relabelling."""
+    told the old labels."""
     retired = ("Keep refining", "keep refining", "Build it")
     surfaces: dict[str, str] = {
         f"composed {kind.value} prompt": compose_kind_prompt(kind, _CONTEXT) for kind in ChatKind

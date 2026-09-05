@@ -40,7 +40,7 @@ const keepPlanning = () => screen.getByTestId('offer-keep-planning')
 
 describe('the two buttons, and the words on them', () => {
   it('reads as a pair: each label names the mode the press puts you in', () => {
-    // Client call, 2026-08-31 (R-15). NOT "Build it", NOT "Keep refining" — which the client found
+    // NOT "Build it", NOT "Keep refining" — which the client found
     // confusing — and NOT the canvas's older "Not yet — keep talking". The same two words appear
     // in the model-facing copy, or the agent tells a citizen to press a button that does not
     // exist, so they are pinned here as constants rather than as inline strings.

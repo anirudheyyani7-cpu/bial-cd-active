@@ -1,10 +1,5 @@
 """The turn plumbing the conversation routes run on.
 
-These helpers used to live as underscore-private names inside the legacy relay's router, and
-`conversations/turns.py` reached across a package boundary to import them anyway — exactly the
-coupling ADR-0010 warns about: a "private" name with a second consumer is not private, it is
-undocumented shared API.
-
 The underscore in the FILE name marks it as internal to `api/v1` — it is plumbing, not a route
 module — while every NAME it exports is public, because it genuinely has more than one caller:
 the send route, the transition route, and the test fixtures that bind `chat_model` and
@@ -190,8 +185,8 @@ def history_rehydrator(
 async def resolve_binaries(
     db: AsyncSession, storage: ObjectStorage | None, user_id: uuid.UUID, attachment_ids: list[str]
 ) -> list[BinaryContent]:
-    """Owned attachment refs → base64-backed `BinaryContent` for the model prompt (the plan's
-    refs→base64-at-send resolver). Rides the store's own rehydrator — owner-scoped row, magic
+    """Owned attachment refs → base64-backed `BinaryContent` for the model prompt.
+    Rides the store's own rehydrator — owner-scoped row, magic
     re-check, authoritative media type — then gates on WHAT may enter the prompt: only
     image/PDF vision content. Office originals and anything else are a 400 (their content
     travels as `attachmentTexts`), and an unknown/foreign id fails the same typed way the
@@ -227,7 +222,7 @@ def prompt_content(
 ) -> str | list[str | BinaryContent]:
     """The turn's user content: binaries first, fenced attachment text next, the typed prose
     LAST (Anthropic's files-before-text ordering — the same shape `BuildSpec` pins). A plain
-    text-only message stays a bare string (the historical single-string shape)."""
+    text-only message stays a bare string."""
     if not binaries and not message.attachment_texts:
         return message.text
     return [*binaries, *message.attachment_texts, message.text]

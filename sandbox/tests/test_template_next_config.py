@@ -85,7 +85,7 @@ def test_the_template_config_evaluates_at_all() -> None:
 
 
 def test_an_injected_base_path_becomes_basePath() -> None:  # noqa: N802 - names the Next key
-    """R10. The platform assigns the path; the app's own code does not get a say."""
+    """The platform assigns the path; the app's own code does not get a say."""
     cfg = _evaluate({"BIAL_BASE_PATH": BASE_PATH})
     assert cfg["basePath"] == BASE_PATH
 

@@ -1,12 +1,11 @@
 """The browser client-error report store — the receiving half of the app's own error reporter
 (U13, R17 runtime half, AE11).
 
-The generated app has ALWAYS captured its own `window.onerror` / `unhandledrejection` /
-`console.error` and relayed them to the framing portal — `sandbox/template/components/bial/
-error-capture.tsx`, whose header has said since Stage 0 that the capture side is "consumed by
-NOBODY". This module is the first consumer. The portal POSTs what it caught to the ingest route,
-the report lands here, and `selfheal.verify` drains it as part of the health verdict, so an app
-that answers 200 and then dies in the browser can no longer be called green.
+The generated app captures its own `window.onerror` / `unhandledrejection` / `console.error`
+and relays them to the framing portal. This module is the consumer on the other end: the portal
+POSTs what it caught to the ingest route, the report lands here, and `selfheal.verify` drains it
+as part of the health verdict, so an app that answers 200 and then dies in the browser can no
+longer be called green.
 
 WHY A STORE AND NOT A DIRECT CALL INTO THE TURN. A report arrives on its own HTTP request, in a
 different task from the turn that is building the app, and there is no in-flight thing to hand it

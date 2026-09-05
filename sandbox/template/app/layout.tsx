@@ -15,9 +15,9 @@ export const metadata: Metadata = {
 };
 
 /**
- * Runtime identity read server-side (C6 §4 / C9): the injected env-vars survive the supervisor
- * child-env scrub (D5). Handed to <BialErrorCapture/>, which publishes them to
- * window.__BIAL_CONFIG so the error relay knows which origin to post to.
+ * Runtime identity read server-side: the injected env-vars survive the supervisor child-env
+ * scrub. Handed to <BialErrorCapture/>, which publishes them to window.__BIAL_CONFIG so the
+ * error relay knows which origin to post to.
  *
  * ONLY non-secret labels are published. The app's data credentials — BIAL_DATABASE_URL and the
  * write-capable BIAL_BLOB_SAS — stay server-side (read from process.env in Route Handlers,

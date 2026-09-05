@@ -11,6 +11,8 @@ lock can shut somebody out. An existing legacy hash is OVERWRITTEN: the scoped r
   APPLY:              uv run python -m scripts.mirror_registry_to_legacy_prefix --apply
 """
 
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
+
 from __future__ import annotations
 
 import argparse

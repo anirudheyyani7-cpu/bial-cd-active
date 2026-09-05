@@ -3,7 +3,7 @@
  *
  * This repo's convention for removing a behaviour has five links: the surface · the navigation
  * payloads · the consumers and imports · the tests-become-inertness-guards · and the human-facing
- * copy, INCLUDING COMMENTS. Wave 3 completed four. The fifth is where fifty present-tense-false
+ * copy, INCLUDING COMMENTS. A past cleanup completed four. The fifth is where fifty present-tense-false
  * sentences then sat — four of them inside `ConversationSurface.tsx` describing itself as
  * `BuilderPage`, one in `App.tsx` actively wrong about routing, and a docstring in the backend
  * telling the next reader that a branch retires with the relay while a shipping endpoint depended
@@ -22,9 +22,11 @@
  *
  * PRODUCTION FILES ONLY. Test files legitimately name what they retired: `twoPageEra-retired`
  * and `relaunch-chain-retired` exist to pin that something is GONE, so a retirement guard's own
- * filename and prose would trip every marker in the list below. (This used to add "and seventeen
- * suites in `pages/__tests__` are still named after the page they no longer render" — that was
- * true until the rename sweep in this same branch made it zero.)
+ * filename and prose would trip every marker in the list below.
+ *
+ * This test asserts an ABSENCE: adding a word to either list below changes what the whole portal
+ * source tree is scanned for, which can turn an innocent, unrelated edit elsewhere red. Treat
+ * both as fixed data.
  */
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -32,7 +34,7 @@ import path from 'node:path'
 
 const SRC_ROOT = path.resolve(process.cwd(), 'src')
 
-/** Deleted by the two-page retirement (#170) and this change. Unambiguous identifiers only —
+/** Deleted by the two-page retirement and this change. Unambiguous identifiers only —
  *  a generic word like "relay" appears in live contexts and would only produce noise. */
 const RETIRED = [
   'ChatPage',

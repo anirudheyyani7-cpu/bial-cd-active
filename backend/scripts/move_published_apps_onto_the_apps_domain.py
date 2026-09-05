@@ -33,6 +33,8 @@ THE OPERATOR PROCEDURE, in order:
   EXECUTE:            uv run python -m scripts.move_published_apps_onto_the_apps_domain --execute
 """
 
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
+
 from __future__ import annotations
 
 import argparse

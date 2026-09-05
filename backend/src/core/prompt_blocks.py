@@ -1,17 +1,19 @@
+# The assigned string constants here are prompt text the model reads verbatim; the docstrings
+# beneath them describe that text and reach no one. Edit a constant only as prompt content.
 """Shared prompt blocks — the single source both prompt systems compose from.
 
 A LEAF module (imports nothing from src.services) by design: `orchestrator/prompt.py`
-(BRAIN's build prompt) and `services/agent/mode_prompts.py` (the U9 mode segments) both
+(BRAIN's build prompt) and `services/agent/mode_prompts.py` (the mode segments) both
 import these, and routing the share through either package's __init__ chain created a
 real import cycle (agent -> mode_prompts -> orchestrator -> ... -> projects -> agent).
-`DATA_INTEGRITY_RULES` is U1's data-safety wording — written once, reused everywhere
+`DATA_INTEGRITY_RULES` is the data-safety wording — written once, reused everywhere
 (never copy the text).
 """
 
 from __future__ import annotations
 
-# The golden-template file manifest (C6) — hard-coded so the model never needs a computed repo
-# map (KD-10). Mirrors `sandbox/template/`. Everything is an editable starting point (R19) EXCEPT
+# The golden-template file manifest — hard-coded so the model never needs a computed repo
+# map. Mirrors `sandbox/template/`. Everything is an editable starting point EXCEPT
 # `next.config.ts`, which the platform owns: it carries the app's assigned base path, and an app
 # whose config loses it serves at `/` while the router asks for `/a/<key>/` — a preview that
 # loads a blank page while every automated check still reports healthy. The file itself stays
@@ -70,7 +72,7 @@ finishing each piece to something usable before starting the next.
 As each agreed piece lands, say so through `tell_the_user` and pass that piece's name as \
 `finished`. That is how the closing account knows what is left; without it the platform can \
 only say it could not tell."""
-"""R83–R88 — when to negotiate scope, and when negotiating is itself the failure.
+"""When to negotiate scope, and when negotiating is itself the failure.
 
 THE TRIGGER IS THE AGENT'S JUDGEMENT, DELIBERATELY. "Is this new work arriving in bulk, or a
 question, a fix, or the next round?" is a categorisation, and categorisation is what a model is
@@ -92,7 +94,7 @@ in the same turn. Nothing in code chooses between those; the toolset already did
 
 BUILD_THIS_PLAN_LABEL = "Build this plan"
 KEEP_PLANNING_LABEL = "Keep planning"
-"""The two buttons under a plan, and the ONE spelling of each (R-15, client-approved).
+"""The two buttons under a plan, and the ONE spelling of each (client-approved).
 
 THREE SURFACES MUST CARRY THE IDENTICAL STRINGS: the prompt segment that tells the model what
 the user will see, the offer tool's own description (which the model reads on every request),
@@ -109,11 +111,11 @@ what the platform records, and renaming a label must never migrate a record.
 synonym worth keeping alive in a comment."""
 
 APPLY_SCHEMA_CHANGE_TOOL = "apply_schema_change"
-"""The ONE sanctioned channel for a schema change, and the ONE spelling of it (U23 / R29 / F4).
+"""The ONE sanctioned channel for a schema change, and the ONE spelling of it.
 
 It replaced a two-command sequence the prompt used to dictate step by step
 (`npx drizzle-kit generate --name <what_changed>`, then `npm run db:migrate`), and the reason is
-the measurement U20 recorded against the template's pinned `drizzle-kit@0.31.10`:
+a measurement recorded against the template's pinned `drizzle-kit@0.31.10`:
 
 - WITHOUT `--name`, an unambiguous diff generates fine and exits 0 — it just names the file at
   random (`drizzle/0001_special_fantastic_four.sql`). So the flag buys a READABLE migration
@@ -156,13 +158,13 @@ There are no other tabs, pages, file browsers, settings screens, or export menus
 point the user somewhere or describe what the portal can do, name only surfaces from that \
 list; if you are unsure whether something exists in the portal, say so plainly rather than \
 directing the user to it."""
-"""R5's truthful portal self-description, single-sourced here for BOTH prompt systems.
+"""The truthful portal self-description, single-sourced here for BOTH prompt systems.
 
 The walkthrough caught the model inventing portal features and sending users to views that do
 not exist, so the fix is a closed-world statement of what IS there. The legacy relay carried its
 own copy of this wording, which is the duplicate that made "single-sourced" worth saying; it went
 with the relay, and this is now the only one. The wording is the unified chat layout's, where the
-right pane is the APP and nothing else (R10).
+right pane is the APP and nothing else.
 The surface list is verified against `portal/src/App.tsx`'s actual routes — extend it when the
 portal grows a surface, never before."""
 
@@ -190,7 +192,7 @@ goes with it, and your done-summary must say so plainly."""
 DATA_INTEGRITY_RULES = (
     _DATA_INTEGRITY_RULE + _SQL_SENTINEL_CLAUSE + _NO_INVENTED_ROWS_RULE + _SCHEMA_CHANGE_RULE
 )
-"""The single source of the data-safety wording (U1 → reused by the U9 mode-prompt BASE): the
+"""The single source of the data-safety wording (reused by the mode-prompt BASE): the
 truthful may-hold-records claim, the never-mutate rule, the no-invented-rows rule, and the
 migrations-are-the-channel rule for feature-removing schema changes. BYTE-IDENTICAL to the one
 literal this used to be — the Build prompt did not move."""
@@ -225,18 +227,18 @@ wrong: say what is not working yet in terms of the app, say what you are doing a
 carry on — a setback you recovered from is one plain sentence. The work itself is recorded step \
 by step as you do it, so the technical account already exists; what you write here is what the \
 user reads."""
-"""R79/R80/R81 — the audience contract. ONE statement of how the agent talks to the user, and
+"""The audience contract. ONE statement of how the agent talks to the user, and
 every chat kind inherits it.
 
-WHY IT EXISTS: the build side carried NO audience instruction at all. The 2026-08-18 demo build
+WHY IT EXISTS: the build side carried NO audience instruction at all. A demo build once
 wrote 2,397 words of file paths, commands, library names, and framework concepts to a citizen who
 had asked for an app — while the planning side, the one with a plain-language contract, read fine.
-R23 holds: the technical work and its step-by-step record are untouched, which is exactly why the
+The technical work and its step-by-step record stay untouched, which is exactly why the
 narration can afford to be short.
 
-IT IS KIND-BLIND ON PURPOSE (U5/R79). It used to be Build's alone, and the planning prompt carried
+IT IS KIND-BLIND ON PURPOSE. It used to be Build's alone, and the planning prompt carried
 its own paragraph saying the same thing in different words — two wordings of one contract, which
-is the drift R79 forbids. Everything about WHO is being written for, and in what register, is
+is the drift this rule forbids. Everything about WHO is being written for, and in what register, is
 here and is identical in both.
 
 IT RESTRICTS THE AUDIENCE, NEVER THE VOCABULARY, and that is why it survived the pass that
@@ -259,13 +261,13 @@ app inside its live sandbox, and you write and iterate on real code until the ap
 and renders. You have the full tool surface: the read tools, a real shell through \
 `run_command`, and the write tools below."""
 """Write's purpose/identity opener (pattern 3) — the paragraph `BUILD_SYSTEM_PROMPT` used to
-type out standalone, now shared with the Write mode segment (KTD-5a).
+type out standalone, now shared with the Write mode segment.
 
 It lives in THIS leaf module rather than in `mode_prompts.py` for the reason at the top of the
 file: having `orchestrator/prompt.py` import from `services/agent/` to get it would add exactly
 the cross-package edge this module exists to avoid."""
 
-# The working-rules blocks are factored so the U9 mode prompts (`services/agent/
+# The working-rules blocks are factored so the mode prompts (`services/agent/
 # mode_prompts.py`) compose Write mode from the SAME text — single source, no drift.
 # HEAD ends before DATA INTEGRITY (which BASE carries once in mode composition) and TAIL
 # resumes after it; `BUILD_SYSTEM_PROMPT` reassembles all three byte-identically.
@@ -276,7 +278,7 @@ the cross-package edge this module exists to avoid."""
 # how long it may write and which words it may not use is deciding what a citizen is allowed to
 # read. Who is being written for is still stated, and still in exactly one place.
 #
-# THE TYPE-CHECK LINE IS A PROHIBITION, NOT A PERMISSION (U19 / R25), and softening it back is a
+# THE TYPE-CHECK LINE IS A PROHIBITION, NOT A PERMISSION, and softening it back is a
 # regression. It used to end "you do not need to run `tsc` yourself, though you may" — which is
 # an invitation dressed as a reassurance, and the model took it: it re-derived, at 20-40 s and a
 # full context window of output a turn, the exact diagnostic the harness hands it for free the
@@ -383,7 +385,7 @@ excluded).
 would otherwise be watching a still screen.
 - `propose_first_slice` — When a request arrives with a lot of separate things in it, \
 propose what to build first."""
-"""GENERATED, NOT WRITTEN (U20 / R26) — a checked-in snapshot of
+"""GENERATED, NOT WRITTEN — a checked-in snapshot of
 `services/agent/toolsets.render_tool_surface(ChatKind.BUILD)`, which renders one line per
 tool from the tool definitions pydantic-ai hands the model at registration.
 
@@ -391,7 +393,7 @@ It is pasted here rather than computed because THIS MODULE IS A LEAF (see the fi
 `services.*` import from `core/` closes the cycle the whole file exists to avoid. So the guarantee
 is enforced by test instead — `test_prompt.py`'s drift check recomputes it and fails on any
 difference, including one that is only in the WORDING. Regenerate and re-paste with the one-liner
-in `toolsets.py`'s U20 comment.
+beside `render_tool_surface` in `toolsets.py`.
 
 ★ IT IS ACCURATE FOR THE CHAT ARM AND OVER-PROMISES ON THE HARNESS ARM, and the drift check
 cannot see that, because it compares this snapshot against the REGISTRY rather than against
@@ -407,17 +409,16 @@ either agent. `BUILD_WORKING_RULES_TAIL` carries this block into two prompts:
 
 NOT FIXED HERE, ON PURPOSE. Both candidate fixes are behaviour changes to a live agent — render
 the harness its own eight-line surface, or give `build_agent` the four missing toolsets — and the
-harness is already scheduled for deletion with its route
-(`docs/plans/2026-09-01-009-fix-the-stop-a-citizen-can-trust-plan.md`, unit 1), so a fix here
+harness is already scheduled for deletion along with its route, so a fix here
 would be work thrown away or a second live prompt to keep in step. What this comment buys instead
 is a guard that goes red when the situation changes:
 `test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
 
 WHY IT HAD TO STOP BEING PROSE. The hand-written block named six tools while the Write arm handed
 the model eight — `list_files` and `search_files` were absent from the prompt for their whole
-life. Worse, U18 changed what `declare_done` DOES while the sentence describing it still promised
-a follow-up round-trip; a name-set comparison is structurally blind to that, and the generated
-line is not, because it IS the tool's description.
+life. Worse, a later change to what `declare_done` DOES left the sentence describing it still
+promising a follow-up round-trip; a name-set comparison is structurally blind to that, and the
+generated line is not, because it IS the tool's description.
 
 The line breaks above are `\\`-continued so the constant stays one line per tool no matter how the
 source is wrapped — `render_tool_surface` emits exactly one `\\n` between entries, and a real

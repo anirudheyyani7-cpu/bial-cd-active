@@ -1,7 +1,7 @@
-"""One-off DEV cleanup: merge the duplicate anant.gupta@rvaiglobal.com user rows (DH / U9).
+"""One-off DEV cleanup: merge the duplicate anant.gupta@rvaiglobal.com user rows.
 
-Investigation (independently verified against the dev DB, 2026-07-24). Two rows share the
-email — `users.email` is deliberately NON-unique (ADR-0004 scopes by `user_id`, not email):
+Investigation (independently verified against the dev DB). Two rows share the
+email — `users.email` is deliberately NON-unique (every query is scoped by `user_id`, not email):
 
   ORPHAN  (the .mythos test-harness identity)   canonical=False
     id   019f4bc9-58ec-74ba-9f0d-044ce94addf3
@@ -33,6 +33,8 @@ default; the `.mythos/walkthrough-e2e/backups/` dump is the rollback.
                         --refresh-tokens <delete|reassign> --execute
 
 """
+
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
 
 from __future__ import annotations
 

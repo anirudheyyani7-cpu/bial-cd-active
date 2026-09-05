@@ -48,6 +48,10 @@ SCANNED = tuple(
 
 # Unambiguous identifiers only. A generic word like "relay" appears in live contexts (the C3
 # progress relay, the BRAIN→SESSION-API relay) and scanning for it would produce pure noise.
+#
+# This test asserts an ABSENCE: adding a word to either tuple below changes what the whole repo
+# is scanned for, which can turn an innocent, unrelated edit elsewhere red. Treat both as fixed
+# data.
 RETIRED = (
     "v1/claude",
     "api.v1.claude",

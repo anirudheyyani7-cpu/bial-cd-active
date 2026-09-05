@@ -1,4 +1,6 @@
-"""The chat-kind → toolset registry (U8 / R6 / D1): tool gating AT THE SERVER.
+# `present_plan_options` below is a registered tool: its docstring is sent to the model
+# verbatim as that tool's description. Edit it as prompt text, not as an internal note.
+"""The chat-kind → toolset registry: tool gating AT THE SERVER.
 
 The registry keys on the server-owned `conversation.kind` — never anything the client
 sends. Structural gating, not prompt gating: the single `chat_agent` is constructed with NO
@@ -25,7 +27,7 @@ arm in the code by the time anyone read it, and the two that remained were named
 that no longer exist — which is the failure this docstring is meant to prevent, committed by
 the docstring itself.
 
-Build additionally gets `fetch_output_slice` (U22/R28) and `apply_schema_change` (U23/R29), and
+Build additionally gets `fetch_output_slice` and `apply_schema_change`, and
 both reach Build the ONLY way they could: registered on `sandbox_toolset`, beside the
 `run_command` whose truncation notice hands out the slice handles and whose two-step migration
 sequence the composite replaces. Putting either on `read_only_toolset` would have been the silent
@@ -45,10 +47,11 @@ allowlist direction matters: a tool added to `read_only_toolset` later stays OUT
 until it is named, so the wrong-direction failure is a missing tool, never a silently
 shadowed one (a read-only `run_command` winning would leave Build unable to run anything).
 
-GENERIC over the deps type (U10): the registry itself is deps-agnostic — the caller
+GENERIC over the deps type: the registry itself is deps-agnostic — the caller
 supplies the accessors that resolve the run's workspace, and for Build the attached sandbox,
-from ITS deps. `ReadDeps` (+ `workspace_from_read_deps`) is the minimal agent-level shape the
-U8 tests exercise; the turn engine passes `ChatDeps`-typed accessors for real traffic.
+from ITS deps. `ReadDeps` (+ `workspace_from_read_deps`) is the minimal agent-level shape
+`tests/services/agent/` exercises; the turn engine passes `ChatDeps`-typed accessors for real
+traffic.
 
 `present_plan_options` is registered here and CARRIES THE PLAN IN ITS ARGUMENT — the seam is
 no longer a bare name. The turn-engine mechanics are `turns/plan_options.py`'s: the user's
@@ -57,8 +60,8 @@ click, minutes or days later, is stored as this call's RESULT. What used to be d
 card — is retired; see the notes at both former sites.
 
 Two more things live in this module and are not the registry: the chat-kind CATALOGUE
-(U16/R73 — what the two kinds are, served on `GET /v1/auth/me`) and the prompt's TOOL SURFACE
-renderer (U20/R26 — what the Build prompt is allowed to say about its tools). Each has its own
+(what the two kinds are, served on `GET /v1/auth/me`) and the prompt's TOOL SURFACE
+renderer (what the Build prompt is allowed to say about its tools). Each has its own
 banner below; both are here because they only stay honest with the registry if changing one
 puts the other under your cursor.
 """
@@ -89,16 +92,17 @@ from src.services.orchestrator.tools import sandbox_toolset
 
 @dataclass
 class ReadDeps:
-    """Minimal per-run deps for a Plan-kind agent-level run (the U8 test surface).
+    """Minimal per-run deps for a Plan-kind agent-level run (the agent-level test surface).
     `workspace` is the turn-pinned read surface (the live workspace); `user_id` scopes
-    everything downstream (ADR-0004)."""
+    everything downstream."""
 
     workspace: ReadOnlyWorkspace
     user_id: uuid.UUID
 
 
 def workspace_from_read_deps(ctx: RunContext[ReadDeps]) -> ReadOnlyWorkspace:
-    """The `ReadDeps` accessor (agent-level tests; U10 supplies its own for `ChatDeps`)."""
+    """The `ReadDeps` accessor (agent-level tests; the turn engine supplies its own for
+    `ChatDeps`)."""
     return ctx.deps.workspace
 
 
@@ -217,7 +221,7 @@ def toolsets_for_kind[DepsT](
             )
 
 
-# --- U16 / R73: one catalogue of what the two kinds ARE, beside the registry of what they --
+# --- One catalogue of what the two kinds ARE, beside the registry of what they -------------
 # --- CAN DO ---------------------------------------------------------------------------------
 #
 # WHY IT LIVES HERE, NEXT TO `toolsets_for_kind`, RATHER THAN IN THE API SCHEMA IT IS SERVED
@@ -283,12 +287,12 @@ fetches before first paint — and read on the client by the single module `chat
 from. No second endpoint, no second wording."""
 
 
-# --- U20 / R26: the prompt's TOOL SURFACE block is GENERATED, never hand-written ---------
+# --- The prompt's TOOL SURFACE block is GENERATED, never hand-written ----------------------
 #
 # WHY. Prose drifts in two directions and a name list only catches one of them. The
 # hand-written block named SIX tools while the Write arm registered eight (`list_files` and
-# `search_files` were simply missing), and — the class a name comparison is blind to — U18
-# changed what `declare_done` DOES while the sentence describing it still promised a
+# `search_files` were simply missing), and — the class a name comparison is blind to — a later
+# change to what `declare_done` DOES left the sentence describing it still promising a
 # follow-up round-trip. Rendering the block from the registry closes both: a tool the mode
 # does not register cannot be named, one it does register cannot be missed, and no line can
 # describe a tool differently from how the model is told it behaves, because the line and
@@ -312,7 +316,7 @@ from. No second endpoint, no second wording."""
 # units trimming. The first sentence is a roll-call — "these are the tools you have, this is
 # what each is for" — and the registration carries the detail. Both are slices of the one
 # string, so the two can restate each other but can never contradict each other, which is
-# the property R26 actually asks for.
+# the property this check actually asks for.
 
 
 def _the_renderer_never_calls_a_model(

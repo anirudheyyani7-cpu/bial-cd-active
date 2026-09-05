@@ -15,7 +15,7 @@ checking.
 
 TWO PASSES, ONE TOOL.
 
-  Pass 1 (the coverage map — plan U9). Run against BIAL's BEFORE export alone, before any
+  Pass 1 (the coverage map). Run against BIAL's BEFORE export alone, before any
   Dockerfile is touched. Every row is mapped to its INTENDED disposition: cleared by a named
   unit, exception, dispute, deferred, or held. That map is the checkable definition of done —
   at handover no row may be unmapped — and it is what bounds the remediation work. A fix made
@@ -27,7 +27,7 @@ TWO PASSES, ONE TOOL.
           --before "<dir>/vibe-coding_sheet.xlsx" \\
           --out-dir "<dir>/coverage"
 
-  Pass 2 (the register — plan U7). Run again once BIAL returns the post-remediation export.
+  Pass 2 (the register). Run again once BIAL returns the post-remediation export.
   Every BEFORE row is reconciled against what actually survived: rows that disappeared are
   Fixed, rows that survived carry their residual disposition, and a residual row the map never
   anticipated is reported as a NON-RECONCILING row — a signal the fix did not land, not a new
@@ -44,12 +44,14 @@ has found a real error, so the arithmetic is the report's own self-check rather 
 `Summary` is therefore never typed: every number on it is an Excel formula over the other
 sheets, so the report cannot drift internally even if someone edits a row by hand.
 
-GRANULARITY (plan AE6). One ENTRY per (image, CVE, software name, software version), each
+GRANULARITY. One ENTRY per (image, CVE, software name, software version), each
 carrying `Rows Accounted` — the number of scanner rows that collapse into it. BIAL's scanner
 emits one row per affected sibling package AND per installation path, so 1,083 rows resolve to
 far fewer real findings; reporting entries while carrying the row count lets the reviewer
 reconcile against the row totals their own console shows, in either direction.
 """
+
+# The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).
 
 from __future__ import annotations
 
@@ -153,7 +155,7 @@ _PRERELEASE = re.compile(
 def is_prerelease(version: str) -> bool:
     """True when `version` is an alpha/beta/rc/dev build rather than a released one.
 
-    Load-bearing for plan AE3: a finding whose ONLY offered fix is a pre-release cannot be
+    Load-bearing: a finding whose ONLY offered fix is a pre-release cannot be
     taken (Scope Boundaries forbids pre-release language runtimes), so it becomes accepted
     risk WITH the pre-release status as its stated reason — never filed as not-affected.
     """
@@ -264,7 +266,7 @@ def _line_of(version: str) -> str:
 def already_at_or_past_fix(installed: str, fixed: str) -> bool:
     """True when the INSTALLED version already meets or exceeds the vendor's fixed version.
 
-    This is plan AE2, and it routes to DISPUTE rather than to an exception: if we already ship
+    This routes to DISPUTE rather than to an exception: if we already ship
     the fixed version, the finding is a scanner error, and filing it as an accepted risk would
     concede a vulnerability we do not have.
 
@@ -339,7 +341,7 @@ class Finding:
 
     @property
     def key(self) -> tuple[str, str, str, str]:
-        """The ENTRY key (plan AE6): one entry per image, CVE, package name and version."""
+        """The ENTRY key: one entry per image, CVE, package name and version."""
         return (self.image, self.cve_id, self.software_name, self.software_version)
 
     @property
@@ -355,7 +357,7 @@ class Finding:
 
     @property
     def prerelease_only_fix(self) -> bool:
-        """True when a fix exists but EVERY offered fix is a pre-release (plan AE3)."""
+        """True when a fix exists but EVERY offered fix is a pre-release."""
         candidates = parse_fix_versions(self.fixed_version)
         return bool(candidates) and all(is_prerelease(c) for c in candidates)
 
@@ -602,7 +604,7 @@ RULES: Final[tuple[Rule, ...]] = (
         reason="esbuild collapsed onto a single current version by a package override, "
         "rebuilding the vendored Go binary that runs schema generation.",
     ),
-    # ── sandbox: the package manager's OWN bundled modules (plan R3) ─────────
+    # ── sandbox: the package manager's OWN bundled modules ───────────────────
     Rule(
         name="sandbox-bundled-npm",
         images=(SANDBOX,),
@@ -634,7 +636,7 @@ RULES: Final[tuple[Rule, ...]] = (
         "dist-packages, carried forward by the Debian 13 base (R3).",
     ),
     # ── sandbox: the golden template ─────────────────────────────────────────
-    #: NAMES THE PACKAGES THAT ACTUALLY MOVED, and nothing else. Plan U3 scoped a 25-of-26 pin
+    #: NAMES THE PACKAGES THAT ACTUALLY MOVED, and nothing else. This scoped a 25-of-26 pin
     #: bump to latest stable; what shipped is `next` 16.2.10 → 16.2.12 plus the `overrides`
     #: block (esbuild — its own rule above — and postcss). A `path_contains` rule over the whole
     #: of /workspace/app/node_modules/ would have filed all 26 pins as FIXED, claiming 25
@@ -642,8 +644,8 @@ RULES: Final[tuple[Rule, ...]] = (
     #: fixability fallback: a fixable one becomes an owned DEFERRED, which is exactly what an
     #: un-taken pin bump is.
     #:
-    #: WHEN THE REST OF U3 LANDS, widen `software_names` in the same commit as the package.json
-    #: change — never ahead of it.
+    #: WHEN THE REST OF THIS PIN BUMP LANDS, widen `software_names` in the same commit as the
+    #: package.json change — never ahead of it.
     Rule(
         name="sandbox-golden-template",
         images=(SANDBOX,),
@@ -685,10 +687,10 @@ RULES: Final[tuple[Rule, ...]] = (
     #: row is not evidence of an unfixable package, so filing these as exceptions would assert
     #: something the data does not support, and it is exactly the claim a reviewer can disprove
     #: from their own console. Two things resolve them: the rescan (which shows whether the
-    #: base move cleared them) and A4's answer on the feed (plan U8 question 2).
+    #: base move cleared them) and a pending answer on the feed itself.
     #:
-    #: The sandbox is the ONLY image where this matters. U4 removes the backend's Debian
-    #: package set outright, so the feed question cannot change that image's answer.
+    #: The sandbox is the ONLY image where this matters: the backend image is Alpine and
+    #: carries no Debian feed at all, so the feed question cannot change its answer.
     Rule(
         name="sandbox-os-no-fix-held",
         images=(SANDBOX,),
@@ -814,10 +816,10 @@ def disposition_for(f: Finding, *, rules: Sequence[Rule] = RULES) -> Verdict:
 
     * Already at or past the vendor's fix → DISPUTE. This is true regardless of what we are
       about to change, and conceding it as an exception would concede a vulnerability we do
-      not have (plan AE2).
+      not have.
     * Only a pre-release fix exists → EXCEPTION with the pre-release status as its reason.
       Scope Boundaries rules out pre-release language runtimes, so there is no version move
-      available and calling it deferred would imply one (plan AE3).
+      available and calling it deferred would imply one.
 
     The final fallback splits on fixability, because those are the two claims a reviewer can
     check independently: a fix exists and we did not take it (DEFERRED, which must carry an
@@ -1218,7 +1220,7 @@ def load_overrides(path: Path) -> list[Override]:
     """Read the annotations file. Lives in the local working directory, never the repo.
 
     Its content is per-CVE commentary about a live system — client data by the same argument
-    that keeps the workbooks out of the tree (R13). The SHAPE is code and is tested; the
+    that keeps the workbooks out of the tree. The SHAPE is code and is tested; the
     content is not committed.
     """
     raw: Any = json.loads(path.read_text(encoding="utf-8"))
@@ -1704,7 +1706,7 @@ def check_integrity(findings: Sequence[Finding], entries: Sequence[Entry]) -> In
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Coverage map output (plan U9)
+# Coverage map output
 # ─────────────────────────────────────────────────────────────────────────────
 
 _MAP_COLUMNS: Final[tuple[str, ...]] = (

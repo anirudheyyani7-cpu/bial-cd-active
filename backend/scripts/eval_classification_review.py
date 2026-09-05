@@ -1,4 +1,4 @@
-"""Evaluate the classification review's budgets and its misses (U14).
+"""Evaluate the classification review's budgets and its misses.
 
 WHAT THIS MEASURES. The review ships with PROVISIONAL ceilings — the wall-clock ceiling,
 the request budget and the 8,000-token final-step output cap in
@@ -8,7 +8,7 @@ over a chosen corpus of saved app bundles and reports, per run: wall-clock, mode
 requests, tool calls, the four raw token classes, THE FINAL STEP'S OUTPUT-TOKEN COUNT
 SEPARATELY (the 8,000 cap is later re-set from that distribution), the six verdicts,
 catch/miss per seeded finding, and the Foundry deployment the run used — ceilings belong
-to the deployment they were measured on and do not transfer (ASM17 / U14).
+to the deployment they were measured on and do not transfer.
 
 It also measures the model-free credential scan against a labeled corpus: Tier A and
 Tier B precision/recall SEPARATELY (they carry different weight — Tier A stands in when
@@ -17,9 +17,10 @@ Tier A must reach 100% precision on the corpus, because a Tier A false positive 
 a verdict nobody reviewed. Narrowing Tier A if the gate fails is a later design
 decision, not this script's.
 
-Two named summary figures, per the plan:
+Two named summary figures:
   * the FALSE-POSITIVE ROUTING RATE — known-clean bundles that would route: any
-    weighted-Yes verdict OR any run failure (ASM17's adoption half); and
+    weighted-Yes verdict OR any run failure (counting a run failure as a route is the
+    deliberately cautious choice); and
   * the MISS RATE — seeded findings a completed review did not answer Yes on.
 
 WHY THE AGENT LAYER, NOT THE SERVICE. The script drives `scan_snapshot` +
@@ -37,7 +38,7 @@ What is NOT replicated from the service: the guided truncation retry, the Tier A
 failure floor, and row storage — those are service behaviour pinned by its own tests.
 Here a truncation or model error is a FAILURE ROW (never an abort of the sweep), which
 the routing rate counts exactly as the publish ladder would route it. The one service
-rule that IS applied is R4's evidence downgrade — a Yes whose every cited location does
+rule that IS applied is the evidence-downgrade rule — a Yes whose every cited location does
 not exist becomes unanswered — imported from the service itself so the eval judges
 catch/miss on the verdicts production would actually store, not on raw model output
 that production would discard.
@@ -90,6 +91,8 @@ stdout. THE REPORT IS AN OPERATOR ARTIFACT: rows carry file paths from citizen-b
 apps (never values — the scan's hit shape structurally cannot carry one), so like the
 exception register's workbooks it lives in a working directory OUTSIDE the repo tree.
 """
+
+# `--help` prints the hand-written `description=` in `_build_parser`, not this docstring.
 
 from __future__ import annotations
 
@@ -518,9 +521,10 @@ def _scan_doc(sweep: CredentialSweep) -> dict[str, Any]:
 def _apply_evidence_rule(
     output: ReviewOutput, root: Path
 ) -> tuple[dict[str, str], dict[str, str], list[str], dict[str, Any]]:
-    """R4, exactly as production applies it (`_cites_a_real_location` is imported from
-    the service, not copied, so the rule cannot drift): a Yes whose every cited location
-    does not exist becomes unanswered. Returns (raw, effective, downgraded, evidence)."""
+    """The evidence-downgrade rule, exactly as production applies it (`_cites_a_real_location`
+    is imported from the service, not copied, so the rule cannot drift): a Yes whose every
+    cited location does not exist becomes unanswered. Returns (raw, effective, downgraded,
+    evidence)."""
     from src.services.classification.service import _cites_a_real_location
 
     raw: dict[str, str] = {}
@@ -763,7 +767,7 @@ async def _evaluate_one(
                 recorder=recorder,
                 scan=scan,
                 seeded=seeded,
-                would_route=True,  # the ladder routes every run failure (R20)
+                would_route=True,  # the ladder routes every run failure
             )
 
         raw, effective, downgraded, evidence = _apply_evidence_rule(output, root)
@@ -814,7 +818,7 @@ def _dist(values: list[float]) -> dict[str, float] | None:
 
 
 def _summarize(rows: list[EvalRow], spec: _EvalSpec, deployment: str | None) -> dict[str, Any]:
-    """The machine-readable summary row. NOTE — the distributions here (wall-clock,
+    """The machine-readable summary row. The distributions here (wall-clock,
     requests, final-step output tokens) are the inputs that later re-set
     `REVIEW_WALL_CLOCK_CEILING_S`, `REVIEW_REQUEST_BUDGET` and the 8,000-token
     `MAX_TOKENS` cap in `src/services/classification/constants.py`. This script NEVER
@@ -824,7 +828,7 @@ def _summarize(rows: list[EvalRow], spec: _EvalSpec, deployment: str | None) -> 
     complete = [row for row in rows if row["status"] == "complete"]
     failed = [row for row in rows if row["status"] == "failed"]
 
-    # The false-positive routing rate — the ASM17 figure the ceilings are tuned
+    # The false-positive routing rate — the figure the ceilings are tuned
     # against: known-clean bundles that would route (weighted-Yes OR run failure).
     clean_rows = [row for row in rows if row["known_clean"]]
     clean_routed = [row for row in clean_rows if row["would_route"]]

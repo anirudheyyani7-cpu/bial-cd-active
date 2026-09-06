@@ -47,6 +47,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -319,6 +320,22 @@ export default function WorkspaceToolbar({
  * WITH NO ACTION PUBLISHED IT IS A STATUS, NOT A BUTTON — a real `<span>`, so nothing invites a
  * press that would do nothing. That is today's project screen, whose surface deliberately has no
  * `onSave`; U11 gives it one and the same control becomes pressable there.
+ *
+ * ═══ AND WHILE IT IS WORKING IT SHOWS IT, NOT ONLY SAYS IT (`#202`) ═══
+ *
+ * The control standing between a citizen and losing their work was the quietest wait in the
+ * product: one word changed and nothing else did — no moving part, and `aria-busy` measured at
+ * zero across the whole row. The canvas rebuild dropped the spinner the old preview header
+ * shipped (`{saving ? <Loader2 className="animate-spin" /> : <Save />}`) and nothing went red,
+ * because a test that asserts a LABEL passes whether or not anything moves beside it.
+ *
+ * So it is back, in the idiom the five other confirm-and-wait controls already use —
+ * `ReclaimWorkspaceDialog`, `UnsavedWorkGuard`, `ProjectCreateModal`, `ProjectDeleteDialog`,
+ * `DataClassificationModal`. `animate-spin` is not an arbitrary class: it is one of the three
+ * utilities `index.css`'s reduced-motion block suppresses, so this spinner stops moving for a
+ * citizen who asked for that WITHOUT this file knowing the preference exists. The suite asserts
+ * the class name for exactly that reason — jsdom cannot evaluate a media query, so a test that
+ * only proved "a spinner is here" would be equally green in both worlds.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save
@@ -330,8 +347,21 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
   const shell = `inline-flex items-center gap-[7px] whitespace-nowrap rounded-[9px] border px-[13px] py-1.5 text-[12.5px] ${look}`
   const body = (
     <>
-      <Save size={14} />
-      {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+      {/* THE WAIT'S BOX — the spinner and the one sentence that describes it, together inside the
+          polite region. Wrapping the sentence is how it is announced; a second `sr-only` copy of a
+          sentence already on screen is that sentence read twice (`Announcer.tsx`). The region is a
+          PERMANENT child of the control — the glyph is always in it — so it is in the accessibility
+          tree before any text arrives, which is the order several reader-and-browser combinations
+          need (`TurnBanner.tsx`); only its TEXT appears and disappears.
+
+          "Save" and "Saved" stay outside it on purpose: they are the control's label, not the wait,
+          and `dirty` flips on its own while a turn edits files — announcing every flip would be
+          noise in the same region the wait needs to cut through. */}
+      <span role="status" aria-live="polite" className="inline-flex items-center gap-[7px]">
+        {saving ? <Loader2 data-testid="save-spinner" size={14} className="animate-spin" /> : <Save size={14} />}
+        {saving ? 'Saving…' : null}
+      </span>
+      {!saving && (dirty ? 'Save' : 'Saved')}
       {dirty && !saving && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" aria-hidden="true" />}
     </>
   )
@@ -352,6 +382,11 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
           data-testid="save-project"
           // `aria-disabled`, NEVER `disabled`: a disabled control throws focus to the document body.
           aria-disabled={saving || dirty === false}
+          // THE THIRD REGISTER, and a silent one: `aria-busy` is what a reader consults when asked
+          // rather than something it speaks, so it costs the wait's sentence nothing. `undefined`
+          // when idle — `aria-busy={false}` would ship a permanent `aria-busy="false"` on a control
+          // that is not waiting, which is a state where the honest answer is no answer.
+          aria-busy={saving || undefined}
           onClick={() => {
             if (saving || dirty === false) return
             readActions().save?.()
@@ -361,7 +396,7 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
           {body}
         </button>
       ) : (
-        <span data-testid="save-state" className={shell}>
+        <span data-testid="save-state" className={shell} aria-busy={saving || undefined}>
           {body}
         </span>
       )}

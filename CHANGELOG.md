@@ -10,6 +10,70 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
 > got there. A version number marks a build, not a merge.
 
+## [1.7.0-beta.9] - 2026-09-06
+
+Eighteen findings from the end-to-end campaign, and the waits finally say what they are doing.
+
+### Added
+
+- **A way to take the workspace back.** When another project is holding the one workspace, the
+  blocked project now offers to stop it and open this app instead, naming the project that has it.
+  Pressing it asks first — it will not throw away unsaved work in the other app without saying so —
+  and it sends no message on your behalf, which is what it used to do.
+- **The review queue says how old the backlog is.** Every pending submission shows its age, and the
+  queue says out loud that the oldest is at the top, so an administrator can see depth at a glance
+  rather than inferring it.
+
+### Fixed
+
+- **Everything that waits now says what it is waiting for, and stops moving if you asked it to.**
+  A reduced-motion preference was honoured by three of thirty-seven continuously animating things.
+  Spinners, pulses and bounces are all silenced now, and every wait they used to stand in for says
+  its sentence in words instead — including the one that appears while your app is starting, and the
+  one on a chat that is still loading.
+- **A reloaded chat shows the app it says is running.** The chat would claim "Your app is running"
+  over an empty pane, because the address it needed was never handed to that screen. A hard load, a
+  move between screens and a refresh now all frame the same running app.
+- **The project screen stops waiting once your app is serving.** It could sit on "Getting your app
+  ready" for up to three quarters of a minute after the app was already up. It now leaves promptly.
+- **A document that is too long is refused in plain words, before it costs you anything.** A
+  sixty-one page PDF quietly occupied more than three quarters of a conversation's room to think
+  while the counter reported it as almost nothing. Documents are now admitted by page count and
+  charged what the longest admissible one really costs. A password-protected file gets its own
+  sentence rather than being told it is "too long" — advice nobody holding a three-page locked
+  invoice could follow.
+- **A refused document says why, instead of "try again".** When the server refused an over-long
+  document, its explanation was overwritten a moment later by a generic "That message did not send
+  — try again". Trying again sent the same document to the same limit, forever. You now read what
+  the server actually said, and your message and your file both stay where you left them.
+- **An address that no longer works says so on the way out.** A dead bookmark, a link a mail client
+  has mangled with a stray space or bracket, a project someone else owns — each used to bounce you
+  to the project list in silence, or show you the raw text of a validator. They now arrive with one
+  neutral sentence, and no dead Rename control over a project that never loaded. A server that
+  merely failed to answer still says nothing, because it does not know anything.
+- **The projects list remembers where you were.** Which page you were on, what you had searched for
+  and how many rows you had chosen now survive a reload, a Back, and a link shared with a colleague.
+- **Stopping a build no longer reads as a crash.** A turn you stopped was announced as "The build
+  failed", and stopped looking stopped once the page was reloaded. It now says what actually
+  happened, and keeps saying it.
+- **The last-saved line names the version you just saved**, rather than the one before it.
+- **A busy workspace answers a question instead of an error.** Asking for a workspace another
+  project holds returned a server error; it now returns the refusal the interface already knew how
+  to turn into a choice, carrying the name of the project holding it.
+- **A long build no longer loses its own workspace.** The lock and heartbeat that mark a workspace
+  as in use were taken once and never renewed, so a build outrunning the lease could have its
+  container reclaimed underneath it.
+- **Deleting a project takes its sandbox with it.** The container and its registry entry are torn
+  down on delete rather than left running.
+
+### Changed
+
+- **An uncaught database error can no longer write a citizen's email into an operator log.** Query
+  parameters are hidden at source on all three database engines rather than at one route.
+- **The reclamation report tells the truth about itself.** It claimed the sweeper was enabled while
+  the worker disagreed; it now carries the outcome and detail of the last pass, and records what it
+  found before the flag is consulted rather than after.
+
 ## [1.7.0-beta.8] - 2026-09-05
 
 A busy workspace hands over, and an image can be built where the registry refuses to.

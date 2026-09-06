@@ -45,6 +45,7 @@ import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import ProjectPage from '../ProjectPage'
+import ProjectsPage, { PROJECT_GONE_NOTICE } from '../ProjectsPage'
 import { ApiError } from '../../utils/apiError'
 import { beaconsFrom } from './_observeBeacons'
 import type { Project } from '../../utils/projectApi'
@@ -55,6 +56,12 @@ const h = vi.hoisted(() => ({
   patchProject: vi.fn(),
   generateDescription: vi.fn(),
   listProjectConversations: vi.fn(),
+  // THE PROJECTS INDEX'S OWN READS. `#206` is a two-page behaviour — a bounce OUT of this page and
+  // a sentence ON that one — so the arrival cases below mount the REAL `ProjectsPage` behind the
+  // `/projects` route. It reads a page of rows and the three summary numbers on mount, and an
+  // unmocked read would make those tests about the network.
+  listProjects: vi.fn(),
+  listProjectCounts: vi.fn(),
   fetchPreviewState: vi.fn(),
   fetchSaveState: vi.fn(),
   relaunchPreview: vi.fn(),
@@ -68,10 +75,18 @@ vi.mock('../../utils/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/api')>()),
   authFetch: h.authFetch,
 }))
-vi.mock('../../utils/projectApi', () => ({
+// SPREAD FROM THE REAL MODULE rather than listed exhaustively, because `ProjectsPage` and the row
+// and card components under it import names this file has no opinion about (`deleteProject`,
+// `createProject`); with a hand-written factory Vitest throws "No X export is defined on the mock"
+// at IMPORT time, which fails the file rather than the test. The three overrides are unchanged —
+// everything else stays real and goes through the already-mocked `authFetch`.
+vi.mock('../../utils/projectApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/projectApi')>()),
   getProject: h.getProject,
   patchProject: h.patchProject,
   generateDescription: h.generateDescription,
+  listProjects: h.listProjects,
+  listProjectCounts: h.listProjectCounts,
 }))
 vi.mock('../../utils/conversationApi.js', () => ({
   listProjectConversations: h.listProjectConversations,
@@ -130,9 +145,22 @@ const makeProject = (over: Partial<Project> = {}): Project => ({
   ...over,
 })
 
+/**
+ * WHERE THE NAVIGATION LANDED, AND WHAT IT CARRIED.
+ *
+ * The address and the router state are TWO nodes on purpose: every existing case asserts
+ * `getByTestId('location').textContent` against a bare pathname, and nesting the state inside that
+ * div would append to the same `textContent` and turn a dozen green assertions red for no reason.
+ */
 function LocationProbe() {
   const loc = useLocation()
-  return <div data-testid="location">{loc.pathname + loc.search}</div>
+  const carried = (loc.state as { notice?: unknown } | null)?.notice
+  return (
+    <>
+      <div data-testid="location">{loc.pathname + loc.search}</div>
+      <div data-testid="location-notice">{typeof carried === 'string' ? carried : ''}</div>
+    </>
+  )
 }
 
 function renderProjectPage(projectId = 'p1') {
@@ -161,6 +189,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.authFetch.mockResolvedValue({ ok: true } as Response)
   h.listProjectConversations.mockResolvedValue([])
+  h.listProjects.mockResolvedValue({ items: [], page: 1, pageSize: 8, total: 0, totalPages: 0 })
+  h.listProjectCounts.mockResolvedValue({ inProduction: 0, totalApplications: 0, inPipeline: 0 })
   h.fetchPreviewState.mockResolvedValue(preview())
   h.fetchSaveState.mockResolvedValue({ appId: 'a1', dirty: false, containerHead: null, savedHead: null })
 })
@@ -470,6 +500,158 @@ describe('ProjectPage — identity + guard rails carried over', () => {
     renderProjectPage()
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/projects'))
+  })
+})
+
+describe('ProjectPage — a dead address says something on the way out (`#206`)', () => {
+  /* THE BOUNCE ITSELF IS NOT WHAT CHANGED — the case above still pins it, and both routes
+     document the redirect deliberately. What these cases pin is the half that was thrown away:
+     the page had the server's own 404 in its hand at the exact moment it decided to say nothing.
+
+     THEY MOUNT THE REAL `ProjectsPage`, because this is a two-page behaviour and neither half is
+     worth much alone. A test that asserted only "the navigation carried a `notice`" would stay
+     green through an arrival screen that silently ignores it, which is the state this unit found
+     the platform in. */
+
+  /** Leaves the list, then comes back — the Back press, driven through the router the way a person drives it. */
+  function Detour() {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button onClick={() => navigate('/elsewhere')}>leave the list</button>
+        <button onClick={() => navigate(-1)}>press back</button>
+      </>
+    )
+  }
+
+  function renderThroughToTheList(projectId: string) {
+    return render(
+      <MemoryRouter initialEntries={[`/projects/${projectId}`]}>
+        <Routes>
+          <Route path="/projects/:projectId" element={<ProjectPage />} />
+          <Route
+            path="/projects"
+            element={
+              <>
+                <ProjectsPage />
+                <LocationProbe />
+                <Detour />
+              </>
+            }
+          />
+          <Route path="/elsewhere" element={<><div data-testid="elsewhere" /><Detour /></>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  /** The sentence the list is showing, read from the notice region and nowhere else. `''` when it
+   *  is showing none. Scoped rather than `getByText`, because `LocationProbe` deliberately carries
+   *  the same words: a whole-document query would answer "found two" — an ambiguity error — where
+   *  the test means to answer a question about one region. */
+  const listSaid = () => screen.getByTestId('projects-notice').textContent ?? ''
+  /** Present only while a notice is up: the region itself is mounted on every render, empty. */
+  const noticeIsUp = () => screen.findByTestId('projects-notice-marker')
+
+  it('a 404 bounces to the list AND says one neutral line there', async () => {
+    h.getProject.mockRejectedValue(new ApiError('Project not found.', 404))
+    renderThroughToTheList('p-206-gone')
+
+    await noticeIsUp()
+    expect(listSaid()).toBe(PROJECT_GONE_NOTICE)
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
+  it('★ the cross-user id and the nonexistent id say the SAME words, byte for byte', async () => {
+    /* THE WHOLE POINT IS THAT THEY ARE INDISTINGUISHABLE. A project id belonging to another
+       citizen is a deliberately non-leaking 404 (ADR-0004), so any sentence that could differ
+       between these two causes is a sentence that can confirm someone else's project exists.
+
+       THE TWO ERRORS CARRY DIFFERENT SERVER MESSAGES ON PURPOSE, and that is what makes this
+       test bite rather than compare a string to itself. The realistic pair is identical — the
+       server sends "Project not found." for both — so feeding identical input would assert
+       nothing at all. Feeding a message that WOULD leak, and requiring the same client sentence
+       anyway, pins the actual invariant: the line is a constant, not `err.message` piped through.
+       Mutation check: carry `err.message` instead of `PROJECT_GONE_NOTICE` and this goes red. */
+    async function noticeCarriedBy(error: ApiError, projectId: string): Promise<string> {
+      h.getProject.mockRejectedValue(error)
+      renderThroughToTheList(projectId)
+      await noticeIsUp()
+      const said = listSaid()
+      cleanup()
+      return said
+    }
+
+    const nonexistent = await noticeCarriedBy(new ApiError('Project not found.', 404), 'p-206-a')
+    const crossUser = await noticeCarriedBy(new ApiError('Not permitted for this user.', 404), 'p-206-b')
+
+    expect(crossUser).toBe(nonexistent)
+    expect(crossUser).toBe(PROJECT_GONE_NOTICE)
+    // …and neither one repeats what the server happened to say.
+    expect(crossUser).not.toMatch(/permitted|access|permission/i)
+    expect(nonexistent).not.toMatch(/permitted|access|permission/i)
+  })
+
+  it('★ a dropped connection says nothing — and does not bounce at all', async () => {
+    /* `fetch` rejects with a plain `TypeError` when the connection drops, which is not an
+       `ApiError` and carries no status. The project page's 404 branch already refuses it (the
+       `instanceof` guard), and this is the case that keeps that guard honest: widen it — drop
+       the `instanceof`, or match on "no status" — and a wifi blink starts telling a citizen
+       their project is gone. */
+    h.getProject.mockRejectedValue(new TypeError('Failed to fetch'))
+    renderThroughToTheList('p-206-offline')
+
+    // LIVENESS FIRST: the page is on screen and settled, so the three absences below are absences
+    // rather than a crashed tree that renders nothing at all.
+    expect(await screen.findByText(/Couldn’t load this project/i)).toBeTruthy()
+    expect(screen.queryByText(PROJECT_GONE_NOTICE)).toBeNull()
+    expect(screen.queryByTestId('projects-notice')).toBeNull()
+    expect(screen.queryByTestId('location')).toBeNull()
+  })
+
+  it('★ the line is neutral in presentation, not the red failure toast', async () => {
+    /* `ProjectsPage`'s toast channel is documented failure-only — red, `role="alert"`, an
+       `AlertCircle`, no auto-dismiss — and nothing here failed. Reusing it would tell a citizen
+       in colour that a stale bookmark was their mistake. */
+    h.getProject.mockRejectedValue(new ApiError('Project not found.', 404))
+    renderThroughToTheList('p-206-neutral')
+
+    await noticeIsUp()
+    const said = within(screen.getByTestId('projects-notice')).getByText(PROJECT_GONE_NOTICE)
+    // POLITE, NOT ASSERTIVE — and the whole page holds no alert while this is the only thing said.
+    expect(screen.getByTestId('projects-notice').getAttribute('role')).toBe('status')
+    expect(document.querySelectorAll('[role="alert"]').length).toBe(0)
+    // Not the failure channel, and not wearing its clothes.
+    expect(screen.queryByTestId('projects-toast')).toBeNull()
+    expect(screen.getByTestId('projects-notice-marker')).toBeTruthy()
+    expect(screen.getByTestId('projects-notice').innerHTML).not.toMatch(/bg-red/)
+    // In the page's own flow, not a bar floating over it.
+    expect(said.closest('.fixed')).toBeNull()
+  })
+
+  it('★ the notice does not survive a Back press — nor the reload that reads the same entry', async () => {
+    /* React Router keeps this in `window.history.state`, which the browser RESTORES on reload and
+       REPLAYS on back. Without the consume-and-replace, a citizen who refreshes their list — or
+       wanders back to it an hour later — is told again about a project they dealt with long ago.
+
+       The scrubbed entry is asserted directly as well as through the Back press: `location-notice`
+       going empty IS what a reload of this address would read. */
+    h.getProject.mockRejectedValue(new ApiError('Project not found.', 404))
+    renderThroughToTheList('p-206-once')
+
+    await noticeIsUp()
+    expect(listSaid()).toBe(PROJECT_GONE_NOTICE)
+    // The history entry no longer carries it — which is the reload half.
+    await waitFor(() => expect(screen.getByTestId('location-notice').textContent).toBe(''))
+
+    fireEvent.click(screen.getByRole('button', { name: 'leave the list' }))
+    expect(await screen.findByTestId('elsewhere')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'press back' }))
+
+    // LIVENESS: we are genuinely back on the list, and it is the list that is silent.
+    expect(await screen.findByRole('heading', { name: /your apps/i })).toBeTruthy()
+    expect(listSaid()).toBe('')
+    expect(screen.queryByTestId('projects-notice-marker')).toBeNull()
   })
 })
 

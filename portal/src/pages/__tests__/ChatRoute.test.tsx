@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 
 const h = vi.hoisted(() => ({
   getConversation: vi.fn(),
@@ -26,7 +26,14 @@ vi.mock('../../utils/api', async (importOriginal) => ({
 }))
 
 vi.mock('../../utils/conversationApi.js', () => ({ getConversation: h.getConversation }))
-vi.mock('../../utils/projectApi', () => ({ getProject: h.getProject }))
+// SPREAD FROM THE REAL MODULE, not listed. `ChatRoute` now imports the dead-address sentence from
+// `ProjectsPage` (`#206` — one string, three surfaces), and that page imports names this file has
+// no opinion about; against a hand-written factory Vitest throws "No X export is defined on the
+// mock" at IMPORT time and the whole file fails. `getProject` is still the only override.
+vi.mock('../../utils/projectApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/projectApi')>()),
+  getProject: h.getProject,
+}))
 
 /**
  * ONE STUB, AND IT IS THE SLOT (Plan D U17).
@@ -66,6 +73,8 @@ vi.mock('../../components/workspace/ConversationSlot', () => ({
 }))
 
 import ChatRoute from '../ChatRoute'
+import { PROJECT_GONE_NOTICE } from '../ProjectsPage'
+import { ApiError } from '../../utils/apiError'
 import {
   WorkspaceChannelProvider,
   createWorkspaceChannel,
@@ -89,6 +98,25 @@ function HeadingProbe() {
 
 
 /**
+ * WHERE A BOUNCE LANDS, AND WHAT IT SAID ON THE WAY (`#206`).
+ *
+ * The real `ProjectsPage` is not mounted here — its own arrival rendering is pinned in
+ * `ProjectPage.test.tsx`, which is where the two-page behaviour lives. What is only observable
+ * from THIS side is the sentence the route hands the navigation, and `null` for the failures that
+ * have not earned one. The `projects-index` testid is unchanged so the existing bail cases keep
+ * asserting exactly what they always did.
+ */
+function ProjectsIndexProbe() {
+  const carried = (useLocation().state as { notice?: unknown } | null)?.notice
+  return (
+    <div data-testid="projects-index">
+      projects
+      <span data-testid="arrival-notice">{typeof carried === 'string' ? carried : ''}</span>
+    </div>
+  )
+}
+
+/**
  * `state` is the freshly-minted marker's carrier. Entries without one stay plain strings so the
  * existing cases exercise the exact same router input they always did.
  */
@@ -103,7 +131,7 @@ function renderRoute(entry: string, state?: unknown) {
         <HeadingProbe />
         <Routes>
           <Route path="/chat/:chatId" element={<ChatRoute />} />
-          <Route path="/projects" element={<div data-testid="projects-index">projects</div>} />
+          <Route path="/projects" element={<ProjectsIndexProbe />} />
         </Routes>
       </MemoryRouter>
     </WorkspaceChannelProvider>,
@@ -401,6 +429,59 @@ describe('ChatRoute — load failure', () => {
     h.getConversation.mockRejectedValue(new Error('boom'))
     renderRoute('/chat/c1')
     expect(await screen.findByTestId('projects-index')).toBeTruthy()
+  })
+})
+
+describe('ChatRoute — a dead address says something on the way out (`#206`)', () => {
+  /* THE BOUNCE IS UNCHANGED. Every case above still bails to /projects, and should. What these
+     pin is the sentence it carries — and, more importantly, the two failures that must NOT
+     carry one. The catch this route hangs on is reached by a 404/422, by a 500, and by a
+     DROPPED CONNECTION, and treating all three as "the chat is gone" is the class of
+     over-claiming this codebase keeps refusing. */
+
+  const arrivalSaid = () => screen.getByTestId('arrival-notice').textContent
+
+  it('an absent row with no query says the neutral line', async () => {
+    // `getConversation` answers a real 404 with `null` rather than by throwing, so this — not
+    // the catch — is the ordinary dead-bookmark path.
+    h.getConversation.mockResolvedValue(null)
+    renderRoute('/chat/ghost-206')
+
+    await screen.findByTestId('projects-index')
+    expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
+  })
+
+  it('a 422 from the server says the same line', async () => {
+    h.getConversation.mockRejectedValue(new ApiError('Input should be a valid UUID', 422))
+    renderRoute('/chat/not-a-uuid')
+
+    await screen.findByTestId('projects-index')
+    expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
+  })
+
+  it('★ a dropped connection bounces in silence — it does NOT say the chat is gone', async () => {
+    /* A `fetch` that never reached the server rejects with a plain `TypeError`: no status, not an
+       `ApiError`. The bounce stays (a spinner with no answer is worse), but the platform knows
+       nothing here and must not claim otherwise.
+
+       MUTATION CHECK — this is the named mutant for `#206`: widen `goneNoticeFor` to return the
+       sentence unconditionally and this goes red while every other case in this file stays green. */
+    h.getConversation.mockRejectedValue(new TypeError('Failed to fetch'))
+    renderRoute('/chat/c-206-offline')
+
+    // LIVENESS FIRST — the bounce genuinely happened, so the empty string below is a silent
+    // arrival rather than a tree that never rendered.
+    expect(await screen.findByTestId('projects-index')).toBeTruthy()
+    expect(arrivalSaid()).toBe('')
+  })
+
+  it('★ a 500 is not a deletion either', async () => {
+    // The server failed to LOOK. Same silence, for the same reason.
+    h.getConversation.mockRejectedValue(new ApiError('Internal Server Error', 500))
+    renderRoute('/chat/c-206-boom')
+
+    expect(await screen.findByTestId('projects-index')).toBeTruthy()
+    expect(arrivalSaid()).toBe('')
   })
 })
 

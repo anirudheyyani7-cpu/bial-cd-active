@@ -20,7 +20,9 @@
  *     `/chat/{clientMintedId}?projectId={pid}&kind={plan|build}` and the page rewrites to
  *     the bare `/chat/{id}` once that first turn commits. This is what lets a flat path
  *     survive a reload and a cold open.
- *  3. It 404s with no query → the chat is gone (or was never real). Back to /projects.
+ *  3. It 404s with no query → the chat is gone (or was never real). Back to /projects,
+ *     saying so on arrival (`#206`) — but only when the server actually answered; see
+ *     `goneNoticeFor`.
  *
  * The breadcrumb's project name is resolved separately and never gates rendering: a
  * chat whose project vanished still shows its transcript, with `projectName: null`.
@@ -43,6 +45,8 @@ import { getConversation } from '../utils/conversationApi'
 import { getProject } from '../utils/projectApi'
 import { markChatOpened } from '../utils/observe'
 import { recallChatProject, rememberChatProject } from '../utils/chatProjectMemory'
+import { ApiError } from '../utils/apiError'
+import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 import type { Project } from '../utils/projectApi'
 
 export type ChatKind = 'plan' | 'build'
@@ -60,7 +64,27 @@ function kindFromServer(raw: unknown): ChatKind {
 type Resolution =
   | { status: 'loading' }
   | { status: 'ready'; chatId: string; kind: ChatKind; projectId: string | null; title: string | null }
-  | { status: 'gone' }
+  // `notice` is what the bounce SAYS, and `null` is a real answer rather than a missing one — see
+  // `goneNoticeFor`. Carried on the resolution instead of decided at the redirect, because the
+  // redirect cannot see which of the three failures got it here.
+  | { status: 'gone'; notice: string | null }
+
+/**
+ * THE FAILURE THAT EARNS THE SENTENCE, AND THE TWO THAT DO NOT (`#206`).
+ *
+ * The catch below is reached by three different things and treats them alike, correctly: they all
+ * bounce, because leaving a citizen on a spinner with no answer is worse than moving them somewhere
+ * that works. What they do NOT share is whether the platform actually knows anything. A 404 or a
+ * 422 is the server saying the chat is not there. A 500 is the server failing to look. A DROPPED
+ * CONNECTION never reached it at all — `fetch` rejects with a plain `TypeError`, which is not an
+ * `ApiError` and carries no status, and telling someone their chat is gone because their wifi
+ * blinked asserts a deletion that never happened.
+ *
+ * So the notice is narrowed to the arm that knows, and the other two bounce in silence.
+ */
+function goneNoticeFor(err: unknown): string | null {
+  return err instanceof ApiError && (err.status === 404 || err.status === 422) ? PROJECT_GONE_NOTICE : null
+}
 
 export default function ChatRoute() {
   const { chatId } = useParams()
@@ -154,14 +178,16 @@ export default function ChatRoute() {
           ready(kindFromQuery(queryKind), queryProjectId)
           return
         }
-        setResolution({ status: 'gone' })
-      } catch {
+        // The row is genuinely absent — `getConversation` answers a 404 with `null` rather than by
+        // throwing, so this arm, not the catch below, is the ordinary dead-bookmark case.
+        setResolution({ status: 'gone', notice: PROJECT_GONE_NOTICE })
+      } catch (err) {
         // A genuine load failure (401 is handled by the auth gate, 403-suspended by the
         // interceptor). Fall back to the query if we have one, rather than stranding
         // the user on a spinner.
         if (!alive) return
         if (queryProjectId) ready(kindFromQuery(queryKind), queryProjectId)
-        else setResolution({ status: 'gone' })
+        else setResolution({ status: 'gone', notice: goneNoticeFor(err) })
       }
     })()
 
@@ -228,7 +254,17 @@ export default function ChatRoute() {
     }
   }, [projectId])
 
-  if (resolution.status === 'gone') return <Navigate to="/projects" replace />
+  // The bounce is unconditional; only the sentence it carries is not. `undefined` leaves the
+  // history entry stateless, which is what a silent arrival looks like on the other side.
+  if (resolution.status === 'gone') {
+    return (
+      <Navigate
+        to="/projects"
+        replace
+        state={resolution.notice === null ? undefined : { notice: resolution.notice }}
+      />
+    )
+  }
 
   if (resolution.status === 'loading') {
     // `flex-1 min-h-0`, NOT `min-h-screen`. This arm renders inside the workspace shell's outlet

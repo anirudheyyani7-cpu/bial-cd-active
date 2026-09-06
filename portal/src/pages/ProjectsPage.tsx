@@ -23,7 +23,7 @@
  * underneath them instead.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Plus,
   Search,
@@ -31,6 +31,7 @@ import {
   List as ListIcon,
   AlertTriangle,
   AlertCircle,
+  Info,
   X,
   ChevronsLeft,
   ChevronsRight,
@@ -60,6 +61,23 @@ import {
   PaginationPrevious,
 } from '../components/ui/pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+
+/**
+ * THE ONE SENTENCE A DEAD ADDRESS SAYS ON THE WAY OUT (`#206`).
+ *
+ * Exported because more than one surface has to say it BYTE FOR BYTE: `ProjectPage` sends it when
+ * a project id 404s, `ChatRoute` sends it when a chat resolves to nothing, and `#207` says it
+ * again in place — as a card body, on a page that stays — for an id the server cannot even parse.
+ * A second copy of these words somewhere else is how two of those three drift apart.
+ *
+ * IT IS NEUTRAL, AND IT IS NOT DIFFERENTIATED PER CAUSE. A project id belonging to another
+ * citizen is a deliberately non-leaking 404, identical to one that never existed (ADR-0004,
+ * `owned_project_or_404` — "fail closed with a non-leaking 404"), so "you do not have access"
+ * would confirm the existence of someone else's project. One line, whatever the reason — which is
+ * also why the line is a CONSTANT rather than the server's own message piped through: the moment
+ * it is derived from the response, two causes can print two sentences again.
+ */
+export const PROJECT_GONE_NOTICE = 'That project is no longer available.'
 
 type View = 'list' | 'grid'
 type Density = 'S' | 'M' | 'L'
@@ -158,6 +176,36 @@ export default function ProjectsPage(): React.JSX.Element {
     const t = setTimeout(() => setDebouncedQ(q), 300)
     return () => clearTimeout(t)
   }, [q])
+
+  // THE ARRIVAL NOTICE, READ ONCE AND THEN SCRUBBED (`#206`, ASM4).
+  //
+  // It rides ROUTER STATE, not the query string. A query survives a copy, a bookmark and a share,
+  // and "that project is no longer available" pinned to a shareable `/projects?notice=…` is a
+  // sentence about a bounce the next reader never made. Router state travels only on the one
+  // navigation that set it.
+  //
+  // BUT IT SURVIVES MORE THAN THAT NAVIGATION UNLESS IT IS TAKEN AWAY. React Router keeps this
+  // in `window.history.state`, which the browser restores on RELOAD and replays on BACK — so
+  // without the replace below, refreshing the list re-announces a project the reader dealt with
+  // ten minutes ago, and stepping back onto the list later does it again. Reading the sentence
+  // into component state and then replacing the entry with a stateless one is what makes this a
+  // one-shot. The replace cannot loop: the re-run reads a `notice` that is no longer there.
+  //
+  // THE TEXT ARRIVES AFTER ITS REGION, which is why this is an effect and not a `useState`
+  // initialiser (ASM5). A live region inserted together with its text is missed entirely by
+  // several reader-and-browser combinations — `TurnBanner` and `LivePreview` both record it — so
+  // the region below is mounted on every render, empty, and the sentence lands inside it a tick
+  // later. It is its own region rather than a second tenant of `projects-wait`: that one narrates
+  // a wait that is still running, and two unrelated sentences sharing one polite region read as
+  // one announcement.
+  const location = useLocation()
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    const carried = (location.state as { notice?: unknown } | null)?.notice
+    if (typeof carried !== 'string' || carried.length === 0) return
+    setNotice(carried)
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
+  }, [location.pathname, location.search, location.state, navigate])
 
   useEffect(() => {
     const id = ++requestId.current
@@ -369,6 +417,33 @@ export default function ProjectsPage(): React.JSX.Element {
             `Announcer.tsx` records as having broken three tests. */}
         <div role="status" aria-live="polite" data-testid="projects-wait">
           {waiting ? <p className="text-sm font-medium text-neutral mt-3">Loading your projects…</p> : null}
+        </div>
+
+        {/* WHY THIS IS NOT THE TOAST AT THE BOTTOM OF THIS FILE (`#206`, ASM4). That channel is
+            documented failure-only — red, `role="alert"`, an `AlertCircle`, and deliberately no
+            auto-dismiss, because "something went wrong" waits for its reader. A dead bookmark is
+            none of those things: nothing failed, nothing was lost, and nothing the citizen did
+            was wrong. Dressing it in the failure styling would tell them, in colour, that it was.
+
+            So the presentation differs in every way the failure toast's own docblock claims as
+            meaningful: `role="status"` (polite) rather than `role="alert"` (assertive), a plain
+            card in the page's own flow rather than a floating red bar, and an `Info` mark rather
+            than the `AlertCircle` the other three sites use to say "this is a failure". */}
+        <div role="status" aria-live="polite" data-testid="projects-notice">
+          {notice !== null ? (
+            <div className="flex items-center gap-2.5 bg-white border border-bial-border rounded-2xl px-4 py-3 mt-4">
+              <Info size={15} className="flex-shrink-0 text-neutral" data-testid="projects-notice-marker" />
+              <p className="text-sm text-tertiary">{notice}</p>
+              <button
+                type="button"
+                onClick={() => setNotice(null)}
+                aria-label="Dismiss notice"
+                className="ml-auto text-neutral hover:text-tertiary"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {/* Three numbers. Nothing else — no charts (§1). */}

@@ -48,6 +48,7 @@ import { getProject } from '../utils/projectApi'
 import type { Project } from '../utils/projectApi'
 import { ApiError } from '../utils/apiError'
 import { markProjectOpened } from '../utils/observe'
+import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 
 export default function ProjectPage() {
   const { projectId } = useParams()
@@ -78,6 +79,20 @@ export default function ProjectPage() {
 
   const goToProjects = useCallback(() => navigate('/projects', { replace: true }), [navigate])
 
+  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY (`#206`). Two navigations rather
+  // than one flag, because they are not the same event: `goToProjects` is the back control a
+  // citizen PRESSED, and being told "that project is no longer available" after asking to leave a
+  // project that is perfectly fine would be a lie. This one is the involuntary exit.
+  //
+  // The sentence is `ProjectsPage`'s constant, never `err.message`. The server's 404 for another
+  // citizen's project is deliberately identical to its 404 for a project that never existed
+  // (ADR-0004), and piping its text through is the one change that could ever make those two
+  // print differently.
+  const bounceGone = useCallback(
+    () => navigate('/projects', { replace: true, state: { notice: PROJECT_GONE_NOTICE } }),
+    [navigate],
+  )
+
   // Load the project. A 404 means it was deleted elsewhere — bounce to the index rather than
   // strand the user on a dead page.
   useEffect(() => {
@@ -102,7 +117,7 @@ export default function ProjectPage() {
       } catch (err) {
         if (!active) return
         if (err instanceof ApiError && err.status === 404) {
-          goToProjects()
+          bounceGone()
           return
         }
         setLoadError(err instanceof ApiError ? err.message : 'Could not load this project.')
@@ -113,7 +128,7 @@ export default function ProjectPage() {
     return () => {
       active = false
     }
-  }, [projectId, goToProjects])
+  }, [projectId, goToProjects, bounceGone])
 
   /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE GONE (plan 002, U3). They existed for
      one renderer, the rail's "Conversations · this project" list, which the client asked not to

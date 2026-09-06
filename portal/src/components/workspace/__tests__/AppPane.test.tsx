@@ -11,7 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import AppPane from '../AppPane'
@@ -23,14 +23,26 @@ import {
   type WorkspaceReport,
 } from '../workspaceChannel'
 import { resolveWorkspaceState, type StartOutcome } from '../workspaceState'
-import type { PreviewState } from '../../../utils/buildSessionApi'
+import { ApiError } from '../../../utils/apiError'
+import type { HandoverStep, PreviewState } from '../../../utils/buildSessionApi'
+
+const api = vi.hoisted(() => ({ relaunchPreview: vi.fn(), handOverWorkspace: vi.fn() }))
 
 vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../utils/buildSessionApi')>()),
-  relaunchPreview: vi.fn(async () => ({
-    appId: 'a1', previewUrl: 'https://app/', status: 'ready', restoredFromFailedBuild: false, ready: true,
-  })),
+  relaunchPreview: api.relaunchPreview,
+  handOverWorkspace: api.handOverWorkspace,
 }))
+
+const STARTED = {
+  appId: 'a1', previewUrl: 'https://app/', status: 'ready', restoredFromFailedBuild: false, ready: true,
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  api.relaunchPreview.mockResolvedValue(STARTED)
+  api.handOverWorkspace.mockResolvedValue(undefined)
+})
 
 const reading = (over: Partial<PreviewState> = {}): PreviewState => ({
   state: 'asleep',
@@ -42,9 +54,13 @@ const reading = (over: Partial<PreviewState> = {}): PreviewState => ({
   ...over,
 })
 
-function reportFor(preview: PreviewState | null, startOutcome: StartOutcome | null = null): WorkspaceReport {
+function reportFor(
+  preview: PreviewState | null,
+  startOutcome: StartOutcome | null = null,
+  startInFlight = false,
+): WorkspaceReport {
   return {
-    state: resolveWorkspaceState({ preview, projectHasSavedBuild: null, startOutcome, startInFlight: false }),
+    state: resolveWorkspaceState({ preview, projectHasSavedBuild: null, startOutcome, startInFlight }),
     projectId: 'p1',
     onStarted: vi.fn(),
     onStartPending: vi.fn(),
@@ -536,5 +552,325 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
     const host = readFileSync(resolve(process.cwd(), 'src/components/workspace/AppPaneHost.tsx'), 'utf8')
     expect(column).toContain('animate-pane-leave')
     expect(host).toContain('animate-pane-return')
+  })
+})
+
+/**
+ * ★ A BLOCKED PROJECT TAKES ITS WORKSPACE BACK (`#196`, U13) — the pane half.
+ *
+ * ═══ WHAT THIS BLOCK IS WRITTEN AGAINST ═══
+ *
+ * The unit's three structural traps, each of which passes review and fails in a browser:
+ *
+ *  1. A take-back that reports `onStartPending` UNMOUNTS ITS OWN BUTTON. `resolveWorkspaceState`
+ *     answers `gettingReady()` on an in-flight press, that arm offers no action, and `NoFrame`
+ *     draws a control only where there is one. The pane also stops framing on `starting`. So the
+ *     in-flight assertions below assert the ARM as well as the button, because "the buttons are
+ *     still there" and "the pane is still held" are two different failures.
+ *  2. THE DIALOG OWNS `busy` AND `error` ITSELF, and its `run()` catches every rejection into one
+ *     alert while staying mounted. If the take-back's handlers rejected, that alert would be what
+ *     a citizen reads on all five of D2's endings and none of the pane states below would be
+ *     reachable. Every failing ending here asserts the dialog is GONE.
+ *  3. THE REOPENED DIALOG IS A NEW MOUNT. It takes focus in a mount-time effect, so a dialog
+ *     updated in place would leave a keyboard user parked where the busy state put them while the
+ *     copy in front of them started naming a different project.
+ */
+describe('★ taking the workspace back (#196)', () => {
+  const HELD: Partial<PreviewState> = {
+    state: 'slot_taken', occupyingProjectName: 'Car pool', occupyingProjectId: 'pA', restorable: true,
+  }
+
+  /** The refusal `POST /relaunch` raises when another project holds the one workspace. */
+  const blocked = (over: Record<string, unknown> = {}) =>
+    new ApiError('“Car pool” is still open.', 409, 'sandbox_reclaim_blocked', {
+      projectId: 'pA', projectName: 'Car pool', dirty: true, building: false, ...over,
+    })
+
+  /** A promise a test opens and closes by hand, for asserting on the middle of a sequence. */
+  function deferred<T>() {
+    let settle!: (value: T) => void
+    let fail!: (err: unknown) => void
+    const promise = new Promise<T>((res, rej) => { settle = res; fail = rej })
+    return { promise, settle, fail }
+  }
+
+  /**
+   * The pane, held by another project, with the report's handlers exposed as spies.
+   *
+   * `onStartPending` IS WIRED TO THE MAP, exactly as both real publishers wire it — the project
+   * hook's `reportStartPending` and the chat surface's `setStartPending` both feed
+   * `resolveWorkspaceState`. Without that the arm assertion below would be vacuous: a harness
+   * holding one frozen state cannot show a take-back unmounting its own button, which is the
+   * precise failure D2 describes.
+   */
+  function heldPane(startOutcome: StartOutcome | null = null) {
+    const channel = createWorkspaceChannel()
+    const report: WorkspaceReport = {
+      ...reportFor(reading(HELD), startOutcome),
+      onStartPending: vi.fn((pending: boolean) => {
+        act(() => channel.workspace.set({ ...report, state: reportFor(reading(HELD), startOutcome, pending).state }))
+      }),
+    }
+    channel.visible.set(true)
+    channel.workspace.set(report)
+    const rendered = render(
+      <MemoryRouter>
+        <div id={WORKSPACE_RAIL_ID} />
+        <WorkspaceChannelProvider value={channel}>
+          <AppPane device="Desktop" reloadNonce={0} />
+        </WorkspaceChannelProvider>
+      </MemoryRouter>,
+    )
+    return { ...rendered, report, channel }
+  }
+
+  const takeBack = () => screen.getByRole('button', { name: /^Stop “Car pool” and open this app instead$/ })
+  const openHolder = () => screen.getByRole('button', { name: /^Open “Car pool”$/ })
+  const dialog = () => screen.queryByRole('dialog')
+
+  /**
+   * Press the take-back and wait for the server's refusal to raise the question.
+   *
+   * ONLY THE FIRST ANSWER IS SCRIPTED HERE — `mockRejectedValueOnce` queues ahead of whatever base
+   * answer the test has set, so the SECOND relaunch (the one that closes the sequence) is the
+   * caller's to choose. `beforeEach` makes that a successful start unless a test says otherwise.
+   */
+  async function askTheQuestion(over: Record<string, unknown> = {}) {
+    api.relaunchPreview.mockRejectedValueOnce(blocked(over))
+    const pane = heldPane()
+    fireEvent.click(takeBack())
+    await screen.findByRole('dialog')
+    return pane
+  }
+
+  it('★ the held arm draws TWO controls, and the first is untouched', async () => {
+    heldPane()
+    // Unchanged in label and in behaviour, per the owner's decision on #196.
+    expect(openHolder()).toBeTruthy()
+    expect(takeBack()).toBeTruthy()
+  })
+
+  it('the unattributed arm still draws neither', () => {
+    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'slot_taken' }))))
+    expect(screen.queryByRole('button', { name: /^Stop|^Open /i })).toBeNull()
+    // LIVENESS: it is still speaking, so this is a withheld pair rather than an empty card.
+    expect(screen.getByTestId('app-pane-empty').textContent?.length).toBeGreaterThan(10)
+  })
+
+  it('★ pressing it asks THIS project`s own start, and the server`s refusal is what opens the dialog', async () => {
+    const { report } = await askTheQuestion()
+
+    expect(api.relaunchPreview).toHaveBeenCalledWith({ projectId: 'p1' })
+    // And the question leads with what the citizen is trying to do, not with the obstacle.
+    expect(dialog()?.textContent).toContain('Car pool')
+    // ★ TRAP 1. The whole point of not routing this through the in-flight channel.
+    expect(report.onStartPending).not.toHaveBeenCalled()
+  })
+
+  for (const [dirty, expected, forbidden] of [
+    [true, /has changes that are not saved yet/i, null],
+    [false, /Everything saved in “Car pool” stays exactly as it is/i, /unsaved|not saved yet/i],
+    [null, /may have changes that are not saved yet/i, null],
+  ] as const) {
+    it(`reaches the dialog's ${String(dirty)} copy arm — from the refusal, which is the only place that answer exists`, async () => {
+      await askTheQuestion({ dirty })
+      expect(dialog()?.textContent).toMatch(expected)
+      if (forbidden) expect(dialog()?.textContent).not.toMatch(forbidden)
+      // The clean arm offers no Save button for work that does not exist.
+      const save = screen.queryByRole('button', { name: /^Save “Car pool” and stop it$/ })
+      expect(save === null).toBe(dirty === false)
+    })
+  }
+
+  for (const [name, button, save] of [
+    ['saving first', /^Save “Car pool” and stop it$/, true],
+    ['without saving', /^Stop “Car pool” without saving$/, false],
+  ] as const) {
+    it(`★ confirming ${name} stops the holder and brings this app up — one press, no turn`, async () => {
+      const { report } = await askTheQuestion()
+
+      fireEvent.click(screen.getByRole('button', { name: button }))
+
+      await waitFor(() => expect(api.handOverWorkspace).toHaveBeenCalledWith('pA', save, {}, expect.any(Function)))
+      // The relaunch that closes the sequence, and the URL the pane frames.
+      await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(2))
+      expect(report.onStarted).toHaveBeenCalledWith('https://app/')
+      expect(report.onStartOutcome).toHaveBeenCalledWith(null)
+      // ★ TRAP 1 again, on the path that actually starts an app: the pane must never be told a
+      // start is pending, or it un-frames itself and unmounts the control mid-sequence.
+      expect(report.onStartPending).not.toHaveBeenCalled()
+      await waitFor(() => expect(dialog()).toBeNull())
+    })
+  }
+
+  it('★ ENDING 1 — a stop that failed dismisses the dialog and hands the pane the server`s sentence', async () => {
+    // `buildSessionApi.ts` authors the two-minute ceiling sentence. It arrives here verbatim, and
+    // `stoppedHolder` is null because nothing was stopped.
+    const ceiling = 'The other app is still saving its work. Nothing has changed — give it a moment and try again.'
+    api.handOverWorkspace.mockImplementation(async (_id, _save, _deps, narrate: (s: HandoverStep) => void) => {
+      narrate('stopping')
+      throw new ApiError(ceiling, 409, 'stop_did_not_settle')
+    })
+    const { report } = await askTheQuestion()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+
+    await waitFor(() =>
+      expect(report.onStartOutcome).toHaveBeenCalledWith({
+        kind: 'take-back-failed', reason: ceiling, stoppedHolder: null,
+      }),
+    )
+    // ★ TRAP 2. The pane is the single reporting surface, so the dialog is gone and its own
+    // "That did not work. Please try again." alert never appeared.
+    await waitFor(() => expect(dialog()).toBeNull())
+    expect(screen.queryByRole('alert')).toBeNull()
+    // LIVENESS: the pane is still on the held arm with both ways out, which is where D2 puts it.
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('held-by-another-project')
+    expect(takeBack()).toBeTruthy()
+  })
+
+  for (const [ending, at, reason] of [
+    ['ENDING 3 — the save failed', 'saving', 'Could not save your work'],
+    ['ENDING 4 — the release failed', 'releasing', 'Could not close the other workspace'],
+  ] as const) {
+    it(`★ ${ending}: the holder is down, and the outcome says so`, async () => {
+      api.handOverWorkspace.mockImplementation(async (_id, _save, _deps, narrate: (s: HandoverStep) => void) => {
+        narrate('stopping')
+        if (at === 'releasing') narrate('saving')
+        narrate(at)
+        throw new ApiError(reason, 500)
+      })
+      const { report } = await askTheQuestion()
+
+      fireEvent.click(screen.getByRole('button', { name: /^Save “Car pool” and stop it$/ }))
+
+      await waitFor(() =>
+        expect(report.onStartOutcome).toHaveBeenCalledWith({
+          kind: 'take-back-failed', reason, stoppedHolder: 'Car pool',
+        }),
+      )
+      await waitFor(() => expect(dialog()).toBeNull())
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  }
+
+  it('★ ENDING 2 — the slot was freed and the start failed: the outcome carries the stopped holder', async () => {
+    api.relaunchPreview.mockRejectedValue(new ApiError('the image could not be pulled', 503))
+    const pane = await askTheQuestion()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+
+    await waitFor(() =>
+      expect(pane.report.onStartOutcome).toHaveBeenCalledWith({
+        kind: 'take-back-failed', reason: 'the image could not be pulled', stoppedHolder: 'Car pool',
+      }),
+    )
+    // The reading is stale the moment the release lands, so the pane asks again — without which it
+    // would sit on a hand-over that is over instead of reaching `start-failed`.
+    expect(pane.report.onRefresh).toHaveBeenCalled()
+    await waitFor(() => expect(dialog()).toBeNull())
+
+    // And that outcome, over the reading that follows it, is the pane D2 describes: the ordinary
+    // failed-to-start sentence, one line naming the holder, and the same Try again.
+    cleanup()
+    renderPane((c) =>
+      c.workspace.set(
+        reportFor(reading({ state: 'asleep', restorable: true }), {
+          kind: 'take-back-failed', reason: 'the image could not be pulled', stoppedHolder: 'Car pool',
+        }),
+      ),
+    )
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('start-failed')
+    expect(screen.getByTestId('app-pane-note').textContent).toBe('“Car pool” was stopped.')
+    expect(screen.getByRole('button', { name: /^Try again$/ })).toBeTruthy()
+  })
+
+  it('★ ENDING 5 — another tab takes the freed slot: the question reopens, remounted, and takes focus', async () => {
+    api.relaunchPreview.mockRejectedValue(blocked({ projectId: 'pB', projectName: 'Roster' }))
+    const { report } = await askTheQuestion()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+
+    // The choice screen again, with new data — never the dialog's generic caught-error alert.
+    const reopened = await screen.findByRole('button', { name: /^Save “Roster” and stop it$/ })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(report.onStartOutcome).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'take-back-failed' }))
+    // ★ TRAP 3. A NEW MOUNT, proved by where the focus is: the dialog takes it in a mount-time
+    // effect, so an in-place update would have left it on the card the busy state parked it on
+    // while the copy silently started naming another project. Drop the `key` and this goes red.
+    await waitFor(() => expect(document.activeElement).toBe(reopened))
+  })
+
+  it('★ while it runs: both controls inert, the take-back busy and renamed, and the arm still HELD', async () => {
+    const hold = deferred<void>()
+    api.handOverWorkspace.mockImplementation(async (_id, _s, _d, narrate: (s: HandoverStep) => void) => {
+      narrate('stopping')
+      await hold.promise
+    })
+    await askTheQuestion()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+    // The dialog is up and narrating; the pane behind it is what these assertions are about.
+    await screen.findByTestId('reclaim-step')
+
+    const working = screen.getByRole('button', { name: /^Taking your workspace back…$/ })
+    expect(working.getAttribute('aria-busy')).toBe('true')
+    expect(working.getAttribute('aria-disabled')).toBe('true')
+    // BOTH, which is a fact about a pair of siblings and so cannot live in either of them.
+    expect(openHolder().getAttribute('aria-disabled')).toBe('true')
+    // ★ TRAP 1, asserted as the ARM rather than as the button — that is the failure D2 describes:
+    // a take-back on the in-flight channel reaches `starting`, which offers no action at all and
+    // un-frames the pane. The harness feeds `onStartPending` back through the map (see `heldPane`),
+    // so reporting one here really does move this arm.
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('held-by-another-project')
+
+    await act(async () => { hold.settle(); await Promise.resolve() })
+  })
+
+  it('the row the two controls sit in is a polite region, mounted before it has anything to say', async () => {
+    // #210's rule: `LivePreview` keeps the pane's permanent region and is not mounted on this arm,
+    // so the take-back's wait would otherwise pass in silence. The region is the ROW — never a
+    // second `sr-only` copy of a sentence already on screen.
+    heldPane()
+    const row = takeBack().parentElement
+    expect(row?.getAttribute('role')).toBe('status')
+    expect(row?.getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('★ unmounting mid-sequence updates nothing and crashes nothing — and the server sequence finishes', async () => {
+    // The citizen clicks another project during the up-to-two-minute stop wait. The existing
+    // hand-over never needed this: its last act is a navigate that unmounts the surface anyway.
+    const hold = deferred<void>()
+    api.handOverWorkspace.mockImplementation(async (_id, _s, _d, narrate: (s: HandoverStep) => void) => {
+      narrate('stopping')
+      await hold.promise
+    })
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent) => errors.push(e.error)
+    window.addEventListener('error', onError)
+    const { unmount, report } = await askTheQuestion()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+    await screen.findByTestId('reclaim-step')
+    unmount()
+
+    await act(async () => { hold.settle(); await Promise.resolve() })
+    // The rest of the sequence ran server-side regardless — the relaunch that closes it fired.
+    await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(2))
+    expect(errors).toEqual([])
+    // The report outlives the pane and is still told, exactly as the start path's own note says.
+    expect(report.onStarted).toHaveBeenCalledWith('https://app/')
+    window.removeEventListener('error', onError)
+  })
+
+  it('cancelling changes nothing anywhere, and leaves both controls live', async () => {
+    await askTheQuestion()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }))
+
+    await waitFor(() => expect(dialog()).toBeNull())
+    expect(api.handOverWorkspace).not.toHaveBeenCalled()
+    expect(takeBack().getAttribute('aria-disabled')).toBe('false')
+    expect(openHolder().getAttribute('aria-disabled')).toBe('false')
   })
 })

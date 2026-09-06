@@ -2808,6 +2808,22 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
           // than through `captureReclaim`, which classifies a raw error; by the time a refusal
           // arrives here the pane's control has already classified it, and re-classifying an
           // already-narrowed value is how a second authority on a refusal gets created.
+          //
+          // ★ `#196`'S TAKE-BACK DOES NOT ARRIVE HERE, AND MUST NOT BE MADE TO (D1). It is the
+          // pane's other control — `Stop “<holder>” and open this app instead` — and it owns its
+          // own dialog and its own closure in `useTakeBack`, mounted by `AppPane`. Two reasons,
+          // and both are this slot's own documented properties rather than anything wrong with it:
+          //
+          //  - `resolveReclaim` AWAITS `retry()`, which on this surface is `fireRelayTurn(rawText,
+          //    …)` for a refused send or `handleBuildIt` for a plan card. A take-back resolved
+          //    through it would SEND the message the citizen still has in the composer, as a build
+          //    instruction, on a press whose entire point is that they did not want to send one.
+          //  - FIRST REFUSAL WINS means a send already holding the slot would swallow the
+          //    take-back's own refusal, and the citizen would then be answering a question about
+          //    one project while the button they pressed acted on another.
+          //
+          // This handler stays exactly as it is: it is the START control's refusal route, which is
+          // an ordinary press with nothing held behind it.
           onReclaimRefusal: (blocked, retry) => setReclaim((current) => current ?? { blocked, retry }),
         }
       : null,

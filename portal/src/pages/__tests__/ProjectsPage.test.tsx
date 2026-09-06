@@ -13,9 +13,17 @@
  * the current path so navigation is observable without a real project-home page, and it
  * uses the `vi.hoisted` + `MemoryRouter` shape this directory's suites share.
  */
+import { useEffect, useRef } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
+import {
+  MemoryRouter,
+  Routes,
+  Route,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+} from 'react-router-dom'
 
 const h = vi.hoisted(() => ({
   listProjects: vi.fn(),
@@ -37,25 +45,91 @@ vi.mock('../../utils/conversationApi', () => ({
 }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 
-import ProjectsPage from '../ProjectsPage'
+import ProjectsPage, { PROJECT_GONE_NOTICE } from '../ProjectsPage'
 import { ApiError } from '../../utils/apiError'
 import type { Project } from '../../utils/projectApi'
 
 function LocationProbe(): React.JSX.Element {
   const loc = useLocation()
-  return <div data-testid="location">{loc.pathname}</div>
+  return (
+    <>
+      <div data-testid="location">{loc.pathname}</div>
+      {/* #208 put page, size and query in the address bar, so the address bar is now an
+          assertable output of this page rather than scenery. */}
+      <div data-testid="location-search">{loc.search}</div>
+    </>
+  )
 }
 
-function renderPage() {
+/**
+ * THE HISTORY STACK, COUNTED — because "the debounce must not push an entry per keystroke" is a
+ * claim about how DEEP the stack is, and no react-router hook reports that.
+ *
+ * `useNavigationType` reports how the CURRENT entry was reached, so a probe that observes every
+ * location change can keep the tally itself: PUSH adds an entry, POP removes one, REPLACE swaps
+ * the top and changes nothing. The first run is skipped — mounting is not a navigation, and
+ * MemoryRouter reports its initial entry as a POP, which would otherwise count the page's own
+ * arrival as a step backwards.
+ */
+const stack = { depth: 1, types: [] as string[] }
+function HistoryProbe(): null {
+  const type = useNavigationType()
+  const { key } = useLocation()
+  const mounting = useRef(true)
+  useEffect(() => {
+    if (mounting.current) {
+      mounting.current = false
+      return
+    }
+    stack.types.push(type)
+    if (type === 'PUSH') stack.depth += 1
+    else if (type === 'POP') stack.depth -= 1
+  }, [key, type])
+  return null
+}
+
+/** The browser's Back button, which RTL cannot press. Named so it collides with nothing. */
+function BackButton(): React.JSX.Element {
+  const navigate = useNavigate()
+  return <button onClick={() => navigate(-1)}>browser back</button>
+}
+
+type Entry = string | { pathname: string; search?: string; state?: { notice: string } }
+
+function renderPage(entry: Entry = '/projects') {
   return render(
-    <MemoryRouter initialEntries={['/projects']}>
+    <MemoryRouter initialEntries={[entry]}>
       <LocationProbe />
+      <HistoryProbe />
+      <BackButton />
       <Routes>
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:id" element={<div data-testid="project-home">home</div>} />
       </Routes>
     </MemoryRouter>,
   )
+}
+
+/**
+ * A LIST THAT ANSWERS THE PAGE IT WAS ACTUALLY ASKED FOR (round-4 finding 10, restated).
+ *
+ * A static `mockResolvedValue` always answers `page: 1`, which pins `appliedPage` at 1 whatever
+ * was clicked — and every assertion about restoring page 3 would then pass against a page 3 that
+ * never arrived.
+ */
+function answersWithTheRequestedPage(
+  rows: Project[],
+  meta: { total: number; totalPages: number },
+): void {
+  h.listProjects.mockImplementation((args: { page: number; limit: number; q?: string }) =>
+    Promise.resolve(page(rows, { ...meta, page: args.page, pageSize: args.limit })),
+  )
+}
+
+/** Radix's Select is a button, not a `<select>`: `fireEvent.change` on it silently no-ops. */
+async function pickRowsPerPage(option: string): Promise<void> {
+  fireEvent.click(screen.getByRole('combobox', { name: 'Rows per page' }))
+  fireEvent.click(await screen.findByRole('option', { name: option }))
 }
 
 const mkProject = (id: string, name: string, over: Partial<Project> = {}): Project => ({
@@ -88,6 +162,8 @@ const COUNTS = { inProduction: 2, totalApplications: 5, inPipeline: 1 }
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  stack.depth = 1
+  stack.types.length = 0
   h.listProjects.mockResolvedValue(page([]))
   h.listProjectCounts.mockResolvedValue(COUNTS)
   h.listProjectConversations.mockResolvedValue([])
@@ -676,5 +752,215 @@ describe('the projects list and the count tiles keep WORDS and a busy state (#21
     await waitFor(() => expect(screen.getByTestId('projects-wait').textContent).toBe(''))
     expect(screen.queryByText('Loading your projects…')).toBeNull()
     expect(document.querySelectorAll('[aria-busy="true"]')).toHaveLength(0)
+  })
+})
+
+// --- the list remembers where you were (#208) -----------------------------------
+
+describe('page, search and rows-per-page live in the URL (#208)', () => {
+  /**
+   * The three round trips the issue reproduced on a real account with 23 projects across 3 pages:
+   * page 3 → open a project → Back landed on page 1; a search survived neither the trip nor a
+   * reload; and rows-per-page reset to 8. All three were component state that no navigation could
+   * see. What makes it a bug rather than a stated policy is the neighbour: the SAME page already
+   * remembers list-vs-grid and card density, in `localStorage`, and still does — those are a
+   * person's habit, not a place in a list.
+   */
+
+  it('page 3 survives opening a project and pressing Back', async () => {
+    answersWithTheRequestedPage([mkProject('p1', 'Ramp Ops')], { total: 40, totalPages: 5 })
+    renderPage()
+    await screen.findByText('Ramp Ops')
+
+    fireEvent.click(screen.getByRole('button', { name: '3' }))
+    await waitFor(() => expect(screen.getByText(/Page 3 of 5/)).toBeTruthy())
+    expect(screen.getByTestId('location-search').textContent).toBe('?page=3')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ramp Ops' }))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/projects/p1'))
+
+    h.listProjects.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'browser back' }))
+
+    // Back onto the list, and the list is where it was — asked for AND narrated.
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/projects'))
+    expect(screen.getByTestId('location-search').textContent).toBe('?page=3')
+    await waitFor(() =>
+      expect(h.listProjects).toHaveBeenCalledWith(expect.objectContaining({ page: 3 })),
+    )
+    expect(await screen.findByText(/Page 3 of 5/)).toBeTruthy()
+  })
+
+  it('a search term survives the same round trip, and the caption reflects it', async () => {
+    h.listProjects.mockImplementation((args: { page: number; limit: number; q?: string }) =>
+      Promise.resolve(
+        args.q === 'ramp'
+          ? page([mkProject('p1', 'Ramp Ops')], { total: 1, totalPages: 1 })
+          : page([mkProject('p1', 'Ramp Ops'), mkProject('p2', 'Visitor Log')], {
+              total: 2,
+              totalPages: 1,
+            }),
+      ),
+    )
+    renderPage()
+    await screen.findByText('Visitor Log')
+
+    fireEvent.change(screen.getByLabelText('Search projects'), { target: { value: 'ramp' } })
+    await waitFor(() => expect(screen.queryByText('Visitor Log')).toBeNull(), { timeout: 3000 })
+    expect(screen.getByTestId('location-search').textContent).toBe('?q=ramp')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ramp Ops' }))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/projects/p1'))
+
+    h.listProjects.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'browser back' }))
+
+    await screen.findByText('Ramp Ops')
+    // The box holds the term, the request carried it, and the caption counts the FILTERED total.
+    expect((screen.getByLabelText('Search projects') as HTMLInputElement).value).toBe('ramp')
+    expect(h.listProjects.mock.calls[0][0]).toEqual({ page: 1, limit: 8, q: 'ramp' })
+    expect(screen.getByText(/Showing 1–1 of 1/)).toBeTruthy()
+    expect(screen.queryByText('Visitor Log')).toBeNull()
+  })
+
+  it('rows-per-page survives a reload', async () => {
+    answersWithTheRequestedPage([mkProject('p1', 'Ramp Ops')], { total: 40, totalPages: 5 })
+    renderPage()
+    await screen.findByText('Ramp Ops')
+
+    await pickRowsPerPage('24')
+    await waitFor(() =>
+      expect(h.listProjects).toHaveBeenCalledWith(expect.objectContaining({ limit: 24 })),
+    )
+    expect(screen.getByTestId('location-search').textContent).toBe('?pageSize=24')
+
+    // THE RELOAD: the whole tree is thrown away and rebuilt at the address that was on screen.
+    // Nothing but the URL crosses this line — component state does not, which is the entire
+    // point, and `localStorage` is left alone so the two mechanisms stay distinguishable.
+    cleanup()
+    h.listProjects.mockClear()
+    renderPage({ pathname: '/projects', search: '?pageSize=24' })
+
+    await screen.findByText('Ramp Ops')
+    expect(h.listProjects.mock.calls[0][0]).toEqual({ page: 1, limit: 24, q: undefined })
+    expect(screen.getByRole('combobox', { name: 'Rows per page' }).textContent).toContain('24')
+  })
+
+  it('a shared URL carrying all three renders that exact view on a cold load', async () => {
+    answersWithTheRequestedPage([mkProject('p1', 'Ramp Ops')], { total: 40, totalPages: 2 })
+    renderPage({ pathname: '/projects', search: '?page=2&pageSize=24&q=ramp' })
+
+    expect(await screen.findByText('Ramp Ops')).toBeTruthy()
+
+    // ONE request, and it already carries all three. `debouncedQ` seeded from `''` would send
+    // the UNFILTERED list first and paint it — a flash of everybody's projects on a link that
+    // named one — so the wait below is longer than the 300ms debounce on purpose.
+    await new Promise((r) => setTimeout(r, 400))
+    expect(h.listProjects).toHaveBeenCalledTimes(1)
+    expect(h.listProjects.mock.calls[0][0]).toEqual({ page: 2, limit: 24, q: 'ramp' })
+
+    expect((screen.getByLabelText('Search projects') as HTMLInputElement).value).toBe('ramp')
+    expect(screen.getByRole('combobox', { name: 'Rows per page' }).textContent).toContain('24')
+    expect(screen.getByText(/Page 2 of 2/)).toBeTruthy()
+  })
+
+  it('a nonsense query string falls back to the default view instead of forwarding it', async () => {
+    // A query string is user input and this one is meant to be pasted around, so it arrives
+    // truncated, hand-edited and occasionally hostile. `?pageSize=9999` honoured literally is a
+    // link that hands somebody else's browser a 9999-row request.
+    answersWithTheRequestedPage([mkProject('p1', 'Ramp Ops')], { total: 40, totalPages: 5 })
+    renderPage({ pathname: '/projects', search: '?page=banana&pageSize=9999' })
+
+    await screen.findByText('Ramp Ops')
+    expect(h.listProjects.mock.calls[0][0]).toEqual({ page: 1, limit: 8, q: undefined })
+  })
+
+  it('the debounce does not push a history entry per keystroke', async () => {
+    // One entry per typed character makes Back spell the word backwards instead of leaving the
+    // page — the one control a reader reaches for when they want OUT.
+    answersWithTheRequestedPage([mkProject('p1', 'Ramp Ops')], { total: 40, totalPages: 5 })
+    renderPage()
+    await screen.findByText('Ramp Ops')
+    expect(stack.depth).toBe(1)
+
+    const box = screen.getByLabelText('Search projects')
+    for (const value of ['r', 'ra', 'ram', 'ramp']) fireEvent.change(box, { target: { value } })
+
+    await waitFor(() => expect(screen.getByTestId('location-search').textContent).toBe('?q=ramp'))
+    await waitFor(
+      () => expect(h.listProjects).toHaveBeenCalledWith(expect.objectContaining({ q: 'ramp' })),
+      { timeout: 3000 },
+    )
+
+    // FOUR keystrokes, and the stack is exactly as deep as it was.
+    expect(stack.depth).toBe(1)
+    expect(stack.types).not.toContain('PUSH')
+    // Paired with liveness, because "depth unchanged" also describes a URL that never moved:
+    // the address really was rewritten once per character, by REPLACE every time.
+    expect(stack.types.filter((t) => t === 'REPLACE').length).toBeGreaterThanOrEqual(4)
+
+    // And the contrast that makes the rule a rule rather than an accident: a deliberate click
+    // DOES push, so Back undoes exactly one page turn.
+    fireEvent.click(screen.getByRole('button', { name: '2' }))
+    await waitFor(() => expect(stack.depth).toBe(2))
+  })
+
+  it('the footer narrates the page the ROWS answer, not the page that was asked for', async () => {
+    // ASM7: `appliedPage` / `appliedPageSize` are NOT redundant copies of the URL. The URL is
+    // what was asked for and moves the instant a number is clicked; the mirrors are what the rows
+    // on screen answer and move only when a response lands. §11 keeps a failed page's rows on
+    // screen, so the gap between the two is a real rendered state, not a theoretical one.
+    //
+    // MUTATION RECEIPT: collapse the mirrors into the URL state — render `page` / `pageSize`
+    // where `appliedPage` / `appliedPageSize` are read — and both halves below go red.
+    h.listProjects.mockResolvedValueOnce(
+      page([mkProject('p1', 'Ramp Ops')], { total: 12, totalPages: 2, page: 1, pageSize: 8 }),
+    )
+    renderPage()
+    await screen.findByText('Ramp Ops')
+    expect(screen.getByText(/Showing 1–1 of 12/)).toBeTruthy()
+    expect(screen.getByText(/Page 1 of 2/)).toBeTruthy()
+
+    h.listProjects.mockReturnValue(new Promise(() => {})) // page 2 never lands
+    fireEvent.click(screen.getByRole('button', { name: '2' }))
+
+    // The ASK is already in the address bar...
+    await waitFor(() => expect(screen.getByTestId('location-search').textContent).toBe('?page=2'))
+    // ...and the rows on screen are still page 1's, so the footer still says page 1.
+    expect(screen.getByText('Ramp Ops')).toBeTruthy()
+    expect(screen.getByText(/Page 1 of 2/)).toBeTruthy()
+    expect(screen.getByText(/Showing 1–1 of 12/)).toBeTruthy()
+    expect(screen.queryByText(/Page 2 of 2/)).toBeNull()
+    expect(screen.queryByText(/Showing 9–9 of 12/)).toBeNull()
+  })
+
+  it('#206’s arrival notice scrubs itself WITHOUT taking the view with it', async () => {
+    // The two mechanisms meet here. The notice rides router state and is replaced away the moment
+    // it is read; that replace carries `location.search` through verbatim, so the page and query
+    // the reader arrived with survive being told a project is gone. The reverse matters as much:
+    // the notice is NOT a query parameter, so it cannot be copied forward by the parameter writer
+    // and cannot outlive the reload it is meant to be cleared by.
+    answersWithTheRequestedPage([mkProject('p1', 'Ramp Ops')], { total: 40, totalPages: 5 })
+    renderPage({
+      pathname: '/projects',
+      search: '?page=3&q=ramp',
+      state: { notice: PROJECT_GONE_NOTICE },
+    })
+
+    expect(await screen.findByText(PROJECT_GONE_NOTICE)).toBeTruthy()
+    expect(screen.getByTestId('location-search').textContent).toBe('?page=3&q=ramp')
+    expect(screen.getByTestId('location-search').textContent).not.toContain('notice')
+    expect(h.listProjects.mock.calls[0][0]).toEqual({ page: 3, limit: 8, q: 'ramp' })
+    // The scrub REPLACED the entry it read from — it did not add one, so Back is unchanged.
+    expect(stack.depth).toBe(1)
+    expect(stack.types).toEqual(['REPLACE'])
+
+    // A RELOAD at the address the scrub left says nothing: the view is restored, the sentence
+    // is not re-announced.
+    cleanup()
+    renderPage({ pathname: '/projects', search: '?page=3&q=ramp' })
+    await screen.findByText('Ramp Ops')
+    expect(screen.queryByText(PROJECT_GONE_NOTICE)).toBeNull()
+    expect(screen.getByTestId('projects-notice').textContent).toBe('')
   })
 })

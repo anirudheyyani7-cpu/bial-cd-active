@@ -7,8 +7,16 @@
  * PAGINATION IS OFFSET NOW, and that is a deliberate exception the server documents at
  * `list_projects`: `Showing 1-8 of 12` and `Page 1 of 2` both need a `total`, which the
  * keyset envelope declines to compute. What changed here is that the page is COMMITTED
- * state — `page`, `pageSize`, `view` — and one effect fetches from it, rather than a hook
- * that appends forward-only.
+ * state — `page` and `pageSize` — and one effect fetches from it, rather than a hook that
+ * appends forward-only.
+ *
+ * THOSE COMMITTED VALUES LIVE IN THE URL (`#208`). `page`, `pageSize` and `q` are read from
+ * `useSearchParams`, so opening a project and pressing Back, reloading, and pasting the address
+ * to a colleague all land on the same view — which matters here more than on most lists, because
+ * the canvas deliberately gives a citizen no recents list: this page IS how a project is found
+ * again. `view` and `density` stay in `localStorage` on purpose. They are a person's habit rather
+ * than a place in a list, and a shared link should not reach into the reader's window and rearrange
+ * it.
  *
  * TWO EMPTY STATES THAT ARE NOT THE SAME THING, carried over because they were already
  * right: zero projects and no search is a first run; zero results WITH a search is a
@@ -22,8 +30,8 @@
  * A PAGE-2 FAILURE MUST NOT CLEAR THE ROWS ALREADY ON SCREEN (§11). The error is said
  * underneath them instead.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus,
   Search,
@@ -120,6 +128,55 @@ const ACTIVE =
   ' data-[state=on]:bg-primary/10 data-[state=on]:text-primary data-[state=on]:ring-1 data-[state=on]:ring-primary/30'
 
 const PAGE_SIZES = [8, 16, 24, 48] as const
+const DEFAULT_PAGE_SIZE = PAGE_SIZES[0]
+
+/** The three values the URL carries. Everything else about this page is local. */
+type Committed = { page: number; pageSize: number; q: string }
+
+/**
+ * READ DEFENSIVELY — a query string is user input, and this one is meant to be pasted around.
+ *
+ * `?page=0`, `?page=-3`, `?page=banana` and `?pageSize=9999` all arrive from a typo or a truncated
+ * paste long before they arrive from an attack, and each of them, taken literally, asks the server
+ * for something it will refuse and leaves the reader on an error where a list should be. Anything
+ * that is not a whole page number at or past 1 falls back to page 1; a page size that is not one of
+ * the four the control actually offers falls back to the default, because honouring `?pageSize=9999`
+ * would let a link hand somebody else's browser a 9999-row request.
+ */
+function readCommitted(params: URLSearchParams): Committed {
+  const asked = Number(params.get('page'))
+  const size = Number(params.get('pageSize'))
+  return {
+    page: Number.isInteger(asked) && asked >= 1 ? asked : 1,
+    pageSize: (PAGE_SIZES as readonly number[]).includes(size) ? size : DEFAULT_PAGE_SIZE,
+    q: params.get('q') ?? '',
+  }
+}
+
+/**
+ * WRITE ONLY WHAT DIFFERS FROM THE DEFAULT, and leave every other parameter alone.
+ *
+ * A default that is spelled out is noise a citizen has to read past before they find the part of
+ * the address that means something, and `?page=1&pageSize=8&q=` on a first paint is three
+ * parameters saying "nothing has happened yet". Dropping them also keeps the plain `/projects`
+ * address reachable: page 1 of an unfiltered list is written by DELETING the keys, not by setting
+ * them to their defaults, so stepping back to the start returns the URL you started with.
+ *
+ * Foreign parameters are copied through rather than dropped. This function owns three keys, not the
+ * query string, and a page that silently ate a parameter it did not recognise would be a trap for
+ * whoever adds the fourth.
+ */
+function intoParams(prev: URLSearchParams, next: Committed): URLSearchParams {
+  const params = new URLSearchParams(prev)
+  const put = (key: string, value: string, isDefault: boolean): void => {
+    if (isDefault) params.delete(key)
+    else params.set(key, value)
+  }
+  put('page', String(next.page), next.page === 1)
+  put('pageSize', String(next.pageSize), next.pageSize === DEFAULT_PAGE_SIZE)
+  put('q', next.q, next.q === '')
+  return params
+}
 
 export default function ProjectsPage(): React.JSX.Element {
   const navigate = useNavigate()
@@ -130,10 +187,37 @@ export default function ProjectsPage(): React.JSX.Element {
   const [view, setView] = useState<View>(() => readStored(VIEW_KEY, ['list', 'grid'] as const, 'list'))
   const [density, setDensity] = useState<Density>(() => readStored(DENSITY_KEY, ['S', 'M', 'L'] as const, 'M'))
 
-  // COMMITTED query state — what the rows on screen answer.
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0])
-  const [q, setQ] = useState('')
+  // COMMITTED query state — WHAT WAS ASKED FOR, and it lives in the address bar (`#208`).
+  //
+  // ONE `commit` RATHER THAN THREE SETTERS, because `setSearchParams` reads the params of the
+  // render it was created in: two calls in one handler would each start from that same snapshot,
+  // and the second would silently drop the first's key. Every caller below that changes more than
+  // one value — typing, which also resets the page; the rows-per-page control, which does the same
+  // — therefore passes both in a single patch.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { page, pageSize, q } = readCommitted(searchParams)
+  /**
+   * `entry` IS THE WHOLE DEBOUNCE QUESTION, ANSWERED AT EVERY CALL SITE.
+   *
+   * The search box writes the URL on every keystroke, so a pushed entry per keystroke would put
+   * `r`, `ra`, `ram`, `ramp` on the stack and make the Back button spell the word backwards
+   * instead of leaving the page — the one control a reader reaches for when they want OUT. Typing
+   * therefore replaces. So does the out-of-range correction below, which is the page fixing its
+   * own address rather than the reader going anywhere: pushing it would put a page that bounces
+   * one step behind the reader, so Back would land on it and immediately throw them forward again.
+   *
+   * Every deliberate click — a page number, a jump to first or last, a new rows-per-page, clearing
+   * the search — pushes, because each of those IS a navigation and Back undoing exactly one of
+   * them is what a reader expects.
+   */
+  const commit = useCallback(
+    (patch: Partial<Committed>, entry: 'push' | 'replace'): void => {
+      setSearchParams((prev) => intoParams(prev, { ...readCommitted(prev), ...patch }), {
+        replace: entry === 'replace',
+      })
+    },
+    [setSearchParams],
+  )
   // WHAT THE ROWS ON SCREEN ANSWER, as opposed to what was last asked for. `appliedQuery`
   // already worked this way; `appliedPage`/`appliedPageSize` are its missing siblings, and
   // the footer needs them for the same reason the empty state needs the query.
@@ -171,7 +255,12 @@ export default function ProjectsPage(): React.JSX.Element {
 
   // The search is debounced, but `page` resets IMMEDIATELY on a keystroke — a cursor into
   // page 3 of the previous query is meaningless against a new one.
-  const [debouncedQ, setDebouncedQ] = useState('')
+  //
+  // SEEDED FROM THE URL RATHER THAN FROM `''` (`#208`). A cold load of `/projects?q=ramp` with an
+  // empty seed asks the server for the UNFILTERED list first, paints all of it, and only 300ms
+  // later asks the question the link actually carried — a flash of everybody's projects on an
+  // address that named one, and a wasted round trip to produce it.
+  const [debouncedQ, setDebouncedQ] = useState(q)
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 300)
     return () => clearTimeout(t)
@@ -190,6 +279,13 @@ export default function ProjectsPage(): React.JSX.Element {
   // ten minutes ago, and stepping back onto the list later does it again. Reading the sentence
   // into component state and then replacing the entry with a stateless one is what makes this a
   // one-shot. The replace cannot loop: the re-run reads a `notice` that is no longer there.
+  //
+  // WHICH IS ALSO WHY IT NEVER BECOMES A QUERY PARAMETER (`#208`). The replace above carries
+  // `location.search` through verbatim, so the page, size and query a reader arrived with survive
+  // being told a project is gone — but the reverse must hold too: a `?notice=…` would be copied
+  // forward by `intoParams`, which preserves the parameters it does not own, and would then
+  // outlive the reload it is supposed to be cleared by. Router state is the only channel that
+  // travels on exactly one navigation and nowhere else, so it stays the channel.
   //
   // THE TEXT ARRIVES AFTER ITS REGION, which is why this is an effect and not a `useState`
   // initialiser (ASM5). A live region inserted together with its text is missed entirely by
@@ -274,8 +370,8 @@ export default function ProjectsPage(): React.JSX.Element {
   // Paged past the end — a delete elsewhere can shrink the list under a reader. Step back
   // rather than stranding them on a blank page with no way out.
   useEffect(() => {
-    if (!loading && totalPages > 0 && page > totalPages) setPage(totalPages)
-  }, [loading, page, totalPages])
+    if (!loading && totalPages > 0 && page > totalPages) commit({ page: totalPages }, 'replace')
+  }, [loading, page, totalPages, commit])
 
   const chooseView = (next: View): void => {
     setView(next)
@@ -488,10 +584,7 @@ export default function ProjectsPage(): React.JSX.Element {
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
             <Input
               value={q}
-              onChange={(e) => {
-                setQ(e.target.value)
-                setPage(1)
-              }}
+              onChange={(e) => commit({ q: e.target.value, page: 1 }, 'replace')}
               placeholder="Search projects…"
               aria-label="Search projects"
               className="pl-9"
@@ -605,10 +698,7 @@ export default function ProjectsPage(): React.JSX.Element {
             {/* The query the ROWS answer, not the one still being typed. */}
             <p className="text-xs text-neutral mt-1">No project matches “{appliedQuery}”. Try a different search.</p>
             <button
-              onClick={() => {
-                setQ('')
-                setPage(1)
-              }}
+              onClick={() => commit({ q: '', page: 1 }, 'push')}
               className="text-xs text-primary font-semibold hover:underline mt-2"
             >
               Clear the search
@@ -685,10 +775,7 @@ export default function ProjectsPage(): React.JSX.Element {
                   <span className="whitespace-nowrap">Rows per page</span>
                   <Select
                     value={String(pageSize)}
-                    onValueChange={(v) => {
-                      setPageSize(Number(v))
-                      setPage(1)
-                    }}
+                    onValueChange={(v) => commit({ pageSize: Number(v), page: 1 }, 'push')}
                   >
                     <SelectTrigger className="h-8 w-[72px]" aria-label="Rows per page">
                       <SelectValue />
@@ -719,7 +806,7 @@ export default function ProjectsPage(): React.JSX.Element {
                       <PaginationLink
                         aria-label="First page"
                         aria-disabled={page <= 1}
-                        onClick={() => page > 1 && setPage(1)}
+                        onClick={() => page > 1 && commit({ page: 1 }, 'push')}
                         className={page <= 1 ? 'pointer-events-none opacity-40' : undefined}
                       >
                         <ChevronsLeft size={15} />
@@ -728,13 +815,13 @@ export default function ProjectsPage(): React.JSX.Element {
                     <PaginationItem>
                       <PaginationPrevious
                         aria-disabled={page <= 1}
-                        onClick={() => page > 1 && setPage(page - 1)}
+                        onClick={() => page > 1 && commit({ page: page - 1 }, 'push')}
                         className={page <= 1 ? 'pointer-events-none opacity-40' : undefined}
                       />
                     </PaginationItem>
                     {pageWindow.map((n) => (
                       <PaginationItem key={n}>
-                        <PaginationLink isActive={n === appliedPage} onClick={() => setPage(n)}>
+                        <PaginationLink isActive={n === appliedPage} onClick={() => commit({ page: n }, 'push')}>
                           {n}
                         </PaginationLink>
                       </PaginationItem>
@@ -742,7 +829,7 @@ export default function ProjectsPage(): React.JSX.Element {
                     <PaginationItem>
                       <PaginationNext
                         aria-disabled={page >= totalPages}
-                        onClick={() => page < totalPages && setPage(page + 1)}
+                        onClick={() => page < totalPages && commit({ page: page + 1 }, 'push')}
                         className={page >= totalPages ? 'pointer-events-none opacity-40' : undefined}
                       />
                     </PaginationItem>
@@ -750,7 +837,7 @@ export default function ProjectsPage(): React.JSX.Element {
                       <PaginationLink
                         aria-label="Last page"
                         aria-disabled={page >= totalPages}
-                        onClick={() => page < totalPages && setPage(totalPages)}
+                        onClick={() => page < totalPages && commit({ page: totalPages }, 'push')}
                         className={
                           page >= totalPages ? 'pointer-events-none opacity-40' : undefined
                         }

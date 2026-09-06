@@ -57,6 +57,7 @@ vi.mock('../../utils/turnStreamApi', async (orig) => ({
 
 import ConversationSurface from '../../components/chat/ConversationSurface'
 import { ApiError } from '../../utils/apiError'
+import { MAX_PDF_ATTACHMENTS_PER_MESSAGE, TOO_MANY_DOCUMENTS_MESSAGE } from '../../utils/attachmentInput'
 import {
   FakeEventSource, makeClient, primeClient, primeTurn, statusResp, turnStreaming, planReply,
   waitForGateOpen, scriptBuildTurn, BUILD_TURN_ID, T_PREVIEW, T_BUILD_END,
@@ -961,5 +962,123 @@ describe('a refused send leaves the citizen holding their message', () => {
 
     // It actually sent. Before the fix this press matched the stale guard and vanished.
     await waitFor(() => expect(h.startTurn).toHaveBeenCalledTimes(2))
+  })
+})
+
+/**
+ * THE DOCUMENT CAP, AT THE SEAM (#194).
+ *
+ * `validatePdfPerMessageCap` is unit-tested next door and stayed green through the whole life of
+ * this defect, because the helper was never the missing piece — the CALL was. Delete the two lines
+ * in `handleSubmit` that ask it and every unit test in `attachmentInput.test.js` still passes while
+ * a citizen sends three PDFs into a turn the server will bounce. So this asserts the wiring:
+ * a third document is refused HERE, in the composer, before a turn exists.
+ *
+ * ═══ AND IT ASSERTS WHICH REFUSAL, WHICH IS THE HALF THAT MOTIVATED THE FIX ═══
+ *
+ * Without this check the citizen still gets stopped — one step later, by the token gate, which
+ * says "start a new chat". That advice does not work: the new chat refuses the identical message,
+ * because a PDF is charged a flat 75,000 tokens wherever it is sent. So "was a refusal shown" is
+ * not enough of a claim. The refusal has to be THIS one, and it must not be the conversation cap's
+ * sentence — the two caps answer different questions (per message vs cumulative) and a test that
+ * accepted either would go green on the wrong one.
+ */
+describe('★ the per-message DOCUMENT cap is enforced where the turn starts (#194)', () => {
+  const pdf = (name) => new File(['%PDF-1.7 ' + 'x'.repeat(64)], name, { type: 'application/pdf' })
+  const png = (name) => new File(['x'.repeat(100)], name, { type: 'image/png' })
+
+  /** ONE gesture carrying several files — a multi-select in the picker, or a handful dragged in
+   *  together. Every `add` starts in the same tick, which is the shape the adapter's cap has to
+   *  survive and the one a citizen actually performs. */
+  const dropAll = (...files) =>
+    fireEvent.drop(screen.getByTestId('composer-dropzone'), { dataTransfer: { types: ['Files'], files } })
+
+  /** Wait until the composer is really holding all of them — the base64 read resolves on a TASK,
+   *  so a send fired before the chips exist would carry an empty attachment list and prove
+   *  nothing about a cap. */
+  const stagedAll = (...names) =>
+    waitFor(() => names.forEach((n) => expect(screen.getByText(n)).toBeTruthy()))
+
+  const openChat = async () => {
+    h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
+    renderAt('build-X', deps().deps)
+    await waitForGateOpen()
+  }
+
+  it('refuses a THIRD document in its own words, and starts no turn', async () => {
+    await openChat()
+    dropAll(pdf('lease.pdf'), pdf('annexe.pdf'), pdf('schedule.pdf'))
+    await stagedAll('lease.pdf', 'annexe.pdf', 'schedule.pdf')
+
+    type('summarise these three')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+
+    // THE EXACT SENTENCE, not a regex that would also match the token gate's advice.
+    expect(await screen.findByText(TOO_MANY_DOCUMENTS_MESSAGE)).toBeTruthy()
+    // NO TURN. The whole point of moving the refusal into the composer is that the server never
+    // has to bounce it — a call here means the message went anyway.
+    expect(h.startTurn).not.toHaveBeenCalled()
+    // NOT THE ADVICE THAT DOES NOT WORK. A new chat refuses the identical message.
+    expect(screen.queryByText(/start a new chat/i)).toBeNull()
+    // NOT THE CONVERSATION CAP EITHER — the other cap, answering the other question.
+    expect(screen.queryByText(/reached its limit of/i)).toBeNull()
+    // A REFUSED SEND LEAVES THE CITIZEN HOLDING THEIR MESSAGE: the text and all three chips stay.
+    expect(composer().value).toBe('summarise these three')
+    expect(screen.getAllByLabelText(/^Remove /)).toHaveLength(3)
+  })
+
+  it('LIVENESS — two documents alongside images go through', async () => {
+    // The cap is `MAX_PDF_ATTACHMENTS_PER_MESSAGE` DOCUMENTS, not a total attachment count, so
+    // images ride along freely. Without this the scenario above would stay green if the composer
+    // simply stopped sending anything with a file on it.
+    expect(MAX_PDF_ATTACHMENTS_PER_MESSAGE).toBe(2)
+    await openChat()
+    dropAll(pdf('lease.pdf'), pdf('annexe.pdf'), png('floorplan.png'))
+    await stagedAll('lease.pdf', 'annexe.pdf', 'floorplan.png')
+
+    type('summarise these two and the plan')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+
+    await waitFor(() => expect(h.startTurn).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(TOO_MANY_DOCUMENTS_MESSAGE)).toBeNull()
+  })
+})
+
+describe('an upload the server refuses says WHY, not "try again" (#194)', () => {
+  /* TWO EMITTERS, ONE BANNER, AND THE ONE THAT KNEW NOTHING WENT LAST.
+     `fireRelayTurn` catches an upload failure and writes the server's own sentence to the urgent
+     slot, then aborts the send. The abort used to reject with a plain `Error`, and a
+     non-`SendRefusal` is not silence to `ComposerBox` — it is the GENERIC line. So the specific
+     sentence was written and immediately overwritten.
+
+     Found in a browser, not here: a real 40-page PDF, `413 POST /api/attachments` in the network
+     log carrying "That document is too long to work with. Try one under 30 pages.", and "That
+     message did not send … try again." on screen. Retrying re-sends the same 40 pages to the same
+     cap, so the advice the citizen was actually given could never work — the failure
+     `attachmentInput.ts` names as advice that leads nowhere. */
+
+  const REFUSAL = 'That document is too long to work with. Try one under 30 pages.'
+
+  it('shows the server’s sentence and keeps the message in the box', async () => {
+    h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
+    h.buildUserParts.mockRejectedValue(new Error(REFUSAL))
+    const { deps: d } = deps()
+    renderAt('build-X', d)
+    await waitForGateOpen()
+
+    type('what does this say?')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+
+    const banner = await screen.findByTestId('urgent-banner')
+    expect(banner.textContent).toContain(REFUSAL)
+    // THE MUTANT THIS CATCHES: reject the abort with a bare `Error` again and the generic line
+    // replaces the one above. Asserted as an absence with the presence assertion beside it, so a
+    // banner that never rendered cannot pass this by being empty.
+    expect(banner.textContent).not.toMatch(/try again/i)
+
+    // NOTHING WAS SENT AND NOTHING WAS TAKEN AWAY — the other half of a silent refusal. A resolve
+    // here would have emptied the composer for a message the server never received.
+    expect(h.startTurn).not.toHaveBeenCalled()
+    expect(composer().value).toBe('what does this say?')
   })
 })

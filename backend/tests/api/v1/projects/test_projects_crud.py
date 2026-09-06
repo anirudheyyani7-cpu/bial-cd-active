@@ -1298,21 +1298,23 @@ async def test_delete_of_an_app_less_project_is_never_blocked_by_a_live_build(
     assert await db_session.get(Project, empty.id) is None
 
 
-async def test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_down(
+async def test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving(
     app, client, db_session, fake_redis
 ) -> None:
-    # PINS A KNOWN-OPEN GAP — this is NOT a bug report, and U8 must not be read as closing it.
+    # THIS TEST USED TO PIN THE GAP; #184 CLOSED IT, so it now pins the closure. What has not
+    # changed is the STATE: a relaunched preview holds NO lock by design (`relaunch_preview`'s
+    # scope releases it on exit; the container's lifetime is owned by the `preview_stay_until`
+    # lease instead), so `refuse_while_build_session_live` still returns without refusing and
+    # the delete still proceeds. What changed is what happens afterwards — the post-commit reap
+    # asks the registry whether it still names THIS project's container and hands it to
+    # `reap_user`, so the container, its registry record and its stay all go with the project.
     #
-    # A relaunched preview holds NO lock by design (`relaunch_preview`'s scope releases it on
-    # exit; the container's lifetime is owned by the `preview_stay_until` lease instead). So
-    # the container-still-serving state is PRECISELY the state where `lock_is_held` is False:
-    # this guard returns without refusing and the delete proceeds exactly as it did before U8,
-    # leaving a live container serving a deleted project's UI. Closing it needs the delete path
-    # to read the stay and call sandbox teardown — it has no `SandboxDep` and never will in
-    # this unit. See `docs/solutions/architecture-patterns/
-    # long-lived-resource-lifecycle-ownership-triad-2026-07-19.md`.
+    # Two assertions were deleted here rather than adjusted: `survivor[APP_NAME] ==
+    # app_name_for(app_row.id)` and `survivor[PREVIEW_STAY_UNTIL] == stay_until.isoformat()`.
+    # Both asserted that a container serving a deleted project keeps running, which is the leak.
     from datetime import UTC, datetime, timedelta
 
+    from src.api.v1.build_sessions.deps import sandbox_or_none_dependency
     from src.services.build_sessions import app_name_for
     from src.services.redis.keys import (
         REGISTRY_FIELD_APP_NAME,
@@ -1321,9 +1323,16 @@ async def test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_do
         REGISTRY_FIELD_STATE,
         registry_key,
     )
+    from tests.fakes import FakeSandboxClient
 
     headers, user, project, app_row = await _project_with_app(db_session)
     _override_storage(app, FakeStorage())
+    # THE SANDBOX HAS TO BE WIRED IN, and that is not test scaffolding — it is the arm under
+    # test. `.env.test` carries no `SANDBOX__*`, so `OptionalSandbox` resolves to `None` and
+    # the reap is skipped; without this override the test would pass while asserting nothing,
+    # which is how the old surviving-registry assertions could have stayed green forever.
+    sandbox = FakeSandboxClient()
+    app.dependency_overrides[sandbox_or_none_dependency] = lambda: sandbox
     # Exactly what a relaunch leaves behind: a READY registry entry under a live stay, and
     # NO lock.
     stay_until = datetime.now(UTC) + timedelta(minutes=30)
@@ -1345,14 +1354,13 @@ async def test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_do
         json=DELETE_BODY,
     )
 
-    # The delete PROCEEDS — the guard never fires, because there is no lock to see.
+    # The delete still PROCEEDS — the guard never fires, because there is no lock to see (R3).
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
-    # ...and the container is NOT torn down: its registry entry and its lease both survive
-    # the delete untouched, because nothing on this path reads or clears them.
-    survivor = await fake_redis.hgetall(registry_key(user.id))
-    assert survivor[REGISTRY_FIELD_APP_NAME] == app_name_for(app_row.id)
-    assert survivor[REGISTRY_FIELD_PREVIEW_STAY_UNTIL] == stay_until.isoformat()
+    # ...and the container goes with it: the ARM delete was called for this app's name, and the
+    # registry hash — which carried the stay — is gone entirely.
+    assert sandbox.torn_down == [app_name_for(app_row.id)]
+    assert await fake_redis.hgetall(registry_key(user.id)) == {}
 
 
 def test_delete_project_documents_409_and_503_in_openapi() -> None:

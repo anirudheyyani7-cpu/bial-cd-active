@@ -48,6 +48,36 @@ import { getProject } from '../utils/projectApi'
 import type { Project } from '../utils/projectApi'
 import { ApiError } from '../utils/apiError'
 import { markProjectOpened } from '../utils/observe'
+import { PROJECT_GONE_NOTICE } from './ProjectsPage'
+
+/**
+ * WHAT THE CARD SAYS — and the one status whose sentence is never the server's (`#207`).
+ *
+ * A 422 on this GET can only be the PATH PARAMETER: the read carries no body for Pydantic to
+ * validate, so the `detail[]` FastAPI sends back is always the parser's account of an id that is
+ * not a UUID, and `flattenValidationDetail` was joining it straight onto the screen:
+ *
+ *   "Input should be a valid UUID, invalid group length in group 4: expected 12, found 7"
+ *
+ * Nobody who reads that sentence typed the id. The realistic path here is a link that lost
+ * characters — a truncated paste, an address wrapped by a mail client — and which group came up
+ * five short is addressed to whoever produced the link, not to the citizen holding it. So the
+ * sentence is `PROJECT_GONE_NOTICE`: from where they stand a malformed address and a deleted one
+ * are the same event, an address that does not lead anywhere, and they get the same words for it.
+ *
+ * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above (`#206`). A 404
+ * is a project that WAS an address and stopped being one, so the list is where the citizen now
+ * belongs. A 422 never addressed a project at all, and redirecting out of an address somebody
+ * deliberately opened reads as the app taking their place away. The page stays — with its back
+ * control on it, which is what makes staying a choice rather than a dead end.
+ *
+ * EVERY OTHER STATUS KEEPS `err.message`. Those are the backend's citizen-facing envelope-1
+ * messages; this is not a licence to replace them all with one line.
+ */
+function loadErrorFor(err: unknown): string {
+  if (!(err instanceof ApiError)) return 'Could not load this project.'
+  return err.status === 422 ? PROJECT_GONE_NOTICE : err.message
+}
 
 export default function ProjectPage() {
   const { projectId } = useParams()
@@ -78,6 +108,20 @@ export default function ProjectPage() {
 
   const goToProjects = useCallback(() => navigate('/projects', { replace: true }), [navigate])
 
+  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY (`#206`). Two navigations rather
+  // than one flag, because they are not the same event: `goToProjects` is the back control a
+  // citizen PRESSED, and being told "that project is no longer available" after asking to leave a
+  // project that is perfectly fine would be a lie. This one is the involuntary exit.
+  //
+  // The sentence is `ProjectsPage`'s constant, never `err.message`. The server's 404 for another
+  // citizen's project is deliberately identical to its 404 for a project that never existed
+  // (ADR-0004), and piping its text through is the one change that could ever make those two
+  // print differently.
+  const bounceGone = useCallback(
+    () => navigate('/projects', { replace: true, state: { notice: PROJECT_GONE_NOTICE } }),
+    [navigate],
+  )
+
   // Load the project. A 404 means it was deleted elsewhere — bounce to the index rather than
   // strand the user on a dead page.
   useEffect(() => {
@@ -102,10 +146,10 @@ export default function ProjectPage() {
       } catch (err) {
         if (!active) return
         if (err instanceof ApiError && err.status === 404) {
-          goToProjects()
+          bounceGone()
           return
         }
-        setLoadError(err instanceof ApiError ? err.message : 'Could not load this project.')
+        setLoadError(loadErrorFor(err))
       } finally {
         if (active) setLoading(false)
       }
@@ -113,7 +157,7 @@ export default function ProjectPage() {
     return () => {
       active = false
     }
-  }, [projectId, goToProjects])
+  }, [projectId, goToProjects, bounceGone])
 
   /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE GONE (plan 002, U3). They existed for
      one renderer, the rail's "Conversations · this project" list, which the client asked not to
@@ -123,40 +167,61 @@ export default function ProjectPage() {
      uploaded files stay in the database. Said here as well as in the rail because this is where
      the reads used to be, and an absent fetch explains itself to nobody. */
 
-  if (loading) {
-    return (
-      <main className="flex-1 min-h-0 overflow-y-auto">
-        <div className="w-full px-5 py-6">
-          <div className="h-6 w-48 bg-gray-100 rounded animate-pulse mb-4" />
-          <div className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
-        </div>
-      </main>
-    )
-  }
+  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM (`#210`, ASM5).
+     They used to be three early returns, and that shape is exactly what cannot carry a live
+     region: a region inserted together with its text is missed entirely by several reader-and-
+     browser combinations (`TurnBanner`, `LivePreview` both record it), and an early return means
+     the region is born with the sentence already inside it. So the region is rendered here on
+     every branch, EMPTY when the project is already on screen, and the skeleton box is what
+     appears inside it.
 
-  if (loadError || !project) {
-    return (
-      <main className="flex-1 min-h-0 overflow-y-auto">
-        <div className="w-full px-5 py-6">
-          <button
-            onClick={goToProjects}
-            className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
-          >
-            <ArrowLeft size={15} /> Back to projects
-          </button>
-          <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
-            <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
-            <p className="text-xs text-neutral mt-1">{loadError || 'It may have been deleted.'}</p>
-          </div>
-        </div>
-      </main>
-    )
-  }
+     THIS IS NOT A THEORETICAL CASE ON THIS PAGE. `projectId` is a route param on a route that is
+     not remounted when it changes, so moving between two projects flips a settled screen back to
+     `loading` against a region that has been in the accessibility tree the whole time.
 
+     The region WRAPS the sentence rather than duplicating it `sr-only` — `Announcer.tsx` records
+     that a second copy is the sentence read twice, and that writing it that way broke three
+     tests. `aria-busy` stays on the box: it is a property, not a speech. */
   return (
-    <ProjectWorkspace
-      project={project}
-      onProjectUpdate={setProject}
-    />
+    <>
+      {/* Laid out only while it holds something. An empty region is a zero-height flex child; the
+          wait needs the column's full height for the same reason the branch it replaced was a
+          `flex-1` `<main>`. The NODE is unchanged either way — only its class list is. */}
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid="project-wait"
+        className={loading ? 'flex-1 min-h-0 flex flex-col' : ''}
+      >
+        {loading ? (
+          <main className="flex-1 min-h-0 overflow-y-auto" aria-busy="true">
+            <div className="w-full px-5 py-6">
+              <p className="text-sm font-medium text-neutral mb-4">Loading this project…</p>
+              <div className="h-6 w-48 bg-gray-100 rounded animate-pulse mb-4" />
+              <div className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
+            </div>
+          </main>
+        ) : null}
+      </div>
+
+      {loading ? null : loadError || !project ? (
+        <main className="flex-1 min-h-0 overflow-y-auto">
+          <div className="w-full px-5 py-6">
+            <button
+              onClick={goToProjects}
+              className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
+            >
+              <ArrowLeft size={15} /> Back to projects
+            </button>
+            <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
+              <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
+              <p className="text-xs text-neutral mt-1">{loadError || 'It may have been deleted.'}</p>
+            </div>
+          </div>
+        </main>
+      ) : (
+        <ProjectWorkspace project={project} onProjectUpdate={setProject} />
+      )}
+    </>
   )
 }

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 
 const h = vi.hoisted(() => ({
   getConversation: vi.fn(),
@@ -26,7 +26,14 @@ vi.mock('../../utils/api', async (importOriginal) => ({
 }))
 
 vi.mock('../../utils/conversationApi.js', () => ({ getConversation: h.getConversation }))
-vi.mock('../../utils/projectApi', () => ({ getProject: h.getProject }))
+// SPREAD FROM THE REAL MODULE, not listed. `ChatRoute` now imports the dead-address sentence from
+// `ProjectsPage` (`#206` — one string, three surfaces), and that page imports names this file has
+// no opinion about; against a hand-written factory Vitest throws "No X export is defined on the
+// mock" at IMPORT time and the whole file fails. `getProject` is still the only override.
+vi.mock('../../utils/projectApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/projectApi')>()),
+  getProject: h.getProject,
+}))
 
 /**
  * ONE STUB, AND IT IS THE SLOT (Plan D U17).
@@ -66,6 +73,8 @@ vi.mock('../../components/workspace/ConversationSlot', () => ({
 }))
 
 import ChatRoute from '../ChatRoute'
+import { PROJECT_GONE_NOTICE } from '../ProjectsPage'
+import { ApiError } from '../../utils/apiError'
 import {
   WorkspaceChannelProvider,
   createWorkspaceChannel,
@@ -89,6 +98,25 @@ function HeadingProbe() {
 
 
 /**
+ * WHERE A BOUNCE LANDS, AND WHAT IT SAID ON THE WAY (`#206`).
+ *
+ * The real `ProjectsPage` is not mounted here — its own arrival rendering is pinned in
+ * `ProjectPage.test.tsx`, which is where the two-page behaviour lives. What is only observable
+ * from THIS side is the sentence the route hands the navigation, and `null` for the failures that
+ * have not earned one. The `projects-index` testid is unchanged so the existing bail cases keep
+ * asserting exactly what they always did.
+ */
+function ProjectsIndexProbe() {
+  const carried = (useLocation().state as { notice?: unknown } | null)?.notice
+  return (
+    <div data-testid="projects-index">
+      projects
+      <span data-testid="arrival-notice">{typeof carried === 'string' ? carried : ''}</span>
+    </div>
+  )
+}
+
+/**
  * `state` is the freshly-minted marker's carrier. Entries without one stay plain strings so the
  * existing cases exercise the exact same router input they always did.
  */
@@ -103,7 +131,7 @@ function renderRoute(entry: string, state?: unknown) {
         <HeadingProbe />
         <Routes>
           <Route path="/chat/:chatId" element={<ChatRoute />} />
-          <Route path="/projects" element={<div data-testid="projects-index">projects</div>} />
+          <Route path="/projects" element={<ProjectsIndexProbe />} />
         </Routes>
       </MemoryRouter>
     </WorkspaceChannelProvider>,
@@ -340,7 +368,12 @@ describe('ChatRoute — what it publishes for the toolbar row', () => {
 
     renderRoute('/chat/never-seen')
 
-    await waitFor(() => expect(screen.getByRole('status', { name: /loading chat/i })).toBeTruthy())
+    // Found by the words it SHOWS. This used to read `getByRole('status', { name: /loading
+    // chat/i })`, which was satisfied by an `aria-label` on a region with NO visible text — the
+    // wordless wait #210 forbids. The label is gone (a live region announces its CONTENT, and a
+    // label repeating that content is the sentence read twice), and `role="status"` takes no name
+    // from content, so the wait is now asserted by the sentence a citizen can actually read.
+    await waitFor(() => expect(screen.getByText('Loading this chat…')).toBeTruthy())
     expect(heading()).toBe('null|null|null|null')
     // LIVENESS: this chat does resolve, so the neutral shape above is a load window and not a
     // route that never answered.
@@ -401,6 +434,68 @@ describe('ChatRoute — load failure', () => {
     h.getConversation.mockRejectedValue(new Error('boom'))
     renderRoute('/chat/c1')
     expect(await screen.findByTestId('projects-index')).toBeTruthy()
+  })
+})
+
+describe('ChatRoute — a dead address says something on the way out (`#206`)', () => {
+  /* THE BOUNCE IS UNCHANGED. Every case above still bails to /projects, and should. What these
+     pin is the sentence it carries — and, more importantly, the two failures that must NOT
+     carry one. The catch this route hangs on is reached by a 400 (a malformed id — the only
+     "the chat is not there" status that actually throws; a 404 is null-ed one arm above), by a
+     500, and by a DROPPED CONNECTION, and treating all three as "the chat is gone" is the class
+     of over-claiming this codebase keeps refusing. */
+
+  const arrivalSaid = () => screen.getByTestId('arrival-notice').textContent
+
+  it('an absent row with no query says the neutral line', async () => {
+    // `getConversation` answers a real 404 with `null` rather than by throwing, so this — not
+    // the catch — is the ordinary dead-bookmark path.
+    h.getConversation.mockResolvedValue(null)
+    renderRoute('/chat/ghost-206')
+
+    await screen.findByTestId('projects-index')
+    expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
+  })
+
+  it('★ a mangled chat link says the same line — the status the server really sends', async () => {
+    /* THE STATUS HERE IS LOAD-BEARING, and this test used to fabricate one the endpoint cannot
+       send. `GET /v1/conversations/{id}` matches the id against `_ID_RE` by hand and answers a
+       malformed token with **400**; the path param is a plain `str`, so FastAPI never validates
+       it and the 422 this case once asserted is unreachable. Verified against the running server:
+       `/chat/abc%20def` → 400 `Invalid conversation id.`
+
+       So the old assertion passed while the real citizen path — a chat link a mail client wrapped
+       with a space or a `<` — bounced to the list in SILENCE, the exact failure `#207` names. */
+    h.getConversation.mockRejectedValue(new ApiError('Invalid conversation id.', 400))
+    renderRoute('/chat/abc def')
+
+    await screen.findByTestId('projects-index')
+    expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
+  })
+
+  it('★ a dropped connection bounces in silence — it does NOT say the chat is gone', async () => {
+    /* A `fetch` that never reached the server rejects with a plain `TypeError`: no status, not an
+       `ApiError`. The bounce stays (a spinner with no answer is worse), but the platform knows
+       nothing here and must not claim otherwise.
+
+       MUTATION CHECK — this is the named mutant for `#206`: widen `goneNoticeFor` to return the
+       sentence unconditionally and this goes red while every other case in this file stays green. */
+    h.getConversation.mockRejectedValue(new TypeError('Failed to fetch'))
+    renderRoute('/chat/c-206-offline')
+
+    // LIVENESS FIRST — the bounce genuinely happened, so the empty string below is a silent
+    // arrival rather than a tree that never rendered.
+    expect(await screen.findByTestId('projects-index')).toBeTruthy()
+    expect(arrivalSaid()).toBe('')
+  })
+
+  it('★ a 500 is not a deletion either', async () => {
+    // The server failed to LOOK. Same silence, for the same reason.
+    h.getConversation.mockRejectedValue(new ApiError('Internal Server Error', 500))
+    renderRoute('/chat/c-206-boom')
+
+    expect(await screen.findByTestId('projects-index')).toBeTruthy()
+    expect(arrivalSaid()).toBe('')
   })
 })
 
@@ -509,5 +604,32 @@ describe('ChatRoute — the chat-open mark (U4; R105)', () => {
 
     await screen.findByTestId('conversation-slot')
     expect(beacons()).toEqual([])
+  })
+})
+
+describe('ChatRoute — the cold-load wait says what it is doing (`#210`, R11)', () => {
+  it('★ shows a visible sentence and one busy polite region while the chat resolves', async () => {
+    // R11 binds the whole batch: suppressing an animation never leaves a wait silent. The three
+    // dots here are `animate-bounce`, which the reduce-motion block freezes — so without words
+    // this arm is three static dots for a citizen who asked for reduced motion. D3 named four
+    // such waits; this is the fifth, in a file that unit did not reach.
+    let settle: (v: unknown) => void = () => {}
+    h.getConversation.mockImplementation(() => new Promise((r) => { settle = r }))
+
+    renderRoute('/chat/c1')
+
+    const wait = await screen.findByTestId('chat-wait')
+    // The sentence, visible — not an sr-only copy and not an aria-label.
+    expect(wait.textContent).toContain('Loading this chat…')
+    expect(wait.getAttribute('aria-busy')).toBe('true')
+    expect(wait.getAttribute('aria-live')).toBe('polite')
+    // No label: a live region announces its content, and a label repeating it reads it twice.
+    expect(wait.getAttribute('aria-label')).toBeNull()
+    // EXACTLY ONE region says it. A second copy is the sentence read twice.
+    expect(screen.getAllByText('Loading this chat…')).toHaveLength(1)
+    // The dots are decoration now that the words carry the meaning.
+    expect(wait.querySelector('[aria-hidden="true"]')).toBeTruthy()
+
+    settle({ id: 'c1', projectId: 'p1', kind: 'build', title: 't' })
   })
 })

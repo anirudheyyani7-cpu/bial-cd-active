@@ -73,6 +73,7 @@ vi.mock('../../utils/turnStreamApi', async (orig) => ({
 }))
 
 import ConversationSurface from '../../components/chat/ConversationSurface'
+import { OUTCOME_COPY, outcomeSummary } from '../../utils/messageTypes'
 
 function renderThread(chatId = 'thread-1') {
   const fake = new FakeEventSource(chatId)
@@ -155,14 +156,41 @@ async function runBuild(turn, text = 'a visitor app') {
  * So the queries below match the SENTENCE rather than a test id. That is a strictly better thing
  * to assert: the test id proved a box existed, and this proves the citizen was told.
  */
-const OUTCOME_SENTENCE = /build finished\.|the build failed|the build stopped/i
+/**
+ * EXACT SENTENCES, NOT A LOOSE MATCHER (#204).
+ *
+ * This used to be `/build finished\.|the build failed|the build stopped/i`, and the substring
+ * `the build failed` is what let the Stop test below pass on the WRONG copy for as long as the
+ * bug existed: a stopped build announced "The build failed: stopped_by_user", the matcher
+ * shrugged, and the suite stayed green while the platform called a citizen's own deliberate
+ * action a failure. Membership of the real copy table replaces it — a sentence either IS one the
+ * table produces or it is not, and no near-miss squeaks through.
+ *
+ * The table is IMPORTED rather than retyped so this file cannot drift from the shipped copy; the
+ * five reasons and their wording are asserted against explicitly in `the copy table` below, which
+ * is where a silent edit to the source would be caught.
+ */
+const FINISHED = 'Build finished.'
+const NEUTRAL_FAILED = 'The build failed.'
+const NEUTRAL_STOPPED = 'This build was stopped before it finished.'
+const EVERY_OUTCOME_SENTENCE = [FINISHED, NEUTRAL_FAILED, NEUTRAL_STOPPED, ...Object.values(OUTCOME_COPY)]
+const saysAnOutcome = (text) => EVERY_OUTCOME_SENTENCE.some((sentence) => (text || '').includes(sentence))
 const outcomeCards = () =>
-  screen
-    .queryAllByTestId('assistant-message')
-    .filter((m) => OUTCOME_SENTENCE.test(m.textContent || ''))
+  screen.queryAllByTestId('assistant-message').filter((m) => saysAnOutcome(m.textContent))
 const findOutcome = async () => {
   await waitFor(() => expect(outcomeCards().length).toBeGreaterThan(0))
   return outcomeCards()[outcomeCards().length - 1]
+}
+
+/** Drive one ordinary send to a terminal and hand back the outcome message it produced. */
+async function buildEndingWith(over) {
+  const turn = scriptTurn('t1')
+  h.readTurnStream.mockImplementation(turn.impl)
+  renderThread()
+  await runBuild(turn)
+  await turn.frame(T_BUILD_END({ turnId: 't1', ...over }))
+  await turn.end()
+  return findOutcome()
 }
 
 /**
@@ -236,25 +264,35 @@ describe('showing the outcome', () => {
     expect(sends.length).toBeGreaterThan(0)
     for (const payload of sends) {
       expect(payload).not.toMatch(/"type"\s*:\s*"build"/)
-      expect(payload).not.toMatch(OUTCOME_SENTENCE)
+      for (const sentence of EVERY_OUTCOME_SENTENCE) expect(payload).not.toContain(sentence)
     }
   })
 
-  it('shows a failed build with its reason', async () => {
-    const turn = scriptTurn('t1')
-    h.readTurnStream.mockImplementation(turn.impl)
-    renderThread()
-    await runBuild(turn)
+  it('a genuine failure still reads as a failure — and still does not print its token', async () => {
+    // THE OTHER HALF OF #204's FIX, and the one it could most easily have broken. Teaching the
+    // surface that `stopped` is not a failure must not teach it that NOTHING is: a build that
+    // really did fall over has to say so, or the fix has simply moved the lie.
+    //
+    // IT USED TO ASSERT THE REASON WAS PRINTED (`/tsc failed after 3 attempts/`), on a fixture
+    // whose reason was prose. No producer emits prose: every `reason` on this wire is a
+    // `_WriteEndedError` token or a session end reason (`self_heal_budget_exhausted`,
+    // `wall_clock_deadline_exceeded`, `sandbox_unavailable`…), so that assertion was pinning a
+    // shape the server cannot send while blessing the interpolation that printed tokens at
+    // citizens. The real token is used here, and the assertion is inverted.
+    const card = await buildEndingWith({ status: 'failed', reason: 'self_heal_budget_exhausted' })
 
-    // The terminal's own `reason` — `self_heal_budget_exhausted`, `sandbox_gone`, and the rest
-    // ride the frame now rather than a C7 envelope.
-    await turn.frame(T_BUILD_END({ turnId: 't1', status: 'failed', reason: 'tsc failed after 3 attempts' }))
-    await turn.end()
+    expect(card.textContent).toContain(NEUTRAL_FAILED)
+    expect(card.textContent).not.toContain('self_heal_budget_exhausted')
+    // The failure must not be dressed up as a stop by the widened status union.
+    expect(card.textContent).not.toContain(NEUTRAL_STOPPED)
+    expect(card.textContent).not.toContain(FINISHED)
+  })
 
-    const card = await findOutcome()
-    expect(card.textContent).toMatch(/build failed/i)
-    // The reason is what the user can act on — surface it, don't bury it in the feed.
-    expect(card.textContent).toMatch(/tsc failed after 3 attempts/i)
+  it('a failure with no reason at all still reads as a failure', async () => {
+    // The generic crash arm: `except Exception` never sets `end_reason`, so the frame carries a
+    // null reason. The neutral sentence is the whole message here.
+    const card = await buildEndingWith({ status: 'failed', reason: null })
+    expect(card.textContent).toContain(NEUTRAL_FAILED)
   })
 
   it('warns when a build ran but its code was not saved', async () => {
@@ -316,7 +354,43 @@ describe('showing the outcome', () => {
 
     await turn.frame(T_BUILD_END({ turnId: 't1', status: 'stopped', reason: 'stopped_by_user' }))
     await turn.end('completed')
-    expect(await findOutcome()).toBeTruthy()
+
+    // THE ASSERTION THIS TEST USED TO MAKE WAS `expect(await findOutcome()).toBeTruthy()`, and it
+    // could not fail: `findOutcome`'s old matcher accepted `the build failed`, which is precisely
+    // the sentence the bug produced. The exact copy is asserted now, and the two things #204
+    // reported are rejected by name — the word "failed", and the raw token.
+    const card = await findOutcome()
+    expect(card.textContent).toContain(OUTCOME_COPY.stopped_by_user)
+    expect(card.textContent).not.toMatch(/failed/i)
+    expect(card.textContent).not.toContain('stopped_by_user')
+  })
+
+  it('the activity pill and the outcome sentence say the same true thing (#204)', async () => {
+    // The contradiction the issue photographed: the pill read "1 step · stopped before it
+    // finished" while the sentence directly beneath it read "The build failed: stopped_by_user".
+    // One view, one build, two answers. Asserted TOGETHER on one screen, because each half
+    // passing on its own is exactly the state the bug shipped in.
+    const turn = scriptTurn('t1')
+    h.readTurnStream.mockImplementation(turn.impl)
+    renderThread()
+    await runBuild(turn) // pushes the one step the pill counts
+    // Settle it. A step left `pending` converts to `running`, and a RUNNING group reports only
+    // its count — "a count of problems while the run is still going describes something that may
+    // yet be recovered from" (ActivityGroup's own rule). The citizen presses Stop between two
+    // steps, not mid-write, so the sealed group is the shape this contradiction actually appears
+    // in — and it is the only shape where the pill has a verdict to contradict.
+    await turn.frame(T_STEP('Scaffolding your app…', { state: 'ok' }))
+
+    await turn.frame(T_BUILD_END({ turnId: 't1', status: 'stopped', reason: 'stopped_by_user' }))
+    await turn.end('completed')
+
+    const card = await findOutcome()
+    const pill = await screen.findByTestId('activity-group-trigger')
+    expect(pill.textContent).toContain('stopped before it finished')
+    expect(card.textContent).toContain(OUTCOME_COPY.stopped_by_user)
+    // Neither half may call it a failure. The pill never did; the sentence is what changed.
+    expect(pill.textContent).not.toMatch(/failed/i)
+    expect(card.textContent).not.toMatch(/failed/i)
   })
 
   it('still warns when the terminal explicitly says the snapshot did not commit', async () => {
@@ -347,6 +421,140 @@ describe('showing the outcome', () => {
     // composer's stop control is present for exactly and only that.
     await waitFor(() => expect(screen.getByTestId('stop-turn')).toBeTruthy())
     expect(outcomeCards()).toHaveLength(0)
+  })
+})
+
+/**
+ * THE REASON → COPY TABLE (#204).
+ *
+ * The sentences are TYPED OUT HERE rather than read from the source, on purpose: importing them
+ * and comparing them to themselves would pass whatever the source said, which is not a test of
+ * copy. This suite is the thing that goes red when somebody edits a citizen-facing sentence, so
+ * the edit has to be deliberate.
+ *
+ * `outcomeSummary` is exercised directly for the table because two of the five reasons —
+ * `force_ended` and `idle_teardown` — reach the browser on the LEGACY session path (the C7 `ended`
+ * envelope) rather than on a turn terminal, and inventing a `turn_ended` frame carrying them would
+ * pin a wire shape the server cannot produce. The three that DO ride a turn terminal are driven
+ * through the real surface below, which is what proves the table is actually wired to the screen.
+ */
+describe('the copy table', () => {
+  const TABLE = [
+    ['quota_exceeded', 'failed', 'The build stopped: you reached your daily limit.'],
+    ['stopped_by_user', 'stopped', 'You stopped this build before it finished.'],
+    ['force_ended', 'ended', 'This build was force-stopped before it finished, and its work was discarded.'],
+    ['idle_teardown', 'ended', 'This build was stopped because it sat idle.'],
+    [
+      'workspace_restored',
+      'failed',
+      'This build stopped so your workspace could be put back from the last saved copy. Send your message again once your workspace is back.',
+    ],
+  ]
+
+  it.each(TABLE)('%s says its own sentence, and says it whatever status carries it', (reason, status, sentence) => {
+    expect(OUTCOME_COPY[reason]).toBe(sentence)
+    expect(outcomeSummary({ status, reason })).toBe(sentence)
+    // THE REASON BEATS THE STATUS, which is the one ordering difference from the server's own
+    // table and the reason the bug existed. `_WriteEndedError` finishes as `failed` for every
+    // named graceful end there is, so answering the status first is exactly what printed
+    // "The build failed: quota_exceeded" at someone who had merely used up their day.
+    expect(outcomeSummary({ status: 'failed', reason })).toBe(sentence)
+  })
+
+  it('names every arm the server names, and the one it does not', () => {
+    // Mirrors `outcome.py::_summary`'s four reasons plus `workspace_restored` (engine.py:1612).
+    // A sixth arm appearing here without a matching one there is the drift this pins.
+    expect(Object.keys(OUTCOME_COPY).sort()).toEqual(TABLE.map(([reason]) => reason).sort())
+  })
+
+  it('an unknown reason gets the neutral fallback and never the token itself', () => {
+    const TOKEN = 'reaped_by_the_kraken'
+    for (const [status, fallback] of [
+      ['failed', NEUTRAL_FAILED],
+      ['stopped', NEUTRAL_STOPPED],
+      ['ended', FINISHED],
+    ]) {
+      const line = outcomeSummary({ status, reason: TOKEN })
+      // Presence first: `not.toContain` on an empty string passes and proves nothing.
+      expect(line).toBe(fallback)
+      expect(line).not.toContain(TOKEN)
+    }
+  })
+})
+
+describe('the table, on the screen', () => {
+  it('a workspace restore is not announced as a failure', async () => {
+    // The turn ends `failed` here because that is genuinely what `_WriteEndedError` finishes as —
+    // and the restore SUCCEEDED. This is the exact frame #204 saw rendered as
+    // "The build failed: workspace_restored" after the platform had just saved the citizen's app.
+    const card = await buildEndingWith({ status: 'failed', reason: 'workspace_restored' })
+
+    expect(card.textContent).toContain(OUTCOME_COPY.workspace_restored)
+    expect(card.textContent).not.toMatch(/failed/i)
+    expect(card.textContent).not.toContain('workspace_restored')
+  })
+
+  it('a spent daily limit is not announced as a failure', async () => {
+    const card = await buildEndingWith({ status: 'failed', reason: 'quota_exceeded' })
+
+    expect(card.textContent).toContain(OUTCOME_COPY.quota_exceeded)
+    expect(card.textContent).not.toMatch(/failed/i)
+    expect(card.textContent).not.toContain('quota_exceeded')
+  })
+
+  it('an unknown reason reaches the transcript as the fallback, with no token in it', async () => {
+    // THIS IS ALSO THE TEST THAT GUARDS `announceTerminal`'S COLLAPSE, and it is the only one
+    // that can be. Restore `: 'failed'` there and every NAMED reason still reads correctly — the
+    // table is consulted before the status, so `stopped_by_user` produces its sentence either way.
+    // The stop whose reason this client does not recognise is the one case where the terminal
+    // itself is the only thing left saying what happened, so it is the case that goes red.
+    const card = await buildEndingWith({ status: 'stopped', reason: 'reaped_by_the_kraken' })
+
+    expect(card.textContent).toContain(NEUTRAL_STOPPED)
+    expect(card.textContent).not.toContain('reaped_by_the_kraken')
+    expect(card.textContent).not.toMatch(/failed/i)
+  })
+})
+
+/**
+ * THE THIRD COLLAPSE SITE — the one #204 does not name.
+ *
+ * The issue calls the fix "two lines". It is three: the reload path has its own fold, in
+ * `conversationApi`'s `banner` projection, and it folds the other way — a stopped build came back
+ * from a reload as `ended`, i.e. as a build that finished normally, sitting directly beneath the
+ * server's own stored sentence saying the citizen stopped it. Fixing only the live path would have
+ * left the contradiction intact for anyone who reloaded, which is everyone who comes back
+ * tomorrow.
+ *
+ * The real module is reached through `importActual` because this file mocks `conversationApi`
+ * wholesale for the surface's own conversation-list read.
+ */
+describe('the stored banner, on reload', () => {
+  const buildPartFor = async (banner) => {
+    const { messagesFromProjection } = await vi.importActual('../../utils/conversationApi')
+    const [message] = messagesFromProjection([
+      { type: 'banner', seq: 4, banner, text: 'the stored sentence', sessionId: 's1', previewUrl: null },
+    ])
+    return message.parts.find((p) => p.type === 'build')
+  }
+
+  // `projection.py::_banner_kind`'s whole vocabulary. `quota` pairs with `stopped` for the same
+  // reason the live path treats it as one: nothing broke, the day ran out.
+  it.each([
+    ['completed', 'ended'],
+    ['failed', 'failed'],
+    ['stopped', 'stopped'],
+    ['quota', 'stopped'],
+  ])('a %s banner comes back as %s', async (banner, status) => {
+    const part = await buildPartFor(banner)
+    expect(part).toBeTruthy() // presence, so the status read below cannot be vacuous
+    expect(part.status).toBe(status)
+  })
+
+  it('an unrecognised banner degrades to ended rather than inventing a failure', async () => {
+    // A client behind its server is a deployment order, not a broken build.
+    const part = await buildPartFor('a_kind_this_client_has_never_heard_of')
+    expect(part.status).toBe('ended')
   })
 })
 

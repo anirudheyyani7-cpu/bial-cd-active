@@ -23,7 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useState } from 'react'
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import WorkspaceShell from '../WorkspaceShell'
 import {
@@ -504,6 +504,82 @@ describe('the Save control', () => {
     withSave({ dirty: false, saving: false, error: null }, () => {})
     for (const el of screen.getAllByRole('button')) expect(el.hasAttribute('disabled')).toBe(false)
   })
+
+  // ═══ THE WAIT ITSELF (`#202`) ═══
+  //
+  // The control between a citizen and losing their work was the quietest wait in the product: the
+  // word changed and nothing else did. Every scenario above stayed green through the removal of
+  // the spinner, because a LABEL assertion cannot tell a moving control from a still one — so
+  // these four are about the other two registers, and about the class name that carries the
+  // reduced-motion guarantee.
+
+  it('★ #202 — while it saves it SHOWS the wait: a spinner, `aria-busy`, and the sentence', () => {
+    // Mutation receipt: delete the `Loader2` arm and this line goes red — the mutant `#202` itself
+    // shipped, and the one no assertion in this suite caught until now.
+    withSave({ dirty: true, saving: true, error: null }, () => {})
+    const save = screen.getByTestId('save-project')
+    expect(screen.getByTestId('save-spinner')).toBeTruthy()
+    expect(save.getAttribute('aria-busy')).toBe('true')
+    expect(save.textContent).toContain('Saving…')
+  })
+
+  it('is still, and claims nothing, in both of the states it rests in', () => {
+    // `aria-busy="false"` on a control that is not waiting is an answer where none was asked for,
+    // so the attribute is absent rather than negative — hence `hasAttribute`, not a value compare.
+    withSave({ dirty: true, saving: false, error: null }, () => {})
+    const dirtyChip = screen.getByTestId('save-project')
+    expect(screen.queryByTestId('save-spinner')).toBeNull()
+    expect(dirtyChip.hasAttribute('aria-busy')).toBe(false)
+    expect(dirtyChip.textContent).toContain('Save')
+
+    cleanup()
+
+    withSave({ dirty: false, saving: false, error: null }, () => {})
+    const cleanChip = screen.getByTestId('save-project')
+    expect(screen.queryByTestId('save-spinner')).toBeNull()
+    expect(cleanChip.hasAttribute('aria-busy')).toBe(false)
+    expect(cleanChip.textContent).toContain('Saved')
+  })
+
+  it('★ the spinner wears the class the reduced-motion block covers — the half jsdom cannot check', () => {
+    // WHY THE CLASS NAME AND NOT MERE PRESENCE. jsdom cannot evaluate
+    // `@media (prefers-reduced-motion: reduce)`, so "a spinner is on screen" is equally green for a
+    // citizen who asked everything to stop moving and for one who did not — which is precisely the
+    // gap that let the original removal ship in silence. `index.css` suppresses by UTILITY, so the
+    // checkable half here is that this spinner is spelled with the utility it suppresses;
+    // `src/__tests__/reducedMotion.test.ts` holds the other half — that the block still names it.
+    withSave({ dirty: true, saving: true, error: null }, () => {})
+    expect(screen.getByTestId('save-spinner').classList.contains('animate-spin')).toBe(true)
+  })
+
+  it('★ announces the wait by WRAPPING its one sentence, in a region that was already mounted', () => {
+    // ASM5, both halves. A second `sr-only` copy is the on-screen sentence read twice — the shape
+    // `Announcer.tsx` records as having broken three tests — and a live region inserted TOGETHER
+    // with its text is missed entirely by several reader-and-browser combinations, which is why
+    // `TurnBanner.tsx` keeps a permanent region and lets only the box inside it appear. So: the
+    // same region element before and after, empty first, and exactly one copy of the sentence.
+    const view = withSave({ dirty: true, saving: false, error: null }, () => {})
+    const before = within(screen.getByTestId('save-project')).getByRole('status')
+    expect(before.getAttribute('aria-live')).toBe('polite')
+    expect(before.textContent).toBe('')
+
+    view.rerender(
+      <Workspace
+        project={{
+          heading: PROJECT_HEADING,
+          save: { dirty: true, saving: true, error: null },
+          actions: { save: () => {}, rename: null },
+        }}
+      />,
+    )
+
+    const after = within(screen.getByTestId('save-project')).getByRole('status')
+    expect(after).toBe(before)
+    expect(after.textContent).toBe('Saving…')
+    // One element carries the sentence — `getNodeText` reads only direct text children, so a
+    // duplicate anywhere in the control would make this two.
+    expect(screen.getAllByText('Saving…')).toHaveLength(1)
+  })
 })
 
 describe('the status chip — where the state is said, and where it would be said twice', () => {
@@ -570,6 +646,52 @@ describe('the back control and the rename', () => {
     cleanup()
     // A chat's title is the agent's, not the citizen's.
     render(<Workspace entry="/chat/c1" />)
+    expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
+  })
+
+  it('★ `#207` — no pencil over a project that never loaded, and one the moment it does', () => {
+    /* THE MANGLED ADDRESS, in the only shape this row can see it. `projectId` is the ROUTE PARAM,
+       so it is still there on a page whose project 422'd at the boundary — which is exactly what
+       the pencil used to be gated on, and why a citizen who followed a truncated link was offered
+       a rename control whose press was a measured no-op (`NO_ACTIONS.rename` is `null`). The NAME
+       is the field that comes from the project's own fetch, so it is the one that means loaded. */
+    render(<Workspace project={{ heading: { ...PROJECT_HEADING, projectName: null } }} />)
+
+    expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
+    // LIVENESS: the row is fully drawn around that absence — full height, a word in the name
+    // slot — so this is a control that is gone rather than a tree that failed to render.
+    expect(row().className).toMatch(/h-\[54px\]/)
+    expect(title().textContent).toBe('Your project')
+
+    cleanup()
+    const rename = vi.fn()
+    render(<Workspace project={{ heading: PROJECT_HEADING, actions: { save: null, rename } }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename project' }))
+    expect(rename).toHaveBeenCalledTimes(1)
+  })
+
+  it('★ `#207` — and the way out is NOT gated by the fact that silences the pencil', () => {
+    /* THE MUTANT THIS EXISTS FOR: gate the back control on `heading.projectName !== null` too and
+       the dead address becomes a dead end. The row's own docblock is explicit that the control
+       survives the load-error branch, and a branch with no way off it is worse than the raw
+       validator sentence this unit came to remove. */
+    render(<Workspace project={{ heading: { ...PROJECT_HEADING, projectName: null } }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to projects' }))
+    expect(screen.getByTestId('where').textContent).toBe('/projects')
+  })
+
+  it('★ `#207` — the deliberate "Your project" fallback on a chat is untouched', () => {
+    /* NOT PART OF THE DEFECT, and the issue says so. A project deleted out from under an open
+       chat leaves the breadcrumb with no name, and the row deliberately says "Your project"
+       rather than leaving a gap that shifts the layout when a fetch lands. The pencil gate is
+       allowed to read the same `null`; it is not allowed to change what the slot says. */
+    render(<Workspace entry="/chat/c1" chat={{ heading: { ...CHAT_HEADING, projectName: null } }} />)
+
+    expect(row().textContent).toContain('Your project')
+    expect(title().textContent).toBe('Add an out-time column')
+    expect(screen.getByRole('button', { name: 'Back to project' })).toBeTruthy()
+    // Rename is a project-screen control; a chat address never had it, name or no name.
     expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
   })
 })

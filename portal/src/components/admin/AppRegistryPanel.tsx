@@ -10,6 +10,7 @@ import {
 import type { RegistryApp, AppStatus, AuditEvent } from '../../utils/appRegistryApi'
 import { ApiError } from '../../utils/apiError'
 import WaitingCountBadge from './WaitingCountBadge'
+import { relativeTimeVerbose } from '../../utils/relativeTime'
 import { readDeclaration, shortSha, MIN_REJECTION_NOTE } from './declaration'
 import type { ReadDeclaration } from './declaration'
 import { auditLabel } from './auditLabels'
@@ -39,6 +40,16 @@ const fmtWhen = (iso: string | null): string => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
+/** The queue's Submitted cell: the visible age, with the exact moment riding underneath
+ *  as a `title` and a machine-readable `datetime`. `fmtWhen` owns the one question that
+ *  decides whether an age exists at all — a row whose submittedAt is missing or
+ *  unparseable takes its guarded placeholder rather than an age counted from 1970. */
+function SubmittedCell({ iso }: { iso: string | null }) {
+  const exact = fmtWhen(iso)
+  if (iso === null || exact === '—') return <>—</>
+  return <time dateTime={iso} title={exact}>{relativeTimeVerbose(iso)}</time>
+}
+
 // Advisory on-disk size of the app's own database (ADR-0028). Null is a real value —
 // "no number to show" (never provisioned, not yet ready, or the cluster was unreachable) —
 // and renders as "—", never "0 B", which would read as an empty database.
@@ -528,6 +539,13 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
     act(app.appId, () => deleteApp(app.appId), `“${appLabel(app)}” deleted`)
   }
 
+  // Pending is the only tab that is a REVIEW QUEUE — the only one ordered oldest-first,
+  // and the only one whose rows carry a submittedAt (it is null everywhere else). One
+  // <thead>/<tbody> serves all four tabs, so both the Submitted column and the ordering
+  // caption hang off this: on Approved, an "oldest first" caption would be a lie and a
+  // Submitted column would be a stripe of em-dashes.
+  const isQueue = tab === 'pending'
+
   if (loading) {
     return <div className="flex items-center justify-center gap-2 py-16 text-neutral text-sm"><Loader2 size={16} className="animate-spin" /> Loading apps…</div>
   }
@@ -568,12 +586,24 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
+            {/* The ordering is a GUARANTEE the backend makes and pins with a test (R16),
+                and until now it was invisible: nothing on screen told an administrator
+                that top means oldest, so the queue read as an arbitrary list. Said out
+                loud, the position becomes information. Deliberately NOT a sort control —
+                a handle that let someone reorder the review queue would turn a reporting
+                gap into a real defect. Pending only: every other tab is newest-first. */}
+            {isQueue && (
+              <caption data-testid="queue-order-note" className="caption-top text-left text-xs text-neutral pb-3">
+                Oldest first — the next app to review is at the top.
+              </caption>
+            )}
             <thead>
               <tr className="border-b border-bial-border">
                 <th className="pb-3 pr-6 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">App</th>
                 <th className="pb-3 pr-6 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">Owner</th>
                 <th className="pb-3 pr-6 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">Login</th>
                 <th className="pb-3 pr-6 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">Status</th>
+                {isQueue && <th className="pb-3 pr-6 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">Submitted</th>}
                 <th className="pb-3 pr-6 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">Database</th>
                 <th className="pb-3 text-left text-[10px] font-bold uppercase tracking-wider text-neutral">Actions</th>
               </tr>
@@ -604,6 +634,11 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                       </button>
                     </td>
                     <td className="py-3 pr-6"><StatusBadge status={app.status} /></td>
+                    {isQueue && (
+                      <td data-testid={`submitted-${app.appId}`} className="py-3 pr-6 text-neutral whitespace-nowrap">
+                        <SubmittedCell iso={app.submittedAt} />
+                      </td>
+                    )}
                     <td data-testid={`db-bytes-${app.appId}`} className="py-3 pr-6 text-neutral whitespace-nowrap">{fmtBytes(app.databaseBytes)}</td>
                     <td className="py-3">
                       <div className="flex items-center gap-1.5 flex-wrap">

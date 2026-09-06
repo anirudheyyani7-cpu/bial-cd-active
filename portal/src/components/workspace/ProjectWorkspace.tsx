@@ -59,6 +59,7 @@ import {
   useWorkspaceProject,
 } from './workspaceChannel'
 import type { ReclaimRequest } from './workspaceChannel'
+import { announceDeploymentChanged } from '../../hooks/usePublishState'
 import { resolvePreviewAddress } from '../../utils/previewAddress'
 import { handOverWorkspace, saveProject } from '../../utils/buildSessionApi'
 import type { HandoverStep, ReclaimBlocked } from '../../utils/buildSessionApi'
@@ -214,6 +215,13 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
    * SURFACED, NEVER SWALLOWED. A save that silently fails leaves the citizen believing their work
    * is stored, which is the one outcome worse than not offering the control at all. The server's
    * own copy names the way out, so it is passed through rather than reworded.
+   *
+   * TWO READS ARE STALE AFTERWARDS, NOT ONE (#205). `workspace.refresh()` re-reads the workspace,
+   * which is what the save chip is drawn from — but the rail's LAST SAVED row and the toolbar's
+   * publish chip are drawn from the DEPLOYMENT read, whose `savedHead`/`savedAt` this save has
+   * just changed. Neither of those reads belongs to this surface, so it raises the nudge they
+   * both already listen to rather than growing a deployment fetch of its own here: one dispatch,
+   * every publish surface on the screen reconciled, no second reader of the same row.
    */
   const save = useCallback(async () => {
     if (saving) return
@@ -222,6 +230,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     try {
       await saveProject(project.id)
       workspace.refresh()
+      announceDeploymentChanged(project.id)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Could not save your work. Try again.')
     } finally {

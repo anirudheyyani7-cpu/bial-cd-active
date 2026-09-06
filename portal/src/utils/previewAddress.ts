@@ -95,11 +95,20 @@ export interface PreviewAddressInputs {
    * At a bare project address on a fresh load there is none of that, so without this arm the
    * project screen frames nothing.
    *
-   * ITS CALLER EXISTS. `components/workspace/ProjectWorkspace.tsx` is the project-scoped publisher
-   * this arm was written for, and it feeds only the `alive` case — the one state whose `previewUrl`
-   * the wire's own contract calls framable. Until it landed, this arm had no caller at all and the
-   * bare project screen published nothing, so the pane host hit its "no pane and no address" early
-   * return and rendered nothing on a fresh load.
+   * IT HAS TWO CALLERS. `components/workspace/ProjectWorkspace.tsx` is the project-scoped
+   * publisher this arm was written for, and `components/chat/ConversationSurface.tsx` joined it
+   * (#192): a chat opened cold — a hard load, a bookmark, a browser restart — has no session
+   * either, so it needs the same arm or it says the app is running over an empty frame. Both feed
+   * only the `alive` case, the one state whose `previewUrl` the wire's own contract calls framable.
+   * Until the first caller landed, this arm had no caller at all and the bare project screen
+   * published nothing, so the pane host hit its "no pane and no address" early return and rendered
+   * nothing on a fresh load.
+   *
+   * THE PRECEDENCE BELOW IS LOAD-BEARING FOR THE SECOND CALLER, and it moved a fixture. This arm
+   * outranks `transcriptHasBuildOutcome ? 'ended'`, so once the chat route feeds it, a transcript
+   * that ended is no longer allowed to declare the preview gone while a container is demonstrably
+   * serving the project. Three tests in `ConversationSurface-session.test.jsx` answered `alive` for
+   * every project id as scenery and asserted "no longer running"; they now say what they mean.
    */
   projectPreviewUrl: string | null
   /** THE PROJECT PREDICATE. Do the project-scoped signals above belong to the OPEN project? */

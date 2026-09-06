@@ -23,9 +23,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from src.api.v1.attachments.router import MAX_PDF_PAGES
 from src.services.usage.context_window import (
     CHARS_PER_TOKEN,
     NOMINAL_BINARY_TOKENS,
+    NOMINAL_PDF_TOKENS,
     occupied_window,
 )
 from src.services.usage.gate import weighted_spend
@@ -163,3 +165,103 @@ def test_a_partial_token_rounds_up(chars: int) -> None:
     # systematic across thousands of small tool returns it is a real under-count.
     expected = -(-chars // CHARS_PER_TOKEN)
     assert occupied_window([_user("x" * chars)], None) == SYSTEM_PROMPT_RESERVE + expected
+
+
+# --- documents cost what documents cost (U6 / D4) ------------------------------
+
+
+def _pdf(identifier: str = "doc") -> BinaryContent:
+    return BinaryContent(data=b"%PDF-1.4 ...", media_type="application/pdf", identifier=identifier)
+
+
+def _image(identifier: str = "shot") -> BinaryContent:
+    return BinaryContent(
+        data=b"\x89PNG" + b"\x00" * 4_000, media_type="image/png", identifier=identifier
+    )
+
+
+def test_a_pdf_and_an_image_are_charged_differently() -> None:
+    """★ THE UNDER-COUNT #194 IS ABOUT, IN ONE ASSERTION.
+
+    A 61-page document really occupies ~153,000 tokens — 77% of the hard limit — and was
+    measured at 1,600, or 0.8%. The flat charge is honest for an IMAGE, whose cost does not
+    scale with byte length, and was the largest error in this module for a DOCUMENT, which is
+    read page by page.
+
+    MUTATION: swap the two constants in `_tokens_in` and both halves of this go red — the PDF
+    would read as 1,600 (the bug) and the image as 75,000 (which would refuse every
+    conversation containing a screenshot)."""
+    reserve_only = occupied_window([], None)
+
+    pdf_only = occupied_window([ModelRequest(parts=[UserPromptPart(content=[_pdf()])])], None)
+    image_only = occupied_window([ModelRequest(parts=[UserPromptPart(content=[_image()])])], None)
+
+    assert pdf_only - reserve_only == NOMINAL_PDF_TOKENS
+    assert image_only - reserve_only == NOMINAL_BINARY_TOKENS
+    assert NOMINAL_PDF_TOKENS > NOMINAL_BINARY_TOKENS * 40
+
+
+def test_the_document_charge_covers_the_longest_document_the_platform_admits() -> None:
+    """The two numbers are one decision, and this is the seam that holds them together.
+
+    The upload cap admits at most `MAX_PDF_PAGES` pages; a page measured ~2,514 tokens. A
+    charge below that product would leave an ADMITTED document under-counted, which is exactly
+    the hole #194 describes — so raising the page cap without raising the charge is the
+    regression this test refuses.
+
+    THE 1% IS A REAL ALLOWANCE, NOT A FUDGE FACTOR, and saying so is the point of this
+    paragraph. 30 × 2,514 = 75,420 and the charge is 75,000, so the bound below is not
+    "comfortably satisfied" — it is satisfied BY the tolerance, and a reader who assumed the
+    charge covered the product exactly would be wrong by 420 tokens. That shortfall is 0.6%
+    against an 8,000-token reserve and is accepted deliberately in favour of a round number;
+    `NOMINAL_PDF_TOKENS`' own docblock carries the reasoning. What this still refuses is the
+    regression that matters: move `MAX_PDF_PAGES` up and the product outruns the tolerance."""
+    measured_tokens_per_page = 2_514
+
+    # `* 0.99` — see the paragraph above. Tightening this to `>= product` is a deliberate
+    # decision to raise the charge, not a cleanup.
+    assert NOMINAL_PDF_TOKENS >= MAX_PDF_PAGES * measured_tokens_per_page * 0.99
+    # And not wildly above it either: an over-charge refuses conversations that would fit.
+    assert NOMINAL_PDF_TOKENS <= MAX_PDF_PAGES * measured_tokens_per_page * 1.2
+
+
+def test_one_document_leaves_room_to_work_and_two_do_not() -> None:
+    """The behaviour #194 says is missing: one ordinary document plus a real conversation sits
+    inside the soft limit, and a second document does not.
+
+    This is the shape of the whole fix — not "documents are refused" but "a document costs what
+    it costs, so the warning fires before the wall does"."""
+    from src.services.usage.limits import DEFAULT_CONTEXT_HARD, DEFAULT_CONTEXT_SOFT
+
+    prose: list[ModelMessage] = [_user("a" * 40_000), _assistant("b" * 40_000)]  # 20k tokens
+
+    one = occupied_window(
+        [*prose, ModelRequest(parts=[UserPromptPart(content=[_pdf("a")])])], None
+    )
+    two = occupied_window(
+        [
+            *prose,
+            ModelRequest(parts=[UserPromptPart(content=[_pdf("a")])]),
+            ModelRequest(parts=[UserPromptPart(content=[_pdf("b")])]),
+        ],
+        None,
+    )
+
+    assert one < DEFAULT_CONTEXT_SOFT
+    assert two > DEFAULT_CONTEXT_SOFT
+    # Two still fit under the hard wall — the citizen is warned, not stopped. Three would not.
+    assert two < DEFAULT_CONTEXT_HARD
+
+
+def test_three_documents_cannot_fit_the_hard_limit_at_all() -> None:
+    """D4's arithmetic, asserted rather than assumed: 3 x 75,000 + the 8,000 reserve is 233,000
+    against a 200,000 ceiling. It is why the send route refuses a third document by COUNT — a
+    token-limit refusal would tell the citizen to start a new chat, and the new chat would
+    refuse the identical message."""
+    from src.services.usage.limits import DEFAULT_CONTEXT_HARD
+
+    three = occupied_window(
+        [ModelRequest(parts=[UserPromptPart(content=[_pdf("a"), _pdf("b"), _pdf("c")])])], None
+    )
+
+    assert three > DEFAULT_CONTEXT_HARD

@@ -201,10 +201,14 @@ async def write_heartbeat(redis: aioredis.Redis, user_uuid: uuid.UUID) -> dateti
     session idle.
 
     BARE for the same reason as `release_lock_as_holder` — see the REDIS-ERROR POLICY in the
-    module docstring. The in-build renewal (`SessionManager.on_progress`, once per non-terminal
-    progress envelope — not a timer loop) already guards its own call, while at BOTH the
-    relaunch and start heartbeat seeds the raise is what tears the container down — each seed
-    sits inside `_holding_user_lock`'s compensated region, before the scope adopts the lock."""
+    module docstring. THERE ARE TWO IN-BUILD RENEWERS, and they renew on different clocks:
+    `SessionManager.on_progress` once per non-terminal progress envelope (frame-driven), and the
+    turn engine's liveness-lease loop on a wall clock inside the TTL (#193 — a build that spends
+    longer than `HEARTBEAT_TTL_SECONDS` inside one tool call emits no frame, so the frame-driven
+    one alone let the heartbeat expire under a live build). Both guard their own call, while at
+    BOTH the relaunch and start heartbeat seeds the raise is what tears the container down — each
+    seed sits inside `_holding_user_lock`'s compensated region, before the scope adopts the
+    lock."""
     now = datetime.now(UTC)
     await redis.set(heartbeat_key(user_uuid), now.isoformat(), ex=HEARTBEAT_TTL_SECONDS)
     return now + timedelta(seconds=HEARTBEAT_TTL_SECONDS)

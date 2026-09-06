@@ -197,11 +197,20 @@ export default {
          * and its annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing
          * about the app is stopped or reloaded — it is only taken off the screen."
          *
-         * A TRANSITION, NOT A LIBRARY. There is no motion library in this project and none is
-         * added: the pane is one element whose visibility the shell already toggles, so a
-         * keyframe pair is the whole mechanism. Both are suppressed under
-         * `prefers-reduced-motion` in `index.css`, which is where every other one in this build
-         * is suppressed too.
+         * A KEYFRAME PAIR, NOT A MOTION RUNTIME. The pane is one element whose visibility the
+         * shell already toggles, so two keyframes are the whole mechanism and nothing imperative
+         * animates it. (`tailwindcss-animate`, in `plugins` below, is present only for the Radix
+         * overlays' `animate-in` / `animate-out` enter-and-exit utilities; it does not drive this.)
+         *
+         * REDUCED MOTION — WHAT IS ACTUALLY TRUE. Both keyframe animations are suppressed by the
+         * `@media (prefers-reduced-motion: reduce)` block in `index.css`, which ALSO suppresses
+         * `.animate-spin`, `.animate-pulse` and `.animate-bounce`. That block and
+         * `usePrefersReducedMotion()` in `src/components/chat/ToolActivityLine.tsx` — three
+         * consumers: `ToolActivityLine`, `OfferStrip`, `StopTurnControl` — are the portal's only
+         * two mechanisms; there is no third. This paragraph used to say `index.css` was "where
+         * every other one in this build is suppressed too" while three dozen spinners ignored the
+         * preference entirely: that false sentence IS `#210`, which is why it is now pinned by
+         * `src/__tests__/reducedMotion.test.ts`.
          */
         'pane-leave': 'pane-leave 0.24s ease-in forwards',
         'pane-return': 'pane-return 0.24s ease-out',

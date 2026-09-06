@@ -364,6 +364,12 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
   })
 
   it('a quota breach ends gracefully and shows the daily-limit banner (C7 §8)', async () => {
+    // #192 fed the resolver's PROJECT arm on the chat route, and that arm outranks
+    // `transcriptHasBuildOutcome ? 'ended'`. The shared fixture answers `alive` for EVERY
+    // project id as scenery; under it the pane now correctly frames the serving container
+    // instead of saying the preview is gone. This test is about the banner, not about a
+    // live container, so it says so.
+    h.fetchPreviewState.mockResolvedValue(previewState('unknown'))
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -399,6 +405,12 @@ describe('BuilderPage — the transition\'s refusals are typed HTTP statuses now
     // The old 200-with-a-reason made the browser re-implement error handling it already had, and
     // a genuine bug arrived looking exactly like a quota refusal.
     h.buildFromPlan.mockRejectedValue(new Error('Another build is already running for your workspace.'))
+    // #192 fed the resolver's PROJECT arm on the chat route, and that arm outranks
+    // `transcriptHasBuildOutcome ? 'ended'`. The shared fixture answers `alive` for EVERY
+    // project id as scenery; under it the pane now correctly frames the serving container
+    // instead of saying the preview is gone. This test is about the banner, not about a
+    // live container, so it says so.
+    h.fetchPreviewState.mockResolvedValue(previewState('unknown'))
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
 
@@ -752,6 +764,12 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
 
     // Navigate the SAME instance to project B's builder chat.
+    // #192: project B must answer for ITSELF. The blanket `alive` fixture would have B's
+    // pane frame project A's container — the cross-project frame the resolver's project
+    // label exists to prevent — so each id now answers its own truth.
+    h.fetchPreviewState.mockImplementation(async (id) =>
+      previewState(id === 'pA' ? 'alive' : 'unknown'),
+    )
     h.buildFromPlan.mockClear()
     h.stop.mockClear()
     h.readTurnStream.mockImplementation(turnStreaming(planReply('Build B, please.', 'opt-B')))

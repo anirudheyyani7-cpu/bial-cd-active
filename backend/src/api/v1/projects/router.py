@@ -11,6 +11,7 @@ the shared `error_responses(...)` + `AUTH_401` builders (KD-7).
 
 from __future__ import annotations
 
+import asyncio
 import math
 import uuid
 from typing import Annotated
@@ -24,6 +25,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from src.api.deps import CurrentUser, DbSession
 from src.api.v1.attachments.router import storage_dependency
+from src.api.v1.build_sessions.deps import OptionalSandbox, SessionManagerDep
 from src.api.v1.conversations._shared import ModelDep
 from src.api.v1.live_build import refuse_while_build_session_live
 from src.api.v1.offset_pagination import PageQuery, clean_page
@@ -55,6 +57,7 @@ from src.schemas import (
 from src.services.appdb.provision import ensure_project_database
 from src.services.appdb.teardown import salt_the_earth, teardown_handles
 from src.services.audit.log import append_audit
+from src.services.build_sessions import SessionManager, app_name_for, read_registry, reap_user
 from src.services.build_sessions.manager import restorable_presence
 from src.services.deploy.liveness import live_app_ids
 from src.services.deploy.teardown import sweep_published_apps
@@ -65,6 +68,9 @@ from src.services.projects import (
     owned_project_or_404,
     resweep_submission_prefixes,
 )
+from src.services.redis import get_redis
+from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
+from src.services.sandbox import SandboxClient
 from src.services.storage import (
     AppContainerStore,
     ObjectStorage,
@@ -433,6 +439,121 @@ _BUILD_LIVE_DELETE_MSG = (
     "A build session is still running for this project — end it before deleting."
 )
 
+# HOW LONG THE POST-COMMIT REAP WILL WAIT FOR THE PER-USER START LOCK, and it is short on
+# purpose. `manager.py`'s `_start_locked` holds that lock across an ENTIRE provision — ACA
+# create, image pull, bundle restore, `wait_ready` — so an unbounded acquire parks a delete
+# that has ALREADY COMMITTED behind a build the citizen started in another project. Worse
+# than slow: if the browser or the proxy gives up first the request is cancelled mid-wait,
+# the reap never runs at all, and the container this exists to kill survives while the user
+# is told their delete failed for a project that is genuinely gone. Timing out costs one
+# sweep cycle; waiting costs the user their delete.
+_SANDBOX_REAP_LOCK_WAIT_SECONDS = 2.0
+
+
+async def _reap_the_project_sandbox_or_shrug(
+    manager: SessionManager,
+    sandbox: SandboxClient | None,
+    *,
+    user_id: uuid.UUID,
+    app_id: uuid.UUID | None,
+) -> None:
+    """Take the deleted project's sandbox container down with it (#184). NEVER RAISES.
+
+    Post-commit and best-effort, like every other sweep on this path: the rows are already
+    gone, so anything that fails here is a logged orphan for the scheduled sweep, never a 500
+    on a delete that in fact succeeded. `reap_user` guards only `SandboxError` around the
+    teardown — its Redis calls are bare by module policy — so the explicit `except Exception`
+    below is the mechanism, not the intention (it mirrors `salt_the_earth`'s own posture).
+
+    NO SECOND TEARDOWN SEQUENCE. `manager.release_project_sandbox` already does exactly this
+    — registry identity check, then `reap_user` — and its docstring states the invariant: there
+    is exactly one teardown sequence in this codebase and no route may drift from the reaper's.
+    So the reap is `reap_user`'s ordered one (`mark_registry_ending` → `teardown` →
+    `delete_registry` → `release_liveness_lease` → `reap_lock`), and this function contributes
+    only the identity check in front of it. Releasing the lock and the lease is not garnish:
+    `LOCK_TTL_SECONDS = 900`, so a teardown that cleared only the registry would leave the
+    citizen unable to start ANY sandbox for fifteen minutes after deleting a project.
+
+    THE IDENTITY CHECK IS NAME-EQUALITY, and deliberately NOT `_registry_serves_and_is_ready`.
+    That helper also demands `state == "ready"`, and an entry left at `ending` by an earlier
+    failed teardown — which names THIS project's own container — would be skipped and go on
+    billing. The check is needed at all because the registry key is per-USER: an unconditional
+    clear would destroy a container the same citizen is running for a DIFFERENT project, which
+    `refuse_while_build_session_live` cannot cover (it is app-scoped, and a relaunched preview
+    holds no lock by design).
+
+    `strict=False`, unlike `release_project_sandbox`'s `True`: that caller is about to act on
+    the outcome, and this one is not — a failed teardown here is left for a later sweep rather
+    than raised at a delete that has already committed.
+
+    `app_id=None` INTO THE DURABLE-COPY GATE IS DELIBERATE, and is the one place this diverges
+    from the janitor. The gate spares a container whose work is not provably preserved by
+    reading the snapshot — and by the time this runs, `salt_the_earth` and the blob sweep above
+    have already destroyed that snapshot. Passing the real id would therefore make the gate
+    refuse EVERY container on this path, which is the exact leak the unit exists to close. The
+    work is not being abandoned: the user asked for the project and everything in it to be
+    deleted, and stated why.
+    """
+    if app_id is None:
+        return  # a project that never built owns no container
+    if sandbox is None:
+        # `OptionalSandbox`, NEVER `SandboxDep`: an eager dependency raises
+        # `SandboxNotConfiguredError` before the route body, where no `except` of the route's
+        # can reach it, so it would 500 every delete on a sandbox-off deployment — including
+        # the whole test suite, whose `.env.test` carries no `SANDBOX__*`. Sandbox-off means
+        # nothing was ever running, so the skip is also the right answer. See
+        # `docs/solutions/design-patterns/
+        # eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`.
+        logger.info(
+            "project_delete_sandbox_reap_skipped_unconfigured",
+            app_id=str(app_id),
+            user_id=str(user_id),
+        )
+        return
+    try:
+        # THE LOCK GOES AROUND BOTH THE CHECK AND THE REAP, because without it they are a
+        # TOCTOU pair: `reap_user` does its own fresh `read_registry` and tears down whatever
+        # it finds, so a concurrent start for a DIFFERENT project landing in the gap has its
+        # live container destroyed. This is the same lock `release_project_sandbox` holds.
+        lock = manager._start_lock_for(user_id)  # noqa: SLF001 — the reference impl's own lock
+        try:
+            await asyncio.wait_for(lock.acquire(), _SANDBOX_REAP_LOCK_WAIT_SECONDS)
+        except TimeoutError:
+            logger.warning(
+                "project_delete_sandbox_reap_skipped_lock_busy",
+                app_id=str(app_id),
+                user_id=str(user_id),
+                waited_seconds=_SANDBOX_REAP_LOCK_WAIT_SECONDS,
+                hint="a start is in flight; the scheduled sweep reclaims this container",
+            )
+            return
+        try:
+            redis = get_redis()
+            reg = await read_registry(redis, user_id)
+            if reg is None or reg.get(REGISTRY_FIELD_APP_NAME) != app_name_for(app_id):
+                logger.info(
+                    "project_delete_sandbox_reap_skipped_not_ours",
+                    app_id=str(app_id),
+                    user_id=str(user_id),
+                )
+                return
+            reaped = await reap_user(redis, user_id, sandbox, strict=False, app_id=None)
+            logger.info(
+                "project_delete_sandbox_reaped",
+                app_id=str(app_id),
+                user_id=str(user_id),
+                reaped=reaped,
+            )
+        finally:
+            lock.release()
+    except Exception:  # noqa: BLE001 — post-commit: a logged orphan, never a 500 (R3)
+        logger.warning(
+            "project_delete_sandbox_reap_failed",
+            app_id=str(app_id),
+            user_id=str(user_id),
+            exc_info=True,
+        )
+
 
 @router.delete(
     "/{project_id}",
@@ -451,6 +572,8 @@ async def delete_project(
     db: DbSession,
     storage: StorageDep,
     container_store: ContainerStoreDep,
+    sandbox: OptionalSandbox,
+    manager: SessionManagerDep,
 ) -> OkResponse:
     """Cascade-delete the project and every child it owns.
 
@@ -473,14 +596,22 @@ async def delete_project(
 
     A live build session for THIS project's app refuses the delete (409, R9) rather than
     racing it. The guard is app-scoped, so a build in one project never blocks the delete of
-    another. It does NOT cover a relaunched preview, which holds no lock by design — that
-    container keeps serving after the delete; see `api/v1/live_build.py` for the open gap.
-    That gap is exactly why the project's own database is torn down with `salt_the_earth`
-    (sever, then `DROP DATABASE ... WITH (FORCE)`): a preview or a deployed container can
-    still be holding live connections at delete time, and the force-drop — not the guard —
-    is what guarantees they stop reading. It runs post-commit and never raises: the rows are
-    already gone, so a failed drop is a logged orphan for the reconciler, never a 500 on a
-    delete that in fact succeeded."""
+    another. It does NOT cover a relaunched preview, which holds no lock by design — and that
+    is what the post-commit sandbox reap is for (#184, `_reap_the_project_sandbox_or_shrug`):
+    once the rows are committed, the registry is asked whether it still names THIS project's
+    container and, if it does, `reap_user` takes it down. Before it, a citizen who deleted a
+    project they had just previewed left the container running at roughly $2.60/day until
+    they next built something.
+
+    THE FORCE-DROP IS STILL THE GUARANTEE, and the reap does not demote it. The reap is
+    best-effort and skippable by design — an unconfigured sandbox, a busy start lock or a
+    Redis blip all leave the container standing for the scheduled sweep — and a DEPLOYED or
+    published container was never in the sandbox registry to be found at all. So the project's
+    own database is torn down with `salt_the_earth` (sever, then `DROP DATABASE ... WITH
+    (FORCE)`) exactly as before: whatever is still holding live connections at delete time,
+    the force-drop is what guarantees it stops reading. It runs post-commit and never raises:
+    the rows are already gone, so a failed drop is a logged orphan for the reconciler, never a
+    500 on a delete that in fact succeeded."""
     project = await owned_project_or_404(db, user.id, project_id)
     # THE TOMBSTONE, written before the cascade removes what it describes (#158 §13.3).
     # Inside the caller's transaction, so a rolled-back delete leaves no record of a
@@ -604,6 +735,10 @@ async def delete_project(
     # the database that names the running container, and the sandbox reaper cannot see it
     # (it sweeps the Redis registry, which a published app is never written to).
     await sweep_published_apps(cleanup.app_container_ids)
+    # ...and LAST, the sandbox container, if the registry still says one of this project's is
+    # up. After the sweeps deliberately: the durable-copy gate reads the snapshot they have
+    # just destroyed, which is why the reap is opted OUT of that gate (see the helper).
+    await _reap_the_project_sandbox_or_shrug(manager, sandbox, user_id=user.id, app_id=app_id)
     return OkResponse(ok=True)
 
 

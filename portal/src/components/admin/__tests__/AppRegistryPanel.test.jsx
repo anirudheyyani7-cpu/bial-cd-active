@@ -715,3 +715,136 @@ describe('internal identifiers stay out of the administrator’s way', () => {
     expect(screen.getByText(/by alice/)).toBeTruthy()
   })
 })
+
+/**
+ * U20 — the review queue shows how old the backlog is (#209).
+ *
+ * The pending list is ordered oldest-submission-first and pinned by a backend test (R16),
+ * so the queue already encodes age in a row's POSITION — but nothing on screen said so,
+ * and no row said how old. A submission waiting 43 days was drawn identically to one that
+ * arrived a minute ago.
+ *
+ * Two things fix that and one thing must NOT: a Submitted column carrying the visible age
+ * (absolute moment underneath as `title`/`datetime`), a caption naming the ordering, and
+ * emphatically no sort control — a handle that let someone reorder the queue would turn a
+ * reporting gap into a real defect. Both additions are TAB-CONDITIONAL: one <thead>/<tbody>
+ * serves all four tabs, and `submittedAt` is null outside pending.
+ */
+const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString()
+
+describe('the review queue shows how old the backlog is (#209)', () => {
+  it('a pending row says how long it has been waiting, with the exact moment underneath', async () => {
+    const iso = daysAgo(43)
+    h.listApps.mockResolvedValue([{ ...PENDING, submittedAt: iso }])
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Gate Tool')
+
+    // The column exists, and the 43-day-old row reads as 43 days old.
+    expect(screen.getByRole('columnheader', { name: 'Submitted' })).toBeTruthy()
+    const cell = screen.getByTestId('submitted-app-1')
+    expect(cell.textContent).toBe('43 days ago')
+
+    // The age is what an administrator reads; the absolute moment is still on the row,
+    // machine-readable and on hover, so "43 days" can be resolved to a date.
+    const stamp = cell.querySelector('time')
+    expect(stamp).toBeTruthy()
+    expect(stamp.getAttribute('datetime')).toBe(iso)
+    expect(stamp.getAttribute('title')).toBe(new Date(iso).toLocaleString())
+  })
+
+  it('reads in whatever unit the wait actually is, not always days', async () => {
+    const minutesAgo = (n) => new Date(Date.now() - n * 60 * 1000).toISOString()
+    h.listApps.mockResolvedValue([
+      { ...PENDING, appId: 'fresh', name: 'Fresh Tool', submittedAt: minutesAgo(0) },
+      { ...PENDING, appId: 'mins', name: 'Minutes Tool', submittedAt: minutesAgo(1) },
+      { ...PENDING, appId: 'hours', name: 'Hours Tool', submittedAt: minutesAgo(3 * 60) },
+      { ...PENDING, appId: 'oneday', name: 'Day Tool', submittedAt: daysAgo(1) },
+    ])
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Fresh Tool')
+    expect(screen.getByTestId('submitted-fresh').textContent).toBe('just now')
+    // Singular reads as singular — "1 minutes ago" is the tell of a formatter nobody read.
+    expect(screen.getByTestId('submitted-mins').textContent).toBe('1 minute ago')
+    expect(screen.getByTestId('submitted-hours').textContent).toBe('3 hours ago')
+    expect(screen.getByTestId('submitted-oneday').textContent).toBe('1 day ago')
+  })
+
+  it('a row with no submittedAt keeps the guarded placeholder — never an age counted from 1970', async () => {
+    h.listApps.mockResolvedValue([
+      { ...PENDING, appId: 'nowhen', name: 'No Date Tool', submittedAt: null },
+      { ...PENDING, appId: 'garbage', name: 'Bad Date Tool', submittedAt: 'not-a-timestamp' },
+    ])
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('No Date Tool')
+
+    for (const id of ['nowhen', 'garbage']) {
+      const cell = screen.getByTestId(`submitted-${id}`)
+      expect(cell.textContent).toBe('—')
+      // Age-from-null is the "1/1/1970" bug in a different unit: ~56 years of waiting.
+      expect(cell.textContent).not.toMatch(/1970|ago|year/i)
+      // And no <time> either — there is no moment to point a datetime at.
+      expect(cell.querySelector('time')).toBeNull()
+    }
+  })
+
+  it('labels the ordering on the pending tab, in the words the queue actually guarantees', async () => {
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Gate Tool') // liveness: the queue rendered
+
+    const note = screen.getByTestId('queue-order-note')
+    expect(note.textContent).toBe('Oldest first — the next app to review is at the top.')
+    // A <caption> is tied to the table it describes, so the claim cannot drift away from
+    // the rows it is about.
+    expect(note.tagName).toBe('CAPTION')
+    expect(note.closest('table')).toBeTruthy()
+  })
+
+  it('the other tabs get neither the column nor the ordering label', async () => {
+    // Only the pending list is a review queue; every other view is newest-created-first,
+    // where "oldest first" would be a plain lie. The APPROVED fixture deliberately CARRIES
+    // a submittedAt — the condition under test is the tab, not the row's data.
+    h.listApps.mockImplementation((status) =>
+      Promise.resolve(status === 'pending' ? [PENDING] : [APPROVED]))
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Gate Tool')
+    expect(screen.getByTestId('queue-order-note')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('apps-tab-approved'))
+    await screen.findByText('Live Tool')
+    // Liveness: the approved tab genuinely rendered its table, so the absences below mean
+    // something. (APPROVED.submittedAt is set, and still nothing shows it.)
+    expect(screen.getByTestId('app-row-app-2')).toBeTruthy()
+    expect(screen.getByTestId('db-bytes-app-2')).toBeTruthy()
+
+    expect(screen.queryByTestId('queue-order-note')).toBeNull()
+    expect(screen.queryByTestId('submitted-app-2')).toBeNull()
+    expect(screen.queryByRole('columnheader', { name: 'Submitted' })).toBeNull()
+    expect(document.body.textContent).not.toMatch(/oldest first/i)
+  })
+
+  it('renders NO sort control — the ordering is a guarantee, not a preference', async () => {
+    h.listApps.mockResolvedValue([
+      { ...PENDING, submittedAt: daysAgo(43) },
+      { ...PENDING, appId: 'app-3', name: 'Second Tool', submittedAt: daysAgo(2) },
+    ])
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Gate Tool')
+
+    // LIVENESS FIRST. Every assertion below is an absence, and a crashed render satisfies
+    // all of them — so prove the table, its headers and both rows are actually on screen.
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.map((el) => el.textContent)).toContain('Submitted')
+    expect(screen.getByTestId('app-row-app-1')).toBeTruthy()
+    expect(screen.getByTestId('app-row-app-3')).toBeTruthy()
+
+    // Nothing offers to reorder the queue: no sort affordance anywhere, and every column
+    // header is inert text rather than a clickable sort handle.
+    expect(screen.queryByRole('button', { name: /sort|order/i })).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/sort/i)
+    for (const el of headers) {
+      expect(el.querySelector('button, select, a, [role="button"]')).toBeNull()
+      expect(el.getAttribute('aria-sort')).toBeNull()
+    }
+  })
+})

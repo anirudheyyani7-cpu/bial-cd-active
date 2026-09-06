@@ -16,8 +16,14 @@ import { markAppVisible } from '../../utils/observe'
 import { isConversationGone } from '../../utils/chatErrors'
 
 import { resolvePreviewAddress } from '../../utils/previewAddress'
-import { PREVIEW_PROBE_MS, SETTLED_GONE, resolveWorkspaceState } from '../workspace/workspaceState'
-import type { StartOutcome } from '../workspace/workspaceState'
+import {
+  BACKGROUND_CADENCE,
+  SETTLED_GONE,
+  STARTING_PROBE_MS,
+  nextProbeCadence,
+  resolveWorkspaceState,
+} from '../workspace/workspaceState'
+import type { ProbeCadence, StartOutcome } from '../workspace/workspaceState'
 import {
   useAppPaneVisible,
   usePublishAddress,
@@ -2464,14 +2470,43 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // reading they already had.
     let latestProbe = 0
     let timer: ReturnType<typeof setInterval> | null = null
+    // THE CADENCE THE ANSWERS HAVE DECIDED, and the delay the running timer was actually armed
+    // with (#203). `starting` is asked about every three seconds instead of every forty-five,
+    // because it is the one reading whose successor arrives with no gesture from anybody —
+    // `nextProbeCadence` owns that decision, the bound on it, and the reasoning behind both
+    // numbers, and the project surface's poll reads the same function so the two cannot drift.
+    //
+    // MADE INSIDE THE PROBE, never as a dependency. This effect keys on `[projectId,
+    // previewProbeEpoch]` and its first statement is `setPolledPreview(null)`, so a cadence
+    // spelled as a dep would re-run it on the very transition it exists to catch: the pane would
+    // flicker through "we could not check" and — since #192, when the framed address became a
+    // function of this probe's own answer — unframe an app that is running.
+    //
+    // `armed` is separate from `cadence` because they answer different questions: one is the
+    // decision, the other is the fact. Re-arming an interval that already runs at the right delay
+    // would reset its phase on every tick, which is a poll that never fires.
+    let cadence: ProbeCadence = BACKGROUND_CADENCE
+    let armed: number | null = null
     const stopAsking = () => {
       if (timer !== null) clearInterval(timer)
       timer = null
+      armed = null
     }
     const keepAsking = () => {
-      timer ??= setInterval(() => void probe(), PREVIEW_PROBE_MS)
+      if (timer !== null && armed === cadence.delayMs) return
+      if (timer !== null) clearInterval(timer)
+      armed = cadence.delayMs
+      // The tick carries HOW IT WAS SCHEDULED rather than reading `cadence` when it fires: the
+      // answer that closes an accelerated window is the one that changes `cadence`, so a tick
+      // reading it at fire time would call itself a background probe on a decision it had not
+      // made yet.
+      const accelerated = armed === STARTING_PROBE_MS
+      timer = setInterval(() => void probe(accelerated), armed)
     }
-    const probe = async () => {
+    // `accelerated` is false for the mount probe and for both visibility handlers — a fresh
+    // surface and a deliberate human act are not the three-second timer, and neither should be
+    // denied the container reads a background tick makes.
+    const probe = async (accelerated = false) => {
       if (!live || document.visibilityState !== 'visible') return
       const generation = ++latestProbe
       try {
@@ -2510,7 +2545,16 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
         // container, and no turn already reporting. Both conditions matter. Without the first
         // the call is an attach against a dead workspace; without the second it races the
         // stream and can move the pane backwards to an older reading.
-        if (state.state === 'alive' && liveTurnIdRef.current === null) {
+        //
+        // AND NOT ON AN ACCELERATED TICK (#203). The three-second cadence exists to catch a
+        // `starting` workspace the moment it serves, and the tick that catches it is looking at a
+        // container that came up seconds ago — still unpacking a snapshot, still booting a dev
+        // server. A compile state read there is a container exec spent on a question whose answer
+        // has not formed yet, so the acceleration must buy the sentence and the frame with cheap
+        // reads and buy nothing else. This one and the workspace check below both wait for the
+        // next background tick — within one accelerated interval of when they would have run with
+        // no acceleration at all.
+        if (!accelerated && state.state === 'alive' && liveTurnIdRef.current === null) {
           const compiling = await fetchCompileState(projectId)
           if (!live || generation !== latestProbe) return
           // Still no live turn: one may have started while this was in flight, and the stream
@@ -2528,7 +2572,12 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
         //
         // Once set it stays set until the next turn clears it — re-asking a question whose answer
         // is already on screen would spend a container call to learn nothing.
+        //
+        // `!accelerated` for the reason above, with one of its own: an accelerated window is open
+        // because THIS surface watched the workspace start, so asking whether somebody else has
+        // taken it is a container exec spent to hear "no" about a container we just saw come up.
         if (
+          !accelerated &&
           state.state === 'alive' &&
           liveTurnIdRef.current === null &&
           standingClaimRef.current !== null &&
@@ -2538,6 +2587,9 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
           if (!live || generation !== latestProbe) return
           if (lost && liveTurnIdRef.current === null) setWorkspaceLost(true)
         }
+        // THE RESCHEDULE, MADE FROM THE ANSWER (#203) — beside the stopping rule, because both are
+        // the same question asked of the same reading: what this answer means for when we ask next.
+        cadence = nextProbeCadence(state.state, cadence)
         if (SETTLED_GONE.has(state.state) && state.restorable !== null) stopAsking()
         else keepAsking()
       } catch {

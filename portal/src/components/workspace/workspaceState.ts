@@ -76,6 +76,101 @@ export function isTerminalReading(preview: Pick<PreviewState, 'state' | 'restora
   return SETTLED_GONE.has(preview.state) && preview.restorable !== null
 }
 
+// ─── the cadence while a start is in flight (#203) ────────────────────────────────────────────
+
+/**
+ * THE ONE STATE WORTH ASKING ABOUT OFTEN, and the numbers that say how often and for how long.
+ *
+ * `starting` is the only reading whose successor arrives WITH NO GESTURE FROM ANYBODY — the
+ * server holds the state, the container comes up, and the next read says `alive`. Every other
+ * state changes because somebody did something, and the thing they did re-arms the poll on its
+ * own. So a background cadence tuned for "has anything happened while nobody was looking" is the
+ * wrong instrument for exactly one state, and #203 is the bill for using it there: an app serving
+ * at t=2.7s, a pane still saying "Getting your app ready." at t=45.5s, and nothing animating in
+ * between to suggest it was not simply hung.
+ *
+ * ═══ WHY 3 SECONDS ═══
+ *
+ * Chosen from the platform's own timings, because no start could be measured in the session that
+ * wrote this (the Azure subscription was read-only) — and that is worth saying plainly rather
+ * than dressing a guess as a measurement. Three anchors:
+ *
+ *  - `_ATTACHED_READY_BUDGET_SECONDS` is 15s server-side: a warm attach is expected to be serving
+ *    inside it. An interval of 3s resolves such a start within a fifth of its own budget, so the
+ *    lag the poll adds is small next to the event it is waiting for.
+ *  - #203's one real measurement has the flip at 2.7s. At 3s that start is caught on the first or
+ *    second accelerated read; at 45s it was caught 42.8s late.
+ *  - The read is cheap by contract (C3 §8.3: one cache read, at most two rows and two object-store
+ *    HEADs, no container call), so 20 of them a minute — only while somebody is watching a start —
+ *    is a real cost and a small one.
+ *
+ * WHAT WOULD HAVE SETTLED IT BETTER: the distribution of `starting`→`alive` on real starts, warm
+ * attach and cold create+pull separately, with the interval set near the tenth percentile and the
+ * window near the ninety-fifth. Anyone holding that data should change these two numbers and say
+ * so here.
+ *
+ * ═══ WHY IT STOPS ═══
+ *
+ * {@link STARTING_PROBE_LIMIT} accelerated reads is 120 seconds, which is
+ * `_COLD_READY_BUDGET_SECONDS` — the budget the server itself gives the final `wait_ready` leg of
+ * a cold start. Past it the platform is no longer confident this attempt is coming up, so neither
+ * is this timer, and the asking falls back to the background cadence.
+ *
+ * FALLING BACK IS NOT A VERDICT. The reading is left exactly as it was — still `starting`, still
+ * "Getting your app ready." — and the background poll goes on correcting it if the app lands two
+ * minutes late. Reading an elapsed budget as a statement about the container is the precise
+ * mistake in `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-
+ * 2026-08-02.md`, where a timeout was read as a death certificate and destroyed unsaved work.
+ */
+export const STARTING_PROBE_MS = 3_000
+
+/** 120s of accelerated asking — the server's own cold-readiness budget. See {@link STARTING_PROBE_MS}. */
+export const STARTING_PROBE_LIMIT = 40
+
+/**
+ * The poll's cadence, and how much of the accelerated window it has spent.
+ *
+ * A pair rather than a bare number because the two are decided together and drift apart the moment
+ * they are not: a delay with no count polls a hung start for the life of the tab, and a count with
+ * no delay is a budget nothing spends.
+ */
+export interface ProbeCadence {
+  /** Milliseconds until the next read. */
+  readonly delayMs: number
+  /** Accelerated reads scheduled so far in the current window. Zero means no window is open. */
+  readonly fastReads: number
+}
+
+/** No window open, asking at the background cadence. Where every poll starts and returns to. */
+export const BACKGROUND_CADENCE: ProbeCadence = { delayMs: PREVIEW_PROBE_MS, fastReads: 0 }
+
+/**
+ * THE CADENCE DECISION, MADE FROM THE ANSWER — never from a dependency list.
+ *
+ * Both polls read the workspace inside an effect whose deps are `[projectId, epoch]`, and both
+ * blank their reading on every re-run so a stale verdict cannot be left under a frame that has
+ * moved. Adding the preview state to either dep list would therefore re-run the effect on the very
+ * transition this exists to catch, flickering the pane through `could-not-read` and — on the chat
+ * surface, since #192 — unframing an app that is running. So the reschedule happens HERE, inside
+ * the read, on the `keepAsking`/`stopAsking` seam both effects already own.
+ *
+ * STRICTLY `starting`, and it reverts on anything else. A window that stayed open on `alive` would
+ * put the whole product on a 3-second poll, which is the change nobody asked for.
+ *
+ * `unknown` NEITHER OPENS NOR CLOSES ONE. It decided nothing — the readers already refuse to let it
+ * overwrite a verdict on screen — so it must not decide the cadence either. But it still SPENDS
+ * from the window, because the bound is on reads made, not on answers liked: a server answering
+ * `unknown` forever must not buy an unbounded fast poll.
+ */
+export function nextProbeCadence(answer: PreviewLifeState, held: ProbeCadence): ProbeCadence {
+  if (answer !== 'starting' && answer !== 'unknown') return BACKGROUND_CADENCE
+  if (answer === 'unknown' && held.fastReads === 0) return BACKGROUND_CADENCE
+  if (held.fastReads >= STARTING_PROBE_LIMIT) {
+    return { delayMs: PREVIEW_PROBE_MS, fastReads: held.fastReads }
+  }
+  return { delayMs: STARTING_PROBE_MS, fastReads: held.fastReads + 1 }
+}
+
 // ─── what came back from a start attempt ──────────────────────────────────────────────────────
 
 /**

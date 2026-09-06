@@ -1925,10 +1925,29 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // The rejection reason is deliberately EMPTY of copy: `fireRelayTurn` has already said what
       // went wrong, in the banner, with the server's own words. The composer's catch only needs
       // to know that it must not empty itself.
+      //
+      // ══ SILENT, OR THE COMPOSER TALKS OVER THE ANSWER ══
+      //
+      // Saying "empty of copy" was not enough — a bare `Error` IS copy, because of what the
+      // composer does with one. `ComposerBox` shows a refusal's own words only for a
+      // `SendRefusal`; anything else gets the generic "That message did not send. Everything you
+      // typed is still here — try again." So the abort wrote the server's sentence into the
+      // banner and the composer immediately overwrote it with that generic line — last writer
+      // wins, and the writer that knew nothing went last.
+      //
+      // The citizen paid for it at exactly the place this branch was fixing. Attach a 40-page
+      // PDF and send: the server refuses with 413 and the sentence `#194` exists to produce —
+      // "That document is too long to work with. Try one under 30 pages." — and what appears
+      // under the composer is "try again", advice that cannot work, because trying again sends
+      // the same 40 pages to the same cap forever. Verified in a browser: `413 POST
+      // /api/attachments` in the network log, generic sentence on screen.
+      //
+      // `silent` is the vocabulary for exactly this and `RailComposer` already uses it twice —
+      // reject so the box keeps the message, say nothing because the surface has already spoken.
       await new Promise<void>((resolve, reject) => {
         void fireRelayTurn(text, attachments, sendChatId, {
           onSent: resolve,
-          onAbort: () => reject(new Error('send-aborted')),
+          onAbort: () => reject(new SendRefusal('send-aborted', { silent: true })),
         })
       })
     } finally {

@@ -1043,3 +1043,42 @@ describe('★ the per-message DOCUMENT cap is enforced where the turn starts (#1
     expect(screen.queryByText(TOO_MANY_DOCUMENTS_MESSAGE)).toBeNull()
   })
 })
+
+describe('an upload the server refuses says WHY, not "try again" (#194)', () => {
+  /* TWO EMITTERS, ONE BANNER, AND THE ONE THAT KNEW NOTHING WENT LAST.
+     `fireRelayTurn` catches an upload failure and writes the server's own sentence to the urgent
+     slot, then aborts the send. The abort used to reject with a plain `Error`, and a
+     non-`SendRefusal` is not silence to `ComposerBox` — it is the GENERIC line. So the specific
+     sentence was written and immediately overwritten.
+
+     Found in a browser, not here: a real 40-page PDF, `413 POST /api/attachments` in the network
+     log carrying "That document is too long to work with. Try one under 30 pages.", and "That
+     message did not send … try again." on screen. Retrying re-sends the same 40 pages to the same
+     cap, so the advice the citizen was actually given could never work — the failure
+     `attachmentInput.ts` names as advice that leads nowhere. */
+
+  const REFUSAL = 'That document is too long to work with. Try one under 30 pages.'
+
+  it('shows the server’s sentence and keeps the message in the box', async () => {
+    h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
+    h.buildUserParts.mockRejectedValue(new Error(REFUSAL))
+    const { deps: d } = deps()
+    renderAt('build-X', d)
+    await waitForGateOpen()
+
+    type('what does this say?')
+    fireEvent.keyDown(composer(), { key: 'Enter' })
+
+    const banner = await screen.findByTestId('urgent-banner')
+    expect(banner.textContent).toContain(REFUSAL)
+    // THE MUTANT THIS CATCHES: reject the abort with a bare `Error` again and the generic line
+    // replaces the one above. Asserted as an absence with the presence assertion beside it, so a
+    // banner that never rendered cannot pass this by being empty.
+    expect(banner.textContent).not.toMatch(/try again/i)
+
+    // NOTHING WAS SENT AND NOTHING WAS TAKEN AWAY — the other half of a silent refusal. A resolve
+    // here would have emptied the composer for a message the server never received.
+    expect(h.startTurn).not.toHaveBeenCalled()
+    expect(composer().value).toBe('what does this say?')
+  })
+})

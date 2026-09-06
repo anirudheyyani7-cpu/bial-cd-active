@@ -7,9 +7,22 @@
  * or a second differently-worded copy of the banner, in front of someone asking for an app. Only
  * this class means "say this out loud".
  *
- * `silent` covers the press the surface swallowed because an identical one is already in flight:
- * the citizen did not knowingly make it, so there is nothing to report — but it must still reject,
- * because resolving would empty the composer for a press that sent nothing.
+ * `silent` means "reject, but say nothing", and TWO different situations need it. Both must still
+ * reject, because resolving would empty the composer for a press that sent nothing.
+ *
+ *   1. THE PRESS NOBODY MADE. An identical send is already in flight and this one was swallowed;
+ *      the citizen did not knowingly make it, so there is nothing to report.
+ *   2. SOMEONE ELSE ALREADY ANSWERED. The surface has put the real explanation on screen — the
+ *      server's own sentence in the urgent banner, or a dialog in front of the composer — and a
+ *      second, weaker line underneath would be the composer talking over it. `RailComposer` uses
+ *      this for its guardrail modal and its held-workspace dialog, and `handleSubmit`'s abort arm
+ *      for the banner `fireRelayTurn` has already written.
+ *
+ * CASE 2 IS WHY THE FLAG IS NOT OPTIONAL DECORATION. The abort arm once rejected with a plain
+ * `Error`, on the stated reasoning that its message was "empty of copy" — but a non-`SendRefusal`
+ * is not silence here, it is the GENERIC sentence, and that overwrote the specific one the surface
+ * had just written. A citizen who attached an over-long PDF was told "try again" instead of the
+ * page limit, and trying again could never work.
  *
  * IT LIVES IN ITS OWN MODULE so that `ComposerBox` can test for it with `instanceof`. `Composer`
  * imports `ComposerBox`, so a class exported from `Composer` is not reachable from inside the box

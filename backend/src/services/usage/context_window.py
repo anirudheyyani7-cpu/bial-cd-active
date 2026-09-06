@@ -20,9 +20,11 @@ WHAT IT COUNTS, and where it is deliberately imprecise:
 
 * Every string reachable from the messages, at four characters to the token — the same ratio
   the retired client-side guardrail used, so the browser and the server describe one thing.
-* A `BinaryContent` at a flat nominal rather than its byte length. An image is worth roughly
-  a thousand tokens however many megabytes it is; charging base64 length would read a 5 MB
-  photo as 1.7 MILLION tokens and refuse every conversation that contained one.
+* A `BinaryContent` at a flat nominal rather than its byte length — one nominal for an image
+  and a much larger one for a PDF. Neither cost tracks byte length: an image is worth roughly
+  a thousand tokens however many megabytes it is, and a document is worth what its PAGES cost.
+  Charging base64 length would read a 5 MB photo as 1.7 MILLION tokens and refuse every
+  conversation that contained one.
 * A structural walk (list → dict → dataclass), not a per-part-type table. The part union is
   pydantic-ai's and it grows; a table would silently stop counting whatever it did not know
   about, which is the failure mode that hurts — under-counting is what lets a conversation
@@ -56,23 +58,49 @@ CHARS_PER_TOKEN: Final = 4
 `useClaudeAPI.ts` guardrail used against the same 200k window, kept so the browser's warning
 and the server's refusal are two readings of one scale rather than two different scales."""
 
+PDF_MEDIA_TYPE: Final = "application/pdf"
+"""The one media type charged as a document. Spelled out here rather than imported from
+`api/v1/conversations/_shared.py`, which holds the same string: a service does not reach up
+into the API layer for a constant. `_shared.resolve_binaries` admits exactly `image/*` and this,
+so the two arms below are the whole of what can reach the model as a binary."""
+
 NOMINAL_BINARY_TOKENS: Final = 1_600
-"""What one attached image or PDF is charged, regardless of its size.
+"""What one attached IMAGE is charged, regardless of its size.
 
-For an IMAGE this is honest. Vision content costs roughly a thousand tokens per image and does
-not scale with the file's byte length, so a flat charge is the right shape — byte length is the
-WRONG number by orders of magnitude: base64 of a 5 MB photo is ~6.7 M characters, which at four
-characters to the token would read as 1.7 M tokens and refuse the conversation outright.
+Vision content costs roughly a thousand tokens per image and does not scale with the file's byte
+length, so a flat charge is the right shape — byte length is the WRONG number by orders of
+magnitude: base64 of a 5 MB photo is ~6.7 M characters, which at four characters to the token
+would read as 1.7 M tokens and refuse the conversation outright.
 
-★ FOR A MULTI-PAGE PDF IT IS A KNOWN UNDER-COUNT, AND THE LARGEST ONE HERE. A document is read
-page by page, so a 40-page PDF costs roughly forty times what this charges it, and
-`_shared.resolve_binaries` admits `application/pdf` beside `image/*`. A citizen who attaches
-documents can therefore carry a conversation past the hard limit while this measures it as
-comfortably inside — which is the opaque provider-side failure the guardrail exists to replace,
-not a conservative estimate. It is recorded rather than fixed because the honest fix needs a
-page count the platform does not store yet (persisted at upload, as the deck branch already
-does for its own reasons); charging by byte length instead would resurrect the 1.7 M-token
-absurdity above. Until then: prose conversations are guarded, document-heavy ones are not."""
+IT NO LONGER COVERS PDFs, and that split is the fix for #194 rather than a tidy-up. This
+constant used to be charged for both; see `NOMINAL_PDF_TOKENS` for what that cost."""
+
+NOMINAL_PDF_TOKENS: Final = 75_000
+"""What one attached PDF is charged, regardless of its size.
+
+★ THE NUMBER THIS REPLACED WAS 1,600, AND IT WAS THE LARGEST ERROR IN THIS MODULE. A document
+is read page by page, so its cost scales with pages and not with bytes. A measured 61-page
+upload occupied 153,342 tokens — 77% of the 200,000 hard limit — while this module recorded it
+as 1,600, or 0.8% (#194). A citizen attaching documents could therefore carry a conversation
+straight past the wall while the guardrail reported it comfortably inside, which is the opaque
+provider-side failure the guardrail exists to REPLACE, not a conservative estimate.
+
+IT IS FLAT, NOT PER-PAGE, BY DECISION (D4). Per-page charging would need a page count persisted
+on the attachment row, which the platform does not store; more to the point, the owner asked for
+one number. So the number is sized to the LONGEST DOCUMENT THE PLATFORM WILL ADMIT: the upload
+route refuses anything over `attachments/router.MAX_PDF_PAGES` (30) pages, and a page measured
+~2,514 tokens. A flat charge sized to the cap cannot under-count an admitted file, which is the
+only direction that hurts — under-counting is what lets an over-long conversation past the guard.
+
+THE TWO NUMBERS ARE ONE DECISION. Raising the page cap without raising this re-opens the hole
+exactly; raising this without raising the cap merely refuses conversations that would have fit.
+`test_context_window.py` pins the relationship so neither can move alone.
+
+WHAT IT COSTS, SAID PLAINLY: with the 8,000-token system-prompt reserve, one document plus a
+real build conversation fits inside the 150,000 soft limit, two documents trip the warning
+honestly, and three cannot fit the 200,000 ceiling at all — which is why the send route refuses
+a third by COUNT rather than letting it arrive as a token-limit refusal that would tell the
+citizen to start a new chat that refuses the identical message."""
 
 
 class ContextWindowExceededError(Exception):
@@ -93,8 +121,16 @@ def _tokens_in(node: Any) -> int:
 
     `BinaryContent` is tested BEFORE the generic dataclass arm because it IS a dataclass, and
     descending into it would charge its `data` field by byte length — the exact over-count the
-    flat nominal exists to avoid."""
+    flat nominal exists to avoid.
+
+    THE BINARY ARM IS SPLIT BY MEDIA TYPE, and reads the type off the content rather than
+    guessing from the bytes: a document costs orders of magnitude more than an image and the
+    two must not share a number (#194). Anything that is neither — nothing today, since
+    `resolve_binaries` admits only these two — falls to the image nominal, the smaller and more
+    common shape."""
     if isinstance(node, BinaryContent):
+        if node.media_type == PDF_MEDIA_TYPE:
+            return NOMINAL_PDF_TOKENS
         return NOMINAL_BINARY_TOKENS
     if isinstance(node, str):
         return -(-len(node) // CHARS_PER_TOKEN)  # ceil, without importing math for one call

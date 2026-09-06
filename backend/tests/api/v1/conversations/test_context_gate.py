@@ -12,6 +12,7 @@ satisfy half of them, which is why the first one exists.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import uuid
@@ -49,6 +50,7 @@ from src.services.usage.limits import (
 )
 from tests.api.v1.conversations.conftest import _headers
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.pdfs import pdf_with_pages
 
 # The turn-driving fixtures live in `conftest.py` — four files needed the same four, and
 # two of them were the 3rd and 4th copy. Named here rather than autouse there, because the
@@ -418,3 +420,165 @@ async def test_an_accepted_turn_still_resolves_a_pending_card(
     await _settle(_fresh_engine, conversation.id)
 
     assert await find_pending(db_session, user_id=user.id, conversation_id=conversation.id) is None
+
+
+# =============================================================================
+# Documents (U6 / D4) — what a PDF costs, at the route that spends it
+# =============================================================================
+#
+# The upload cap next door (`test_attachments.py`) refuses a document longer than 30 pages; the
+# window charge (`test_context_window.py`) prices an admitted one at what its pages cost. Both
+# are unit-level. What only shows up HERE is what those two numbers do to a real send: the third
+# document on one message, and a conversation that already holds two.
+
+
+@pytest.fixture
+def shared_storage(fake_storage, monkeypatch):
+    """ONE store for both consumers of it. The upload route takes its store by injected
+    dependency; the send route's rehydrator reaches the accessor-level `get_storage()`. The
+    directory fixture binds only the first, so a test that uploads and then SENDS the upload
+    needs the accessor bound to the same object or the send answers 503 and proves nothing."""
+    from src.services.storage import accessor
+
+    monkeypatch.setattr(accessor, "_backend_singleton", fake_storage)
+    return fake_storage
+
+
+async def _upload(client, user, attachment_id: str, media_type: str, data: bytes) -> None:
+    resp = await client.post(
+        "/v1/attachments",
+        headers=_headers(user),
+        json={
+            "attachmentId": attachment_id,
+            "mediaType": media_type,
+            "base64": base64.b64encode(data).decode(),
+            "name": f"{attachment_id}.bin",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def _send_with(client, user, conversation_id: uuid.UUID, ids: list[str], text="here"):
+    return await client.post(
+        f"/v1/conversations/{conversation_id}/turns",
+        headers=_headers(user),
+        json={"message": {"text": text, "attachmentTexts": [], "attachmentIds": ids}},
+    )
+
+
+async def test_three_documents_on_one_message_are_refused_by_count_not_by_tokens(
+    client, db_session, shared_storage
+) -> None:
+    """★ THE REFUSAL THAT HAD TO BE ITS OWN SENTENCE.
+
+    Three documents is 3 x 75,000 plus the 8,000 reserve — 233,000 against a 200,000 ceiling —
+    so the token gate would refuse it anyway, and would refuse it with `CHAT_TOO_LONG_TEXT`.
+    That copy says "start a new chat", which here is WRONG ADVICE: the new chat refuses the
+    identical message, so the citizen is sent round a loop with no way out. `MAX_ATTACHMENT_BLOCKS`
+    meanwhile still advertises eight attachments, so nothing on the way in warned them.
+
+    So the third document is refused by count, before the tokens are counted, with a sentence
+    that names the DOCUMENT limit and an action that works. Delete the count check and this
+    goes red on the copy — the request still fails, but it fails telling the citizen something
+    untrue."""
+    user, _project, conversation = await _a_conversation(db_session)
+    for index in range(3):
+        await _upload(client, user, f"doc_{index}", "application/pdf", pdf_with_pages(2))
+
+    resp = await _send_with(client, user, conversation.id, ["doc_0", "doc_1", "doc_2"])
+
+    assert resp.status_code == 413, resp.text
+    body = resp.json()["error"]
+    assert body["code"] == "too_many_documents"
+    assert body["message"] == (
+        "You can send up to 2 documents in one message. Take one out and send again."
+    )
+    # Emphatically NOT the too-long copy, whose advice does not work here.
+    assert body["code"] != CHAT_TOO_LONG_CODE
+    assert "new chat" not in body["message"]
+    # And nothing was written — the refusal is side-effect-free like every other one above the
+    # persist, so the citizen can fix the message and send it again.
+    rows = await db_session.scalar(
+        select(func.count()).select_from(Message).where(Message.conversation_id == conversation.id)
+    )
+    assert rows == 0
+
+
+async def test_two_documents_on_one_message_are_allowed(
+    client, db_session, shared_storage, _fresh_engine
+) -> None:
+    """The boundary, from the permitted side. A cap that refused two would satisfy the test
+    above and quietly make the product worse than it was."""
+    user, _project, conversation = await _a_conversation(db_session)
+    for index in range(2):
+        await _upload(client, user, f"pair_{index}", "application/pdf", pdf_with_pages(2))
+
+    resp = await _send_with(client, user, conversation.id, ["pair_0", "pair_1"])
+
+    assert resp.status_code == 202, resp.text
+    await _settle(_fresh_engine, conversation.id)
+
+
+async def test_eight_images_still_send_the_document_cap_is_not_an_attachment_cap(
+    client, db_session, shared_storage, _fresh_engine
+) -> None:
+    """`MAX_ATTACHMENT_BLOCKS` is 8 and stays 8. The new limit counts DOCUMENTS, so a message
+    carrying eight screenshots is unaffected — an image is charged 1,600, and eight of them plus
+    the reserve is nowhere near the wall. Count binaries instead of documents and this goes red."""
+    user, _project, conversation = await _a_conversation(db_session)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    for index in range(8):
+        await _upload(client, user, f"shot_{index}", "image/png", png)
+
+    resp = await _send_with(client, user, conversation.id, [f"shot_{index}" for index in range(8)])
+
+    assert resp.status_code == 202, resp.text
+    await _settle(_fresh_engine, conversation.id)
+
+
+async def test_a_conversation_that_already_holds_two_documents_is_refused_at_its_next_message(
+    client, db_session, shared_storage, _fresh_engine
+) -> None:
+    """★ THE DEPLOY-TIME CONSEQUENCE, ASSERTED RATHER THAN DISCOVERED.
+
+    The gate re-counts the WHOLE history on every send and stored `BinaryContent` is in it, so
+    raising the document charge changes the answer for conversations that already exist. A chat
+    holding two documents and a real build conversation is now refused at its next message where
+    yesterday it sailed on — and that is the point, because yesterday it sailed on into an opaque
+    provider-side failure instead.
+
+    The control is the load-bearing half: the SAME conversation shape with two IMAGES in place of
+    the two documents still sends. Nothing else differs, so the only thing that can have changed
+    the answer is what a document is charged. Without it this test passes with the gate wired to
+    refuse anything at all."""
+    user, _project, conversation = await _a_conversation(db_session)
+    for index in range(2):
+        await _upload(client, user, f"hist_{index}", "application/pdf", pdf_with_pages(2))
+    first = await _send_with(
+        client, user, conversation.id, ["hist_0", "hist_1"], text="read these"
+    )
+    assert first.status_code == 202, first.text
+    await _settle(_fresh_engine, conversation.id)
+    # A real build conversation on top of them — well inside the limit on its own.
+    await _stuff_the_conversation(db_session, user, conversation, tokens=60_000)
+
+    refused = await _send(client, user, conversation.id)
+
+    assert refused.status_code == 413, refused.text
+    assert refused.json()["error"]["code"] == CHAT_TOO_LONG_CODE
+    assert refused.json()["error"]["message"] == CHAT_TOO_LONG_TEXT
+
+    # CONTROL: the identical conversation with images instead of documents still sends.
+    other, _p2, other_conv = await _a_conversation(db_session)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    for index in range(2):
+        await _upload(client, other, f"ctrl_{index}", "image/png", png)
+    control_first = await _send_with(
+        client, other, other_conv.id, ["ctrl_0", "ctrl_1"], text="read these"
+    )
+    assert control_first.status_code == 202, control_first.text
+    await _settle(_fresh_engine, other_conv.id)
+    await _stuff_the_conversation(db_session, other, other_conv, tokens=60_000)
+
+    assert (await _send(client, other, other_conv.id)).status_code == 202
+    await _settle(_fresh_engine, other_conv.id)

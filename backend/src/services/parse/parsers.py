@@ -1,8 +1,9 @@
 """Kind dispatch for untrusted-file parsing (R26), run inside the killable process governor.
 
-The live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`), driven
-by `api/v1/attachments/router.py`. The extraction itself lives in `services/extract/office.py`;
-this module's job is to order the bounds around it and map its errors.
+The live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`) and the
+PDF page count (`count_pdf_pages`), all driven by `api/v1/attachments/router.py`. The office
+extraction itself lives in `services/extract/office.py`; this module's job is to order the
+bounds around it and map its errors.
 
 The four bounds (untrusted-file-parsing learning): (1) the decoded-size cap is enforced
 by the caller before parsing (the attachments upload limits — the old per-app parse HTTP
@@ -17,7 +18,8 @@ validators; (3) a row/col range-clamp is applied BEFORE iterating, by `office.py
 
 from __future__ import annotations
 
-from typing import Any
+import io
+from typing import Any, Final
 
 from src.services.extract.office import (
     EXCEL_MEDIA_TYPE,
@@ -43,14 +45,59 @@ def _extract_office_payload(buffer: bytes, media_type: str, filename: str) -> di
     }
 
 
+PDF_UNREADABLE_CODE: Final = "INVALID_PDF"
+"""What a PDF that will not parse is reported as. A 400, not the governor's generic 500
+`PARSE_FAILED`: a malformed upload is the caller's file, not the platform failing."""
+
+
+def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
+    """A real PDF's page count, read by a real PDF reader. Runs INSIDE the governor child.
+
+    ★ THIS IS NOT `extract/deck.py::count_pdf_pages`, AND MUST NOT BECOME IT. That one scans
+    the raw bytes for `/Type /Page` markers, which is documented as reliable for the
+    LibreOffice/Gotenberg output it was written for and silently UNDER-counts any PDF whose
+    page objects live in a compressed object stream — the one failure mode an admission cap
+    cannot have, because under-counting is what admits the document the charge cannot cover.
+    The deck path keeps its scan and its own 100-page limit; the two caps disagreeing is
+    deliberate (D4) and is revisited when decks are enabled.
+
+    `len(reader.pages)` rather than the catalog's `/Count`: the count is walked from the page
+    tree, so a file that merely CLAIMS to be short is counted honestly. pypdf's own traversal
+    limits (depth, entry count) turn a page-tree bomb into an exception here rather than a
+    hang, and everything it can still raise — a truncated file, a broken cross-reference, a
+    recursion limit — is mapped to one 400. `MemoryError` is deliberately re-raised: the
+    governor maps it to its own 413, and swallowing it would report a contained OOM as a
+    malformed file."""
+    # Imported HERE, not at module scope: `spawn` re-imports this module in every governor
+    # child, so a top-level pypdf import would be paid by the office kinds too — and by the
+    # API process at boot, which never counts a page.
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(buffer))
+        pages = len(reader.pages)
+    except MemoryError:
+        raise
+    except Exception as exc:
+        # Broad on purpose: a hostile file reaches pypdf through a dozen call paths and the
+        # library raises whatever the malformation happens to hit (`PdfReadError`, `KeyError`,
+        # `RecursionError`, `struct.error`, `zlib.error`). An allowlist of exception types
+        # here would let one unlisted shape through as the governor's generic 500.
+        raise FileParseError(
+            "The file could not be read as a PDF.", status=400, code=PDF_UNREADABLE_CODE
+        ) from exc
+    return {"pageCount": pages}
+
+
 def parse_dispatch(buffer: bytes, kind: str, filename: str, sheet: str | None) -> dict[str, Any]:
     """Run the bounds then the extract for `kind`. Called INSIDE the killable governor child.
 
-    The `extract_*` kinds are the whole live surface — the chat office→Markdown path, sharing
-    this governor so an untrusted docx/xlsx inflate can never OOM the shared API worker. The
-    `__test_*` kinds are test-only governor seams; the one live caller derives its kind from
-    `office_format_for`, so it can pass neither those nor an unknown one. `sheet` is accepted
-    for the governor's uniform call shape and is unused by the extract kinds."""
+    The `extract_*` and `count_pdf_pages` kinds are the whole live surface — the chat
+    office→Markdown path and the PDF upload page cap — sharing this governor so neither an
+    untrusted docx/xlsx inflate nor a hostile PDF can OOM or stall the shared API worker. The
+    `__test_*` kinds are test-only governor seams; the live callers pass a kind derived from
+    the upload's own media type, so they can pass neither those nor an unknown one. `sheet` is
+    accepted for the governor's uniform call shape and is unused by every live kind."""
     if kind == "__test_sleep":  # governor timeout seam
         import time
 
@@ -70,9 +117,11 @@ def parse_dispatch(buffer: bytes, kind: str, filename: str, sheet: str | None) -
     if kind == "extract_excel":  # chat xlsx → Markdown, zip-bomb-bounded in the governor
         assert_zip_not_bomb(buffer)
         return _extract_office_payload(buffer, EXCEL_MEDIA_TYPE, filename)
+    if kind == "count_pdf_pages":  # PDF upload page cap, time- and memory-bounded in the governor
+        return _count_pdf_pages_payload(buffer)
 
     raise FileParseError(
-        "Supported: Word (.docx) and Excel (.xlsx).",
+        "Supported: Word (.docx), Excel (.xlsx) and PDF.",
         status=415,
         code="UNSUPPORTED_TYPE",
     )

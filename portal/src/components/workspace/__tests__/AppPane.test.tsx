@@ -519,8 +519,17 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
     expect(reduced.length).toBeGreaterThan(0)
 
-    const rule = reduced.match(/\.animate-pane-leave\s*,\s*\.animate-pane-return\s*\{([^}]*)\}/)
-    expect(rule?.[1]).toMatch(/animation:\s*none/)
+    // Each utility is looked up in whatever rule carries it, rather than in a rule matching the
+    // two of them ADJACENT. The old regex demanded `.animate-pane-leave, .animate-pane-return {`
+    // literally, so #210 — which suppressed the same way by adding `.animate-spin`,
+    // `.animate-pulse` and `.animate-bounce` to this very selector list — turned this guard red
+    // while the guarantee it protects was strictly widened. A guard that breaks when the thing it
+    // guards gets stronger is a guard that gets deleted.
+    for (const utility of ['animate-pane-leave', 'animate-pane-return']) {
+      const rule = reduced.match(new RegExp(String.raw`([^{}]*\.${utility}\b[^{}]*)\{([^}]*)\}`))
+      expect(rule, `no rule in the reduce-motion block names .${utility}`).not.toBeNull()
+      expect(rule?.[2]).toMatch(/animation:\s*none/)
+    }
     // LIVENESS: the two utilities the block suppresses are the two the components apply, so the
     // rule cannot go on matching class names nothing renders.
     const column = readFileSync(resolve(process.cwd(), 'src/components/workspace/AppPane.tsx'), 'utf8')

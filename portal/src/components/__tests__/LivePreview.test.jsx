@@ -28,14 +28,14 @@ function fromSandbox(data, source) {
   return new MessageEvent('message', { data, origin: SANDBOX_ORIGIN, source })
 }
 
-describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
+describe('LivePreview — cross-origin sandbox preview frame', () => {
   it('frames the cross-origin previewUrl (not the retired same-origin /preview)', () => {
     const { iframe } = setup()
     expect(iframe).toBeTruthy()
     expect(iframe.getAttribute('src')).toBe(SANDBOX_URL)
   })
 
-  it('uses the C8 sandbox token list — allow-same-origin for the cross-origin next dev app, top-nav/popups withheld', () => {
+  it('uses the sandbox token list — allow-same-origin for the cross-origin next dev app, top-nav/popups withheld', () => {
     const { iframe } = setup()
     const sandbox = iframe.getAttribute('sandbox')
     expect(sandbox).toBe('allow-scripts allow-same-origin allow-forms allow-downloads')
@@ -43,14 +43,14 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
     expect(sandbox).not.toContain('allow-popups') // withheld: no popup-phishing of the portal tab
   })
 
-  it('REJECTS a message from a wrong origin — forwards nothing (C8 §3 origin guard, pinned)', () => {
+  it('REJECTS a message from a wrong origin — forwards nothing (origin guard, pinned)', () => {
     const onFrameMessage = vi.fn()
     setup({ onFrameMessage })
     window.dispatchEvent(new MessageEvent('message', { data: { hello: true }, origin: 'https://evil.example' }))
     expect(onFrameMessage).not.toHaveBeenCalled()
   })
 
-  it('forwards a message from the framed app’s OWN window to the Wave-1 receiver seam', () => {
+  it('forwards a message from the framed app’s OWN window to the receiver seam', () => {
     const onFrameMessage = vi.fn()
     const { iframe } = setup({ onFrameMessage })
     window.dispatchEvent(fromSandbox({ kind: 'client_error' }, iframe.contentWindow))
@@ -119,7 +119,7 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
     expect(onFrameMessage).not.toHaveBeenCalled()
   })
 
-  it('the single-file relay is INERT — no outbound postMessage of code/config/token occurs (ORIG-§3-a)', () => {
+  it('the single-file relay is INERT — no outbound postMessage of code/config/token occurs', () => {
     const { iframe } = setup({ status: 'ready' })
     const post = vi.spyOn(iframe.contentWindow, 'postMessage')
     // A previewReady-style message that USED to round-trip code back must now do nothing. Sent
@@ -130,7 +130,7 @@ describe('LivePreview — cross-origin sandbox preview frame (C8)', () => {
   })
 })
 
-describe('LivePreview — reload semantics (ORIG-§3-f, no HMR-socket leak)', () => {
+describe('LivePreview — reload semantics (no HMR-socket leak)', () => {
   it('a NEW previewUrl (a fresh preview_ready) remounts and reloads the frame', () => {
     const { container, rerender } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
     const first = container.querySelector('iframe')
@@ -153,7 +153,7 @@ describe('LivePreview — reload semantics (ORIG-§3-f, no HMR-socket leak)', ()
   })
 })
 
-describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
+describe('LivePreview — status-driven visuals, all five statuses', () => {
   it('provisioning / building show the loading state (no iframe, no spinner-forever terminal)', () => {
     for (const status of ['provisioning', 'building']) {
       const { container, unmount } = render(<LivePreview previewUrl={null} status={status} />)
@@ -215,7 +215,7 @@ describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
   })
 })
 
-describe('LivePreview — the pardoned preview: completed builds stay framed (#13/R2)', () => {
+describe('LivePreview — the pardoned preview: completed builds stay framed', () => {
   it('ended + completedLive + previewUrl KEEPS the frame with the build-complete chip — not the placeholder', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive />)
     const iframe = container.querySelector('iframe')
@@ -300,7 +300,7 @@ describe('LivePreview — the pardoned preview: completed builds stay framed (#1
   })
 })
 
-describe('LivePreview — relaunch a torn-down preview (#43)', () => {
+describe('LivePreview — relaunch a torn-down preview', () => {
   // INERTNESS GUARD. This used to press "Relaunch preview" on the terminal
   // placeholder; that control moved to `components/workspace/StartAppControl.tsx`, rendered by
   // `AppPane` from the one computed workspace state (exactly ONE control starts the app). The
@@ -362,7 +362,7 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
     }
   })
 
-  it('re-requests the SAME url after a repair turn ends (review #5)', () => {
+  it('re-requests the SAME url after a repair turn ends', () => {
     // The attach arm makes "same container, same url" the common case, so a repair turn ends
     // with previewUrl byte-identical. Keyed on the url alone React kept the same DOM node, the
     // browser never re-requested, and the citizen kept staring at the broken render of an app
@@ -437,7 +437,7 @@ describe('LivePreview — relaunch a torn-down preview (#43)', () => {
 // fourth copy of the same "this is gone, and moved to X" finding would not prove anything the
 // first did not.
 describe('LivePreview — the no-previewUrl/no-status combination (formerly "relaunch from PROJECT state")', () => {
-  it('stays inert across the whole former N7/U6 matrix — hasSavedBuild and relaunchError no longer reach any render here', () => {
+  it('stays inert across the whole former relaunch matrix — hasSavedBuild and relaunchError no longer reach any render here', () => {
     for (const props of [
       { hasSavedBuild: true },
       { hasSavedBuild: false },
@@ -455,7 +455,7 @@ describe('LivePreview — the no-previewUrl/no-status combination (formerly "rel
   })
 })
 
-describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
+describe('LivePreview — the relaunch response matrix', () => {
   // THE `not_found` ARM WENT WITH THE PROP. It was the last of the three `relaunchError` reads to
   // survive that sweep, and it selected a `role="alert"` sentence on three placeholders. Its
   // producer was the session hook's `relaunch()` — unreachable — so the alert could not fire; what
@@ -550,7 +550,7 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
   })
 })
 
-describe('LivePreview — dev-server crash: reconnecting is distinct from building (F8/U5)', () => {
+describe('LivePreview — dev-server crash: reconnecting is distinct from building', () => {
   it('shows a distinct "Reconnecting…" state (NOT the "Building…" loading copy, NOT the live frame)', () => {
     // A dev-process crash after framing: the port is dead, so the pane must not keep framing a
     // now-broken URL, and must not read as "building" (a different, in-progress meaning).
@@ -592,7 +592,7 @@ describe('LivePreview — dev-server crash: reconnecting is distinct from buildi
 
 const FRAME_LOAD_CAP_MS = 20000 // mirrors LivePreview's own cap; the tests step over it deliberately
 
-describe('LivePreview — R104\u2019s stop-clock: `onRevealed` (U4)', () => {
+describe('LivePreview — the stop-clock instant: `onRevealed`', () => {
   it('\u2605 fires when the citizen is actually LOOKING at the app, and not a moment before', () => {
     // The mark has to mean "the app is on screen". A `load` alone does not: it fires for a 500,
     // and it fires under a raised cover. Only `revealed` \u2014 frame loaded AND cover down \u2014 is the
@@ -691,7 +691,7 @@ describe('LivePreview — R104\u2019s stop-clock: `onRevealed` (U4)', () => {
   })
 })
 
-describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3)', () => {
+describe('LivePreview — the frame is revealed on load, never on a timer', () => {
   it('keeps the labelled wait up when previewUrl arrives, and swaps it for the frame on load', () => {
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" />)
     const iframe = container.querySelector('iframe')
@@ -760,7 +760,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
     }
   })
 
-  it('the capped state inherits the R5/N7 discipline: no relaunch offered, and none PROMISED, without a confirmed build', () => {
+  it('the capped state inherits the relaunch discipline: no relaunch offered, and none PROMISED, without a confirmed build', () => {
     // The same trap as before: copy that
     // says "relaunch it" is a claim about a saved build, so it is gated exactly like the button.
     vi.useFakeTimers()
@@ -876,7 +876,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer (U5/R3
   })
 })
 
-describe('LivePreview — the reconnecting state is BOUNDED after a completed build (F8/U5)', () => {
+describe('LivePreview — the reconnecting state is BOUNDED after a completed build', () => {
   // INERTNESS GUARD. The bound itself (never a forever spinner) is untouched and stays
   // asserted; only the button half — this pane's own way to act on the collapse — moved off it.
   it('INERTNESS GUARD: after the cap with no recovery, still collapses to "preview unavailable" (no forever spinner), with no button of its own', () => {
@@ -930,7 +930,7 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
    claiming the work is saved. Named rather than deleted quietly, because a guard that vanishes
    with its markup is how the claim stops being checked. */
 
-describe('LivePreview — the preview only claims a build that exists (R5)', () => {
+describe('LivePreview — the preview only claims a build that exists', () => {
   // The exact bug: a fresh, never-built project
   // opened on the terminal placeholder promised "restore your saved app" and offered a
   // Relaunch that could only 404.
@@ -1047,7 +1047,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
   })
 })
 
-describe('LivePreview — the device width it is told to frame at (#42)', () => {
+describe('LivePreview — the device width it is told to frame at', () => {
   // THE SWITCHER IS NOT IN THIS COMPONENT ANY MORE. It is in the shell's toolbar
   // row, above both columns, so the three `aria-pressed` scenarios that used to live here are in
   // `WorkspaceToolbar.test.tsx` — where the control is. What stays here is the half this
@@ -1082,7 +1082,7 @@ describe('LivePreview — the device width it is told to frame at (#42)', () => 
     }
   })
 
-  it('the card keeps relative + overflow-hidden in every mode — anchors/clips the C8 overlays', () => {
+  it('the card keeps relative + overflow-hidden in every mode — anchors/clips the overlays', () => {
     for (const device of ['Desktop', 'Tablet', 'Mobile']) {
       const { container } = setup({ device })
       expect(deviceCard(container).className).toMatch(/relative/)
@@ -1092,7 +1092,7 @@ describe('LivePreview — the device width it is told to frame at (#42)', () => 
   })
 })
 
-describe('LivePreview — compact ended-state card (#42 F3)', () => {
+describe('LivePreview — compact ended-state card', () => {
   it('renders the terminal state as a small bounded card, not a full-pane block', () => {
     // Under the new hasSavedBuild gating, onRelaunch alone no longer renders the button —
     // pass hasSavedBuild explicitly so this exercises the button-present path.
@@ -1117,7 +1117,7 @@ describe('LivePreview — compact ended-state card (#42 F3)', () => {
   })
 })
 
-describe('LivePreview — compact unavailable-state card (#42 F3)', () => {
+describe('LivePreview — compact unavailable-state card', () => {
   it('renders the bounded reconnect-cap-expired state as a small card, distinct from the ended card', () => {
     vi.useFakeTimers()
     try {
@@ -1209,8 +1209,8 @@ function coverEl(container) {
   )
 }
 
-describe('LivePreview — the cover (R16/R18): the framework error screen is never seen', () => {
-  it('covers the frame when the app fails to compile, and shows the holding state (AE10)', () => {
+describe('LivePreview — the cover: the framework error screen is never seen', () => {
+  it('covers the frame when the app fails to compile, and shows the holding state', () => {
     const { container } = setup({ turnRunning: true,  compileState: 'failed' })
 
     const cover = coverEl(container)
@@ -1225,7 +1225,7 @@ describe('LivePreview — the cover (R16/R18): the framework error screen is nev
     expect(container.textContent).not.toMatch(/unhandled runtime error|module not found|\.tsx/i)
   })
 
-  it('covers an app built before any of this shipped — no version is ever consulted (AE14)', () => {
+  it('covers an app built before any of this shipped — no version is ever consulted', () => {
     // THE FLEET ASSERTION. The cover takes no prop describing the app, its framework version or
     // its image; it is driven purely by a signal about compilation. That is what makes it the
     // only mechanism that reaches the apps already out there, and this test fails the moment
@@ -1450,7 +1450,7 @@ function loadTheFrame(container) {
   })
 }
 
-describe('LivePreview — the holding state stops when the turn does (U7/R13)', () => {
+describe('LivePreview — the holding state stops when the turn does', () => {
   it('says the app is not running once no turn is in flight, and stops claiming progress', () => {
     // THE FAILURE THIS CLOSES. "Putting the latest change together…" is true for exactly as long
     // as a turn is running. Left up after one ends it becomes a progress state that never
@@ -1537,7 +1537,7 @@ describe('LivePreview — the holding state stops when the turn does (U7/R13)', 
   })
 })
 
-describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
+describe('LivePreview — the reveal is earned twice over', () => {
   it('reveals when the verdict passes AND the frame loads', () => {
     const { container } = setup({ compileState: 'clean' })
     expect(deviceCard(container).className).toMatch(/opacity-0/)
@@ -1566,7 +1566,7 @@ describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
     expect(deviceCard(container).className).toMatch(/opacity-0/)
   })
 
-  it('RETRACTS a reveal when the verdict flips to failed (R4), and the cover explains', () => {
+  it('RETRACTS a reveal when the verdict flips to failed, and the cover explains', () => {
     const { container, rerender } = setup({ compileState: 'clean' })
     loadTheFrame(container)
     expect(deviceCard(container).className).toMatch(/opacity-100/)
@@ -1579,7 +1579,7 @@ describe('LivePreview — the reveal is earned twice over (U10/R11)', () => {
     expect(coverEl(container).textContent).toMatch(HOLDING)
   })
 
-  it('does NOT retract a reveal on an unanswerable verdict (AE8)', () => {
+  it('does NOT retract a reveal on an unanswerable verdict', () => {
     // `unknown` HOLDS whatever is showing rather than moving it — the same fail-closed rule that
     // stops an absent signal uncovering a broken app stops it hiding a working one.
     const { container, rerender } = setup({ compileState: 'clean' })

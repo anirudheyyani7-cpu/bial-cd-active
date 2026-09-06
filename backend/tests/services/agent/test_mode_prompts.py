@@ -407,7 +407,7 @@ def test_plan_segment_is_citizen_facing_not_a_developer_spec() -> None:
     # everyday words" is NO LONGER asserted here on purpose — it moved to the shared audience
     # block, and a Plan chat inherits it through `_base` rather than restating it. Asserting it
     # against the segment again would recreate a second copy of the same text;
-    # `test_a_plan_chat_inherits_the_contract_and_only_the_length_differs` holds that ground on
+    # `test_both_kinds_inherit_the_one_audience_contract` holds that ground on
     # the composed prompt, where the model actually reads it.
     assert "plain, everyday words" in compose_kind_prompt(ChatKind.PLAN, _CONTEXT).lower()
     # THE MANDATED SHAPE IS GONE, and its absence is asserted rather than merely unmentioned.

@@ -235,7 +235,7 @@ describe('one author for every pane sentence', () => {
     expect(screen.getByTestId('app-pane-empty').textContent?.length).toBeGreaterThan(10)
   })
 
-  it('never says what the app is NOT (R-16)', () => {
+  it('never says what the app is NOT', () => {
     for (const preview of [
       reading({ state: 'asleep', restorable: true }),
       reading({ state: 'never_built', restorable: false }),
@@ -325,7 +325,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
   })
 })
 
-describe('the column a plan chat does not get (plan 002, U6)', () => {
+describe('the column a plan chat does not get', () => {
   // THE DEFECT THIS BLOCK IS WRITTEN AGAINST: `AppPane` read the report and the address but
   // never the VISIBILITY, so its `flex-1` section claimed half the window on a plan chat —
   // filled with the "Your app is saved / Launch Application" card, offering to start an app the
@@ -392,7 +392,7 @@ describe('the column a plan chat does not get (plan 002, U6)', () => {
   })
 })
 
-describe('the movement between the two layouts (plan 002, U6)', () => {
+describe('the movement between the two layouts', () => {
   const paneClasses = (container: HTMLElement) =>
     (container.querySelector('[data-testid="app-pane-region"]')?.className ?? '').split(/\s+/)
 

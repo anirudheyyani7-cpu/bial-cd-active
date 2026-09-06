@@ -78,7 +78,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup())
 
-describe('AE1 — one deliberate press, one request', () => {
+describe('one deliberate press, one request', () => {
   it('renders the client-approved label and fires nothing until it is pressed', () => {
     renderControl(START, reportSpy())
 
@@ -117,7 +117,7 @@ describe('AE1 — one deliberate press, one request', () => {
   })
 })
 
-describe('R4b — a start that did not end in a running app says which way it ended', () => {
+describe('a start that did not end in a running app says which way it ended', () => {
   it('reads `ready: false` as "started but not painted", never as dead', async () => {
     api.relaunchPreview.mockResolvedValue({ appId: 'a1', previewUrl: 'https://app/', status: 'provisioning', restoredFromFailedBuild: false, ready: false })
     const report = reportSpy()
@@ -152,7 +152,7 @@ describe('R4b — a start that did not end in a running app says which way it en
     await waitFor(() => expect(report.onStartOutcome).toHaveBeenCalledWith({ kind: 'timed-out' }))
   })
 
-  it('AE3: a start whose readiness cannot be read issues no second call of its own', async () => {
+  it('a start whose readiness cannot be read issues no second call of its own', async () => {
     // Asserting what the COMPONENT does. Deliberately not written as "no stop, release or restore
     // call was made" — see this file's docblock for why that assertion would prove nothing.
     api.relaunchPreview.mockRejectedValue(new ApiError('could not read', 503))

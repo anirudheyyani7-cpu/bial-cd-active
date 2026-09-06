@@ -224,8 +224,8 @@ describe('buildLock — no BroadcastChannel', () => {
   })
 })
 
-describe('buildLock — advisory only (KTD-7)', () => {
-  it('blockedBy stays the fast cross-tab pre-check, but the module enforces nothing — C3 start’s 409 is authoritative', () => {
+describe('buildLock — advisory only', () => {
+  it('blockedBy stays the fast cross-tab pre-check, but the module enforces nothing — the server start’s 409 is authoritative', () => {
     const lock = createBuildLock({ channel: null })
     // A local claim gives the instant "another chat is building" signal (the toast pre-check)...
     expect(lock.acquire('p1', 'chat-A')).toBeNull()

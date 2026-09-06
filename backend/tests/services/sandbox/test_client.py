@@ -85,7 +85,7 @@ async def test_exec_returns_result_and_nonzero_exit_is_not_an_error() -> None:
     await client.aclose()
 
 
-async def test_files_str_replace_serializes_to_flat_c1_body() -> None:
+async def test_files_str_replace_serializes_to_a_flat_body() -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -138,7 +138,7 @@ async def test_dev_start_returns_pid_and_is_idempotent_on_409() -> None:
         (["pid", 4321], "not even an object"),
     ],
 )
-async def test_a_malformed_dev_start_body_stays_inside_the_c2_taxonomy(
+async def test_a_malformed_dev_start_body_raises_sandbox_error_not_a_vendor_exception(
     body: object, shape: str
 ) -> None:
     """★ A 200 whose body is not the `{"pid": N}` shape must be a `SandboxError`, never a raw

@@ -60,7 +60,7 @@ const slot = () => screen.getByTestId('conversation-slot')
 
 afterEach(() => cleanup())
 
-describe('ConversationSlot — one body, whatever the kind (R72)', () => {
+describe('ConversationSlot — one body, whatever the kind', () => {
   // FLIPPED, NOT DELETED. These three cases assert that the per-kind branch is gone — the
   // mechanical form of that requirement's surface half — which is worth more than deleting them would be.
   it('mounts the same body for both kinds', () => {
@@ -72,7 +72,7 @@ describe('ConversationSlot — one body, whatever the kind (R72)', () => {
     expect(screen.getByTestId('conversation-body')).toBeTruthy()
   })
 
-  it('hands the resolved conversation through, INCLUDING its kind (Plan F, U6)', () => {
+  it('hands the resolved conversation through, INCLUDING its kind', () => {
     // INVERTED DELIBERATELY — the surface cannot branch on what it is never given. These
     // requirements need exactly one thing from it: a Plan chat has no app pane, a Build chat
     // shows it, and only the route knows which this is.

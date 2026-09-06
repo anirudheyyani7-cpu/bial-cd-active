@@ -59,7 +59,7 @@ function renderRail(over: { save?: SaveState | null } = {}) {
 
 afterEach(() => cleanup())
 
-describe("R6 — what the rail carries at rest", () => {
+describe("what the rail carries at rest", () => {
   it('carries the composer with its kind picker, the app status, and the description', () => {
     renderRail()
 
@@ -83,7 +83,7 @@ describe("R6 — what the rail carries at rest", () => {
     expect(block.textContent).not.toMatch(/your app is saved/i)
   })
 
-  it('★ carries NO start control — R3 says exactly one, and it is the pane\'s', () => {
+  it('★ carries NO start control — exactly one exists, and it is the pane\'s', () => {
     // The map OFFERS the start action here; the rail deliberately does not render it. A second
     // Start button on the same screen satisfies "exactly one control starts it" with two, and both
     // would race the same idempotent endpoint.

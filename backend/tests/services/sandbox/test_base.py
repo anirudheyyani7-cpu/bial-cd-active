@@ -56,11 +56,11 @@ def test_client_is_abstract_and_cannot_be_instantiated() -> None:
         cls()
 
 
-def test_abstractmethod_set_equals_the_c2_contract() -> None:
+def test_abstractmethod_set_equals_the_pinned_contract() -> None:
     assert set(SandboxClient.__abstractmethods__) == _C2_METHODS
 
 
-def test_handle_has_the_five_c2_fields_with_correct_types() -> None:
+def test_handle_has_the_five_expected_fields_with_correct_types() -> None:
     handle = SandboxHandle(
         fqdn="app-xyz.westeurope.azurecontainerapps.io",
         token="tok",
@@ -85,7 +85,7 @@ def test_handle_is_frozen() -> None:
         obj.fqdn = "other"
 
 
-def test_result_value_types_carry_the_c2_fields() -> None:
+def test_result_value_types_carry_the_expected_fields() -> None:
     assert {f.name for f in dataclasses.fields(ExecResult)} == {"stdout", "stderr", "exit"}
     assert {f.name for f in dataclasses.fields(DevStatus)} == {
         "running",

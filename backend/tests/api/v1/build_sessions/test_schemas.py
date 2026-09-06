@@ -45,7 +45,7 @@ _NOW = datetime(2026, 7, 13, 12, 0, 0, tzinfo=UTC)
 # --- BuildSessionStatus StrEnum ------------------------------------------------
 
 
-def test_status_enum_has_exactly_the_five_c3_members() -> None:
+def test_status_enum_has_exactly_the_five_members() -> None:
     assert {s.value for s in BuildSessionStatus} == {
         "provisioning",
         "building",
@@ -69,7 +69,7 @@ def test_status_enum_rejects_unknown_value() -> None:
 # --- the frozen lock TTL + cadence constants ----------------------------------
 
 
-def test_cadence_constants_are_the_frozen_c3_values() -> None:
+def test_cadence_constants_are_the_frozen_values() -> None:
     assert LOCK_TTL_SECONDS == 900
     assert LOCK_RENEW_CADENCE_SECONDS == 300
     assert HEARTBEAT_CADENCE_SECONDS == 30
@@ -150,7 +150,7 @@ _ENVELOPE: TypeAdapter[ProgressEnvelope] = TypeAdapter(ProgressEnvelope)
 _C7_TYPES = {"step", "error", "preview_ready", "escalation", "quota_exceeded", "ended"}
 
 
-def test_envelope_union_is_the_six_c7_members_plus_the_reconnecting_signal() -> None:
+def test_envelope_union_is_the_six_members_plus_the_reconnecting_signal() -> None:
     # `ProgressEnvelope` is `Annotated[Union[...], Field(discriminator="type")]`, so the union
     # itself is `get_args(...)[0]` — walking the annotation directly finds only the Annotated.
     union = get_args(ProgressEnvelope)[0]
@@ -277,7 +277,7 @@ def test_envelope_rejects_mismatched_payload_for_type() -> None:
         )
 
 
-def test_error_source_has_exactly_the_four_c7_members() -> None:
+def test_error_source_has_exactly_the_four_members() -> None:
     assert {s.value for s in ErrorSource} == {"tsc", "next_build", "server", "client"}
 
 

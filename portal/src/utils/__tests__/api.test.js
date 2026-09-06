@@ -166,7 +166,7 @@ describe('authFetch — the suspension gate covers the post-refresh retry too', 
 // looked healthy only because the observed recovery was a GET, which carries no token at all. This
 // guard must land together with the turn-transport routing itself: routing the six turn calls
 // through a wrapper with this bug would have converted a dead transport into a 403ing one.
-describe('authFetch — the retry carries the POST-refresh CSRF token (N11)', () => {
+describe('authFetch — the retry carries the POST-refresh CSRF token', () => {
   const res401 = () => ({ ok: false, status: 401, json: async () => ({ detail: 'Not authenticated' }), clone() { return this } })
   const setCsrf = (value) => {
     document.cookie = `csrf=${value}`
@@ -218,7 +218,7 @@ describe('authFetch — the retry carries the POST-refresh CSRF token (N11)', ()
 // the release-blocking defect that gated the whole unified-chat flow, is exactly a missing header
 // here. getCsrfToken() reads the JS-readable `csrf` cookie, so we drive it through jsdom's
 // document.cookie.
-describe('authFetch — CSRF double-submit on mutating methods (F1 regression guard)', () => {
+describe('authFetch — CSRF double-submit on mutating methods (regression guard)', () => {
   const setCsrf = (value) => {
     document.cookie = `csrf=${value}`
   }

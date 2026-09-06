@@ -371,7 +371,7 @@ describe('the review pre-fill', () => {
     expect(version.textContent).toMatch(/saved/i)
   })
 
-  it('re-opening for an unchanged version renders the stored answers and never polls (AE4)', async () => {
+  it('re-opening for an unchanged version renders the stored answers and never polls', async () => {
     // The server answers the ensure-POST with the stored COMPLETE row — settled, so the
     // dialog has nothing to poll and issues no GET. One ask per open, no run implied.
     ensureReview.mockResolvedValue(COMPLETE_ALL_NO)
@@ -414,7 +414,7 @@ describe('the review pre-fill', () => {
     expect(confirmButton().disabled).toBe(false)
   })
 
-  it('renders a leaked-credential reason verbatim — no file name, no value, no markdown mangling (AE1)', async () => {
+  it('renders a leaked-credential reason verbatim — no file name, no value, no markdown mangling', async () => {
     // Server-shaped reason: the backend strips locations and values before this body is
     // built. The render path's obligation is to pass it through VERBATIM in a
     // whitespace-preserving plain element — the shared markdown renderer would collapse
@@ -739,7 +739,7 @@ describe('the failure buckets', () => {
     expect(screen.getByTestId('dc-review-status').textContent).toMatch(/couldn't be read/i)
   })
 
-  it('an app with nothing saved says so and offers no questions (R21)', async () => {
+  it('an app with nothing saved says so and offers no questions', async () => {
     ensureReview.mockResolvedValue(NOTHING_SAVED)
     await renderModal()
 

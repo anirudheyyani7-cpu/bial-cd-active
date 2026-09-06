@@ -51,7 +51,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup())
 
-describe('AE33 — an in-place exit with unsaved work warns before anything is discarded', () => {
+describe('an in-place exit with unsaved work warns before anything is discarded', () => {
   it('intercepts the navigation and says what is at stake', () => {
     const onLeave = vi.fn()
     render(<Harness saveDirty={true} workspaceIsAlive onLeave={onLeave} />)
@@ -73,7 +73,7 @@ describe('AE33 — an in-place exit with unsaved work warns before anything is d
   })
 })
 
-describe('★ AE35 / R62 — the tri-state, and the fourth case', () => {
+describe('★ the tri-state, and the fourth case', () => {
   it('warns on `null` WHILE ALIVE, and says the platform could not check', () => {
     const onLeave = vi.fn()
     render(<Harness saveDirty={null} workspaceIsAlive onLeave={onLeave} />)

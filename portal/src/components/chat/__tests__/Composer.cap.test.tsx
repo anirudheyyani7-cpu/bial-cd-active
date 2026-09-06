@@ -71,7 +71,7 @@ describe('nothing is ever cut', () => {
   })
 })
 
-describe('R43 — the counter is silent until it is useful, and then exact', () => {
+describe('the counter is silent until it is useful, and then exact', () => {
   it('shows nothing on an ordinary message', () => {
     draw()
     type('add a column for the gate number')

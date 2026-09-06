@@ -98,7 +98,7 @@ describe('capState — nothing is ever cut', () => {
   })
 })
 
-describe('the gap to the server is deliberate and wide (R42a)', () => {
+describe('the gap to the server is deliberate and wide', () => {
   it('stops six times below the server refusal, so the two never disagree in front of a citizen', () => {
     // The server REFUSES (does not trim) at 64,000 with a 422 and nothing stored. Six times the
     // headroom means a message that passes here cannot plausibly be refused there. Pinning the

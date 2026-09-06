@@ -70,7 +70,7 @@ export default function Page() {
 """
 
 
-def test_after_write_without_a_claim_is_the_documented_u11_gap() -> None:
+def test_a_write_with_no_refetch_and_no_liveness_claim_is_not_flagged() -> None:
     """U11 ACCEPTED BOUNDARY (not a bug): the hoisted AFTER A WRITE prompt rule requires EVERY app
     to refetch after a mutation so the user sees their own change. This detector cannot enforce
     that — it is claim-gated by `_CLAIM_RE` and returns early when no UI file makes a

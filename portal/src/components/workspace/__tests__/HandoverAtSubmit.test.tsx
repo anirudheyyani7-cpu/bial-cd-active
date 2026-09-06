@@ -407,7 +407,7 @@ describe('transferring', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('★ carries the FILES across the hand-over too, not just the words (plan 002, U5)', async () => {
+  it('★ carries the FILES across the hand-over too, not just the words', async () => {
     // This test's claim is that "a refused send never loses a message, and a hand-over never eats
     // an attachment". The refused half was pinned; the files were not — and they are the half most
     // easily lost, because they live only as decoded bytes in a composer the hand-over is about to
@@ -445,7 +445,7 @@ describe('transferring', () => {
     expect(screen.getByTestId('carried-files').textContent).toContain('visitors.csv')
   })
 
-  it('★ a reload part-way through the transfer strands neither a chat nor a message (plan 002, U9)', async () => {
+  it('★ a reload part-way through the transfer strands neither a chat nor a message', async () => {
     // The transfer spans a stop that can run for over a minute, and a citizen can reload in the
     // middle of it. The dialog is in-memory and goes with the tab; what must NOT happen is a chat
     // opening without anybody asking, or the typed message disappearing with the dialog.

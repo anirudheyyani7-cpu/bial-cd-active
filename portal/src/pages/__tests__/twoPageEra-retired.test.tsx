@@ -89,7 +89,7 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out
 }
 
-describe('the deleted modules are gone and nothing reaches for them (L8)', () => {
+describe('the deleted modules are gone and nothing reaches for them', () => {
   it('none of the six files exists', () => {
     for (const rel of DELETED) {
       expect(existsSync(path.join(SRC_ROOT, rel)), `${rel} still exists`).toBe(false)
@@ -118,7 +118,7 @@ describe('the deleted modules are gone and nothing reaches for them (L8)', () =>
     expect(offenders).toEqual([])
   })
 
-  it('no `kind ===` comparison survives under pages/ — R72, mechanically', () => {
+  it('no `kind ===` comparison survives under pages/, checked mechanically', () => {
     // ChatRoute still RESOLVES a kind and hands it to the slot; what has stopped is anything
     // branching on it. The slot's own file is checked too, because that is where the branch this
     // unit deleted actually lived.

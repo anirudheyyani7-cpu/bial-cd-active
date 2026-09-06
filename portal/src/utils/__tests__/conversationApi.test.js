@@ -54,7 +54,7 @@ describe('listProjectConversations', () => {
 })
 
 describe('getConversation', () => {
-  it('hydrates header + PROJECTION into the in-memory message shape (U7)', async () => {
+  it('hydrates header + PROJECTION into the in-memory message shape', async () => {
     // `mode` is gone from the wire doc entirely — ConversationHeader lost the field, and the
     // reload projection no longer carries a per-item mode either. `kind` is the whole of what
     // a chat is now, fixed at creation. No assertion below reads `.mode`; that IS the proof.
@@ -108,7 +108,7 @@ describe('messagesFromProjection', () => {
       },
     ])
   })
-  it('maps a plan_options item to a card part carrying the NARROWED item (U13) — mode/reason do not ride along', () => {
+  it('maps a plan_options item to a card part carrying the NARROWED item — mode/reason do not ride along', () => {
     // The stored item is fed through toPlanOptionsItem, same as the live path (turnStreamApi.ts)
     // — not forwarded verbatim. `mode` and `reason` are given here as an old stored row could
     // still carry them, and neither reaches the rendered part: PlanOptionsItem dropped `reason`
@@ -123,7 +123,7 @@ describe('messagesFromProjection', () => {
       },
     ])
   })
-  it('maps visible steps and the in-progress anchor; hidden (read) steps stay out (U15)', () => {
+  it('maps visible steps and the in-progress anchor; hidden (read) steps stay out', () => {
     const visible = { type: 'step', seq: 1, tool: 'write_file', label: 'Updated x', state: 'ok', hidden: false }
     expect(
       messagesFromProjection([
@@ -149,7 +149,7 @@ describe('messagesFromProjection', () => {
     ])
   })
 
-  it('drops a malformed plan_options item (no toolCallId) instead of rendering a dead card (PR #93 review finding 9)', () => {
+  it('drops a malformed plan_options item (no toolCallId) instead of rendering a dead card', () => {
     // The concrete "drop" case toPlanOptionsItem defines: a card without a toolCallId is
     // an unclickable ghost, so it's dropped rather than rendered — same as the live path
     // (turnStreamApi.ts's 'plan_options' case returns null for the same input, and its
@@ -158,7 +158,7 @@ describe('messagesFromProjection', () => {
     expect(messagesFromProjection([malformed])).toEqual([])
   })
 
-  it('drops a malformed step item the same way (parity with the live path, PR #93 review finding 9)', () => {
+  it('drops a malformed step item the same way (parity with the live path)', () => {
     // toStepItem only returns null for a non-record value, which a RawProjectionItem
     // can't be — so this can't fire through messagesFromProjection today. Pinned anyway
     // for parity with the plan_options case above and with the live path's own guard.
@@ -166,7 +166,7 @@ describe('messagesFromProjection', () => {
   })
 })
 
-describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () => {
+describe('messagesFromProjection — the loud fallback arm', () => {
   // Until this arm existed the if/else-if chain simply ENDED, so a projection item type this
   // client did not recognise vanished with no error, no warning and no trace — on the one path a
   // reloaded transcript is rebuilt from, for both kinds of chat. That is the four-edit change no
@@ -327,7 +327,7 @@ describe('deriveTitle', () => {
 // seq. Keyed `srv_{seq}_{kind}`, those collided. React states plainly that duplicate keys "may
 // cause children to be duplicated and/or omitted", so this was latent message-list corruption
 // rather than a console warning: a re-render could drop a bubble or paint one twice.
-describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)', () => {
+describe('messagesFromProjection — keys are unique per ITEM, not per row', () => {
   const keysOf = (projection) => messagesFromProjection(projection).map((m) => m.id)
   const unique = (keys) => new Set(keys).size === keys.length
 

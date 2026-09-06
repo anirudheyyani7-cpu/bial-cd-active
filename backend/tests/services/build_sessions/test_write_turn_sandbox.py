@@ -4,13 +4,14 @@ A Write turn allocates everything a build allocates (container, one-per-user loc
 entry, heartbeat) and none of what a build runs (the `run_build` task, the `build_started`
 marker, attachments). These tests pin both halves of that sentence.
 
-The starred one is `test_the_write_turn_terminal_actually_saves_the_work`. It is the test this
-whole commit exists for: `write_snapshot` is the only thing that ever pushes the sandbox tree
-to Blob storage, and before Write turns could reach it, the only caller was the build harness's
-`_do_finalize`. A Write
-turn running on the chat engine with no equivalent save point would report success, show a
-correct preview, and lose every edit to the next reaper sweep — silently, with nothing in any
-log to say so.
+The two that carry the save model are
+`test_the_turn_terminal_does_not_save_because_saving_is_the_users_call` and
+`test_the_user_clicking_save_is_what_writes_the_bundle`, and they are why this file exists:
+`write_snapshot` is the only thing that ever pushes the sandbox tree to Blob storage, and
+before Write turns could reach it, the only caller was the build harness's `_do_finalize`. A
+Write turn running on the chat engine with no reachable save point would report success, show
+a correct preview, and lose every edit to the next reaper sweep — silently, with nothing in
+any log to say so.
 
 ON `may_write` — the pairing rule these tests hold themselves to:
 
@@ -583,7 +584,8 @@ async def test_the_next_write_turn_restores_the_tree_the_last_one_saved(
     # ...from the SAVED key: `newest_restore_source` found nothing newer to prefer, because the
     # user's click landed after the turn's recovery copy. This pins the SOURCE SELECTION only —
     # `FakeSandboxClient` hands back the same constant bundle whichever key is read, so it says
-    # nothing about the bytes. The e2e twin (`test_s5`) is what proves the tree itself.
+    # nothing about the bytes. The e2e twin
+    # (`test_s5_a_reaped_container_resumes_the_work_not_the_last_save`) proves the tree itself.
     assert client.restored_from[-1] is None
 
 

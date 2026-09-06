@@ -36,7 +36,7 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-describe('BuilderPage — the passive stored-app preview is inert (U5)', () => {
+describe('BuilderPage — the passive stored-app preview is inert', () => {
   it('landing a saved chat whose project has an app fires NO getAppSource and frames no stored code', async () => {
     h.getBuild.mockResolvedValue({
       messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'build the gate board' }], seq: 0 }],

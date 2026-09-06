@@ -273,7 +273,7 @@ describe('a used card cannot re-fire', () => {
   })
 })
 
-describe('the reload half of the build narrative (U15)', () => {
+describe('the reload half of the build narrative', () => {
   it('renders stored friendly steps and the in-progress truth line from the projection', async () => {
     h.getBuild.mockResolvedValue({
       id: 'thread-1',
@@ -349,7 +349,7 @@ describe('the reload half of the build narrative (U15)', () => {
   })
 })
 
-describe('the U13 header', () => {
+describe('the header ignores a legacy mode field and mounts no mode control', () => {
   it('an inertness guard: no mode control mounts, and a legacy `mode` field on the header is never read', async () => {
     // AN INERTNESS GUARD, not a deleted test (L8). This used to prove the in-composer switcher
     // showed the server-saved `mode` as its trigger label ("Mode: Ask"). The three-valued
@@ -375,7 +375,7 @@ describe('the U13 header', () => {
   })
 })
 
-describe('R8 live clause — a reload MID-TURN re-attaches to the running reply', () => {
+describe('a reload MID-TURN re-attaches to the running reply', () => {
   it('re-subscribes to the running turn and lands its text in the transcript', async () => {
     // `getBuild` already returned `activeTurn` and nothing consumed it: the reload showed a
     // transcript frozen at the user's message while the server kept generating, and the next

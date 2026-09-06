@@ -65,7 +65,7 @@ def test_key_prefix_is_the_environment_scoped_root() -> None:
     assert key_prefix() == f"bial:{_ENV}:sandbox:"
 
 
-def test_legacy_prefix_is_the_pre_r22_root_verbatim() -> None:
+def test_legacy_prefix_matches_the_original_root_verbatim() -> None:
     # If this string drifts the dual-read reaches nothing. `keys.py` records why it is frozen.
     assert LEGACY_KEY_PREFIX == "bial:sandbox:"
     assert legacy_registry_key(_U1) == f"bial:sandbox:registry:{_U1}"
@@ -173,7 +173,7 @@ def test_ns_is_the_choke_point_every_builder_goes_through() -> None:
 # --- the registry hash's own frozen surface -------------------------------------------------
 
 
-def test_registry_fields_are_the_frozen_c5_set() -> None:
+def test_registry_fields_are_the_frozen_set() -> None:
     """A CHOKE POINT, and it earns its keep: adding `stay_writer` turns it red on the full run,
     which is the only reason the contract's field table and this list do not drift apart.
     Update the contract and this literal in the same change, never one of them."""

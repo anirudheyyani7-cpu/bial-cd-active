@@ -62,14 +62,14 @@ describe('it is ABSENT at the bottom, not disabled', () => {
 })
 
 describe('one control, three things to say', () => {
-  it('names the offer above everything else (R29a)', () => {
+  it('names the offer above everything else', () => {
     // When a pending offer has scrolled out of view this is how it stays reachable — which is what
     // lets there be NO second Build button anywhere else on the screen.
     expect(scrollControlLabel(true, true)).toBe('Back to the plan waiting for you')
     expect(scrollControlLabel(false, true)).toBe('Back to the plan waiting for you')
   })
 
-  it('says a reply is arriving while a turn runs (R35a)', () => {
+  it('says a reply is arriving while a turn runs', () => {
     expect(scrollControlLabel(true, false)).toBe('A reply is arriving — jump to it')
   })
 

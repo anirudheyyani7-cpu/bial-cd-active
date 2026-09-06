@@ -171,7 +171,7 @@ function streamResponse(chunks: string[]): Response {
   return new Response(body, { status: 200 })
 }
 
-describe('the compile frame (R17/R18) — an absent signal is never good news', () => {
+describe('the compile frame — an absent signal is never good news', () => {
   const parseOne = (json: string) => parseSseText(`data: ${json}\n\n`).frames
 
   it('parses each of the four states', () => {
@@ -280,7 +280,7 @@ describe('readTurnStream', () => {
     expect(outcome).toBe('stalled')
   })
 
-  it('resolves stalled when the REQUEST itself never answers (#137)', async () => {
+  it('resolves stalled when the REQUEST itself never answers', async () => {
     // THE HUNG-SUBSCRIBE HOLE. The watchdog used to guard only `reader.read()` — i.e. only
     // after response HEADERS arrived. A server that accepted the connection and then never
     // answered left this promise pending FOREVER, and `BuilderPage`'s `endGenerating` sits
@@ -298,7 +298,7 @@ describe('readTurnStream', () => {
     expect(outcome).toBe('stalled')
   })
 
-  it('resolves aborted when the caller aborts during the REQUEST (#137)', async () => {
+  it('resolves aborted when the caller aborts during the REQUEST', async () => {
     // The abort arm of the same window: a navigation away mid-subscribe must settle the
     // promise, not leave the page pinned to a request that will never answer.
     const controller = new AbortController()
@@ -438,7 +438,7 @@ describe('startTurn', () => {
 // call sites keeps a `/api/v1/...` base it doubles to `/v1/v1/...` → 404 for every turn / mode /
 // build / events call. Pin every call site to the
 // un-prefixed `/api/conversations/...` base so the doubling can never come back silently.
-describe('base-path contract (F2 regression guard) — every call hits /api/conversations, never /api/v1', () => {
+describe('base-path contract (regression guard) — every call hits /api/conversations, never /api/v1', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const urlOf = (fetchFn: ReturnType<typeof vi.fn>) => (fetchFn.mock.calls[0] as unknown[])[0] as string
   const expectUnPrefixed = (url: string) => {
@@ -528,7 +528,7 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
 // guard above stays fully green. The header now comes from `authFetch` rather than a second copy in this
 // module; the assertion is unchanged because the observable contract is. The read path
 // (readTurnStream) is a safe GET and carries none.
-describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call rides X-CSRF-Token', () => {
+describe('CSRF double-submit (regression guard) — every MUTATING turn call rides X-CSRF-Token', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const headersOf = (fetchFn: ReturnType<typeof vi.fn>) =>
     ((fetchFn.mock.calls[0] as unknown[])[1] as RequestInit).headers as Record<string, string>
@@ -583,7 +583,7 @@ describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call 
 // quietly refreshed and retried. Routing them through `authFetch` is the whole fix, so pin it at
 // every site: a single call site slipping back to raw `fetch` reintroduces the dead transport for
 // exactly one action, which is precisely how this shipped unnoticed the first time.
-describe('session expiry recovery (N11) — every turn call refreshes once and retries', () => {
+describe('session expiry recovery — every turn call refreshes once and retries', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const unauthorized = () => new Response(JSON.stringify({ detail: 'Not authenticated' }), { status: 401 })
 
@@ -667,7 +667,7 @@ describe('session expiry recovery (N11) — every turn call refreshes once and r
     expect(seen.map((frame) => frame.type)).toEqual(['snapshot', 'text_delta'])
   })
 
-  it('the retried mutating call carries the POST-refresh CSRF token (the KTD-9 pairing)', async () => {
+  it('the retried mutating call carries the POST-refresh CSRF token', async () => {
     // This fix is two halves and they only work together: routing through authFetch without the
     // per-attempt CSRF read would trade every 401 for a 403. Pin the pairing from this side too —
     // api.test.js owns the wrapper-level proof.

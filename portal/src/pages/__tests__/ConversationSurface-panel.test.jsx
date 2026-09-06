@@ -81,7 +81,7 @@ async function renderReady(kind = 'build') {
   return screen.findByTestId('chat-panel')
 }
 
-describe('BuilderPage — the retired #42 chat-panel collapse (now the shell rail\'s, R13)', () => {
+describe('BuilderPage — the retired chat-panel collapse, now the shell rail\'s', () => {
   it('★ the scenarios it hands its retired properties to are really there, under those names', () => {
     // EVERY GUARD IN THIS SUITE IS A POINTER. Each one says "this property still holds, and it is
     // proven over there" — which is only worth anything while "over there" exists.

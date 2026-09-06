@@ -30,7 +30,7 @@ function setup(over = {}) {
   return props
 }
 
-describe('ReclaimWorkspaceDialog (#83)', () => {
+describe('ReclaimWorkspaceDialog — naming, both actions, and a failed save', () => {
   it('names the project holding the workspace, so the user knows what they are choosing about', () => {
     setup()
     expect(screen.getByRole('dialog').textContent).toMatch(/Lost & Found/)
@@ -79,7 +79,7 @@ describe('ReclaimWorkspaceDialog (#83)', () => {
  * trap: a mouse never notices that Tab escapes, that Escape does nothing, or that focus was
  * never taken in the first place. These drive the dialog the way a keyboard user does.
  */
-describe('ReclaimWorkspaceDialog — focus and keyboard (#83 review, blocker 3)', () => {
+describe('ReclaimWorkspaceDialog — focus and keyboard', () => {
   const card = (): HTMLElement => screen.getByRole('dialog').querySelector('[tabindex="-1"]')!
 
   it('takes focus on the primary action, so a keyboard user learns it appeared', () => {
@@ -121,7 +121,7 @@ describe('ReclaimWorkspaceDialog — focus and keyboard (#83 review, blocker 3)'
     expect(document.activeElement).toBe(cancel) // wrapped backward
   })
 
-  it('HOLDS focus while every button is disabled — the exact gap #86 was told to fix', async () => {
+  it('HOLDS focus while every button is disabled, so the trap survives', async () => {
     // All three buttons share one `disabled={busy}`, so mid-save the dialog has zero focusable
     // elements. Without the card fallback the browser drops focus to <body>, the keydown
     // handler stops firing, and the trap is silently dead for the rest of the request.
@@ -217,7 +217,7 @@ describe('ReclaimWorkspaceDialog — a project that is still being built', () =>
  * 'may have unsaved changes'` — which was CORRECT under that server and becomes a lie under this
  * one, telling a person their confirmed-clean project "may have unsaved changes".
  */
-describe('ReclaimWorkspaceDialog — a CLEAN incumbent (AE50)', () => {
+describe('ReclaimWorkspaceDialog — a CLEAN incumbent', () => {
   const CLEAN = { ...BLOCKED, dirty: false as boolean | null }
 
   it('★ claims no unsaved work, in either the definite or the hedged wording', () => {
@@ -250,7 +250,7 @@ describe('ReclaimWorkspaceDialog — a CLEAN incumbent (AE50)', () => {
     )
   })
 
-  it('still says the app STOPS, and never that anything moves (R95)', () => {
+  it('still says the app STOPS, and never that anything moves', () => {
     setup({ blocked: CLEAN })
     const text = screen.getByRole('dialog').textContent ?? ''
 
@@ -262,7 +262,7 @@ describe('ReclaimWorkspaceDialog — a CLEAN incumbent (AE50)', () => {
   })
 })
 
-describe('ReclaimWorkspaceDialog — issue #161', () => {
+describe('ReclaimWorkspaceDialog — naming the project being started', () => {
   it('★ names the project being STARTED first, not the incumbent', () => {
     // ASSERT ORDER, NOT MERE PRESENCE: both names appear either way, and the bug was which one
     // came first.

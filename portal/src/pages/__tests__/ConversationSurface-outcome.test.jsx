@@ -155,7 +155,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('showing the outcome', () => {
-  it('does NOT present a dead preview link on the ended-build card (F4)', async () => {
+  it('does NOT present a dead preview link on the ended-build card', async () => {
     const turn = scriptTurn('t1')
     h.readTurnStream.mockImplementation(turn.impl)
     renderThread()

@@ -60,7 +60,7 @@ function heldSend() {
   return { onSubmit, release: () => settle?.resolve(), fail: () => settle?.reject(new Error('refused')) }
 }
 
-describe('AE26 — a second message typed during a failing upload survives it', () => {
+describe('a second message typed during a failing upload survives it', () => {
   it('keeps the newer text character for character', async () => {
     const { onSubmit, fail } = heldSend()
     draw({ onSubmit })
@@ -83,7 +83,7 @@ describe('AE26 — a second message typed during a failing upload survives it', 
   })
 })
 
-describe('AE27 — a file read that is still running when Send is pressed', () => {
+describe('a file read that is still running when Send is pressed', () => {
   it('is either attached to that send, or the citizen is told — never silently absent', async () => {
     // THE DISJUNCTION IS THE ASSERTION, and "silently absent" is neither branch. The old shape
     // could drop an in-flight read into a composer that had already been cleared, so the citizen
@@ -109,7 +109,7 @@ describe('AE27 — a file read that is still running when Send is pressed', () =
   })
 })
 
-describe('AE28 / R60 — a failure in chat A does not touch chat B', () => {
+describe('a failure in chat A does not touch chat B', () => {
   it('leaves the sibling’s text alone, and writes nothing under the sibling’s key', async () => {
     // Pinned by NOTHING before this. The send stamps its conversation at press time, so a
     // completion that lands after the reader has moved cannot write into the chat they are now

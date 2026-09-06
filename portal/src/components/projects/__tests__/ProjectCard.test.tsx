@@ -67,7 +67,7 @@ describe('ProjectCard', () => {
     expect(open.contains(del)).toBe(false)
   })
 
-  it('does not nest the delete control inside any interactive element (F-10)', () => {
+  it('does not nest the delete control inside any interactive element', () => {
     const { container } = render(
       <ProjectCard project={mkProject('Roster')} onOpen={vi.fn()} onDelete={vi.fn()} />,
     )

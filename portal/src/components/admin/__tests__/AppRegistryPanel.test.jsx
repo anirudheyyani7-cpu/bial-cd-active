@@ -231,7 +231,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     prompted.mockRestore()
   })
 
-  it('the URL prompt defaults to the recorded one and a blank answer keeps it (R5)', async () => {
+  it('the URL prompt defaults to the recorded one and a blank answer keeps it', async () => {
     const live = 'https://apps.bial.example.com/gate-ops'
     const prompted = vi.spyOn(window, 'prompt').mockReturnValue('')
     h.listApps.mockResolvedValue([{ ...APPROVED, deployedUrl: live }])
@@ -307,7 +307,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
  * actions sit outside the scroll region, so a full six-category dispute cannot push
  * Approve off the bottom of a card that has no way to scroll to it.
  */
-describe('the review screen leads with the dispute (R15)', () => {
+describe('the review screen leads with the dispute', () => {
   it('shows the disputed categories, their reasons, and the explanation IN THAT ORDER', async () => {
     h.listApps.mockResolvedValue([{
       ...PENDING,
@@ -346,7 +346,7 @@ describe('the review screen leads with the dispute (R15)', () => {
     expect(screen.queryByTestId('dispute-financial_data')).toBeNull()
   })
 
-  it('states the criterion — the data, not the code (P3)', async () => {
+  it('states the criterion — the data, not the code', async () => {
     render(<AppRegistryPanel onToast={() => {}} />)
     await openReview()
     const criterion = screen.getByTestId('review-criterion').textContent
@@ -516,7 +516,7 @@ describe('the scroll contract — Approve and Reject stay reachable', () => {
   })
 })
 
-describe('the rejection note is required, with a floor (P3)', () => {
+describe('the rejection note is required, with a floor', () => {
   it('disables Send rejection below 20 characters and says how far off it is', async () => {
     render(<AppRegistryPanel onToast={() => {}} />)
     await openReview()
@@ -602,7 +602,7 @@ describe('a submission withdrawn while the modal was open', () => {
   })
 })
 
-describe('the self-publish lineage has no runbook (R17a)', () => {
+describe('the self-publish lineage has no runbook', () => {
   it('an approved self-publish app shows neither Deploy needed nor Mark deployed', async () => {
     h.listApps.mockResolvedValue([{ ...APPROVED, approvalRoute: 'self_publish', redeployNeeded: false }])
     render(<AppRegistryPanel onToast={() => {}} />)
@@ -632,7 +632,7 @@ describe('the self-publish lineage has no runbook (R17a)', () => {
   })
 })
 
-describe('the waiting count is mirrored on the pending tab (P1)', () => {
+describe('the waiting count is mirrored on the pending tab', () => {
   it('renders the badge with its accessible name', async () => {
     h.fetchAppStatusCounts.mockResolvedValue({
       draft: 0, pending: 4, approved: 0, rejected: 0, disabled: 0,

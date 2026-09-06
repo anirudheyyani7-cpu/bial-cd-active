@@ -44,7 +44,7 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('ProjectDeleteDialog — confirm gating', () => {
-  it('arms confirm on a VALID REASON, not on retyping the name (#158 §13.1)', async () => {
+  it('arms confirm on a VALID REASON, not on retyping the name', async () => {
     // A retyped name is not required: retyping proves you can read, not that you meant it,
     // and it taught people to copy-paste straight past the warning. The reason is the gate
     // instead, and unlike a name it is still worth something a month later.

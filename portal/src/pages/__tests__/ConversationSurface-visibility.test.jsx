@@ -149,7 +149,7 @@ describe('BuilderPage — build turn visible without a refresh', () => {
     expect(within(screen.getByTestId('chat-panel')).queryByText(/preview is live/i)).toBeNull()
   })
 
-  it('does NOT blank the live preview while the agent keeps working after the preview frames (KTD-8b)', async () => {
+  it('does NOT blank the live preview while the agent keeps working after the preview frames', async () => {
     const turn = scriptTurn()
     h.readTurnStream.mockImplementation(turn.impl)
     renderBuilder({ deps: deps().deps })

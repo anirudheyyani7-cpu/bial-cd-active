@@ -45,7 +45,7 @@ function paneFor(state: PreviewState, extra: Record<string, unknown> = {}) {
 }
 
 describe('LivePreview — the four states a workspace can be in', () => {
-  it('ASLEEP reads as sleep, not failure, and promises the work back (AE9)', async () => {
+  it('ASLEEP reads as sleep, not failure, and promises the work back', async () => {
     const verdict = await asTheBrowserSeesIt({
       state: 'asleep',
       alive: false,
@@ -178,7 +178,7 @@ describe('LivePreview — the four states a workspace can be in', () => {
     expect(screen.getByRole('status').textContent).toMatch(/could not check on your preview/i)
   })
 
-  it('STARTING (U13) parses as its own state, not a coerced "unknown", and is never treated as gone', async () => {
+  it('STARTING parses as its own state, not a coerced "unknown", and is never treated as gone', async () => {
     // The closed-list defect this state exists to catch: an unwidened `PREVIEW_LIFE_STATES`
     // would fall through `asPreviewLifeState`'s fallback straight to 'unknown' (`alive` is
     // false), which is a confident-sounding "nothing to report" for a fact the server DID
@@ -203,7 +203,7 @@ describe('LivePreview — the four states a workspace can be in', () => {
   })
 })
 
-describe('LivePreview — a reclaimed container is never an error (R17)', () => {
+describe('LivePreview — a reclaimed container is never an error', () => {
   it.each(['asleep', 'slot_taken', 'never_built'] as const)(
     'renders NO danger-styled alert for %s',
     async (state) => {
@@ -259,7 +259,7 @@ describe('LivePreview — a reclaimed container is never an error (R17)', () => 
   })
 })
 
-describe('LivePreview — the restore offer is driven by `restorable` (R18)', () => {
+describe('LivePreview — the restore offer is driven by `restorable`', () => {
   it('INERTNESS GUARD: the four start buttons are gone, and the explanation is not', async () => {
     // This used to be asserted here by pressing "Bring it back". That control moved — the rule is
     // exactly ONE control starts the app, and four scattered through this file's placeholder arms
@@ -444,7 +444,7 @@ describe('a workspace found reverted while the tab sat idle', () => {
   })
 })
 
-describe('LivePreview — what Plan F removed, and what it deliberately did not', () => {
+describe('LivePreview — the start-affordance removal, and what it deliberately left untouched', () => {
   it('defines and exports no start affordance at all', async () => {
     // A STRUCTURAL guard, because the behavioural ones above can only see the states they set up.
     // Four render sites shared one component; deleting three and leaving the fourth is exactly the

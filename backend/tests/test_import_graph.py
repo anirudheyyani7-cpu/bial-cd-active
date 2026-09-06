@@ -167,7 +167,7 @@ def test_the_package_does_not_drag_in_the_route_tree() -> None:
     )
 
 
-def test_the_c7_schema_re_exports_survive() -> None:
+def test_the_build_session_schema_re_exports_survive() -> None:
     """The other half of the `deps`/`router` cleanup: these schemas (`ProgressEnvelope`,
     `RunBuild`, `StartBuildRequest`) are frozen AT THIS LOCATION, so that cleanup must not
     have taken them with it."""

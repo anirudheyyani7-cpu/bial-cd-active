@@ -31,7 +31,7 @@ const ESCALATION: ProgressEnvelope = { type: 'escalation', seq: 5, reason: 'self
 const QUOTA: ProgressEnvelope = { type: 'quota_exceeded', seq: 6, limit: 100, used: 100, resets_at: '2026-07-15T18:30:00Z' }
 const ENDED: ProgressEnvelope = { type: 'ended', seq: 7, status: 'ended', preview_url: null, snapshot_committed: true, reason: 'completed' }
 
-describe('buildSessionEvents — dispatch (C7 §3)', () => {
+describe('buildSessionEvents — dispatch', () => {
   it('produces the correct typed object for each of the 6 envelope types', () => {
     const { fake, envelopes } = setup()
     fake.open()
@@ -52,7 +52,7 @@ describe('buildSessionEvents — dispatch (C7 §3)', () => {
     expect(errors).toHaveLength(0)
   })
 
-  it('drops a retired `log` frame (U29 — the server can no longer emit one) without throwing, and a known frame still lands right after it (liveness)', () => {
+  it('drops a retired `log` frame (the server can no longer emit one) without throwing, and a known frame still lands right after it (liveness)', () => {
     // FLIPPED: `log` used to be a recognized envelope member; it was removed end to end because no
     // production orchestrator path had ever emitted one. The wire-level consumer must now treat it
     // exactly like any other unrecognized `type` — dropped defensively, never a throw — and a
@@ -68,7 +68,7 @@ describe('buildSessionEvents — dispatch (C7 §3)', () => {
     expect(errors).toHaveLength(0)
   })
 
-  it('skips a malformed (non-JSON) data line — parity with the chat relay skip-malformed rule (C3 §4.2)', () => {
+  it('skips a malformed (non-JSON) data line — parity with the chat relay skip-malformed rule', () => {
     const { fake, envelopes } = setup()
     fake.open()
     fake.emit('not-json {oops')
@@ -77,7 +77,7 @@ describe('buildSessionEvents — dispatch (C7 §3)', () => {
   })
 })
 
-describe('buildSessionEvents — terminal close (C3 §4.3)', () => {
+describe('buildSessionEvents — terminal close', () => {
   it('recognizes the [DONE] sentinel AHEAD of the malformed-skip rule and closes', () => {
     const { fake, envelopes } = setup()
     fake.open()
@@ -97,7 +97,7 @@ describe('buildSessionEvents — terminal close (C3 §4.3)', () => {
   })
 })
 
-describe('buildSessionEvents — error arm, fail closed (C3 §4.1, KTD-1)', () => {
+describe('buildSessionEvents — error arm, fail closed', () => {
   it('a never-opened admission failure surfaces a terminal error and stops (readyState CLOSED)', () => {
     const { fake, errors, envelopes } = setup()
     fake.failNeverOpened() // 401/404 — the stream never opened
@@ -119,7 +119,7 @@ describe('buildSessionEvents — error arm, fail closed (C3 §4.1, KTD-1)', () =
     expect(fake.closeCalls).toBe(1)
   })
 
-  it('a flapping connection (open→drop, open→drop, …) still exhausts the budget — onopen alone never resets it (finding #14)', () => {
+  it('a flapping connection (open→drop, open→drop, …) still exhausts the budget — onopen alone never resets it', () => {
     vi.useFakeTimers()
     try {
       const { fake, errors } = setup({ maxReconnects: 2 })
@@ -159,7 +159,7 @@ describe('buildSessionEvents — error arm, fail closed (C3 §4.1, KTD-1)', () =
   })
 })
 
-describe('buildSessionEvents — quota + resume (C7 §8, C3 §4.2)', () => {
+describe('buildSessionEvents — quota + resume', () => {
   it('dispatches the quota pair quota_exceeded → ended in seq order', () => {
     const { fake, envelopes } = setup()
     fake.open()
@@ -199,7 +199,7 @@ describe('toProgressEnvelope — parse at the boundary', () => {
     expect(toProgressEnvelope({ type: 'step', seq: 'nope', name: 'x', label: 'y', state: 'ok' })).toBeNull()
   })
 
-  it('carries a step`s `hidden` flag through the parse (F3: else the live hidden-step filter is a no-op)', () => {
+  it('carries a step`s `hidden` flag through the parse (else the live hidden-step filter is a no-op)', () => {
     // The backend serializes `hidden:true` for read-only/housekeeping steps; if the parser drops it,
     // the live `!env.hidden` filter keeps every step and the LIVE feed shows what reload hides.
     const hidden = toProgressEnvelope({ type: 'step', seq: 5, name: 'inspect', label: 'x', state: 'ok', hidden: true })

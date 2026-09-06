@@ -53,7 +53,7 @@ const rendered = (over: Partial<WorkspaceInputs> = {}) => {
 }
 
 describe('the register — what the pane may and may not say', () => {
-  it('AE1: a saved, not-running project says "Your app is saved." and offers exactly one start', () => {
+  it('a saved, not-running project says "Your app is saved." and offers exactly one start', () => {
     const state = resolve({ preview: reading({ state: 'asleep', restorable: true }) })
 
     expect(state.name).toBe('not-running')
@@ -97,7 +97,7 @@ describe('the register — what the pane may and may not say', () => {
     }
   })
 
-  it('AE2: nothing built invites a description and offers NO action', () => {
+  it('nothing built invites a description and offers NO action', () => {
     const state = resolve({ preview: reading({ state: 'never_built', restorable: false }) })
 
     expect(state.name).toBe('never-built')
@@ -106,7 +106,7 @@ describe('the register — what the pane may and may not say', () => {
     expect(state.headline).toMatch(/describe what you want to build/i)
   })
 
-  it('AE36: the starting sentence carries no digits and no duration word', () => {
+  it('the starting sentence carries no digits and no duration word', () => {
     // The no-duration-claim rule taken literally. Nobody has measured a cold start, so no
     // sentence may name one — the canvas's "about thirty seconds" and the register's "about
     // half a minute" are both dropped.
@@ -121,7 +121,7 @@ describe('the register — what the pane may and may not say', () => {
 })
 
 describe('the hand-over states — two arms, and neither is an error', () => {
-  it('AE31: with a name and an id, it names that project and offers the way to it', () => {
+  it('with a name and an id, it names that project and offers the way to it', () => {
     const state = resolve({
       preview: reading({
         state: 'slot_taken',
@@ -139,7 +139,7 @@ describe('the hand-over states — two arms, and neither is an error', () => {
     })
   })
 
-  it('AE31: with the attribution withheld, it names none, quotes nothing and offers no action', () => {
+  it('with the attribution withheld, it names none, quotes nothing and offers no action', () => {
     // A first-class wire state, not a bug to paper over: the server declines to attribute a
     // container it cannot map to a project this person owns. The failure this is written against
     // is a sentence with an empty pair of quotes in it.
@@ -161,7 +161,7 @@ describe('the hand-over states — two arms, and neither is an error', () => {
     expect(idOnly.action).toBeNull()
   })
 
-  it('a held slot outranks a start outcome — the remedy, never a retry (R4b)', () => {
+  it('a held slot outranks a start outcome — the remedy, never a retry', () => {
     // A retry against an occupied slot can only fail the same way again.
     const state = resolve({
       preview: reading({
@@ -176,8 +176,8 @@ describe('the hand-over states — two arms, and neither is an error', () => {
   })
 })
 
-describe('R4b — a start that did not end in a running app says which way it ended', () => {
-  it('AE3: an unreadable state answers "we could not check" and offers the retry member', () => {
+describe('a start that did not end in a running app says which way it ended', () => {
+  it('an unreadable state answers "we could not check" and offers the retry member', () => {
     const state = resolve({ preview: reading({ state: 'unknown' }) })
 
     expect(state.name).toBe('could-not-read')

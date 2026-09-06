@@ -104,7 +104,7 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('BuilderPage — the attachment user-turn is persisted before the build starts', () => {
-  it('sends the attachment as an OWNED REF on the wire message, WITH the row\'s own create block, before the build starts (R-18/U13, was U7/R3)', async () => {
+  it('sends the attachment as an OWNED REF on the wire message, WITH the row\'s own create block, before the build starts', async () => {
     // buildUserParts stands in for the upload: it yields a text part + a file part.
     h.buildUserParts.mockImplementation(async (text) => [
       { type: 'text', text },
@@ -134,7 +134,7 @@ describe('BuilderPage — the attachment user-turn is persisted before the build
     )
   })
 
-  it('passes the chat id as conversationId on start, so the persisted parts reach the build (R3)', async () => {
+  it('passes the chat id as conversationId on start, so the persisted parts reach the build', async () => {
     // The other half of the seam: persisting the parts only matters if start TELLS the server
     // which thread to read them from. Without this the build is text-only and the file is
     // silently ignored — the exact bug this test guards against.
@@ -147,7 +147,7 @@ describe('BuilderPage — the attachment user-turn is persisted before the build
     expect(h.buildFromPlan).toHaveBeenCalledWith('build-X', PLAN_CARD_ID, expect.any(String))
   })
 
-  it('ABORTS the send when the upload fails — never starts a text-only build (R3)', async () => {
+  it('ABORTS the send when the upload fails — never starts a text-only build', async () => {
     h.buildUserParts.mockRejectedValue(new Error('Upload failed: storage is full.'))
     renderBuilder()
     const textarea = await screen.findByPlaceholderText(/ask for another change/i)

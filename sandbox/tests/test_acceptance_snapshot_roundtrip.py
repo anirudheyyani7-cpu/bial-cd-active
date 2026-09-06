@@ -38,7 +38,7 @@ APP_ENV = {
 
 
 # --- conformance: pure Python, offline (no container / Azurite) --------------------------------
-def test_reference_client_conforms_to_frozen_c2_abc() -> None:
+def test_reference_client_conforms_to_the_frozen_sandbox_client_interface() -> None:
     # A complete subclass instantiates — all 10 frozen abstract methods are implemented.
     c = ReferenceSandboxClient(image="unused", storage=FakeStorage(), lock=InProcLock())
     assert isinstance(c, SandboxClient)

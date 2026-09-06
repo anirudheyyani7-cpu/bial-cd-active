@@ -31,7 +31,7 @@ const EXCEL_MEDIA_TYPE =
 const file = (name, type, size = 1024) => ({ name, type, size })
 const UNSUPPORTED = /isn't supported/
 
-describe('formats that need a conversion step are unreachable (R46)', () => {
+describe('formats that need a conversion step are unreachable', () => {
   it('offers no presentation, spreadsheet or document type in the allowlist or the OS picker', () => {
     for (const type of [PPTX_MEDIA_TYPE, WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE]) {
       expect(ALLOWED_MEDIA_TYPES).not.toContain(type)

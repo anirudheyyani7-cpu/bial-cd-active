@@ -196,7 +196,7 @@ describe('what an unreadable answer may and may not do', () => {
   })
 })
 
-describe('cost — the calls this hook refuses to make (R3)', () => {
+describe('cost — the calls this hook refuses to make', () => {
   it('never asks a stopped workspace whether it has unsaved work', async () => {
     // Two `git` execs against a dead container is an attach the screen caused.
     for (const state of ['asleep', 'never_built', 'slot_taken', 'starting', 'unknown'] as const) {

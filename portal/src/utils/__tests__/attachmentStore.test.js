@@ -61,7 +61,7 @@ describe('countAttachments', () => {
   })
 })
 
-describe('wireMessageFromParts — the U7 stateless wire message', () => {
+describe('wireMessageFromParts — the stateless wire message', () => {
   it('an image part becomes an OWNED REF, never bytes (the server rehydrates at send)', () => {
     const message = wireMessageFromParts([imagePart('img9'), { type: 'text', text: 'look' }])
     expect(message).toEqual({ text: 'look', attachmentIds: ['img9'] })

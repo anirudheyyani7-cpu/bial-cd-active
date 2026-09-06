@@ -191,8 +191,8 @@ describe('ProjectPage — the composer is unconditional', () => {
   })
 })
 
-describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, AE2)', () => {
-  it('AE1: a saved, not-running project offers exactly one start control, and says what IS', async () => {
+describe('ProjectPage — the app arrives behind one deliberate press', () => {
+  it('a saved, not-running project offers exactly one start control, and says what IS', async () => {
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1', hasRelaunchableSnapshot: true }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'asleep', restorable: true }))
     renderProjectPage()
@@ -208,7 +208,7 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
     expect(document.body.textContent).not.toMatch(/\bstopped\b/i)
   })
 
-  it('AE2: a project with nothing built offers no start control at all', async () => {
+  it('a project with nothing built offers no start control at all', async () => {
     h.getProject.mockResolvedValue(makeProject({ appId: null, hasRelaunchableSnapshot: false }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'never_built', restorable: false }))
     renderProjectPage()
@@ -218,7 +218,7 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
     expect(screen.queryByRole('button', { name: /launch application/i })).toBeNull()
   })
 
-  it('★ opening the screen STARTS NOTHING — the read is the only call it makes (R3)', async () => {
+  it('★ opening the screen STARTS NOTHING — the read is the only call it makes', async () => {
     // Mutation receipt: make `ProjectWorkspace` call `relaunchPreview` on mount and this goes red.
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1', hasRelaunchableSnapshot: true }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'asleep', restorable: true }))
@@ -229,7 +229,7 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
     expect(h.relaunchPreview).not.toHaveBeenCalled()
   })
 
-  it('★ never asks a stopped project whether it has unsaved work (R3)', async () => {
+  it('★ never asks a stopped project whether it has unsaved work', async () => {
     // `fetchSaveState` runs two `git` executions inside the container. On a stopped workspace that
     // is an attach the screen caused, so the rail shows the status sentence and no save state.
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1', hasRelaunchableSnapshot: true }))
@@ -242,7 +242,7 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
     expect(screen.queryByTestId('rail-save-state')).toBeNull()
   })
 
-  it('shows the save half only once the workspace is alive (R6, delivered in the running state)', async () => {
+  it('shows the save half only once the workspace is alive', async () => {
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1', hasRelaunchableSnapshot: true }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'alive', alive: true, previewUrl: 'https://app.example/' }))
     h.fetchSaveState.mockResolvedValue({ appId: 'a1', dirty: true, containerHead: 'deadbeefcafe', savedHead: 'abc1234def' })
@@ -258,7 +258,7 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
     expect(saved.textContent).not.toContain('abc1234')
   })
 
-  it('R62: an unreadable save state says so rather than reporting that everything is saved', async () => {
+  it('an unreadable save state says so rather than reporting that everything is saved', async () => {
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1' }))
     h.fetchPreviewState.mockResolvedValue(preview({ state: 'alive', alive: true, previewUrl: 'https://app.example/' }))
     h.fetchSaveState.mockResolvedValue({ appId: 'a1', dirty: null, containerHead: null, savedHead: null })
@@ -279,7 +279,7 @@ describe('ProjectPage — the app arrives behind one deliberate press (R3, AE1, 
   })
 })
 
-describe('ProjectPage — the description rail (R3, U7 pop-up editor)', () => {
+describe('ProjectPage — the description rail (pop-up editor)', () => {
   it('shows an Edit button and NO attach / file-input control, with no dialog open by default', async () => {
     h.getProject.mockResolvedValue(makeProject())
     renderProjectPage()
@@ -311,7 +311,7 @@ describe('ProjectPage — the description rail (R3, U7 pop-up editor)', () => {
    that it names the project, that a project with nothing built still gets one rather than an
    absence, and that it neither moves nor remounts. What this page can answer for is the other half
    — that the rail says nothing about publishing — because the rail is what this file renders. */
-describe('ProjectPage — publishing is not in the rail (R37)', () => {
+describe('ProjectPage — publishing is not in the rail', () => {
   it('keeps every word about publishing out of the description section', async () => {
     h.getProject.mockResolvedValue(makeProject({ appId: 'a1' }))
     renderProjectPage()
@@ -325,7 +325,7 @@ describe('ProjectPage — publishing is not in the rail (R37)', () => {
   })
 })
 
-describe('ProjectPage — an outlet child that owns its own scroller (Plan A, U3)', () => {
+describe('ProjectPage — an outlet child that owns its own scroller', () => {
   // THE RISK THIS GUARDS. This surface used to be a `min-h-screen` document scroller with a page
   // frame and a navbar of its own. Inside the workspace shell it is a flex child of a full-height
   // frame that does not scroll — so if it does not declare a scroller, a project with twenty
@@ -438,7 +438,7 @@ describe('ProjectPage — identity + guard rails carried over', () => {
   })
 })
 
-describe('ProjectPage — the project-open mark (U4; R104, R105)', () => {
+describe('ProjectPage — the project-open mark', () => {
   /** The page under React's development double-mount, which is how it actually runs in dev. */
   function renderTwiceOver(projectId: string) {
     return render(

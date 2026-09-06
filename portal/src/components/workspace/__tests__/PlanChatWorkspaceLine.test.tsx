@@ -61,7 +61,7 @@ const line = (preview: PreviewState) =>
 
 afterEach(() => cleanup())
 
-describe('AE5 — the standing line says what this chat DOES', () => {
+describe('the standing line says what this chat DOES', () => {
   it('★ speaks the board\'s line verbatim, and still never says the app is not RUNNING', () => {
     // THE LINE WAS REWRITTEN ONCE, ON A MISREADING. An earlier pass read the
     // board's "your app is not open here" as a claim that the container is down — which would be
@@ -92,7 +92,7 @@ describe('AE5 — the standing line says what this chat DOES', () => {
   })
 })
 
-describe('★ AE48 — the same value, the same sentence, on both surfaces (R97)', () => {
+describe('★ the same value, the same sentence, on both surfaces', () => {
   // Scoped to the three states this scenario covers, deliberately. Asserting sameness across
   // `never_built` and `asleep` too would pin wording this scenario does not require, when the
   // pane's own wording there may need to differ — a Plan chat has no business inviting somebody

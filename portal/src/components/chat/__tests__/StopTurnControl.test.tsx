@@ -153,7 +153,7 @@ describe('StopTurnControl', () => {
     await waitFor(() => expect(onStopTurn).toHaveBeenCalledTimes(2))
   })
 
-  it('leaves the composer typeable while the control is on screen (R45 with R55)', () => {
+  it('leaves the composer typeable while the control is on screen', () => {
     setup()
 
     expect(screen.getByTestId('stop-turn')).toBeTruthy()

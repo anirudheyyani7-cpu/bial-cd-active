@@ -164,7 +164,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     expect(screen.getByTestId('edit-admin@x.com')).toBeTruthy()
   })
 
-  it("the caller's own super-admin row cannot be self-suspended (AE6)", async () => {
+  it("the caller's own super-admin row cannot be self-suspended", async () => {
     // Only a super-admin can load this panel, and they appear in their own roster;
     // the super-admin guard therefore also covers self-suspension.
     h.fetchUsers.mockResolvedValue(
@@ -253,7 +253,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     expect(msg.textContent).toContain('Super-admin privileges required.')
   })
 
-  it('sets a daily token limit to 200000 and then clears it — PATCH null clears the override (AE4)', async () => {
+  it('sets a daily token limit to 200000 and then clears it — PATCH null clears the override', async () => {
     h.fetchUsers.mockResolvedValue(pageOf([user({ limits: {}, effectiveLimits: { ...DEFAULTS } })]))
     h.updateUserLimits
       .mockResolvedValueOnce({
@@ -296,7 +296,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     )
   })
 
-  it('shows "0 (default)" in the placeholder when the server envelope omits a default (#106)', async () => {
+  it('shows "0 (default)" in the placeholder when the server envelope omits a default', async () => {
     // dailyTokenLimit is missing from `defaults` entirely (not null) — the same
     // "genuinely absent" case Partial<LimitFields> exists to represent.
     const { dailyTokenLimit: _omit, ...defaultsMissingDaily } = DEFAULTS

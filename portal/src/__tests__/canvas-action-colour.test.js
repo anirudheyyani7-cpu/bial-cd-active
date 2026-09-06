@@ -85,7 +85,7 @@ function offenders(pattern, allowed) {
   return found
 }
 
-describe('U1 — teal is the action colour', () => {
+describe('teal is the action colour', () => {
   it('paints no surface with the brand gold outside its one label site', () => {
     expect(
       offenders(GOLD_SURFACE, GOLD_ALLOWED),

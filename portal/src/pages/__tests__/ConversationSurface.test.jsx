@@ -94,7 +94,7 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-describe('R55 — a running turn is STILL stoppable now the card is gone', () => {
+describe('a running turn is STILL stoppable now the card is gone', () => {
   it('the surface renders a stop control and pressing it calls the turn-stop path', async () => {
     // THE SCENARIO THE WHOLE ORDERING EXISTS FOR. An earlier commit shipped the relocated stop
     // before anything was deleted so that no commit in this migration left a build startable and
@@ -153,7 +153,7 @@ describe('exactly one control initiates a build', () => {
   })
 })
 
-describe('R49 — one scroll container, and no viewport-height assertions', () => {
+describe('one scroll container, and no viewport-height assertions', () => {
   it('exactly one `overflow-y-auto` inside the chat slot', async () => {
     renderBuilder({ deps: deps().deps })
     await waitForGateOpen()
@@ -182,7 +182,7 @@ describe('R49 — one scroll container, and no viewport-height assertions', () =
   })
 })
 
-describe('R54 — no chat list came back while the pages were being rewritten', () => {
+describe('no chat list came back while the pages were being rewritten', () => {
   it('renders no list of conversations, in any state', async () => {
     // The chat list was removed earlier; this is the assertion that the rewrite around it did not
     // quietly restore one. Past conversations live on the project page the breadcrumb links to.
@@ -281,7 +281,7 @@ describe('the per-conversation guardrail reaches the composer', () => {
   })
 })
 
-describe('U9 — the offer\'s Build reaches the SAME hand-over dialog as the composer', () => {
+describe('the offer\'s Build reaches the SAME hand-over dialog as the composer', () => {
   it('opens the shell\'s dialog naming both projects, in citizen language', async () => {
     // THE THIRD DOOR. Three presses can be refused because another project holds the one
     // workspace — a rail send, the pane's start control, and this one — and the plan asks that
@@ -312,7 +312,7 @@ describe('U9 — the offer\'s Build reaches the SAME hand-over dialog as the com
   })
 })
 
-describe('U11 — a failed launch INSIDE a chat says why', () => {
+describe('a failed launch INSIDE a chat says why', () => {
   it('puts the server\'s reason on the pane, not just a stopped spinner', async () => {
     // The press used to report nothing at all here: the spinner stopped, the same sentence came
     // back, and pressing again did the same thing — because this surface handed the shared map a

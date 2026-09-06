@@ -57,7 +57,7 @@ const assistant = (id: string, text: string, seq = 1): ChatMessage => ({
 })
 
 describe('ChatThread — what the new host must still guarantee', () => {
-  it('AE41: refuses a model-authored image, and fetches nothing from that host', () => {
+  it('refuses a model-authored image, and fetches nothing from that host', () => {
     const { container } = mount([
       assistant('a1', 'before ![alt text](https://attacker.example/x.png) after'),
     ])
@@ -84,7 +84,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(container.querySelectorAll('li')).toHaveLength(2)
   })
 
-  it('R49: the viewport is the ONLY scroll container in the thread', () => {
+  it('the viewport is the ONLY scroll container in the thread', () => {
     // The mechanical form of the requirement. The old surface nested five scrollers
     // (ChatPage 639→642→644→655→700→719 plus BuilderPage's own); this asserts the new one adds
     // exactly one, by querying the class rather than trusting the markup to stay put.
@@ -112,7 +112,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(container.querySelectorAll('p')).toHaveLength(0)
   })
 
-  it('AE43: the same reply renders identically in a Plan chat and a Build chat', () => {
+  it('the same reply renders identically in a Plan chat and a Build chat', () => {
     // Asserted on the rendered TREE, because nothing in the renderer may consult the kind — and
     // the only way to prove that is to render the same parts twice and diff the DOM.
     const parts: ChatMessage['parts'] = [
@@ -127,7 +127,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(second.container.innerHTML).toBe(planHtml)
   })
 
-  it('N1: an assistant message carries a copy action and only a copy action', () => {
+  it('an assistant message carries a copy action and only a copy action', () => {
     mount([assistant('a1', 'Here is your app.')])
 
     const bar = screen.getByTestId('assistant-action-bar')
@@ -141,7 +141,7 @@ describe('ChatThread — what the new host must still guarantee', () => {
     expect(within(bar).queryByRole('button', { name: /more/i })).toBeNull()
   })
 
-  it('N1: a USER message carries no copy control', () => {
+  it('a USER message carries no copy control', () => {
     mount([{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hi' }], seq: 1 }])
 
     const message = screen.getByTestId('user-message')

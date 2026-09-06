@@ -50,7 +50,7 @@ describe('countWords — the shared rule', () => {
 })
 
 describe('the shared limits', () => {
-  it('carries the delete-reason bounds from §13.2', () => {
+  it('carries the delete-reason bounds — five words minimum, fifty maximum', () => {
     expect(MIN_DELETE_REASON_WORDS).toBe(5)
     expect(MAX_DELETE_REASON_WORDS).toBe(50)
   })

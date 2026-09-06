@@ -720,7 +720,7 @@ class SandboxClient(abc.ABC):
         """What the app's dev server is compiling right now — the supervisor's `GET /dev/compile`.
 
         DELIBERATELY NOT abstract, for the same reason as `someone_has_to_go_first` below:
-        `test_abstractmethod_set_equals_the_c2_contract` pins the abstract set so the contract
+        `test_abstractmethod_set_equals_the_pinned_contract` pins the abstract set so the contract
         cannot drift, and adding a member to that frozen set is a cross-track break. Follow
         the precedent — a new capability arrives non-abstract with a safe default — rather
         than amending `_C2_METHODS`.
@@ -735,7 +735,7 @@ class SandboxClient(abc.ABC):
 
         DELIBERATELY NOT ABSTRACT, and for the same reason as `someone_has_to_go_first` below
         rather than for convenience: every abstract method on this class mirrors one supervisor
-        endpoint, and `test_abstractmethod_set_equals_the_c2_contract` pins that set so the
+        endpoint, and `test_abstractmethod_set_equals_the_pinned_contract` pins that set so the
         surface cannot drift. This is not a supervisor call — it is an ordinary GET at the app's
         own root through the same Caddy the citizen's iframe uses.
 
@@ -754,7 +754,7 @@ class SandboxClient(abc.ABC):
 
         DELIBERATELY NOT abstract, and the reason is a real distinction rather than
         convenience: every method above mirrors one supervisor endpoint, and
-        `test_abstractmethod_set_equals_the_c2_contract` pins that set so the surface
+        `test_abstractmethod_set_equals_the_pinned_contract` pins that set so the surface
         cannot drift. This is not a supervisor call at all — it is an ordinary GET at the
         app's public root, through the same Caddy the citizen's iframe uses. Adding it to
         the frozen set would claim the supervisor grew an endpoint it did not.

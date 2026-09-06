@@ -67,7 +67,7 @@ describe('the region', () => {
   })
 })
 
-describe('useActivityAnnouncement — two announcements and no more (R66)', () => {
+describe('useActivityAnnouncement — two announcements and no more', () => {
   it('says nothing at rest', () => {
     const { result } = renderHook(() => useActivityAnnouncement({ isRunning: false, sealedSummary: null }))
     expect(result.current).toBeNull()

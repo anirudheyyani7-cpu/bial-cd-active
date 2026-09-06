@@ -49,7 +49,7 @@ function walk(dir: string): string[] {
   })
 }
 
-describe('ModeSwitcher is retired (U19)', () => {
+describe('ModeSwitcher is retired', () => {
   it('the component file is gone from disk', () => {
     expect(existsSync(path.join(SRC_ROOT, 'components', 'chat', 'ModeSwitcher.tsx'))).toBe(false)
   })

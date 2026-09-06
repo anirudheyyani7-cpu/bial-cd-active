@@ -27,7 +27,7 @@ describe('owner-surface retirement (inertness guard)', () => {
 })
 
 describe('approveApp', () => {
-  it('POSTs the REVIEWED submission id (the D5 guard has something to check)', async () => {
+  it('POSTs the REVIEWED submission id', async () => {
     const fetchImpl = vi.fn(async () => ok({ appId: 'a1', status: 'approved' }))
     await registry.approveApp('a1', 'sub-1', deps(fetchImpl))
 
@@ -57,7 +57,7 @@ describe('markDeployed', () => {
     expect(opts.method).toBe('POST')
   })
 
-  it('sends the deployed URL when one is given (R5)', async () => {
+  it('sends the deployed URL when one is given', async () => {
     const live = 'https://apps.bial.example.com/gate-ops'
     const fetchImpl = vi.fn(async () => marked({ deployedUrl: live }))
     const body = await registry.markDeployed('a1', live, deps(fetchImpl))

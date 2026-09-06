@@ -73,7 +73,7 @@ const renderNavbar = () =>
     </MemoryRouter>,
   )
 
-describe('the usage meter is visible on a narrow screen (N4)', () => {
+describe('the usage meter is visible on a narrow screen', () => {
   it('THE BUG: the meter is never hidden behind a breakpoint', async () => {
     // jsdom has no viewport-driven CSS, so the honest assertion is on the MECHANISM: a
     // `hidden md:flex` container is unreachable below 768px no matter what the media query
@@ -101,7 +101,7 @@ describe('the usage meter is visible on a narrow screen (N4)', () => {
   })
 })
 
-describe('the navbar the boards draw (plan 002, U1)', () => {
+describe('the navbar matches what the design board draws, without losing any existing feature', () => {
   it('the meter is amber well below any 80% threshold, because the board draws it amber at 54%', async () => {
     // The board's own worked example is `537,102 / 1,000,000 tokens` over a 54%-wide `--amb`
     // fill. The code turned the bar amber only past 80%, so at the board's own figures it
@@ -178,7 +178,7 @@ describe('the navbar the boards draw (plan 002, U1)', () => {
   })
 })
 
-describe('the meter settles without a reload (N4)', () => {
+describe('the meter settles without a reload', () => {
   it('subscribes to the usage-changed signal and refetches when it fires', async () => {
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalledTimes(1))
@@ -215,7 +215,7 @@ describe('the meter settles without a reload (N4)', () => {
  * REQUESTED for anyone else (the route is superadmin-only; asking would spend a request
  * to earn a 403 in every citizen's console).
  */
-describe('the waiting-count badge (P1)', () => {
+describe('the waiting-count badge is accurate, accessible, and admin-only', () => {
   it('renders the pending count on the admin entry, with an accessible name', async () => {
     h.getStoredUser.mockReturnValue(ADMIN)
     h.fetchAppStatusCounts.mockResolvedValue(counts(7))
@@ -306,7 +306,7 @@ describe('the waiting-count badge (P1)', () => {
  * boolean. Nothing in this file covered the open/close behaviour either before or after, so the
  * rewrite rested entirely on a manual browser pass. These are the three ways the menu closes.
  */
-describe('the avatar menu opens and closes (#157 A)', () => {
+describe('the avatar menu opens and closes', () => {
   // Resolved ONCE, while the menu is closed, and the node is reused afterwards. Two traps
   // here, both of which bit:
   //   - `getAllByRole('button').at(-1)` re-resolves, and once the menu is open the last
@@ -406,7 +406,7 @@ const signOut = async () => {
   fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
 }
 
-describe('the sign-out warning outlives the navigation (U15)', () => {
+describe('the sign-out warning outlives the navigation', () => {
   it('THE BUG: a failed sign-out leaves the warning readable on the screen the person lands on', async () => {
     h.logout.mockResolvedValue(false)
     renderNavbarWithLoginRoute()

@@ -138,7 +138,7 @@ describe('the mint-and-navigate protocol, carried through the deletion', () => {
   })
 })
 
-describe('the cold return leg — a draft that outlives the trip to a chat (plan 002, U3)', () => {
+describe('the cold return leg — a draft that outlives the trip to a chat', () => {
   /** The two moves a citizen makes with the rail: into a chat, and back to the project. */
   function Trip() {
     const navigate = useNavigate()
@@ -204,7 +204,7 @@ describe('the cold return leg — a draft that outlives the trip to a chat (plan
   })
 })
 
-describe("R15's picker — the control that makes the other half of the product reachable", () => {
+describe('the kind picker — the control that makes the other half of the product reachable', () => {
   it('offers both kinds, with the words from the shared catalogue', () => {
     renderComposer()
 

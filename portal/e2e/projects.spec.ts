@@ -98,7 +98,7 @@ test.describe('project-first journey', () => {
  * Neither test drives a real model turn — no build needed for either check — so they run
  * under the suite's default 90s timeout rather than the 420s one above.
  */
-test.describe('description editor — keyboard focus + stacking (#86 review)', () => {
+test.describe('description editor — keyboard focus + stacking', () => {
   test('Tab stays contained inside the dialog once a busy request disables every other focusable', async ({ page }) => {
     await createProject(page, `E2E Focus Trap ${Date.now()}`)
 

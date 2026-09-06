@@ -235,7 +235,7 @@ describe('WorkspaceShell — the reclaim dialog is mounted here, its handlers st
   })
 })
 
-describe('WorkspaceShell — the unsaved-work warning, hoisted here (U7, AE33\'s leaving-the-page half)', () => {
+describe('WorkspaceShell — the unsaved-work warning, hoisted here (the leaving-the-page half)', () => {
   /** Ask the browser to leave, and report whether anything objected. */
   const tryToLeave = (): boolean => {
     const event = new Event('beforeunload', { cancelable: true })
@@ -462,7 +462,7 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
  * the navbar's links — sit above the Outlet, so a guard mounted below it would lose coverage of
  * exactly the controls it was written for.
  */
-describe('WorkspaceShell — the in-place unsaved-work guard (U8)', () => {
+describe('WorkspaceShell — the in-place unsaved-work guard', () => {
   function SurfaceWithSaveState({ dirty, running }: { dirty: boolean | null; running: boolean }) {
     usePublishSaveState(dirty)
     useWorkspaceChannel()?.workspace.set({

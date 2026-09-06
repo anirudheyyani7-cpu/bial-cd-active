@@ -459,7 +459,7 @@ describe('ChatRoute — the page is never torn down mid-turn', () => {
   })
 })
 
-describe('ChatRoute — the chat-open mark (U4; R105)', () => {
+describe('ChatRoute — the chat-open mark', () => {
   it('marks a chat open for a project whose page this load opened', async () => {
     // The chat-open ratio's numerator, taken at THE resolution seam rather than on the three
     // handlers that navigate here — those live in components other work is mid-rewrite of.

@@ -1071,7 +1071,7 @@ def assert_speaks_product_language(text: str, *, where: str) -> None:
     assert not hits, f"{where} leaks developer vocabulary {hits}: {text!r}"
 
 
-async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to_a_developer(
+async def test_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to_a_developer(
     db_session,
 ) -> None:
     """Asserted over the COMPLETE rendered set, not only the agent's narration.

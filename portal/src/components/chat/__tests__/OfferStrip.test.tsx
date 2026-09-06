@@ -58,7 +58,7 @@ describe('the two buttons, and the words on them', () => {
     expect(container.querySelectorAll('button')).toHaveLength(2)
   })
 
-  it('never renders a real `disabled`, in any state (R45, R64)', () => {
+  it('never renders a real `disabled`, in any state', () => {
     // `disabled` on the focused element blurs it to `document.body`. Both buttons carry
     // `aria-disabled` while a press is in flight instead — affordance, not enforcement.
     const { container } = draw({ spent: true })
@@ -117,7 +117,7 @@ describe('the strip IS its tool call id', () => {
 })
 
 describe('Build this plan', () => {
-  it('sends the conversation, the tool call and a minted chat id — and NO plan text (D3)', async () => {
+  it('sends the conversation, the tool call and a minted chat id — and NO plan text', async () => {
     const onBuild = vi.fn().mockResolvedValue(undefined)
     draw({ onBuild })
 
@@ -136,7 +136,7 @@ describe('Build this plan', () => {
     expect(handoff.newChatId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
-  it('a double press carries the SAME minted id — one plan, one build chat (D4)', async () => {
+  it('a double press carries the SAME minted id — one plan, one build chat', async () => {
     // Two presses that minted two ids would be two build chats for one plan, and the citizen would
     // be looking at the second, empty one. The ref is what makes the second press collide on the
     // primary key so the server answers with the chat that already exists.
@@ -157,7 +157,7 @@ describe('Build this plan', () => {
     expect(onBuild.mock.calls[1][0].newChatId).toBe(onBuild.mock.calls[0][0].newChatId)
   })
 
-  it('a FRESH mount mints a new id — R28’s reload clause, undelivered on purpose', async () => {
+  it('a FRESH mount mints a new id — the reload gap stays undelivered, on purpose', async () => {
     // A ref dies with the page, and this component keeps no other record of a mint — so after
     // a reload a fresh press-session mints a new id and creates a SECOND build chat. That is
     // the honest boundary of idempotency without storage, asserted here rather than discovered
@@ -176,7 +176,7 @@ describe('Build this plan', () => {
     expect(onBuild.mock.calls[1][0].newChatId).not.toBe(first)
   })
 
-  it('a failed handoff leaves the reader where they are, told, with the strip pressable (R29)', async () => {
+  it('a failed handoff leaves the reader where they are, told, with the strip pressable', async () => {
     const onBuild = vi.fn().mockRejectedValue(new Error('nope'))
     const onFailed = vi.fn()
     draw({ onBuild, onFailed })
@@ -212,7 +212,7 @@ describe('Keep planning', () => {
   })
 })
 
-describe('a spent strip (D2)', () => {
+describe('a spent strip', () => {
   it('stays on screen, is marked spent, and STILL issues a request when pressed', async () => {
     const onBuild = vi.fn().mockResolvedValue(undefined)
     draw({ spent: true, onBuild })

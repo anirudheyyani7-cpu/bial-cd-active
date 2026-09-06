@@ -48,7 +48,7 @@ function headerOf(m: ReturnType<typeof jsonFetch>, name: string, call = 0): stri
 }
 
 // The frozen `buildSessionClient` member set — the portal's mirror of the backend's
-// `test_abstractmethod_set_equals_the_c2_contract` (`test_base.py`). A drifted mock bag is
+// `test_abstractmethod_set_equals_the_pinned_contract` (`test_base.py`). A drifted mock bag is
 // what this guards: the client interface trimmed to five members here, but one call site
 // (`ConversationSurface-memo.test.jsx`) went on mocking `acquireLock` / `renewLock` / `releaseLock` /
 // `heartbeat` anyway, because nothing forced its stale keys to be read against the real
@@ -57,12 +57,12 @@ function headerOf(m: ReturnType<typeof jsonFetch>, name: string, call = 0): stri
 const _CLIENT_MEMBERS = new Set(['relaunchPreview', 'stop', 'getStatus', 'forceEnd'])
 
 describe('buildSessionApi — buildSessionClient member set (inertness guard)', () => {
-  it('exposes exactly the four surviving C3 client operations', () => {
+  it('exposes exactly the four surviving client operations', () => {
     expect(new Set(Object.keys(buildSessionClient))).toEqual(_CLIENT_MEMBERS)
   })
 })
 
-describe('buildSessionApi — control operations (C3 §2)', () => {
+describe('buildSessionApi — control operations', () => {
   // ─── THE 409 MAPPING, RE-POINTED OFF THE DELETED `start` (`postJson`, shared) ──────────────
   //
   // `start` is gone — a composer send is a TURN, so the wrapper had no caller — and these two
@@ -70,7 +70,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
   // call in this module goes through. Deleting them with the wrapper would have taken the typed
   // 409 with them, so they are re-pointed onto `relaunchPreview`, which is live (`StartAppControl`
   // and `RailComposer` call it directly) and is now the only caller that can raise this error.
-  it('a 409 build_session_already_active surfaces the existing sessionId as a typed error (C3 §2.1/§6)', async () => {
+  it('a 409 build_session_already_active surfaces the existing sessionId as a typed error', async () => {
     const fetchImpl = jsonFetch(409, { error: { code: 'build_session_already_active', message: 'You already have a build running.' }, sessionId: 'existing-9' })
     const err = await relaunchPreview({ projectId: 'p1' }, { fetchImpl }).catch((e: unknown) => e)
 
@@ -88,7 +88,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect((err as BuildSessionAlreadyActiveError).existingSessionId).toBe('nested-42')
   })
 
-  it('relaunchPreview: 200 maps {appId, previewUrl, status} — no sessionId/createdAt on this shape (Decision 6, #43)', async () => {
+  it('relaunchPreview: 200 maps {appId, previewUrl, status} — no sessionId/createdAt on this shape', async () => {
     const READY_URL = 'https://app.example.azurecontainerapps.io/'
     const fetchImpl = jsonFetch(200, { appId: 'a1', previewUrl: READY_URL, status: 'ready' })
     const out = await relaunchPreview({ projectId: 'p1' }, { fetchImpl })
@@ -112,7 +112,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/build-sessions/relaunch')
   })
 
-  it('relaunchPreview: carries `ready: false` through — a framable URL that is not serving yet (R6/SL-20)', async () => {
+  it('relaunchPreview: carries `ready: false` through — a framable URL that is not serving yet', async () => {
     // The attach arm now hands back the live container's URL even when the app has not answered
     // within its readiness budget, because the alternative — condemning the container — rolled a
     // citizen back to their last save. The pane needs to be able to tell those two apart, so a
@@ -134,7 +134,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect(out.status).toBe('provisioning') // …and `status` does not claim READY over it
   })
 
-  it('relaunchPreview: the wire restoredFromFailedBuild=true survives the mapping (U6/F1)', async () => {
+  it('relaunchPreview: the wire restoredFromFailedBuild=true survives the mapping', async () => {
     const fetchImpl = jsonFetch(200, {
       appId: 'a1', previewUrl: 'https://x.example/', status: 'ready', restoredFromFailedBuild: true,
     })
@@ -156,7 +156,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect((statusErr as ApiError).status).toBe(500)
   })
 
-  it('getStatus: previewUrl is null before ready and the stable URL once ready; lastSeq present after the first envelope (C3 §2.3)', async () => {
+  it('getStatus: previewUrl is null before ready and the stable URL once ready; lastSeq present after the first envelope', async () => {
     const before = jsonFetch(200, { sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'building', previewUrl: null, lastSeq: 3, createdAt: 'c', updatedAt: 'u' })
     const b = await getStatus('s1', { fetchImpl: before })
     expect(b.previewUrl).toBeNull()
@@ -175,7 +175,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
   })
 })
 
-describe('buildSessionApi — CSRF discipline (C3 §3, KTD-2)', () => {
+describe('buildSessionApi — CSRF discipline', () => {
   it('attaches X-CSRF-Token on every mutating POST (start / stop / forceEnd)', async () => {
     const stopImpl = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', {}, { fetchImpl: stopImpl })
@@ -201,7 +201,7 @@ describe('buildSessionApi — CSRF discipline (C3 §3, KTD-2)', () => {
   })
 })
 
-describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
+describe('buildSessionApi — lock ops + fail-closed errors', () => {
   it('stop: sends {reason} when supplied, and a valid empty StopBuildRequest {} otherwise', async () => {
     const withReason = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', { reason: 'user cancelled' }, { fetchImpl: withReason })
@@ -218,14 +218,14 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
   // Re-anchored onto `forceEnd`: `acquireLock` / `releaseLock`, which this assertion used to
   // run against, are gone — nothing called them. `forceEnd` is the surviving bodyless lock
   // POST, and the "lock ops take no request body" contract still holds for it.
-  it('lock ops take NO request body (C3 §3) — forceEnd sends neither body nor Content-Type', async () => {
+  it('lock ops take NO request body — forceEnd sends neither body nor Content-Type', async () => {
     const impl = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await forceEnd('s', { fetchImpl: impl })
     expect(optsOf(impl).body).toBeUndefined()
     expect(headerOf(impl, 'Content-Type')).toBeUndefined()
   })
 
-  it('forceEnd: a 403 build_session_forbidden is surfaced fail-closed, not swallowed (C3 §3.4)', async () => {
+  it('forceEnd: a 403 build_session_forbidden is surfaced fail-closed, not swallowed', async () => {
     const fetchImpl = jsonFetch(403, { error: { code: 'build_session_forbidden', message: 'Not the owner.' } })
     const err = await forceEnd('s', { fetchImpl }).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ApiError)
@@ -243,7 +243,7 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
     expect((err as ApiError).status).toBe(500)
   })
 
-  it('a session body with NO projectId fails at the boundary — it drives the 409 reattach/block routing (finding #31)', async () => {
+  it('a session body with NO projectId fails at the boundary — it drives the 409 reattach/block routing', async () => {
     // getStatus is the ONE reader of this guard now: the projectId comparison is the
     // reattach-vs-block gate, and `start` — which used to anchor the same routing on the created
     // session — is gone with its wrapper.
@@ -254,7 +254,7 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
   })
 })
 
-describe('asReclaimBlocked (#83)', () => {
+describe('asReclaimBlocked', () => {
   it('reads the occupying project off the 409', () => {
     const err = { code: 'sandbox_reclaim_blocked', details: { projectId: 'p-a', projectName: 'Lost & Found', dirty: true } }
     expect(asReclaimBlocked(err)).toEqual({
@@ -421,7 +421,7 @@ function fastClock() {
   }
 }
 
-describe('handOverWorkspace — the stop → save → release ordering (#83)', () => {
+describe('handOverWorkspace — the stop → save → release ordering', () => {
   /** Records the path of every call in order, and answers each of the three routes plausibly. */
   function recordingFetch(stopState = 'stopped') {
     const seen: string[] = []
@@ -689,11 +689,11 @@ describe('handOverWorkspace — the stop → save → release ordering (#83)', (
   })
 })
 
-describe('fetchPreviewState — the wire mirror (C3 §8.3)', () => {
+describe('fetchPreviewState — the wire mirror', () => {
   const previewFetch = (body: unknown) =>
     ({ fetchImpl: async () => res(200, body) })
 
-  it('narrows `starting` to itself, not to `unknown` (AE54a)', async () => {
+  it('narrows `starting` to itself, not to `unknown`', async () => {
     // The one that degrades silently: a closed tuple without `starting` resolves it through
     // the fallback to `unknown`, so the pane says "we could not check" and offers a retry for
     // a start that is actively under way.

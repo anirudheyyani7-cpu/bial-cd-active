@@ -102,7 +102,7 @@ describe('the dialog', () => {
   })
 })
 
-describe('R47 — the reader dismisses it, and only the reader', () => {
+describe('the reader dismisses it, and only the reader', () => {
   it('Escape closes it', () => {
     const onClose = vi.fn()
     render(<AttachmentPreview target={pdf} onClose={onClose} />)
@@ -118,7 +118,7 @@ describe('R47 — the reader dismisses it, and only the reader', () => {
   })
 })
 
-describe('U11 — a file is never a blank box', () => {
+describe('a file is never a blank box', () => {
   // THE DEFECT THIS UNIT EXISTS TO CLOSE. A frame this component can address is refused by the
   // browser — `data:` by `frame-src 'self'`, a same-origin `/api/attachments/{id}` by the control
   // plane's own `X-Frame-Options: DENY` — and a refused `<iframe>` fires NO `error` event, so

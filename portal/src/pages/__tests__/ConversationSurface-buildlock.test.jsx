@@ -229,7 +229,7 @@ describe('BuilderPage — one build at a time, per project (advisory pre-check)'
     await waitFor(() => expect(h.buildFromPlan).toHaveBeenCalledTimes(2)) // both started
   })
 
-  it('a second build RE-ACQUIRES the claim — a second chat stays blocked after the refine (finding #23)', async () => {
+  it('a second build RE-ACQUIRES the claim — a second chat stays blocked after the refine', async () => {
     mintBuild('new-A', 'First build')
     const a = renderBuilder('build-A')
     await buildFrom(a.container, 'build it')

@@ -165,7 +165,7 @@ describe('App — the SPA must never claim /apps/*', () => {
   })
 })
 
-describe('App — the workspace shell is one element across a move inside a project (AE4, the wiring half)', () => {
+describe('App — the workspace shell is one element across a move inside a project, the wiring half', () => {
   it('keeps the SAME shell element across project → chat → project; only the outlet content changes', () => {
     renderAt('/projects/p1')
     const frame = shell()
@@ -245,7 +245,7 @@ describe('App — the auth guard sits ABOVE the shell', () => {
   })
 })
 
-describe('the welcome page is gone (#158 §7)', () => {
+describe('the welcome page is gone — its old addresses now land on the project list', () => {
   it.each(['/dashboard', '/enterprise', '/teamspace'])(
     '%s lands on the project list instead of its own page',
     (path) => {

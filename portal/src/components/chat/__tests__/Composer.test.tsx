@@ -41,7 +41,7 @@ const type = (text: string) => fireEvent.change(box(), { target: { value: text }
 const noRealDisabled = (container: HTMLElement) =>
   expect(container.querySelector('[disabled]')).toBeNull()
 
-describe('a turn in flight: typing stays, sending waits (AE30)', () => {
+describe('a turn in flight: typing stays, sending waits', () => {
   it('takes typed input, marks Send unavailable, and says why in one short line', () => {
     const { container } = draw({ isRunning: true })
 
@@ -106,7 +106,7 @@ describe('nothing is ever `disabled` — swept in every state', () => {
     expect(box().value.length).toBe(10_001) // and NOTHING was cut
   })
 
-  it('the textarea carries no `maxLength` — issue #156 forbids it by name', () => {
+  it('the textarea carries no `maxLength` attribute', () => {
     draw()
     expect(box().hasAttribute('maxLength')).toBe(false)
   })
@@ -150,7 +150,7 @@ describe('growth is bounded, then it scrolls', () => {
   })
 })
 
-describe('the draft is held until the server confirms (R58/R59)', () => {
+describe('the draft is held until the server confirms', () => {
   it('clears text and staged files ONLY on a resolved send', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     draw({ onSubmit })
@@ -201,7 +201,7 @@ describe('the draft is held until the server confirms (R58/R59)', () => {
     expect(box().value).toBe('actually make it red')
   })
 
-  it('stamps the conversation at PRESS time, so a mid-send switch cannot misfile it (R60)', async () => {
+  it('stamps the conversation at PRESS time, so a mid-send switch cannot misfile it', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     draw({ onSubmit })
     type('for chat one')
@@ -263,7 +263,7 @@ describe('the draft follows its own chat', () => {
   })
 })
 
-describe('R55 — the relocated stop', () => {
+describe('the relocated stop', () => {
   it('renders when a turn is running, with a stable accessible name', () => {
     draw({
       isRunning: true,
@@ -386,7 +386,7 @@ describe('★ an offer waiting, drawn the way the boards draw it', () => {
   })
 })
 
-describe('one composer, both kinds (R72)', () => {
+describe('one composer, both kinds', () => {
   it('behaves identically whichever kind mounted it — the placeholder is the only difference', () => {
     // The placeholder is a HINT, not a mode: nothing downstream reads it, and every behaviour
     // above is a property of this component rather than of the surface that mounted it.

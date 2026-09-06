@@ -254,7 +254,7 @@ afterEach(() => {
   cleanup()
 })
 
-describe('BuilderPage — the preview poll stops on a terminal answer (R16)', () => {
+describe('BuilderPage — the preview poll stops on a terminal answer', () => {
   it('stops asking once the workspace is settled asleep', async () => {
     h.fetchPreviewState.mockResolvedValue(answer('asleep', true))
     await framedBuild()
@@ -343,7 +343,7 @@ describe('BuilderPage — the preview poll stops on a terminal answer (R16)', ()
   })
 })
 
-describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
+describe('BuilderPage — stopping the poll must not pin "gone"', () => {
   it('re-arms on the workspace coming back, even though the restored preview URL is IDENTICAL', async () => {
     const turn = await framedBuild()
     expect(framedUrl()).toBe(PREVIEW_URL)
@@ -527,7 +527,7 @@ describe('BuilderPage — stopping the poll must not pin "gone" (R17)', () => {
   })
 })
 
-describe('BuilderPage — `restorable` vs the `projectHasSavedBuild` prop (U17, previously untested)', () => {
+describe('BuilderPage — `restorable` vs the `projectHasSavedBuild` prop', () => {
   // The intended order: this session's own Save first (it can only
   // move the answer toward "yes"), then the POLL — the freshest server answer, and the only
   // one that counts the platform's turn-boundary recovery copy — then the prop, which was read

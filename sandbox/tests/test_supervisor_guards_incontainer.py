@@ -296,7 +296,7 @@ def test_image_carries_no_build_time_npm_cache(sandbox_image: str) -> None:
         assert int(kib) < 1024, f"{path} still carries {kib} KiB of build cache"
 
 
-def test_image_size_is_far_below_the_pre_u7_baseline(sandbox_image: str) -> None:
+def test_image_size_is_far_below_the_original_baseline(sandbox_image: str) -> None:
     # This is ALSO the same-layer proof for the cache removal: deleting the build cache in a LATER
     # layer would leave the merged filesystem clean — so the test above would still pass — while
     # the image kept shipping every byte. Only the total size tells the two apart.

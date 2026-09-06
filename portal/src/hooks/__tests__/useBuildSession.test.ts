@@ -49,7 +49,7 @@ const ENDED_QUOTA: ProgressEnvelope = { type: 'ended', seq: 4, status: 'ended', 
  *   · the mid-flight-unmount guard (FIX 1) is re-pointed onto `reattach` below, which carries the
  *     identical `mountedRef` bail.
  */
-describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2)', () => {
+describe('useBuildSession — status derivation across the lifecycle', () => {
   it('derives status at EACH hop: provisioning →(first step)→ building → preview_ready → ready → stop → ended', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
@@ -69,7 +69,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.envelopes.map((e) => e.type)).toEqual(['step'])
   })
 
-  it('preview_reconnecting raises a DISTINCT reconnecting flag (not a feed row, not feedDisconnected), cleared by the re-frame (F8/U5)', async () => {
+  it('preview_reconnecting raises a DISTINCT reconnecting flag (not a feed row, not feedDisconnected), cleared by the re-frame', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
     act(() => { fake.open() })
@@ -99,7 +99,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.status).toBe('failed')
   })
 
-  it('quota graceful end resolves ENDED (not FAILED); quota banner set; timers torn down (C7 §8)', async () => {
+  it('quota graceful end resolves ENDED (not FAILED); quota banner set; timers torn down', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
     act(() => { fake.open() })
@@ -110,7 +110,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.quota).toEqual({ limit: 1_000_000, used: 1_000_000, resetsAt: '2026-07-15T18:30:00Z' })
   })
 
-  it('missed preview_ready (KTD-1): reattach seeds previewUrl from getStatus even though no live preview_ready arrives', async () => {
+  it('missed preview_ready: reattach seeds previewUrl from getStatus even though no live preview_ready arrives', async () => {
     const client = makeClient({
       getStatus: vi.fn(async (): Promise<BuildSessionStatusResponse> => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'ready', previewUrl: PREVIEW_URL, lastSeq: 7, createdAt: 'c', updatedAt: 'u' })),
     })
@@ -121,7 +121,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
     expect(result.current.previewUrl).toBe(PREVIEW_URL)
   })
 
-  it('reattach measures elapsed time from the session createdAt, not the moment of reattach (review F3)', async () => {
+  it('reattach measures elapsed time from the session createdAt, not the moment of reattach', async () => {
     const created = '2026-07-14T00:00:00.000Z'
     const client = makeClient({
       getStatus: vi.fn(async (): Promise<BuildSessionStatusResponse> => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'building', previewUrl: null, lastSeq: 3, createdAt: created, updatedAt: 'u' })),
@@ -132,7 +132,7 @@ describe('useBuildSession — status derivation across the lifecycle (C3 §1/§2
   })
 })
 
-describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', () => {
+describe('useBuildSession — endReason: the pardoned preview signal', () => {
   const ENDED_COMPLETED: ProgressEnvelope = { type: 'ended', seq: 3, status: 'ended', preview_url: PREVIEW_URL, snapshot_committed: true, reason: 'completed' }
 
   it("a completed terminal carries reason 'completed' and KEEPS previewUrl — the done-preview-live state", async () => {
@@ -191,7 +191,7 @@ describe('useBuildSession — endReason: the pardoned preview signal (#13/R2)', 
   })
 })
 
-describe('useBuildSession — stop / force-end (C3 §2.2/§3.4)', () => {
+describe('useBuildSession — stop / force-end', () => {
   it('forceEnd resolves terminal from the control-plane response, overriding the envelope stream (mid-building, no ended envelope)', async () => {
     const forceEnd = vi.fn(async () => ({ sessionId: 's1', status: 'ended' as const }))
     const { result, fake } = setup(makeClient({ forceEnd }))
@@ -218,7 +218,7 @@ describe('useBuildSession — stop / force-end (C3 §2.2/§3.4)', () => {
   })
 })
 
-describe('useBuildSession — an open tab is NOT a keep-alive writer (U13, R13)', () => {
+describe('useBuildSession — an open tab is NOT a keep-alive writer', () => {
   /*
    * useBuildSession.ts carries why nothing in the browser extends a deadline; what is pinned here
    * is that this hook makes no such call, however long a tab sits.
@@ -252,7 +252,7 @@ describe('useBuildSession — an open tab is NOT a keep-alive writer (U13, R13)'
   })
 })
 
-describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
+describe('useBuildSession — feed disconnection + teardown', () => {
   it('a bounded-reconnect exhaustion raises feedDisconnected (not a stalled-build masquerade); reconnect resubscribes', async () => {
     const { result, fake } = setup()
     await act(async () => { await result.current.reattach('s1') })
@@ -266,7 +266,7 @@ describe('useBuildSession — feed disconnection + teardown (KTD-1)', () => {
     expect(result.current.feedDisconnected).toBe(false)
   })
 
-  it('reconnect() reseeds previewUrl/status from getStatus — a preview_ready missed while the feed was dead still frames (finding #18)', async () => {
+  it('reconnect() reseeds previewUrl/status from getStatus — a preview_ready missed while the feed was dead still frames', async () => {
     // The reattach that opens the session and the reconnect that reseeds it now read the SAME
     // `getStatus`, so the fixture has to move between them or the "never seen" assertion below is
     // vacuous: the first call answers as the session looked when the tab reattached, the second as

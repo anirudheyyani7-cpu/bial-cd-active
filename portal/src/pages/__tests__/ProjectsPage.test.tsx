@@ -182,7 +182,7 @@ describe('a row', () => {
     expect(screen.getByText('Nothing built yet')).toBeTruthy()
   })
 
-  it('keeps Delete OUT of the open button (invariant F-10)', async () => {
+  it('keeps Delete OUT of the open button', async () => {
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Visitor Log')]))
     renderPage()
     await screen.findByText('Visitor Log')

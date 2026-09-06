@@ -81,7 +81,7 @@ const openReviewAndApprove = () => {
   fireEvent.click(screen.getByTestId('approve-btn'))
 }
 
-describe('the admin toast channel — confirmation vs failure through the SAME callback (U15 integration)', () => {
+describe('the admin toast channel — confirmation vs failure through the SAME callback', () => {
   it('an action that succeeds renders the confirmation appearance', async () => {
     h.approveApp.mockResolvedValue({})
     renderAdmin()
@@ -107,7 +107,7 @@ describe('the admin toast channel — confirmation vs failure through the SAME c
   })
 })
 
-describe('a failure waits to be dismissed; a confirmation may fade (U15)', () => {
+describe('a failure waits to be dismissed; a confirmation may fade', () => {
   it('a confirmation auto-dismisses after 3 seconds', async () => {
     h.approveApp.mockResolvedValue({})
     vi.useFakeTimers()
@@ -174,7 +174,7 @@ describe('a confirmation and a failure are visually distinguishable without read
   })
 })
 
-describe('two messages in quick succession (U15 edge case)', () => {
+describe('two messages in quick succession', () => {
   it('the second message never leaves the first one’s text under the second’s styling', async () => {
     // Fail, then immediately retry and succeed — `act()`'s catch and success branches
     // each call `showToast` exactly once, and `showToast` replaces the whole

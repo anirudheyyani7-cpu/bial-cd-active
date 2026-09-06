@@ -8,7 +8,7 @@ afterEach(cleanup)
 // The banner slot is where every sentence the platform says to a citizen lands: their app was
 // recovered, it could not be, the workspace could not be checked, the change did not come
 // together, today's allowance is used up. All five arrive at the same moment in the same place.
-describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
+describe('TurnBanner — one banner, newest wins', () => {
   it('renders no visible box when there is nothing to say', () => {
     render(<TurnBanner text={null} />)
     // NOT an empty bordered box. A permanent visual artefact above the composer reads as broken

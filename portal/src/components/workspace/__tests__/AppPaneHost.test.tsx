@@ -132,7 +132,7 @@ function ProjectAddress() {
 
 afterEach(() => cleanup())
 
-describe('AppPaneHost — the frame outlives a move between the two addresses (AE4)', () => {
+describe('AppPaneHost — the frame outlives a move between the two addresses', () => {
   it('keeps the SAME iframe node across chat → project → chat, and never re-issues its src', () => {
     render(<Workspace chatSurface={<ChatSurface />} />)
     const original = frame()
@@ -415,7 +415,7 @@ describe('AppPaneHost — identity is the address, and a different app is a real
   })
 })
 
-describe('AppPaneHost — a layout change does not remount the frame (AE37)', () => {
+describe('AppPaneHost — a layout change does not remount the frame', () => {
   it('flipping the shell\'s grid between side-by-side and stacked keeps the same iframe node', () => {
     // The class comes from a fixture here; the real threshold that produces it in the
     // product lives elsewhere. What is assertable NOW — and what makes the claim about this

@@ -252,7 +252,7 @@ describe('the chip names the state, and the closed chip is a complete answer', (
     expect(shared).toEqual(['Approved'])
   })
 
-  it('covers AE24 — the drift is in the chip itself, with the popover closed', () => {
+  it('the drift is in the chip itself, with the popover closed', () => {
     // Mutation receipt: fold `live_newer_work`'s label back to plain "Live" and this goes
     // red twice — on the visible text and on the accessible name.
     wire(view('live_newer_work'))
@@ -350,7 +350,7 @@ describe('the chip names the state, and the closed chip is a complete answer', (
 // ── one sentence, the version row, at most one action ────────────────────────────────
 
 describe('the popover explains the state and offers at most one thing to do', () => {
-  it('covers AE23 — switched off says an administrator did it, and offers nothing', async () => {
+  it('switched off says an administrator did it, and offers nothing', async () => {
     wire(view('switched_off'))
     mount()
     const pop = await openChip()

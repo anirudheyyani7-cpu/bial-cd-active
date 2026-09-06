@@ -180,7 +180,7 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
+describe('BuilderPage — the build-turn flow', () => {
   it('Build it starts a WRITE TURN; its step frames render; the preview frame frames the sandbox URL', async () => {
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
@@ -224,7 +224,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     await waitFor(() => expect(document.querySelector('iframe')?.getAttribute('src')).toBe(PREVIEW_URL))
   })
 
-  it('a doubly-truncated turn resubscribes once, then surfaces the connection-dropped notice (#28)', async () => {
+  it('a doubly-truncated turn resubscribes once, then surfaces the connection-dropped notice', async () => {
     const { deps: sessionDeps } = deps()
     // The socket drops before the terminal on BOTH the first read AND the resubscribe.
     h.readTurnStream.mockImplementation(async ({ onFrame }) => {
@@ -268,7 +268,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     expect(document.querySelector('iframe')).toBeNull() // terminal collapses the dead frame
   })
 
-  it('a COMPLETED build keeps the preview framed — "done, preview live", never "no longer running" (#13/R2)', async () => {
+  it('a COMPLETED build keeps the preview framed — "done, preview live", never "no longer running"', async () => {
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -294,7 +294,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
   // test above is what pins it. The kill switch still belongs to the legacy session surfaces
   // (SessionBanners' block/reclaim arms), which reach it by session id and are tested there.
 
-  it('U4: a self-heal diagnostic renders as a RETRY mid-build, and leaves no residue after completion', async () => {
+  it('a self-heal diagnostic renders as a RETRY mid-build, and leaves no residue after completion', async () => {
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -333,7 +333,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     expect(glyphs().getAllByText(/^failed$/i).length).toBe(1)
   })
 
-  it('U4 mirror: repair exhausted → turn_ended(failed) — the retry framing does NOT persist beside the terminal', async () => {
+  it('repair exhausted → turn_ended(failed) — the retry framing does NOT persist beside the terminal', async () => {
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -356,7 +356,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     expect(glyphs().getAllByText(/^failed$/i).length).toBe(1)
   })
 
-  it('a quota breach ends gracefully and shows the daily-limit banner (C7 §8)', async () => {
+  it('a quota breach ends gracefully and shows the daily-limit banner', async () => {
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -383,7 +383,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
   })
 })
 
-describe('BuilderPage — the transition\'s refusals are typed HTTP statuses now (KTD-8a)', () => {
+describe('BuilderPage — the transition\'s refusals are typed HTTP statuses now', () => {
   it('a busy workspace RE-ARMS the card with the server\'s own message — no turn started', async () => {
     // `build_failed` + `reason` is gone from the response. Every case it carried is a status the
     // fetch layer already raises on (429 the daily cap, 409 a busy workspace, 503 an unconfigured
@@ -423,7 +423,7 @@ describe('BuilderPage — the transition\'s refusals are typed HTTP statuses now
   })
 })
 
-describe('BuilderPage — ONE gate: the composer is shut while the agent works (U16)', () => {
+describe('BuilderPage — ONE gate: the composer is shut while the agent works', () => {
   it('a send is REFUSED while the build runs — the composer is disabled and the build is untouched', async () => {
     // The decision this pins: a build is not a parallel track you talk over. The tool calls the
     // agent makes ARE its answer, told in this thread — so while it works there is nothing to
@@ -499,7 +499,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     expect(h.buildFromPlan).not.toHaveBeenCalled() // no click, no build
   })
 
-  it('AN INERTNESS GUARD (L8): no mode control appears at the terminal, and a stray legacy `mode` field is ignored', async () => {
+  it('AN INERTNESS GUARD: no mode control appears at the terminal, and a stray legacy `mode` field is ignored', async () => {
     // Restated as an absence: no build terminal ever renders a mode control, and a `getBuild`
     // row still carrying a legacy `mode` field (an old, pre-migration row) is simply ignored
     // rather than read.
@@ -550,7 +550,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     expect(h.stop).not.toHaveBeenCalled()
   })
 
-  it('a RELOAD mid-build re-takes the gate from the transcript (review P1)', async () => {
+  it('a RELOAD mid-build re-takes the gate from the transcript', async () => {
     // The window the gate mattered most in, and was simply ABSENT from. `buildActive` derives
     // from refs only `Build it` stamps, so a fresh mount over a RUNNING build rendered an open
     // textarea, an armed mode pill, no note, and a past-tense "a build was running here" line —
@@ -595,7 +595,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     expect(textarea.value).toBe('while you are at it, add a chart')
   })
 
-  it('the composer shuts on the CLICK, not on the server\'s answer (review P2)', async () => {
+  it('the composer shuts on the CLICK, not on the server\'s answer', async () => {
     // `buildFromPlan` is a full round-trip — the sandbox provision lives behind it, seconds long.
     // The composer used to stay open for all of it, and a send in that window hit the silent
     // double-Enter ref guard: no turn, no toast, the message simply gone.
@@ -686,7 +686,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     expect(h.stop).not.toHaveBeenCalled() // A's live build is untouched
   })
 
-  it('a Send in a DIFFERENT project does NOT tear down another project\'s live build (review F1)', async () => {
+  it('a Send in a DIFFERENT project does NOT tear down another project\'s live build', async () => {
     // One BuilderPage instance persists across project switches (flat routing). A live build in
     // project A must survive a Send made from project B's chat — the bug was a tautological refine
     // guard that stopped A's build instead of refusing B.
@@ -761,7 +761,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
   })
 })
 
-describe('BuilderPage — the "come back later" relaunch entry point (#43)', () => {
+describe('BuilderPage — the "come back later" relaunch entry point', () => {
   // A reload drops the in-memory session, but the transcript's persisted BuildOutcome part proves
   // a build once ran — so a fresh mount must render the terminal placeholder (with its Relaunch
   // action), not the idle "submit a prompt" empty state. The live/reattach flow always wins: this
@@ -865,7 +865,7 @@ describe('BuilderPage — the "come back later" relaunch entry point (#43)', () 
 // AN INERTNESS GUARD: there is no mode to fail switching INTO — a chat's kind is fixed when it
 // is created, so a mode-switch failure can no longer occur. The control is not on the surface,
 // ⌥P opens nothing, and that is true at every point in a build's life: idle, and mid-build.
-describe('a failed mode switch says what actually failed (N12) — RETIRED, now an inertness guard', () => {
+describe('a failed mode switch says what actually failed — RETIRED, now an inertness guard', () => {
   it('no mode pill exists idle, and ⌥P opens no menu — the whole surface this suite exercised is gone', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
     const { deps: sessionDeps } = deps()
@@ -904,7 +904,7 @@ describe('a failed mode switch says what actually failed (N12) — RETIRED, now 
 //
 // The remaining two tests are about the TERMINAL leaving no empty bubble behind, which
 // `headline()` still resolves to `null` for regardless of `isBuild`.
-describe('a read turn reads the live container without becoming a build (2026-07-30) — the live half is rewritten for U1', () => {
+describe('a read turn reads the live container without becoming a build (2026-07-30)', () => {
   /** An open read-turn socket: the workspace frame lands first, the answer arrives later. */
   function scriptReadTurn() {
     const live = { emit: null, close: null }
@@ -921,7 +921,7 @@ describe('a read turn reads the live container without becoming a build (2026-07
     }
   }
 
-  it('says a reply is coming for the whole container wait, with no phase headline (rewritten for U6)', async () => {
+  it('says a reply is coming for the whole container wait, with no phase headline', async () => {
     // NO PHASE HEADLINE: no "Setting up your sandbox" then "Building your app…", no elapsed
     // timer, no "step 3 of 9" — the screen should read as an app being built rather than as an
     // agent being watched.
@@ -1001,7 +1001,7 @@ describe('a build that dies before its first step shows no empty bubble (2026-07
 })
 
 // The platform's own sentences about the workspace, and the slot they share.
-describe('what the platform says about the workspace itself (U2)', () => {
+describe('what the platform says about the workspace itself', () => {
   function scriptReadTurn() {
     const live = { emit: null, close: null }
     h.readTurnStream.mockImplementation(async ({ onFrame }) => {

@@ -241,7 +241,7 @@ function inR68Scope(file) {
   return IN_SCOPE.some((entry) => (entry.endsWith('/') ? r.startsWith(entry) : r === entry))
 }
 
-describe('R68 — no text below the platform body size on the chat surface', () => {
+describe('no text below the platform body size on the chat surface', () => {
   it('no in-scope file sets an arbitrary font size below the body ramp', () => {
     const offenders = []
     for (const file of sourceFiles(ROOT).filter(inR68Scope)) {

@@ -49,7 +49,7 @@ const groups = () => screen.queryAllByTestId('activity-group')
 const trigger = (i = 0) => within(groups()[i]!).getByTestId('activity-group-trigger')
 
 describe('a group exists only when a tool actually ran', () => {
-  it('AE15: a turn with a text part and NO tool calls renders zero group elements', () => {
+  it('a turn with a text part and NO tool calls renders zero group elements', () => {
     mount([textPart('Right now only you can. Feedback is saved against the person who sent it.')])
 
     expect(groups()).toHaveLength(0)
@@ -58,7 +58,7 @@ describe('a group exists only when a tool actually ran', () => {
     expect(screen.getByTestId('assistant-message').textContent).toContain('Right now only you can')
   })
 
-  it('AE15: the same turn shows no group WHILE RUNNING either', () => {
+  it('the same turn shows no group WHILE RUNNING either', () => {
     mount([textPart('Right now only you can.')], { isRunning: true })
 
     expect(groups()).toHaveLength(0)
@@ -67,7 +67,7 @@ describe('a group exists only when a tool actually ran', () => {
 })
 
 describe('sealing is adjacency, and there is no seal logic', () => {
-  it('AE13: twelve adjacent tool calls followed by text make ONE group above the paragraph', () => {
+  it('twelve adjacent tool calls followed by text make ONE group above the paragraph', () => {
     const parts = [
       ...Array.from({ length: 12 }, (_, i) => stepPart(i + 1, `Step ${i + 1}`)),
       textPart('The picker is in and wired to the list.'),
@@ -103,7 +103,7 @@ describe('sealing is adjacency, and there is no seal logic', () => {
 })
 
 describe('a sealed group collapses to a count, and opens where it sits', () => {
-  it('AE13: is collapsed at rest, and pressing it lists the rows in place', () => {
+  it('is collapsed at rest, and pressing it lists the rows in place', () => {
     // Sealed means collapsed, including the last group of a turn. Vercel's AI Elements
     // auto-open completed tools; we deliberately do not.
     mount([
@@ -181,8 +181,8 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
   })
 })
 
-describe('R34 — a group that hit a problem opens by itself, but never mid-turn', () => {
-  it('AE14: a sealed group containing a failed step is already expanded', () => {
+describe('a group that hit a problem opens by itself, but never mid-turn', () => {
+  it('a sealed group containing a failed step is already expanded', () => {
     mount([
       stepPart(1, 'Working on your app', 'ok'),
       stepPart(2, 'Working on your app', 'failed'),
@@ -194,7 +194,7 @@ describe('R34 — a group that hit a problem opens by itself, but never mid-turn
     expect(trigger().textContent).toContain('one problem')
   })
 
-  it('AE14 (the negative half): the same group WHILE RUNNING stays collapsed', () => {
+  it('the negative half — the same group WHILE RUNNING stays collapsed', () => {
     // Expanding mid-turn moves what the reader is reading, so the fail-open waits for terminal.
     mount([
       stepPart(1, 'Working on your app', 'failed'),
@@ -214,7 +214,7 @@ describe('R34 — a group that hit a problem opens by itself, but never mid-turn
   })
 })
 
-describe('R31 — a live group names what is happening NOW and grows in place', () => {
+describe('a live group names what is happening NOW and grows in place', () => {
   it('★ stays COLLAPSED while it runs, with the current step on one quiet line beneath it', () => {
     // `ActivityAnatomy` panel 2 draws a live group OPEN with the current step named inside it;
     // the working detail does not belong on screen. So the row is a count with icons in it, and the
@@ -341,7 +341,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
     expect(trigger().getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('AE16: a Plan-kind message with four read steps produces the same shape as a Build one', () => {
+  it('a Plan-kind message with four read steps produces the same shape as a Build one', () => {
     const parts = Array.from({ length: 4 }, (_, i) => stepPart(i + 1, `Reading file ${i + 1}`))
     const a = mount([...parts, textPart('Here is what I found.')])
     const html = a.container.innerHTML
@@ -355,7 +355,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
   })
 })
 
-describe('R35b — a step with no label still says something', () => {
+describe('a step with no label still says something', () => {
   it('renders the unrecognised-tool phrase, never an empty row and never the tool name', () => {
     mount([stepPart(1, ''), textPart('Done.')])
 
@@ -366,7 +366,7 @@ describe('R35b — a step with no label still says something', () => {
   })
 })
 
-describe('R35c — an interrupted turn does not read like a finished one', () => {
+describe('an interrupted turn does not read like a finished one', () => {
   it('says so in the sealed label, and the two labels differ', () => {
     const finished = mount([stepPart(1, 'Working on your app'), textPart('Done.')])
     const finishedLabel = trigger().textContent

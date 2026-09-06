@@ -100,7 +100,7 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-describe('the gate withholds SENDING, not typing (N10)', () => {
+describe('the gate withholds SENDING, not typing', () => {
   it('mid-reply: the box takes input, attach is live, send is unavailable — the mode pill is gone entirely', async () => {
     h.readTurnStream.mockImplementation(() => new Promise(() => {})) // the reply never lands
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
@@ -126,7 +126,7 @@ describe('the gate withholds SENDING, not typing (N10)', () => {
     expect(screen.queryByRole('button', { name: /^Mode:/ })).toBeNull()
   })
 
-  it('focus never leaves the box — not at the turn\'s start, not at its terminal (the N10 complaint)', async () => {
+  it('focus never leaves the box — not at the turn\'s start, not at its terminal', async () => {
     // Nothing GRABS focus at either edge — stealing focus at an async moment is its own bug class.
     //
     // HONEST LIMIT: jsdom does not implement blur-on-disable, so the `activeElement` assertions
@@ -226,7 +226,7 @@ describe('the closed gate always states its reason', () => {
   })
 })
 
-describe('the gate waits for the adopt round-trip (G1)', () => {
+describe('the gate waits for the adopt round-trip', () => {
   it('THE COMMON CASE: a chat with no build anchor resolves on mount and send is available', async () => {
     // The arm that would brick the whole product if missed. `reattachToLiveBuild` early-returns
     // when the transcript holds no `build_in_progress` part — which is every ordinary chat — so
@@ -299,7 +299,7 @@ describe('the gate waits for the adopt round-trip (G1)', () => {
   })
 })
 
-describe('an in-flight turn belongs to ONE chat (G2)', () => {
+describe('an in-flight turn belongs to ONE chat', () => {
   it('a turn streaming in chat A does not gate chat B\'s send', async () => {
     h.readTurnStream.mockImplementation(() => new Promise(() => {})) // A's reply never lands
     h.getBuild.mockResolvedValue({ id: 'chat-A', kind: 'build', messages: [] })
@@ -385,7 +385,7 @@ describe('an in-flight turn belongs to ONE chat (G2)', () => {
   })
 })
 
-describe('a typed draft survives (G3)', () => {
+describe('a typed draft survives', () => {
   it('a reload restores it', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
     const { deps: d } = deps()
@@ -532,7 +532,7 @@ describe('a finished build offers no canned follow-ups (2026-07-30)', () => {
 // whole daily budget watching a number that only ever moved on a page load. The signal now fires
 // from the ONE function every turn terminal routes through, which is what makes the failed and
 // stopped arms below free rather than three separate call sites to remember.
-describe('the usage meter settles at every turn terminal (N4)', () => {
+describe('the usage meter settles at every turn terminal', () => {
   it('a completed turn signals the meter', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
     const { deps: d } = deps()
@@ -576,11 +576,11 @@ describe('the usage meter settles at every turn terminal (N4)', () => {
 // CC1–CC4 — opening one chat must never damage another chat's live build, and reloading
 // mid-build must not erase the story. All four live in this file's neighbourhood because they
 // share the adopt/reattach predicates the composer gate is built on.
-describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
+describe('cross-chat build scoping and reload fidelity', () => {
   const liveStatus = (sessionId) =>
     statusResp({ sessionId, projectId: 'p1', status: 'building' })
 
-  it('CC1: adopting a SIBLING chat with a stale anchor does not tear down the live session', async () => {
+  it('adopting a SIBLING chat with a stale anchor does not tear down the live session', async () => {
     // This is a regression of a class the repo already fixed once and wrote down: stamp the
     // ownership refs before classifying and every same-session guard becomes tautological. Here
     // it is worse than tautological — `session.reattach()`'s first act is a synchronous
@@ -618,7 +618,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     expect(h.getStatus).not.toHaveBeenCalledWith('stale-9')
   })
 
-  it('CC1: the OWNING chat still reattaches on its own reload', async () => {
+  it('the OWNING chat still reattaches on its own reload', async () => {
     // The other arm — the guard must not be so broad that it breaks legitimate reattach.
     h.getBuild.mockResolvedValue(withAnchor('live-7'))
     h.getStatus.mockResolvedValue(liveStatus('live-7'))
@@ -629,7 +629,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     await waitFor(() => expect(screen.getByTestId('composer-gate-note').textContent).toMatch(/building your app/i))
   })
 
-  it('CC2: a reload mid-build still renders the stored step history', async () => {
+  it('a reload mid-build still renders the stored step history', async () => {
     // `reattach()` resets `envelopes` and subscribes to the LIVE feed — it replays nothing — so
     // suppressing every stored row "because the live bubble re-tells them" blanked the whole
     // transcript. Assert a COUNT, not merely the absence of a crash.
@@ -667,7 +667,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     expect(screen.getByTestId('stop-turn')).toBeTruthy()
   })
 
-  it('CC3: a sibling chat renders no live build bubble, and therefore no Stop button', async () => {
+  it('a sibling chat renders no live build bubble, and therefore no Stop button', async () => {
     // The narrative used to be project-scoped while the composer gate was chat-scoped, so a
     // sibling rendered another chat's build complete with a WORKING Stop — one click ending a
     // build the reader never started. The turn narrative is scoped by the same per-chat predicate
@@ -733,7 +733,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     expect(composer()).toBeTruthy()
   })
 
-  it('CC4: a reattached turn resubscribes ONCE on a truncation, then gives up honestly', async () => {
+  it('a reattached turn resubscribes ONCE on a truncation, then gives up honestly', async () => {
     // `fireRelayTurn` has had resume-once since the streamed-reply learning; this path mapped any
     // throw to 'truncated' and stopped, so one dropped socket after a reload reported "the
     // connection dropped" about a turn that was still running server-side.
@@ -758,7 +758,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     expect(screen.queryByText(/the connection dropped/i)).toBeNull()
   })
 
-  it('CC4: a SECOND truncation is a real drop and says so', async () => {
+  it('a SECOND truncation is a real drop and says so', async () => {
     h.getBuild.mockResolvedValue({
       id: 'build-X',
       kind: 'build',
@@ -779,7 +779,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
 // a 202: the user's message is persisted and the reply runs detached, so a failure AFTER that
 // point is subscription plumbing, not a refused send — and "could not be sent" over a persisted
 // message invites a duplicate resend.
-describe('the send-failure catch splits on whether the turn was accepted (N8)', () => {
+describe('the send-failure catch splits on whether the turn was accepted', () => {
   it('a startTurn refusal rolls back BOTH bubbles and says the message was not sent', async () => {
     h.getBuild.mockResolvedValue({ id: 'build-X', kind: 'build', messages: [] })
     h.startTurn.mockRejectedValue(new Error('refused at the door'))

@@ -80,7 +80,7 @@ describe('convertMessage — parts', () => {
   })
 })
 
-describe('R36 — the wall is the converter, not a promise at the draw site', () => {
+describe('the wall is the converter, not a promise at the draw site', () => {
   it('drops every platform-internal field a step frame may carry', () => {
     // The wire's step frame carries `detail.args` and `detail.result`, redacted and clipped but
     // PRESENT, and the diagnostic frame carries a developer half whose own schema records that
@@ -126,7 +126,7 @@ describe('convertMessage — identity is the server’s', () => {
     expect(convertMessage(message).id).toBe('srv_7_a_3')
   })
 
-  it('AE43: the same reply converts identically live and on reload', () => {
+  it('the same reply converts identically live and on reload', () => {
     // The live assembly and `messagesFromProjection` both produce a `ChatMessage`; ONE converter
     // takes both. Identical output is therefore a property of the shape, not a rule anyone has to
     // remember — which is what makes "one surface, both kinds, live and reloaded" true.

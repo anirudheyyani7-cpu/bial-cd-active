@@ -112,7 +112,7 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-describe('U8 — the chat surface draws no header of its own', () => {
+describe('the chat surface draws no header of its own', () => {
   it('renders none of the removed chrome, and no header either', async () => {
     const { container } = renderBuilder()
     // Settle the async adopt (getBuild → welcome message) before asserting on the header.
@@ -142,7 +142,7 @@ describe('U8 — the chat surface draws no header of its own', () => {
      rather than navigating straight out. */
 })
 
-describe('U8 regression guard — builds/refreshBuilds survive the dropdown removal', () => {
+describe('regression guard — builds/refreshBuilds survive the dropdown removal', () => {
   it('the Build-it blocked advisory still names the blocking chat by title', async () => {
     // Build-it is a HANDOFF now: pressing it in `build-A` creates a SECOND, brand-new
     // build chat and the claim + the live turn both belong to THAT chat, not to `build-A` — so

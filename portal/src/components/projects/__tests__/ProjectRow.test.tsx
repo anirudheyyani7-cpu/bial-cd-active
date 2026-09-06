@@ -126,7 +126,7 @@ describe('ProjectRow — a project with no description', () => {
   })
 })
 
-describe('ProjectRow — F-10, still', () => {
+describe('ProjectRow — no nested interactive elements, still', () => {
   it('keeps Delete out of the name button, even with the tooltip wrapper added', () => {
     // The tooltip restructuring (round 4) wraps the name in TooltipProvider/Tooltip/
     // TooltipTrigger — worth re-confirming the invariant survives the extra nesting.

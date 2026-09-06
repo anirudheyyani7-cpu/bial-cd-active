@@ -159,7 +159,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup())
 
-describe('R3 — loading a project address frames the running app, with no chat in the story', () => {
+describe('loading a project address frames the running app, with no chat in the story', () => {
   it('★ frames the app on a direct project load, with no conversation ever mounted', async () => {
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
@@ -188,7 +188,7 @@ describe('R3 — loading a project address frames the running app, with no chat 
     expect(frameWrapper()).toBeNull()
   })
 
-  it('★ AE1 — a saved, not-running project offers the ONE start control, on the project screen', () => {
+  it('★ a saved, not-running project offers the ONE start control, on the project screen', () => {
     // Asserted where a citizen would meet it: through the real shell, at a project address,
     // with no conversation in the story.
     //
@@ -222,7 +222,7 @@ describe('R3 — loading a project address frames the running app, with no chat 
   })
 })
 
-describe('AE4 — the app survives the round trip, in BOTH directions', () => {
+describe('the app survives the round trip, in BOTH directions', () => {
   it('project → chat → project keeps the SAME iframe node', async () => {
     // The direction the existing shell suite does not exercise: it starts from a chat. A second
     // publisher introduces the return trip, and the return trip is where a cold first commit can
@@ -280,7 +280,7 @@ describe('AE4 — the app survives the round trip, in BOTH directions', () => {
   })
 })
 
-describe('AE37 — the stacked crossing is a class, not a remount', () => {
+describe('the stacked crossing is a class, not a remount', () => {
   it('expresses both layouts on ONE grid element, with no measurement anywhere', async () => {
     // This crossing costs no `matchMedia` and no `ResizeObserver`: the container carries both
     // directions as responsive classes, so the two-column ↔ stacked crossing cannot remount the

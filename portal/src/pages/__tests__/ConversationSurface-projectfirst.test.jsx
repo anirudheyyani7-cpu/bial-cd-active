@@ -106,7 +106,7 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('BuilderPage — the seed turn is filed under a project', () => {
-  it('sends the create block (projectId + title) on the turn\'s own FIRST call, then the confirmed brief starts the build (R-18/U13, was "the create branch")', async () => {
+  it('sends the create block (projectId + title) on the turn\'s own FIRST call, then the confirmed brief starts the build', async () => {
     // R-18: there is no separate `createBuild` round trip left to carry `header.projectId` /
     // `title` — they ride the turn's OWN `POST .../turns` as its `create` block instead, so the
     // server can check the workspace BEFORE creating the row (see `fireRelayTurn`'s R-18 comment).
@@ -124,7 +124,7 @@ describe('BuilderPage — the seed turn is filed under a project', () => {
     await waitFor(() => expect(h.buildFromPlan).toHaveBeenCalledWith('build-X', PLAN_CARD_ID, expect.any(String)))
   })
 
-  it('persists the user turn (row + message, in ONE call) before any build (R-18/U13, was "before the relay reads it")', async () => {
+  it('persists the user turn (row + message, in ONE call) before any build', async () => {
     // The two-call ordering this used to prove — append, THEN the relay reads what it wrote — is
     // gone with the append: the row's creation and the turn's own POST are the SAME call now, so
     // there is nothing left to order the turn against except the LATER confirmed-brief call.
@@ -158,7 +158,7 @@ describe('BuilderPage — a refused first-message turn aborts cleanly (was "an a
     expect(h.buildFromPlan).not.toHaveBeenCalled()
   })
 
-  it('ABORTS the seeded send when the attachment upload fails — never a text-only build (R3)', async () => {
+  it('ABORTS the seeded send when the attachment upload fails — never a text-only build', async () => {
     // This path used to swallow the failure and build "from your description only": the user
     // handed off a prompt + a spreadsheet from the project page, the upload failed, and a build
     // ran that never saw the file. Silently ignoring an attachment is exactly the bug this fix
@@ -176,7 +176,7 @@ describe('BuilderPage — a refused first-message turn aborts cleanly (was "an a
     expect(h.buildFromPlan).not.toHaveBeenCalled()
   })
 
-  it('a seed abort does not wedge the composer — the next send still reaches a build (R3)', async () => {
+  it('a seed abort does not wedge the composer — the next send still reaches a build', async () => {
     // An abort that left the send path latched would force a reload: the toast would tell the user
     // to retry something they cannot retry.
     h.buildUserParts.mockRejectedValueOnce(new Error('Attachment storage is full.'))
@@ -253,7 +253,7 @@ describe('BuilderPage — a refine turn', () => {
   })
 })
 
-describe('BuilderPage — the preview is fed NO app credentials (C9 server-side, U5 inertness)', () => {
+describe('BuilderPage — the preview is fed NO app credentials', () => {
   it('never hands LivePreview a config / appKey / accessToken / previewCode', async () => {
     renderHandoff()
     await confirmBrief()
@@ -269,7 +269,7 @@ describe('BuilderPage — the preview is fed NO app credentials (C9 server-side,
   })
 })
 
-describe('BuilderPage — the preview is handed R104\u2019s stop-clock (U4)', () => {
+describe('BuilderPage — the preview is handed the first-view stop-clock', () => {
   it('\u2605 passes LivePreview a reveal callback \u2014 without it the first-view measurement is dead', async () => {
     // THIS MOUNT IS THE ONLY PRODUCTION MOUNT OF LivePreview IN THE TREE, so a callback added to
     // the component and never passed here is a counter that never fires and a test suite that
@@ -320,7 +320,7 @@ describe('BuilderPage — the composer is not shared across a chat navigation', 
     return <button onClick={() => navigate('/chat/chat-B')}>go to B</button>
   }
 
-  it('a seed upload that fails AFTER a chat switch does not clobber the adopted chat (R3)', async () => {
+  it('a seed upload that fails AFTER a chat switch does not clobber the adopted chat', async () => {
     // The seed abort rolls the optimistic message back — but `provisional`/`userSeq` describe the
     // chat the seed started in. If the user navigated away while the upload was in flight, writing
     // them would wipe the transcript of the chat now on screen.
@@ -367,7 +367,7 @@ describe('BuilderPage — the composer is not shared across a chat navigation', 
   })
 })
 
-describe('BuilderPage — the StrictMode load strand (U7)', () => {
+describe('BuilderPage — the StrictMode load strand', () => {
   const SAVED = { id: 'build-X', kind: 'build', messages: [{ id: 'm0', role: 'assistant', parts: [{ type: 'text', text: 'SAVED TRANSCRIPT LINE' }], seq: 0 }] }
 
   it('renders a saved transcript under <StrictMode>', async () => {
@@ -438,7 +438,7 @@ describe('BuilderPage — a send blocked by an in-flight reply explains itself',
 // `location.state` intact; `useDropTransientQuery` then re-wrote that survivor back into history.
 // The result fires on exactly the FIRST reload — the second has no query left to drop — which is
 // why this needs the full mount-drop-remount cycle rather than a single render.
-describe('BuilderPage — the hand-off does not replay on reload (N1)', () => {
+describe('BuilderPage — the hand-off does not replay on reload', () => {
   /** Reports the live router location so the test can remount over the entry the drop produced. */
   function LocationProbe({ sink }) {
     sink.current = useLocation()

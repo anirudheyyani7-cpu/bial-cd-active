@@ -112,6 +112,7 @@ from src.db.models.project_database import ProjectDatabase
 from src.db.models.token_usage import TokenUsage, TokenUsageKind
 from src.db.models.user import User
 from src.db.models.user_limit import UserLimit
+from src.db.models.worker_pass import WorkerPass
 from src.schemas import ADMIN_AUTH, AUTH_401, ErrorEnvelope, OkResponse, error_responses
 from src.services.appdb.engine import get_maintenance_engine
 from src.services.appdb.errors import AppDatabaseUnconfiguredError
@@ -164,6 +165,7 @@ from src.services.usage.limits import (
     MODEL_CONTEXT_WINDOW,
     effective_context,
 )
+from src.workers.reclamation import RECLAMATION_TASK_NAME
 
 _log = structlog.get_logger()
 
@@ -1385,6 +1387,37 @@ async def reconcile_sandboxes(
     raise coordination_is_gone()
 
 
+async def _what_the_worker_actually_did(db: DbSession) -> tuple[str | None, str | None]:
+    """The newest reclamation pass's `(outcome, detail)`, or `(None, None)` if none was ever run.
+
+    THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD (`#190`). It is the API
+    process's own flag; the pass is gated on the worker's, in another container reading another
+    env file. The row the worker wrote is the only artefact in this deployment that both processes
+    agree about, so it is what the report quotes.
+
+    A SECOND READ OF THE SAME ROW `reclamation_pass_freshness` just took, deliberately. That
+    function owns exactly one question — is the worker alive — and answers it for two endpoints;
+    widening its return to carry an outcome would push the reporting concern into the liveness
+    check that `reconcile-sandboxes` also depends on. The cost is one extra indexed single-row
+    select on a superadmin-only, human-invoked endpoint. Worst case under READ COMMITTED is a pass
+    landing between the two reads, which pairs a fresh timestamp with the previous outcome — one
+    tick of staleness in a report whose whole subject is a 15-minute cadence.
+    """
+    row = (
+        await db.execute(
+            sa.select(WorkerPass.outcome, WorkerPass.detail)
+            .where(WorkerPass.task_name == RECLAMATION_TASK_NAME)
+            .order_by(WorkerPass.finished_at.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    if row is None:
+        return None, None
+    # `.value`, not `str(...)`: `PassOutcome` is a `StrEnum`, so both render the same today — and
+    # a future plain `Enum` would silently start serialising as `PassOutcome.OK`.
+    return row.outcome.value, row.detail
+
+
 @router.post(
     "/reclamation-report",
     responses=error_responses(
@@ -1448,6 +1481,7 @@ async def reclamation_report(
         )
         await db.commit()
         last_pass, stale = await reclamation_pass_freshness(db)
+        outcome, detail = await _what_the_worker_actually_did(db)
         flags = settings.sandbox
         return ReclamationReportResponse(
             scanned=report.scanned,
@@ -1467,6 +1501,8 @@ async def reclamation_report(
             reclaim_destroy=flags is not None and flags.reclaim_destroy,
             last_reclamation_pass_at=last_pass,
             reclamation_stale=stale,
+            last_pass_outcome=outcome,
+            last_pass_detail=detail,
         )
     # Reached only when `build_coordination_or_503` skipped the body on an unconfigured Redis.
     # The spare-list IS the classifier's second source — without it every claimed container reads

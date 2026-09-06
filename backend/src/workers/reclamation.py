@@ -56,6 +56,40 @@ RECLAMATION_CRON: Final = "*/15 * * * *"
 FLEET_THRESHOLD_EVENT: Final = "sandbox_fleet_over_threshold"
 PASS_COMPLETED_EVENT: Final = "sandbox_reclamation_pass_completed"
 
+#: How much of `WorkerPass.detail` the fleet note may take. The column is `String(512)`, and the
+#: reason a pass gives for itself matters more than the fleet it gave it about — so the note is
+#: what gets trimmed if the two together would overflow, never the reason.
+_DETAIL_LIMIT: Final = 512
+
+
+def _enumerated_fleet() -> str | None:
+    """The fleet this pass answers about — `resource_group/managed_environment` — or `None`.
+
+    NO SUBSCRIPTION ID, EVER. This string is written to `WorkerPass.detail`, which an admin
+    endpoint reads back into a response body; a subscription id is an Azure account identifier and
+    belongs in the server-side log beside it (`.claude/rules/security.md`, C10 §3.6). The resource
+    group and the managed environment are what distinguish one deployment's fleet from another's,
+    which is the whole question `#190` could not answer.
+    """
+    sandbox = settings.sandbox
+    if sandbox is None:
+        # Nothing was enumerated and nothing could have been: `unconfigured` is already the
+        # reason on the record, and inventing a fleet name here would be a claim nobody made.
+        return None
+    return f"fleet {sandbox.resource_group}/{sandbox.managed_environment_name}"
+
+
+def _detail_with_fleet(detail: str | None) -> str | None:
+    """The pass's own reason, plus the fleet it was a reason ABOUT.
+
+    `scanned: 0` READ WITHOUT A FLEET IS UNFALSIFIABLE (`#190`). A pass that declined and a pass
+    that swept the wrong subscription both report zero, and an operator holding only the count
+    cannot tell which they are in — so every record says which fleet the number describes.
+    """
+    fleet = _enumerated_fleet()
+    joined = "; ".join(part for part in (detail, fleet) if part)
+    return joined[:_DETAIL_LIMIT] or None
+
 
 def _off_duty_because() -> str | None:
     """Why this pass must not run, or `None` when it may.
@@ -324,6 +358,11 @@ async def _record_pass(*, outcome: str, counts: dict[str, int], detail: str | No
     writes, because a pass that raises every tick leaves no `ok` row and would otherwise be
     indistinguishable from one that never ran.
 
+    AND EVERY RECORD NAMES ITS FLEET (`#190`). The `detail` an admin endpoint reads back says both
+    what the pass did and which resource group and managed environment it did it about — because
+    `scanned: 0` is a fact about a subscription, and a report that omits which one lets a pass that
+    swept somebody else's fleet read exactly like a clean sweep of ours.
+
     ITS OWN SESSION, not the caller's: this runs outside any request, and it must land even when
     the pass it is describing has just failed."""
     from src.db.base import async_session_factory
@@ -337,7 +376,7 @@ async def _record_pass(*, outcome: str, counts: dict[str, int], detail: str | No
                     outcome=PassOutcome(outcome),
                     finished_at=dt.datetime.now(dt.UTC),
                     counts=counts,
-                    detail=detail,
+                    detail=_detail_with_fleet(detail),
                 )
             )
             await db.commit()

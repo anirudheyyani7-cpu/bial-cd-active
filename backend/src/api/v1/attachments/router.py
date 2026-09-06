@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import base64
 import binascii
-import logging
 import re
 import uuid
 from typing import Annotated, Any, Final
 
 import sqlalchemy as sa
+import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -61,7 +61,7 @@ from src.services.storage import (
     get_storage,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/attachments", tags=["attachments"])
 
@@ -332,19 +332,27 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
     OOM — all four are `PDF_TOO_LONG_TEXT` and a 413. The alternative is telling a citizen
     which of the platform's internal failure modes their file hit, which is both useless to
     them and the leak `.claude/rules/security.md` forbids; the distinguishing detail goes to
-    the log instead."""
+    the log instead — `pdf_page_check_failed` (the parser's `code`/`status`) or
+    `pdf_over_page_cap` (`pages`/`cap`).
+
+    THOSE TWO EVENTS ARE THE COMPENSATING CONTROL the collapse was traded for, so they are
+    pinned by a test rather than left to good intentions. They go through STRUCTLOG, like every
+    other module here: nothing in this process configures stdlib `logging` (`main.py` wires
+    structlog to a `PrintLogger`, and uvicorn's config names only the `uvicorn*` loggers), so a
+    `logging.getLogger(__name__)` line would be dropped at the root or reach `lastResort`, whose
+    bare `%(message)s` strips exactly the fields an operator came for."""
     try:
         counted = await run_parse(data, "count_pdf_pages", name, None)
         pages = counted["pageCount"]
     except FileParseError as exc:
-        logger.warning("pdf_page_check_failed", extra={"code": exc.code, "status": exc.status})
+        logger.warning("pdf_page_check_failed", code=exc.code, status=exc.status)
         # The locked arm is the one exception to the collapse above, and only this one: it is a
         # 415 rather than a 413 because nothing about the file's SIZE was the problem.
         if exc.code == PDF_LOCKED_CODE:
             raise AppApiError(415, PDF_LOCKED_TEXT, code=PDF_LOCKED_CODE) from exc
         raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE) from exc
     if not isinstance(pages, int) or pages > MAX_PDF_PAGES:
-        logger.info("pdf_over_page_cap", extra={"pages": pages, "cap": MAX_PDF_PAGES})
+        logger.info("pdf_over_page_cap", pages=pages, cap=MAX_PDF_PAGES)
         raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE)
 
 

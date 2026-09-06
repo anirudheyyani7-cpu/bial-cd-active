@@ -13,6 +13,7 @@ import uuid
 
 from openpyxl import Workbook
 from sqlalchemy import select
+from structlog.testing import capture_logs
 
 from src.api.v1.attachments.router import MAX_PDF_PAGES
 from src.config import settings
@@ -860,3 +861,67 @@ async def test_a_pdf_that_hangs_the_parser_is_killed_and_the_worker_keeps_servin
     monkeypatch.undo()
     ok = await _upload_pdf(client, headers, "att_after", pdf_with_pages(1))
     assert ok.status_code == 201, ok.text
+
+
+# --- the log that pays for the collapsed sentence ------------------------------
+#
+# ★ WHY THESE TWO TESTS EXIST. `_assert_pdf_within_page_cap` deliberately answers four distinct
+# refusals — over the cap, unreadable, killed at the deadline, contained OOM — with ONE citizen-
+# facing sentence, and both its docstring and `PDF_TOO_LONG_TEXT`'s justify that collapse by
+# promising the real cause reaches the server-side log where an operator can act on it. That
+# promise IS the compensating control the collapse was traded for, so it is asserted rather than
+# assumed. It was not free: the module logged through stdlib `logging`, which nothing in this
+# process configures — the over-cap line vanished at the root and the failure line reached
+# `lastResort`, whose bare `%(message)s` dropped `code` and `status` on the floor.
+#
+# Both assert the FIELDS, not just the event name. An event name alone tells an operator a PDF
+# was refused, which they already knew from the 413; the fields are the entire distinguishing
+# detail the citizen was not given.
+
+
+async def test_the_over_cap_refusal_logs_the_pages_and_the_cap(client, db_session) -> None:
+    """The over-cap arm names both numbers, so an operator can see a 31-page document met a
+    30-page cap without re-deriving either from the refused upload."""
+    headers, _ = await _auth(db_session)
+
+    with capture_logs() as logs:
+        resp = await _upload_pdf(
+            client, headers, "att_log_over", pdf_with_pages(MAX_PDF_PAGES + 1)
+        )
+
+    assert resp.status_code == 413, resp.text
+    over = [entry for entry in logs if entry["event"] == "pdf_over_page_cap"]
+    assert over, f"no pdf_over_page_cap event in {[e['event'] for e in logs]}"
+    assert over[0]["pages"] == MAX_PDF_PAGES + 1
+    assert over[0]["cap"] == MAX_PDF_PAGES
+
+
+async def test_the_unreadable_and_locked_refusals_log_the_cause_that_tells_them_apart(
+    client, db_session
+) -> None:
+    """★ THE DISCRIMINATION, not merely the presence of a line.
+
+    A corrupt PDF and a locked one are the same 413/415 shrug to the citizen by design, so the
+    log is the ONLY place the two are distinguishable. Two uploads, two different `code`s, and a
+    `status` that is the PARSER's (400 — the caller's file, not the platform failing), not the
+    413 the citizen was shown. A log line that hardcoded either field, or that carried the event
+    name alone, would leave an operator exactly as informed as the refused citizen."""
+    headers, _ = await _auth(db_session)
+
+    with capture_logs() as corrupt_logs:
+        corrupt = await _upload_pdf(client, headers, "att_log_corrupt", unreadable_pdf())
+    with capture_logs() as locked_logs:
+        locked = await _upload_pdf(client, headers, "att_log_locked", encrypted_pdf(pages=3))
+
+    assert corrupt.status_code == 413, corrupt.text
+    assert locked.status_code == 415, locked.text
+
+    failures = [
+        entry
+        for entries in (corrupt_logs, locked_logs)
+        for entry in entries
+        if entry["event"] == "pdf_page_check_failed"
+    ]
+    assert len(failures) == 2, f"expected both refusals logged, got {failures}"
+    assert [entry["code"] for entry in failures] == ["INVALID_PDF", "PDF_ENCRYPTED"]
+    assert [entry["status"] for entry in failures] == [400, 400]

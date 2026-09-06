@@ -368,7 +368,12 @@ describe('ChatRoute — what it publishes for the toolbar row', () => {
 
     renderRoute('/chat/never-seen')
 
-    await waitFor(() => expect(screen.getByRole('status', { name: /loading chat/i })).toBeTruthy())
+    // Found by the words it SHOWS. This used to read `getByRole('status', { name: /loading
+    // chat/i })`, which was satisfied by an `aria-label` on a region with NO visible text — the
+    // wordless wait #210 forbids. The label is gone (a live region announces its CONTENT, and a
+    // label repeating that content is the sentence read twice), and `role="status"` takes no name
+    // from content, so the wait is now asserted by the sentence a citizen can actually read.
+    await waitFor(() => expect(screen.getByText('Loading this chat…')).toBeTruthy())
     expect(heading()).toBe('null|null|null|null')
     // LIVENESS: this chat does resolve, so the neutral shape above is a load window and not a
     // route that never answered.
@@ -590,5 +595,32 @@ describe('ChatRoute — the chat-open mark (U4; R105)', () => {
 
     await screen.findByTestId('conversation-slot')
     expect(beacons()).toEqual([])
+  })
+})
+
+describe('ChatRoute — the cold-load wait says what it is doing (`#210`, R11)', () => {
+  it('★ shows a visible sentence and one busy polite region while the chat resolves', async () => {
+    // R11 binds the whole batch: suppressing an animation never leaves a wait silent. The three
+    // dots here are `animate-bounce`, which the reduce-motion block freezes — so without words
+    // this arm is three static dots for a citizen who asked for reduced motion. D3 named four
+    // such waits; this is the fifth, in a file that unit did not reach.
+    let settle: (v: unknown) => void = () => {}
+    h.getConversation.mockImplementation(() => new Promise((r) => { settle = r }))
+
+    renderRoute('/chat/c1')
+
+    const wait = await screen.findByTestId('chat-wait')
+    // The sentence, visible — not an sr-only copy and not an aria-label.
+    expect(wait.textContent).toContain('Loading this chat…')
+    expect(wait.getAttribute('aria-busy')).toBe('true')
+    expect(wait.getAttribute('aria-live')).toBe('polite')
+    // No label: a live region announces its content, and a label repeating it reads it twice.
+    expect(wait.getAttribute('aria-label')).toBeNull()
+    // EXACTLY ONE region says it. A second copy is the sentence read twice.
+    expect(screen.getAllByText('Loading this chat…')).toHaveLength(1)
+    // The dots are decoration now that the words carry the meaning.
+    expect(wait.querySelector('[aria-hidden="true"]')).toBeTruthy()
+
+    settle({ id: 'c1', projectId: 'p1', kind: 'build', title: 't' })
   })
 })

@@ -20,6 +20,7 @@ import {
   resolveWorkspaceState,
   sameWorkspaceState,
   type WorkspaceInputs,
+  type WorkspaceState,
 } from '../workspaceState'
 import type { PreviewState } from '../../../utils/buildSessionApi'
 
@@ -523,18 +524,51 @@ describe('the properties that hold across every input', () => {
       preview: reading({ state: 'alive', alive: true, previewUrl: 'https://app.example/' }),
     })
 
-    // AND THE WHOLE KEY SET, which is doing a second job since `#196`: `secondAction` and `note`
-    // are OPTIONAL in the type so the suites that hand-build a state need not restate two nulls,
-    // and this is what keeps the MAP total over them — an arm that forgets one fails here.
-    expect(Object.keys(state).sort()).toEqual([
-      'action',
-      'detail',
-      'headline',
-      'name',
-      'note',
-      'secondAction',
-    ])
     expect(JSON.stringify(state)).not.toContain('https://app.example/')
+  })
+
+  it('★ EVERY arm carries the whole key set, so the map stays total over the optional two', () => {
+    // `secondAction` and `note` are OPTIONAL in the type, so the suites that hand-build a state
+    // need not restate two nulls (three files do, and making them required is a compile break in
+    // files this unit may not touch). That optionality is exactly why the map has to be pinned
+    // here instead: TypeScript will not notice an arm that forgets one.
+    //
+    // IT IS PINNED OVER EVERY ARM, NOT ONE. This assertion used to run against a single `alive`
+    // resolve while its comment claimed "an arm that forgets one fails here" — which was true of
+    // that arm and of nothing else. Nine of the ten arms could have dropped a key with the suite
+    // green. The inputs below reach all ten; `expectedNames` is asserted too, so an input that
+    // stops reaching its arm fails loudly rather than quietly shrinking the coverage.
+    const KEYS = ['action', 'detail', 'headline', 'name', 'note', 'secondAction']
+
+    const arms: Array<[string, WorkspaceState]> = [
+      ['running', resolve({ preview: reading({ state: 'alive', alive: true }) })],
+      ['starting', resolve({ preview: reading({ state: 'starting' }) })],
+      ['never-built', resolve({ preview: reading({ state: 'never_built', restorable: false }) })],
+      ['not-running', resolve({ preview: reading({ state: 'asleep', restorable: true }) })],
+      ['could-not-read', resolve({ preview: null })],
+      [
+        'held-by-another-project',
+        resolve({
+          preview: reading({
+            state: 'slot_taken',
+            occupyingProjectName: 'Roster',
+            occupyingProjectId: 'p-9',
+          }),
+        }),
+      ],
+      ['held-unattributed', resolve({ preview: reading({ state: 'slot_taken' }) })],
+      ['not-painted', resolve({ startOutcome: { kind: 'not-painted' } })],
+      ['timed-out', resolve({ startOutcome: { kind: 'timed-out' } })],
+      ['start-failed', resolve({ startOutcome: { kind: 'failed', reason: 'no image' } })],
+    ]
+
+    // Liveness first: the inputs really do reach ten DISTINCT arms. Without this the loop below
+    // could pass while every entry resolved to the same fallback.
+    expect(new Set(arms.map(([, s]) => s.name)).size).toBe(10)
+    for (const [expectedName, armState] of arms) {
+      expect(armState.name).toBe(expectedName)
+      expect(Object.keys(armState).sort()).toEqual(KEYS)
+    }
   })
 
   it('answers even before the platform has said anything', () => {

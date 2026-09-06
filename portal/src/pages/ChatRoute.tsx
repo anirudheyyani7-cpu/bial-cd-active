@@ -272,16 +272,35 @@ export default function ChatRoute() {
     // viewport height cannot shrink into it, so it overflows and the spinner is clipped low by the
     // navbar's height on every cold chat open. The shell owns the one height model now — surfaces
     // fill the column they are given.
+    // AND IT SAYS SO IN WORDS (#210, R11). The three dots are `animate-bounce`, which the
+    // reduce-motion block now freezes — so for a citizen who asked their operating system to stop
+    // motion this arm was three static dots and nothing to read. D3 enumerated four wordless waits
+    // and gave them all sentences; this is a fifth, in a file that unit did not reach.
+    //
+    // The sentence IS the announcement: `role="status"` wraps it rather than an `sr-only` copy
+    // sitting beside it, because two elements carrying one sentence is that sentence read twice
+    // (`Announcer.tsx` records it breaking three tests). The old `aria-label` is gone with it —
+    // a label on a region whose text says the same thing is the same duplication in another
+    // spelling, and the visible words are what a reader should get.
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center bg-bial-bg">
-        <div className="flex gap-1.5" role="status" aria-label="Loading chat">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="w-2 h-2 bg-primary/60 rounded-full animate-bounce"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
+        <div
+          className="flex flex-col items-center gap-3"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          data-testid="chat-wait"
+        >
+          <div className="flex gap-1.5" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-2 h-2 bg-primary/60 rounded-full animate-bounce"
+                style={{ animationDelay: `${i * 0.15}s` }}
+              />
+            ))}
+          </div>
+          <p className="text-sm font-medium text-neutral">Loading this chat…</p>
         </div>
       </div>
     )

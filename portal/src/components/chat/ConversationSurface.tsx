@@ -55,6 +55,7 @@ import { wireMessageFromParts, buildUserParts, partsToText, countAttachments, re
 import { validateConversationAttachmentCap } from '../../utils/attachmentInput'
 
 import { loadBuilds, getBuild, deriveTitle } from '../../utils/builderHistory'
+import { outcomeSummary } from '../../utils/messageTypes'
 import type { ChatMessage, MessagePart, BuildPartLive } from '../../utils/messageTypes'
 
 // The from-scratch greeting (ephemeral — never persisted, and never sent to the model: it is
@@ -95,19 +96,6 @@ const welcomeMessage = (): ChatMessage => ({ id: 'welcome', ephemeral: true, rol
 // composer (U3) and the raw-output expander did not come across at all. The TERMINALS stay
 // deliberately absent from the live surface: a finished build appends a real `build`-part message
 // (003-U5) that says the same thing permanently — live narrative while it runs, a record after.
-
-/**
- * The one-line summary persisted alongside a build part. It is the message's TEXT, so it is both
- * what a plain reader sees and what the model is shown as history on the next turn — which is why
- * it states the outcome plainly rather than decoratively.
- */
-function outcomeSummary({ status, reason }: Pick<BuildPartLive, 'status' | 'reason'>) {
-  if (status === 'failed') {
-    return reason ? `The build failed: ${reason}` : 'The build failed.'
-  }
-  if (reason === 'quota_exceeded') return 'The build stopped: you reached your daily limit.'
-  return 'Build finished.'
-}
 
 /**
  * THE CONVERSATION SURFACE — one surface, both kinds (Plan D U17, R72).
@@ -1737,7 +1725,11 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     (sink: TurnSink) => {
       if (!sink.terminal) return
       showBuildOutcome({
-        status: sink.terminal === 'completed' ? 'ended' : 'failed',
+        // THREE TERMINALS IN, THREE OUT. This used to be `=== 'completed' ? 'ended' : 'failed'`,
+        // which is where a citizen's own Stop became a failure (#204): the sink already carries
+        // `stopped` — the same fact the activity pill reads to say "stopped before it finished" —
+        // and the collapse threw it away one line before the sentence was written from it.
+        status: sink.terminal === 'completed' ? 'ended' : sink.terminal,
         turnId: sink.turnId ?? undefined,
         previewUrl: turnPreviewRef.current.url,
         endedAt: new Date().toISOString(),

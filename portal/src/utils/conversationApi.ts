@@ -12,7 +12,7 @@ import { authFetch } from './api'
 import type { AuthFetchDeps } from './api'
 import { readApiError } from './apiError'
 import { toPlanOptionsItem, toStepItem } from './turnStreamApi'
-import type { ChatMessage, MessagePart } from './messageTypes'
+import type { BuildOutcomeStatus, ChatMessage, MessagePart } from './messageTypes'
 
 /** The in-memory header shape pages expect, normalized from the server's raw doc.
  *
@@ -120,6 +120,21 @@ export function reportUnknownProjectionItem(item: RawProjectionItem): void {
 }
 
 /**
+ * A stored banner kind → the build part's terminal.
+ *
+ * FOUR KINDS IN, THREE OUT, and the pairing is the point: `stopped` and `quota` both mean the
+ * build ended without anything going wrong, so both land on `stopped` rather than on the
+ * "everything finished" value. Anything unrecognised reads as `ended`, matching this module's
+ * standing rule that a client behind its server degrades quietly rather than inventing a
+ * failure — an unknown banner is a deployment order, not a broken build.
+ */
+function bannerStatus(banner: unknown): BuildOutcomeStatus {
+  if (banner === 'failed') return 'failed'
+  if (banner === 'stopped' || banner === 'quota') return 'stopped'
+  return 'ended'
+}
+
+/**
  * @param onUnknown Injected so a test can assert the surfaced item rather than scrape the console.
  *   A parameter with a default rather than module state: every existing call site is unchanged and
  *   two tests running in parallel cannot see each other's handler.
@@ -197,7 +212,13 @@ export function messagesFromProjection(
           {
             type: 'build',
             sessionId: item.sessionId as string,
-            status: item.banner === 'failed' ? 'failed' : 'ended',
+            // THE RELOAD HALF OF #204. The projection's banner vocabulary is four-valued —
+            // `completed` / `failed` / `stopped` / `quota` (`projection.py::_banner_kind`) — and
+            // this mapping used to throw two of those away, landing `stopped` and `quota` on
+            // `ended`. That put a part claiming the build ended normally directly beside the
+            // stored sentence "You stopped this build before it finished." A quota stop is a stop
+            // for the same reason the live path treats it as one: nothing broke, the day ran out.
+            status: bannerStatus(item.banner),
             reason: item.banner as string,
             previewUrl: (item.previewUrl as string | null) ?? null,
           },

@@ -131,10 +131,15 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
     mid-thought BEFORE the citizen chooses, and the alternative — teaching the cheap state poll
     to answer it — cannot: that read is contractually forbidden from the container round trip
     the unsaved-work half needs. Every refusal on the send path is side-effect-free before
-    anything is persisted, so asking by sending is legitimate, and all three entry points (the
-    send, the plan offer's build action, and relaunch) come through this one function — which is
-    what makes the answer identical on all three rather than correct on the one that was
-    tested."""
+    anything is persisted, so asking by sending is legitimate, and all FOUR entry points come
+    through this one function — which is what makes the answer identical on all four rather than
+    correct on the one that was tested. They are: the send (`conversations/turns.py::start_turn`),
+    the plan offer's build action (`conversations/transition.py::build_it`), relaunch and
+    `start_build` (both in `build_sessions/router.py`). `start_build` is the newest and was the
+    counter-example to the sentence above it: it raised uncaught and answered 500 (#183) — a door
+    into the hand-over dialog that crashed instead of asking, while this docstring was claiming
+    every door answered identically. Three was the count when it was three; the number is part of
+    the claim, so it moves when a call site is added."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:

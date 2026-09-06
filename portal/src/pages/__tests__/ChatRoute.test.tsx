@@ -440,9 +440,10 @@ describe('ChatRoute — load failure', () => {
 describe('ChatRoute — a dead address says something on the way out (`#206`)', () => {
   /* THE BOUNCE IS UNCHANGED. Every case above still bails to /projects, and should. What these
      pin is the sentence it carries — and, more importantly, the two failures that must NOT
-     carry one. The catch this route hangs on is reached by a 404/422, by a 500, and by a
-     DROPPED CONNECTION, and treating all three as "the chat is gone" is the class of
-     over-claiming this codebase keeps refusing. */
+     carry one. The catch this route hangs on is reached by a 400 (a malformed id — the only
+     "the chat is not there" status that actually throws; a 404 is null-ed one arm above), by a
+     500, and by a DROPPED CONNECTION, and treating all three as "the chat is gone" is the class
+     of over-claiming this codebase keeps refusing. */
 
   const arrivalSaid = () => screen.getByTestId('arrival-notice').textContent
 
@@ -456,9 +457,17 @@ describe('ChatRoute — a dead address says something on the way out (`#206`)', 
     expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
   })
 
-  it('a 422 from the server says the same line', async () => {
-    h.getConversation.mockRejectedValue(new ApiError('Input should be a valid UUID', 422))
-    renderRoute('/chat/not-a-uuid')
+  it('★ a mangled chat link says the same line — the status the server really sends', async () => {
+    /* THE STATUS HERE IS LOAD-BEARING, and this test used to fabricate one the endpoint cannot
+       send. `GET /v1/conversations/{id}` matches the id against `_ID_RE` by hand and answers a
+       malformed token with **400**; the path param is a plain `str`, so FastAPI never validates
+       it and the 422 this case once asserted is unreachable. Verified against the running server:
+       `/chat/abc%20def` → 400 `Invalid conversation id.`
+
+       So the old assertion passed while the real citizen path — a chat link a mail client wrapped
+       with a space or a `<` — bounced to the list in SILENCE, the exact failure `#207` names. */
+    h.getConversation.mockRejectedValue(new ApiError('Invalid conversation id.', 400))
+    renderRoute('/chat/abc def')
 
     await screen.findByTestId('projects-index')
     expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)

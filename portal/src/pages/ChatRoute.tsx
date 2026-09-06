@@ -74,16 +74,28 @@ type Resolution =
  *
  * The catch below is reached by three different things and treats them alike, correctly: they all
  * bounce, because leaving a citizen on a spinner with no answer is worse than moving them somewhere
- * that works. What they do NOT share is whether the platform actually knows anything. A 404 or a
- * 422 is the server saying the chat is not there. A 500 is the server failing to look. A DROPPED
- * CONNECTION never reached it at all — `fetch` rejects with a plain `TypeError`, which is not an
- * `ApiError` and carries no status, and telling someone their chat is gone because their wifi
- * blinked asserts a deletion that never happened.
+ * that works. What they do NOT share is whether the platform actually knows anything. A 400 is the
+ * server saying that id is not an id — the mangled-link case `#207` is about, and the one status
+ * this catch actually sees. A 500 is the server failing to look. A DROPPED CONNECTION never reached
+ * it at all — `fetch` rejects with a plain `TypeError`, which is not an `ApiError` and carries no
+ * status, and telling someone their chat is gone because their wifi blinked asserts a deletion that
+ * never happened.
  *
  * So the notice is narrowed to the arm that knows, and the other two bounce in silence.
+ *
+ * 400 IS THE ONE THAT REACHES HERE, and this predicate once named two statuses that could not.
+ * `GET /v1/conversations/{id}` validates the id by hand against `_ID_RE`
+ * (`backend/src/api/v1/conversations/router.py`) and answers a malformed token with **400**; it
+ * declares the path param as a plain `str`, so FastAPI never validates it and **422 is unreachable**.
+ * A **404** never arrives either — `getConversation` answers one with `null` (`conversationApi.ts`),
+ * which the arm above this catch handles. So the original `404 || 422` matched nothing a citizen
+ * could actually produce: a chat link a mail client had wrapped (a space, a `<`, a trailing `.`)
+ * bounced to the list in SILENCE, which is the exact failure `#207` names. 404 is kept beside 400
+ * because it is the same class of answer and costs nothing if that null-ing ever changes; the dead
+ * 422 is gone.
  */
 function goneNoticeFor(err: unknown): string | null {
-  return err instanceof ApiError && (err.status === 404 || err.status === 422) ? PROJECT_GONE_NOTICE : null
+  return err instanceof ApiError && (err.status === 400 || err.status === 404) ? PROJECT_GONE_NOTICE : null
 }
 
 export default function ChatRoute() {

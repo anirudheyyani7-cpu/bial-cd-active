@@ -614,3 +614,67 @@ describe('create and delete', () => {
     expect(screen.queryByRole('alert')).toBeNull() // and still no scary toast
   })
 })
+
+describe('the projects list and the count tiles keep WORDS and a busy state (#210)', () => {
+  /** Every live region currently SAYING the given thing — see the twin helper in `App.test.jsx`. */
+  const regionsSaying = (re: RegExp): Element[] =>
+    Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
+      (el) => re.test(el.textContent ?? ''),
+    )
+
+  it('★ says what it is doing, marks BOTH busy containers, and does it in exactly ONE region', async () => {
+    // `index.css` suppresses `.animate-pulse`, so with motion off the three count tiles and the
+    // five row skeletons sit perfectly still — eight grey rectangles and not one word.
+    h.listProjects.mockReturnValue(new Promise(() => {}))
+    h.listProjectCounts.mockReturnValue(new Promise(() => {}))
+    renderPage()
+
+    expect(await screen.findByText('Loading your projects…')).toBeTruthy()
+    // Said ONCE, for both waits — no `sr-only` duplicate, and not one sentence per skeleton.
+    expect(screen.getAllByText('Loading your projects…')).toHaveLength(1)
+    const regions = regionsSaying(/Loading your projects/)
+    expect(regions).toHaveLength(1)
+    expect(regions[0]).toBe(screen.getByTestId('projects-wait'))
+    // TWO busy containers, one sentence: the tiles grid and the row skeletons. `aria-busy` is a
+    // property and announces nothing, which is why it may sit on both without saying anything
+    // twice.
+    expect(document.querySelectorAll('[aria-busy="true"]')).toHaveLength(2)
+  })
+
+  it('★ the region is already in the tree, EMPTY, before the wait starts — and it is the SAME node', async () => {
+    // THE ARM ASM5 EXISTS FOR. Every skeleton on this page is conditional, so a region rendered
+    // beside one is born holding its own text — which several reader-and-browser combinations
+    // miss entirely. Move `<div role="status">` inside the `waiting` branch and the empty-region
+    // assertion below goes red.
+    h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 12, totalPages: 2 }))
+    renderPage()
+    await screen.findByText('Alpha')
+    // Both reads have settled: nothing is in flight.
+    await waitFor(() => expect(screen.getByTestId('projects-wait').textContent).toBe(''))
+
+    const before = screen.getByTestId('projects-wait')
+    expect(regionsSaying(/Loading your projects/)).toHaveLength(0)
+    // Paired with a liveness assertion: an empty region also describes a crashed render.
+    expect(screen.getByText('Alpha')).toBeTruthy()
+
+    // Turning the page re-enters the wait against a page that has been mounted the whole time.
+    h.listProjects.mockReturnValue(new Promise(() => {}))
+    fireEvent.click(screen.getByRole('button', { name: '2' }))
+
+    await waitFor(() => expect(before.textContent).toContain('Loading your projects…'))
+    expect(screen.getByTestId('projects-wait')).toBe(before)
+    expect(regionsSaying(/Loading your projects/)).toHaveLength(1)
+  })
+
+  it('★ a page whose reads have all landed says NOTHING — the region is present and silent', async () => {
+    // The other half of "empty when idle": a region that keeps its sentence after the wait ends
+    // is a screen reader told the page is still loading forever.
+    h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')]))
+    renderPage()
+    await screen.findByText('Alpha')
+
+    await waitFor(() => expect(screen.getByTestId('projects-wait').textContent).toBe(''))
+    expect(screen.queryByText('Loading your projects…')).toBeNull()
+    expect(document.querySelectorAll('[aria-busy="true"]')).toHaveLength(0)
+  })
+})

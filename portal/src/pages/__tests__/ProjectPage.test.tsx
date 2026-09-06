@@ -43,7 +43,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import ProjectPage from '../ProjectPage'
 import { ApiError } from '../../utils/apiError'
 import { beaconsFrom } from './_observeBeacons'
@@ -567,5 +567,82 @@ describe('ProjectPage — the project-open mark (U4; R104, R105)', () => {
       .sort()
 
     expect(callers).toEqual(['../ProjectPage.tsx'])
+  })
+})
+
+describe('the project skeleton keeps WORDS and a busy state (#210)', () => {
+  /** Every live region currently SAYING the given thing — see the twin helper in `App.test.jsx`. */
+  const regionsSaying = (re: RegExp): Element[] =>
+    Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
+      (el) => re.test(el.textContent ?? ''),
+    )
+
+  /** A control that moves to ANOTHER project without leaving the route — see the test below. */
+  function ProjectSwitch({ to }: { to: string }) {
+    const navigate = useNavigate()
+    return (
+      <button type="button" data-testid="switch-project" onClick={() => navigate(`/projects/${to}`)}>
+        switch
+      </button>
+    )
+  }
+
+  function renderSwitchable(from: string, to: string) {
+    return render(
+      <MemoryRouter initialEntries={[`/projects/${from}`]}>
+        <Routes>
+          <Route
+            path="/projects/:projectId"
+            element={
+              <>
+                <ProjectPage />
+                <ProjectSwitch to={to} />
+              </>
+            }
+          />
+          <Route path="*" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('★ says what it is doing, marks the box busy, and does it in exactly ONE region', () => {
+    // `index.css` suppresses `.animate-pulse`, so with motion off these two grey bars sit
+    // perfectly still and the screen says nothing at all about why it is empty.
+    h.getProject.mockReturnValue(new Promise(() => {}))
+    renderProjectPage('p-wait-words')
+
+    expect(screen.getByText('Loading this project…')).toBeTruthy()
+    // Said ONCE — no `sr-only` duplicate beside the visible sentence.
+    expect(screen.getAllByText('Loading this project…')).toHaveLength(1)
+    const regions = regionsSaying(/Loading this project/)
+    expect(regions).toHaveLength(1)
+    const region = screen.getByTestId('project-wait')
+    expect(regions[0]).toBe(region)
+    expect(region.querySelector('[aria-busy="true"]')).toBeTruthy()
+  })
+
+  it('★ the region is already in the tree, EMPTY, before the skeleton appears — and it is the SAME node', async () => {
+    // THE ARM ASM5 EXISTS FOR. This page used to be three early returns, and an early return
+    // cannot carry a live region: the region is born holding the sentence, which several
+    // reader-and-browser combinations miss entirely. Move the region back inside the `loading`
+    // branch — mount it together with its text — and the empty-region assertion below goes red.
+    h.getProject.mockResolvedValue(makeProject({ id: 'p-wait-before' }))
+    renderSwitchable('p-wait-before', 'p-wait-after')
+    // The project has landed: the wait is NOT running.
+    expect(await screen.findByTestId('rail-app-status')).toBeTruthy()
+
+    const before = screen.getByTestId('project-wait')
+    expect(before.textContent).toBe('')
+    expect(regionsSaying(/Loading this project/)).toHaveLength(0)
+
+    // `projectId` is a param on a route that is NOT remounted when it changes, so this is the
+    // real product path in which a settled screen flips back to loading.
+    h.getProject.mockReturnValue(new Promise(() => {}))
+    fireEvent.click(screen.getByTestId('switch-project'))
+
+    await waitFor(() => expect(before.textContent).toContain('Loading this project…'))
+    expect(screen.getByTestId('project-wait')).toBe(before)
+    expect(regionsSaying(/Loading this project/)).toHaveLength(1)
   })
 })

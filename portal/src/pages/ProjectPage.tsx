@@ -123,40 +123,61 @@ export default function ProjectPage() {
      uploaded files stay in the database. Said here as well as in the rail because this is where
      the reads used to be, and an absent fetch explains itself to nobody. */
 
-  if (loading) {
-    return (
-      <main className="flex-1 min-h-0 overflow-y-auto">
-        <div className="w-full px-5 py-6">
-          <div className="h-6 w-48 bg-gray-100 rounded animate-pulse mb-4" />
-          <div className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
-        </div>
-      </main>
-    )
-  }
+  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM (`#210`, ASM5).
+     They used to be three early returns, and that shape is exactly what cannot carry a live
+     region: a region inserted together with its text is missed entirely by several reader-and-
+     browser combinations (`TurnBanner`, `LivePreview` both record it), and an early return means
+     the region is born with the sentence already inside it. So the region is rendered here on
+     every branch, EMPTY when the project is already on screen, and the skeleton box is what
+     appears inside it.
 
-  if (loadError || !project) {
-    return (
-      <main className="flex-1 min-h-0 overflow-y-auto">
-        <div className="w-full px-5 py-6">
-          <button
-            onClick={goToProjects}
-            className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
-          >
-            <ArrowLeft size={15} /> Back to projects
-          </button>
-          <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
-            <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
-            <p className="text-xs text-neutral mt-1">{loadError || 'It may have been deleted.'}</p>
-          </div>
-        </div>
-      </main>
-    )
-  }
+     THIS IS NOT A THEORETICAL CASE ON THIS PAGE. `projectId` is a route param on a route that is
+     not remounted when it changes, so moving between two projects flips a settled screen back to
+     `loading` against a region that has been in the accessibility tree the whole time.
 
+     The region WRAPS the sentence rather than duplicating it `sr-only` — `Announcer.tsx` records
+     that a second copy is the sentence read twice, and that writing it that way broke three
+     tests. `aria-busy` stays on the box: it is a property, not a speech. */
   return (
-    <ProjectWorkspace
-      project={project}
-      onProjectUpdate={setProject}
-    />
+    <>
+      {/* Laid out only while it holds something. An empty region is a zero-height flex child; the
+          wait needs the column's full height for the same reason the branch it replaced was a
+          `flex-1` `<main>`. The NODE is unchanged either way — only its class list is. */}
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid="project-wait"
+        className={loading ? 'flex-1 min-h-0 flex flex-col' : ''}
+      >
+        {loading ? (
+          <main className="flex-1 min-h-0 overflow-y-auto" aria-busy="true">
+            <div className="w-full px-5 py-6">
+              <p className="text-sm font-medium text-neutral mb-4">Loading this project…</p>
+              <div className="h-6 w-48 bg-gray-100 rounded animate-pulse mb-4" />
+              <div className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
+            </div>
+          </main>
+        ) : null}
+      </div>
+
+      {loading ? null : loadError || !project ? (
+        <main className="flex-1 min-h-0 overflow-y-auto">
+          <div className="w-full px-5 py-6">
+            <button
+              onClick={goToProjects}
+              className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
+            >
+              <ArrowLeft size={15} /> Back to projects
+            </button>
+            <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
+              <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
+              <p className="text-xs text-neutral mt-1">{loadError || 'It may have been deleted.'}</p>
+            </div>
+          </div>
+        </main>
+      ) : (
+        <ProjectWorkspace project={project} onProjectUpdate={setProject} />
+      )}
+    </>
   )
 }

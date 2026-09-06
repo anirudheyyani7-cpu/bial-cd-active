@@ -29,6 +29,20 @@
  * `aria-disabled`, not `disabled`. Disabling a control that currently has focus blurs it to
  * `document.body`, which drops a keyboard user out of the interface at the exact moment something
  * is happening. The name and the reason stay on it throughout.
+ *
+ * ═══ THE VISIBLE LABEL IS THE REASON NOW (`#210`) ═══
+ *
+ * It used to be that only the `aria-label` changed while a start was in flight: the words on the
+ * button read "Launch Application" whether it had been pressed or not, and the only moving part
+ * was a spinning glyph — which `index.css` suppresses outright for a citizen who asks for less
+ * motion. Pressed and unpressed were then indistinguishable on screen. The visible label carries
+ * the state instead, and the `aria-label` that used to carry it alone is GONE rather than left
+ * beside it: an override that restates the visible text is a second name for one control, and
+ * WCAG's label-in-name rule wants the accessible name to BE the visible words.
+ *
+ * NO LIVE REGION HERE, deliberately. The pane this button starts already owns one persistent
+ * polite region that speaks for every one of its states (`LivePreview`), and a second region
+ * describing the same start announces it twice.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -195,7 +209,9 @@ function Control({ label, pending, pendingLabel, icon, onPress }: ControlProps) 
       // `aria-disabled`, NEVER `disabled` — see the docblock. The click handler checks the same
       // flag, so the control is inert without being unfocusable.
       aria-disabled={pending}
-      aria-label={pending ? `${label} — ${pendingLabel}` : label}
+      // A property, not a speech: it marks the control as working without announcing anything,
+      // which is what keeps this off the pane's live region.
+      aria-busy={pending}
       onClick={() => {
         if (!pending) onPress()
       }}
@@ -203,8 +219,11 @@ function Control({ label, pending, pendingLabel, icon, onPress }: ControlProps) 
         pending ? 'opacity-60' : ''
       }`}
     >
-      {pending ? <Loader2 size={15} className="animate-spin" /> : icon}
-      {label}
+      {pending ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : icon}
+      {/* THE WORDS ARE WHAT CHANGES. With no `aria-label` over the top, this is also the
+          accessible name — so the button renames itself from "Launch Application" to "Starting
+          your app…" as it goes, and a reader on the control hears the change. */}
+      {pending ? `${pendingLabel}…` : label}
     </button>
   )
 }

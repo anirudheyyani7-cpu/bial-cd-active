@@ -289,6 +289,15 @@ export default function ProjectsPage(): React.JSX.Element {
   const isEmpty = items.length === 0
   const settled = appliedQuery !== null
   const showSkeleton = isEmpty && (loading || !settled)
+  // THE THREE NUMBERS ARE STILL BEING FETCHED. `null` is "not asked yet or the first ask is in
+  // flight"; `countsFailedCold` is the arm that has stopped waiting and shows a retry instead, so
+  // it is not a wait and must not claim to be one.
+  const countsPending = counts === null && !countsFailedCold
+  // WHAT THE WAIT SENTENCE ANSWERS TO. Deliberately WIDER than `showSkeleton`, which only fires on
+  // an EMPTY list: turning to page 2 leaves the rows on screen, draws no skeleton, and until now
+  // said nothing at all for the length of the round trip. One sentence covers all three of the
+  // page's reads because a citizen is in one situation — waiting for their projects.
+  const waiting = loading || showSkeleton || countsPending
   const showFirstPageError = error !== null && isEmpty
   // `deleting` covers the round trip: the optimistic removal can empty `items` while the
   // request is still in flight, and "Nothing here yet" is a claim about the ACCOUNT, not
@@ -346,6 +355,22 @@ export default function ProjectsPage(): React.JSX.Element {
           Each project is one tool — its app, its description, and its chats.
         </p>
 
+        {/* THE PAGE'S ONE POLITE REGION — permanently mounted, empty when nothing is in flight
+            (`#210`, ASM5). The skeletons below are the only thing this page used to say while it
+            loaded, and `index.css` suppresses `.animate-pulse` for a citizen who asks for less
+            motion: with that block extended, three grey boxes and five grey rows sit perfectly
+            still and say nothing. This is the sentence they now sit under.
+
+            IT IS MOUNTED HERE, NOT IN THE SKELETON, on purpose. A region inserted together with
+            its text is missed entirely by several reader-and-browser combinations (`TurnBanner`,
+            `LivePreview`), and every skeleton on this page is conditional — so the region has to
+            live in the header, which is not. It WRAPS the visible sentence rather than adding an
+            `sr-only` copy: two elements carrying one sentence is that sentence read twice, which
+            `Announcer.tsx` records as having broken three tests. */}
+        <div role="status" aria-live="polite" data-testid="projects-wait">
+          {waiting ? <p className="text-sm font-medium text-neutral mt-3">Loading your projects…</p> : null}
+        </div>
+
         {/* Three numbers. Nothing else — no charts (§1). */}
         {countsFailedCold ? (
           <div className="flex items-center justify-between gap-3 bg-white border border-danger/30 rounded-2xl px-5 py-4 mt-5 mb-6">
@@ -359,7 +384,7 @@ export default function ProjectsPage(): React.JSX.Element {
             </button>
           </div>
         ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5 mb-6" aria-busy={countsPending}>
           {[
             { label: 'In production', value: counts?.inProduction, hint: 'apps live for BIAL staff right now' },
             { label: 'Total applications', value: counts?.totalApplications, hint: 'created since the platform opened' },
@@ -445,7 +470,7 @@ export default function ProjectsPage(): React.JSX.Element {
         {showSkeleton ? (
           // Shaped like the view you are in — a card skeleton under a list flashes wrong.
           view === 'list' ? (
-            <div className="bg-white border border-bial-border rounded-2xl overflow-hidden">
+            <div className="bg-white border border-bial-border rounded-2xl overflow-hidden" aria-busy="true">
               {[0, 1, 2, 3, 4].map((i) => (
                 <div key={i} className="px-4 py-3.5 border-b border-bial-border last:border-0">
                   <Skeleton className="h-4 w-48 mb-2" />
@@ -454,7 +479,7 @@ export default function ProjectsPage(): React.JSX.Element {
               ))}
             </div>
           ) : (
-            <div className={`grid gap-4 ${DENSITY_COLS[density]}`}>
+            <div className={`grid gap-4 ${DENSITY_COLS[density]}`} aria-busy="true">
               {[0, 1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="bg-white border border-bial-border rounded-2xl px-5 py-4">
                   <Skeleton className="h-4 w-1/2 mb-3" />

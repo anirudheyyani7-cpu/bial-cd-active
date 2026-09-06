@@ -11,16 +11,22 @@ every outcome, including the boring ones and the failed ones.
 from __future__ import annotations
 
 import datetime as dt
+import re
+import subprocess
+import sys
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 import redis.asyncio as aioredis
 import sqlalchemy as sa
 import structlog.testing
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.db.models.worker_pass import PassOutcome, WorkerPass
 from src.services.build_sessions import reclamation_pass as pass_mod
 from src.services.build_sessions.pass_history import STALE_AFTER, reclamation_pass_freshness
@@ -35,10 +41,15 @@ from src.services.sandbox.base import (
     FleetMember,
     control_plane_segment,
 )
+from src.services.sandbox.config import SandboxConfig
 from tests.fakes import a_fleet_member
+from tests.subprocess_env import child_env
 
 USER = uuid.uuid4()
 APP = uuid.uuid4()
+#: An obviously-fake Azure subscription id — this repo is PUBLIC and has no secret scanning, and
+#: the tests below print it into log assertions.
+_FAKE_SUB = "00000000-0000-0000-0000-000000000000"
 
 
 class _Fleet:
@@ -479,3 +490,192 @@ async def test_the_threshold_alarm_fires_once_per_pass_not_once_per_container(
 
 async def _noop_record(*, outcome: str, counts: dict[str, int], detail: str | None) -> None:
     return None
+
+
+# --- WHICH FLEET? (#190) -----------------------------------------------------------
+
+#: The `backend/` tree — `tests/workers/` lives two levels under it.
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+_WORKER_SAMPLE = ".env.worker.example"
+
+#: The only strings a `SANDBOX__*` value in the tracked sample may be. Deliberately a closed set
+#: of exact literals rather than a "looks fake enough" heuristic: this repo is PUBLIC and has no
+#: secret scanning, the worker's `SandboxConfig` is REQUIRED and carries an ACR password, and the
+#: failure mode is somebody pasting a working credential in to make the file parse.
+_PLACEHOLDERS = frozenset({"REPLACE_ME", "00000000-0000-0000-0000-000000000000", "true", "false"})
+
+_SANDBOX_KEY = re.compile(r"^SANDBOX__[A-Z0-9_]+$")
+
+
+def _a_fleet_configuration(*, reclaim_enabled: bool) -> SandboxConfig:
+    """A structurally valid `SANDBOX__*` block naming an obviously-fake fleet."""
+    return SandboxConfig(
+        subscription_id=_FAKE_SUB,
+        resource_group="rg-not-ours",
+        region="REPLACE_ME",
+        managed_environment_name="env-not-ours",
+        image_ref="REPLACE_ME",
+        acr_server="REPLACE_ME",
+        acr_username="REPLACE_ME",
+        acr_password=SecretStr("REPLACE_ME"),
+        reclaim_enabled=reclaim_enabled,
+    )
+
+
+async def _a_quiet_report(**_: object) -> pass_mod.PassReport:
+    return pass_mod.PassReport(
+        scanned=0,
+        spared=0,
+        staged=0,
+        destroy=0,
+        escalate=0,
+        not_ours=0,
+        store_fault=False,
+        candidates=(),
+        owners={},
+    )
+
+
+async def test_a_running_pass_names_the_fleet_it_enumerated_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE GREPPABLE LINE. `sandbox_fleet_over_threshold` and the pass-completed event both
+    describe a fleet without naming one, so neither can settle the question `#190` actually
+    hit: is this worker judging OUR containers? The resource group and the managed environment
+    answer it, and the subscription id — which is kept out of `WorkerPass.detail` because an
+    admin endpoint reads that column into a response — is precise enough to settle it alone.
+
+    ONCE PER PASS, not once per container: a per-container line makes the fleet identity scale
+    with the fleet, which is exactly when nobody reads it.
+
+    MUTATION-CHECK: make `_log_the_fleet` a no-op (`return` on its first line) and this goes red.
+    """
+    from src.workers import reclamation
+
+    monkeypatch.setattr(settings, "sandbox", _a_fleet_configuration(reclaim_enabled=True))
+    monkeypatch.setattr(reclamation, "_record_pass", _noop_record)
+    monkeypatch.setattr(pass_mod, "run_reclamation_pass", _a_quiet_report)
+
+    with structlog.testing.capture_logs() as logs:
+        await reclamation.reclaim_abandoned_sandboxes()
+
+    named = [e for e in logs if e.get("event") == reclamation.FLEET_ENUMERATED_EVENT]
+    assert len(named) == 1
+    assert named[0]["resource_group"] == "rg-not-ours"
+    assert named[0]["managed_environment"] == "env-not-ours"
+    assert named[0]["subscription_id"] == _FAKE_SUB
+
+
+async def test_a_pass_declined_by_the_flag_still_names_its_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`#190`'s WORKER, RECONSTRUCTED. It was misconfigured in both halves at once: the reclaim
+    flag was never set on the worker's own env, AND the subscription was one retired two
+    rotations earlier. A fleet line emitted only by a pass that RUNS would never have been
+    emitted on that deployment — the one it exists for — which is why `_log_the_fleet` is called
+    before the flag gate rather than after it.
+
+    MUTATION-CHECK: move the `_log_the_fleet()` call below the `if off_duty is not None: return`
+    block and this goes red while the running-pass test above stays green."""
+    from src.workers import reclamation
+
+    monkeypatch.setattr(settings, "sandbox", _a_fleet_configuration(reclaim_enabled=False))
+    monkeypatch.setattr(reclamation, "_record_pass", _noop_record)
+
+    with structlog.testing.capture_logs() as logs:
+        await reclamation.reclaim_abandoned_sandboxes()
+
+    assert any(e.get("reason") == "flag_off" for e in logs), "the pass must still have declined"
+    named = [e for e in logs if e.get("event") == reclamation.FLEET_ENUMERATED_EVENT]
+    assert len(named) == 1
+    assert named[0]["resource_group"] == "rg-not-ours"
+
+
+# --- the tracked sample (#190's second finding) -------------------------------------
+
+
+def test_the_worker_sample_boots_a_valid_worker_profile() -> None:
+    """R4 FOR THE ROLE THAT HAD NO TEMPLATE. A fresh checkout could produce a working API from
+    `.env.example`; there was nothing at all for the worker, and `WorkerSettings` makes object
+    storage, Redis and ARM access REQUIRED in every environment — so a hand-assembled file fails
+    at construction, and the cheapest way out of that is to start trimming safety.
+
+    A SUBPROCESS WITH A SCRUBBED ENVIRONMENT, not an in-process construct: pydantic-settings
+    merges the ambient environment on top of the file, so a developer's own `.env.worker` would
+    quietly supply anything this sample forgot — the exact drift the test exists to catch."""
+    done = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            "from src.config import resolve_settings;"
+            " s = resolve_settings();"
+            " print(type(s).__name__, s.sandbox.reclaim_enabled)",
+        ],
+        cwd=_BACKEND_ROOT,
+        env=child_env(ENV_FILE=_WORKER_SAMPLE, BIAL_ROLE="worker"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode == 0, f"{_WORKER_SAMPLE} does not boot a worker:\n{done.stderr}"
+    # The profile AND the flag: `BIAL_ROLE` is read from the real environment, never from the
+    # file, so a sample that booted an ApiSettings would prove nothing about the worker.
+    assert done.stdout.split() == ["WorkerSettings", "False"], done.stdout
+
+
+def test_no_sandbox_value_in_the_worker_sample_looks_real() -> None:
+    """THE ONE THAT STOPS A CREDENTIAL REACHING A PUBLIC REPO.
+
+    `SandboxConfig` is REQUIRED for this role and carries `acr_password`, `acr_username` and a
+    subscription id, and `.env.example` never had to demonstrate safe placeholders for that block
+    because the API's sandbox is optional. So there is nothing here to copy the convention from,
+    and the natural move when a sample will not parse is to paste a value that works. This
+    repository is public and has nothing scanning it.
+
+    COMMENTED LINES COUNT TOO: a commented-out real credential is a committed credential."""
+    lines = (_BACKEND_ROOT / _WORKER_SAMPLE).read_text(encoding="utf-8").splitlines()
+    values = {
+        key: value
+        for key, _, value in (line.lstrip("# ").partition("=") for line in lines)
+        if _SANDBOX_KEY.match(key)
+    }
+
+    assert values, f"{_WORKER_SAMPLE} documents no SANDBOX__* key at all"
+    assert "SANDBOX__RECLAIM_ENABLED" in values, (
+        "the flag whose absence from the real file produced `flag_off` must be IN the template"
+    )
+    not_placeholders = {k: v for k, v in values.items() if v not in _PLACEHOLDERS}
+    assert not not_placeholders, (
+        f"{_WORKER_SAMPLE} carries SANDBOX__ values that are not placeholders — this repo is "
+        f"public and unscanned, so replace each with one of {sorted(_PLACEHOLDERS)}: "
+        f"{sorted(not_placeholders)}"
+    )
+
+
+def test_the_worker_sample_is_not_excluded_by_gitignore() -> None:
+    """A TEMPLATE NOBODY CAN COMMIT IS THE ABSENCE IT WAS WRITTEN TO FIX. `backend/.gitignore` is
+    `.env.*` — which matches this filename — rescued only by the `!.env*.example` negation on the
+    next line. Reorder those two, or narrow the negation to `!.env.example`, and the file silently
+    stops being trackable while every other test here stays green.
+
+    ASKED OF GIT ITSELF rather than by re-implementing pattern precedence: last-match-wins across
+    nested `.gitignore` files is not a rule worth reproducing in a test. `--no-index` keeps the
+    answer the same before and after the file is committed."""
+    probe = subprocess.run(  # noqa: S603
+        ["git", "check-ignore", "--no-index", "-v", "--", f"backend/{_WORKER_SAMPLE}"],
+        cwd=_BACKEND_ROOT.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if probe.returncode == 1:  # no pattern matched at all — trivially trackable
+        return
+    assert probe.returncode == 0, f"git could not answer: {probe.stderr}"
+    # `<source>:<line>:<pattern>\t<path>`. A leading `!` is git saying "explicitly NOT ignored".
+    pattern = probe.stdout.split("\t", 1)[0].split(":", 2)[2]
+    assert pattern.startswith("!"), (
+        f"backend/{_WORKER_SAMPLE} is ignored by {pattern!r} — the template cannot be committed"
+    )

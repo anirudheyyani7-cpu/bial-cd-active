@@ -147,3 +147,28 @@ def objstm_pdf(pages: int) -> bytes:
     out += xref_payload
     out += b"\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n" % xref_at
     return bytes(out)
+
+
+def encrypted_pdf(pages: int = 3, password: str = "letmein") -> bytes:
+    """A SHORT, VALID, PASSWORD-PROTECTED PDF — the shape that makes unfollowable advice.
+
+    Deliberately under the page cap: the point of the fixture is that the document's LENGTH is
+    fine and the citizen still cannot get past a refusal that talks about length. Built with
+    pypdf rather than hand-assembled because the encryption dictionary is the part under test,
+    and hand-writing one would be testing the fixture rather than the reader.
+    """
+    import io
+
+    from pypdf import PdfWriter
+
+    plain = PdfWriter()
+    for _ in range(pages):
+        plain.add_blank_page(width=200, height=200)
+    unlocked = io.BytesIO()
+    plain.write(unlocked)
+
+    locked = PdfWriter(clone_from=io.BytesIO(unlocked.getvalue()))
+    locked.encrypt(password)
+    out = io.BytesIO()
+    locked.write(out)
+    return out.getvalue()

@@ -49,6 +49,11 @@ PDF_UNREADABLE_CODE: Final = "INVALID_PDF"
 """What a PDF that will not parse is reported as. A 400, not the governor's generic 500
 `PARSE_FAILED`: a malformed upload is the caller's file, not the platform failing."""
 
+PDF_ENCRYPTED_CODE: Final = "PDF_ENCRYPTED"
+"""A PDF that parsed far enough to say it is locked. Distinct from `INVALID_PDF` because it is
+the one PDF failure the citizen can act on — every other one is a fact about the platform, and
+those stay collapsed behind a single sentence on purpose."""
+
 
 def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
     """A real PDF's page count, read by a real PDF reader. Runs INSIDE the governor child.
@@ -72,12 +77,24 @@ def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
     # child, so a top-level pypdf import would be paid by the office kinds too — and by the
     # API process at boot, which never counts a page.
     from pypdf import PdfReader
+    from pypdf.errors import FileNotDecryptedError
 
     try:
         reader = PdfReader(io.BytesIO(buffer))
         pages = len(reader.pages)
     except MemoryError:
         raise
+    except FileNotDecryptedError as exc:
+        # A LOCKED DOCUMENT IS NOT A BROKEN ONE, and it is the one failure here the citizen can
+        # actually do something about. Every other arm below is a fact about the platform (a
+        # malformation, a bomb, a timeout) and is deliberately collapsed into one sentence; this
+        # is a fact about THEIR file, so it gets its own code and the caller gives it its own
+        # advice. Folding it in with the rest would tell someone holding a three-page locked
+        # invoice that it is too long — advice that cannot be followed, which is the exact shape
+        # `attachmentInput.ts` records as "advice is only honest while it leads somewhere".
+        raise FileParseError(
+            "The file is password-protected.", status=400, code=PDF_ENCRYPTED_CODE
+        ) from exc
     except Exception as exc:
         # Broad on purpose: a hostile file reaches pypdf through a dozen call paths and the
         # library raises whatever the malformation happens to hit (`PdfReadError`, `KeyError`,

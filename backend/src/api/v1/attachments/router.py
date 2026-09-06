@@ -107,6 +107,22 @@ PDF_TOO_LONG_CODE: Final = "PDF_TOO_LONG"
 """The machine-readable code beside `PDF_TOO_LONG_TEXT`, so a client can branch on the page
 cap without string-matching prose."""
 
+PDF_LOCKED_TEXT: Final = (
+    "That document is password-protected. Remove the password and upload it again."
+)
+"""THE ONE PDF FAILURE THE CITIZEN CAN ACT ON, so it is the one that does not get the sentence
+above. A locked document is a fact about THEIR file, not about the platform — and telling
+someone holding a three-page locked invoice that it is "too long to work with, try one under 30
+pages" is advice that cannot be followed. They would shorten the document and be refused again,
+learning nothing. `attachmentInput.ts` already records this rule for the format refusals:
+advice is only honest while it leads somewhere.
+
+It names no parser, no encryption scheme and no internal state, so it keeps the property the
+collapsed sentence exists for."""
+
+PDF_LOCKED_CODE: Final = "PDF_ENCRYPTED"
+"""Mirrors `parse/parsers.py::PDF_ENCRYPTED_CODE` — the child raises it, this route maps it."""
+
 # The allowlist + magic-byte prefixes live in `src.services.media.magic` — the SINGLE source of
 # truth shared with every other path that can put bytes in front of the model, so a block the
 # upload path would reject cannot slip in through one of them. `ALLOWED_MEDIA` / `magic_matches`
@@ -322,6 +338,10 @@ async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
         pages = counted["pageCount"]
     except FileParseError as exc:
         logger.warning("pdf_page_check_failed", extra={"code": exc.code, "status": exc.status})
+        # The locked arm is the one exception to the collapse above, and only this one: it is a
+        # 415 rather than a 413 because nothing about the file's SIZE was the problem.
+        if exc.code == PDF_LOCKED_CODE:
+            raise AppApiError(415, PDF_LOCKED_TEXT, code=PDF_LOCKED_CODE) from exc
         raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE) from exc
     if not isinstance(pages, int) or pages > MAX_PDF_PAGES:
         logger.info("pdf_over_page_cap", extra={"pages": pages, "cap": MAX_PDF_PAGES})

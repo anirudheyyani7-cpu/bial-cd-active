@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import datetime
 import io
+import re
 import time
 import uuid
 
@@ -21,7 +22,7 @@ from src.services.auth.session_jwt import mint_session_jwt
 from src.services.extract.deck import DeckResult
 from src.services.extract.office import EXCEL_MEDIA_TYPE, PPTX_MEDIA_TYPE
 from tests.factories import ConversationFactory, UserFactory
-from tests.pdfs import pdf_with_pages, unreadable_pdf, xref_bomb_pdf
+from tests.pdfs import encrypted_pdf, pdf_with_pages, unreadable_pdf, xref_bomb_pdf
 
 _TTL = settings.auth.access_ttl_seconds
 
@@ -747,6 +748,41 @@ async def test_a_corrupt_pdf_is_refused_with_the_same_sentence_not_a_500(
         resp.json()["error"]["message"]
         == "That document is too long to work with. Try one under 30 pages."
     )
+    assert fake_storage.objects == {}
+
+
+async def test_a_locked_pdf_is_told_it_is_locked_not_that_it_is_too_long(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE ONE PDF REFUSAL THE CITIZEN CAN ACT ON, so it is the one that does not get the
+    collapsed sentence.
+
+    A password-protected PDF parses far enough to say it is locked and no further, so it lands
+    in the same `FileParseError` arm as a corrupt file. Under the collapse that made it "too
+    long to work with — try one under 30 pages", which is advice that cannot be followed: this
+    fixture is THREE pages. A citizen holding a locked invoice would shorten it, be refused
+    again, and learn nothing. That is the shape `attachmentInput.ts` records as advice only
+    being honest while it leads somewhere.
+
+    A 415 rather than a 413, because nothing about the file's size was the problem. The
+    sentence still names no parser, no encryption scheme and no internal state, so it keeps the
+    property the collapsed sentence exists for."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_locked", encrypted_pdf(pages=3))
+
+    assert resp.status_code == 415, resp.text
+    body = resp.json()["error"]
+    assert body["message"] == (
+        "That document is password-protected. Remove the password and upload it again."
+    )
+    assert body["code"] == "PDF_ENCRYPTED"
+    # It must not be told the length is the problem — the document is well under the cap.
+    assert "too long" not in body["message"]
+    assert "30 pages" not in body["message"]
+    # And it leaks nothing about how we found out.
+    assert not re.search(r"pypdf|decrypt|encrypt|cipher|/Encrypt|parser", body["message"], re.I)
+    # Refused before the store, like every other arm.
     assert fake_storage.objects == {}
 
 

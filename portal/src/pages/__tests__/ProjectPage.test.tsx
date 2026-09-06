@@ -46,7 +46,7 @@ import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-li
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import ProjectPage from '../ProjectPage'
 import ProjectsPage, { PROJECT_GONE_NOTICE } from '../ProjectsPage'
-import { ApiError } from '../../utils/apiError'
+import { ApiError, extractApiMessage } from '../../utils/apiError'
 import { beaconsFrom } from './_observeBeacons'
 import type { Project } from '../../utils/projectApi'
 
@@ -652,6 +652,81 @@ describe('ProjectPage — a dead address says something on the way out (`#206`)'
     expect(await screen.findByRole('heading', { name: /your apps/i })).toBeTruthy()
     expect(listSaid()).toBe('')
     expect(screen.queryByTestId('projects-notice-marker')).toBeNull()
+  })
+})
+
+describe('ProjectPage — a mangled address never shows the validator (`#207`)', () => {
+  /* THE OTHER HALF OF "a bad project address". `#206` is the id that RESOLVED and stopped
+     existing; this is the id that never resolved at all — a link that lost characters on its
+     way to a citizen, which the backend answers with a Pydantic `detail[]` about UUID groups.
+     The page had that parser sentence in its hand and painted it as the card body.
+
+     THESE CASES STAY ON THE PAGE. That is the deliberate difference from the bounce above: a 422
+     never addressed a project, so there is nothing to be sent back from — the card says the
+     sentence and the way out is a control, not a redirect. */
+
+  /** The exact envelope from `#207`, read through the REAL envelope reader.
+   *
+   *  Hand-writing the message would make this test about a literal somebody chose; running the
+   *  production body through `extractApiMessage` is what makes it about the string the page would
+   *  actually be handed — including on the day `flattenValidationDetail` starts joining the
+   *  `type` in as well. */
+  const MANGLED_ID = '01a06ba7-1d89-7091-8eca-e109f4b'
+  const MANGLED_BODY = {
+    detail: [
+      {
+        type: 'uuid_parsing',
+        loc: ['path', 'project_id'],
+        msg: 'Input should be a valid UUID, invalid group length in group 4: expected 12, found 7',
+      },
+    ],
+  }
+  const mangled = () => new ApiError(extractApiMessage(MANGLED_BODY, 422, 'Could not load this project'), 422)
+
+  it('★ says one neutral sentence, and NOT the parser’s account of the id', async () => {
+    h.getProject.mockRejectedValue(mangled())
+    renderProjectPage(MANGLED_ID)
+
+    // PRESENCE FIRST, and it is what makes the four absences below mean anything: a page that
+    // crashed on this branch would satisfy every `not.toMatch` for free.
+    expect(await screen.findByText(PROJECT_GONE_NOTICE)).toBeTruthy()
+    expect(screen.getByText(/Couldn’t load this project/i)).toBeTruthy()
+
+    const onScreen = document.body.textContent ?? ''
+    // The `type`, which no rendering path carries today — pinned so that a future change which
+    // starts surfacing `detail[].type` or `err.code` cannot land here quietly.
+    expect(onScreen).not.toMatch(/uuid_parsing/i)
+    // And the `msg`, which the page genuinely WAS painting.
+    expect(onScreen).not.toMatch(/Input should be a valid UUID/i)
+    expect(onScreen).not.toMatch(/invalid group length|expected 12|group 4/i)
+    // It stays. A 422 is not the 404's involuntary exit — nothing navigated, so the catch-all
+    // route never rendered.
+    expect(screen.queryByTestId('location')).toBeNull()
+  })
+
+  it('★ keeps the way out: the card’s back control survives the load-error branch', async () => {
+    /* THE CONTROL THAT MUST NOT BE GATED BY WHAT SILENCES THE PENCIL. Everything else on this
+       branch is text; press this and the citizen is somewhere they can act. Gate it on the
+       loaded project — the fact the rename control is now gated on — and a dead address
+       becomes a dead end with no keyboard route out of it. */
+    h.getProject.mockRejectedValue(mangled())
+    renderProjectPage(MANGLED_ID)
+
+    fireEvent.click(await screen.findByRole('button', { name: /back to projects/i }))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/projects'))
+    // The involuntary-exit sentence belongs to `#206`; a press the citizen made carries nothing.
+    expect(screen.getByTestId('location-notice').textContent).toBe('')
+  })
+
+  it('a server error that is not a 422 still says what the server said', async () => {
+    // The narrow catch, kept narrow. Envelope-1 messages are written for citizens and replacing
+    // every one of them with the neutral line would tell somebody their project is gone when the
+    // control-plane merely fell over.
+    h.getProject.mockRejectedValue(new ApiError('The workspace service is restarting.', 503))
+    renderProjectPage('p-207-503')
+
+    expect(await screen.findByText('The workspace service is restarting.')).toBeTruthy()
+    expect(screen.queryByText(PROJECT_GONE_NOTICE)).toBeNull()
   })
 })
 

@@ -50,6 +50,35 @@ import { ApiError } from '../utils/apiError'
 import { markProjectOpened } from '../utils/observe'
 import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 
+/**
+ * WHAT THE CARD SAYS — and the one status whose sentence is never the server's (`#207`).
+ *
+ * A 422 on this GET can only be the PATH PARAMETER: the read carries no body for Pydantic to
+ * validate, so the `detail[]` FastAPI sends back is always the parser's account of an id that is
+ * not a UUID, and `flattenValidationDetail` was joining it straight onto the screen:
+ *
+ *   "Input should be a valid UUID, invalid group length in group 4: expected 12, found 7"
+ *
+ * Nobody who reads that sentence typed the id. The realistic path here is a link that lost
+ * characters — a truncated paste, an address wrapped by a mail client — and which group came up
+ * five short is addressed to whoever produced the link, not to the citizen holding it. So the
+ * sentence is `PROJECT_GONE_NOTICE`: from where they stand a malformed address and a deleted one
+ * are the same event, an address that does not lead anywhere, and they get the same words for it.
+ *
+ * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above (`#206`). A 404
+ * is a project that WAS an address and stopped being one, so the list is where the citizen now
+ * belongs. A 422 never addressed a project at all, and redirecting out of an address somebody
+ * deliberately opened reads as the app taking their place away. The page stays — with its back
+ * control on it, which is what makes staying a choice rather than a dead end.
+ *
+ * EVERY OTHER STATUS KEEPS `err.message`. Those are the backend's citizen-facing envelope-1
+ * messages; this is not a licence to replace them all with one line.
+ */
+function loadErrorFor(err: unknown): string {
+  if (!(err instanceof ApiError)) return 'Could not load this project.'
+  return err.status === 422 ? PROJECT_GONE_NOTICE : err.message
+}
+
 export default function ProjectPage() {
   const { projectId } = useParams()
   // WHICH PROJECT THE WORKSPACE IS SHOWING. Declared above the early returns below, because the
@@ -120,7 +149,7 @@ export default function ProjectPage() {
           bounceGone()
           return
         }
-        setLoadError(err instanceof ApiError ? err.message : 'Could not load this project.')
+        setLoadError(loadErrorFor(err))
       } finally {
         if (active) setLoading(false)
       }

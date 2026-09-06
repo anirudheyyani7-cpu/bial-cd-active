@@ -206,8 +206,23 @@ export default function WorkspaceToolbar({
           rail's header, which U3 replaces with the board's three sections — none of which is a
           project name. No board draws a rename control anywhere, but the origin's rule is not to
           delete a shipped capability because an older board omits it, so it comes here, next to
-          the name it edits, at the smallest weight the row has. */}
-      {!isChat && heading.projectId && (
+          the name it edits, at the smallest weight the row has.
+
+          WHAT GATES IT IS THE NAME, NOT THE ID (`#207`). `projectId` is the ROUTE PARAM — it is
+          non-null for an address that never resolved to a project at all, including the mangled
+          paste that 422s at the boundary — so gating on it drew a pencil over a page with no
+          project behind it, whose press was a measured no-op (`NO_ACTIONS.rename` is `null` and
+          the call site is optional). The NAME is the only field on this heading that is an ANSWER
+          from the project's own fetch, so it is the one that means "a project loaded", on both
+          routes that publish a heading. Explicitly against `null` rather than truthy: a name is a
+          string, and `'' && …` renders a stray text node instead of nothing.
+
+          IT MUST NOT SPREAD TO THE BACK CONTROL ABOVE. That control's whole job is to survive the
+          branch where nothing loaded — it is the way OUT of the dead address this issue is about,
+          and gating it on the same fact would strand the citizen on the page. For the same reason
+          the breadcrumb keeps its "Your project" fallback: a missing name silences the pencil, and
+          nothing else in the row. */}
+      {!isChat && heading.projectName !== null && (
         <button
           type="button"
           onClick={() => readActions().rename?.()}

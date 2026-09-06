@@ -648,6 +648,52 @@ describe('the back control and the rename', () => {
     render(<Workspace entry="/chat/c1" />)
     expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
   })
+
+  it('★ `#207` — no pencil over a project that never loaded, and one the moment it does', () => {
+    /* THE MANGLED ADDRESS, in the only shape this row can see it. `projectId` is the ROUTE PARAM,
+       so it is still there on a page whose project 422'd at the boundary — which is exactly what
+       the pencil used to be gated on, and why a citizen who followed a truncated link was offered
+       a rename control whose press was a measured no-op (`NO_ACTIONS.rename` is `null`). The NAME
+       is the field that comes from the project's own fetch, so it is the one that means loaded. */
+    render(<Workspace project={{ heading: { ...PROJECT_HEADING, projectName: null } }} />)
+
+    expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
+    // LIVENESS: the row is fully drawn around that absence — full height, a word in the name
+    // slot — so this is a control that is gone rather than a tree that failed to render.
+    expect(row().className).toMatch(/h-\[54px\]/)
+    expect(title().textContent).toBe('Your project')
+
+    cleanup()
+    const rename = vi.fn()
+    render(<Workspace project={{ heading: PROJECT_HEADING, actions: { save: null, rename } }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename project' }))
+    expect(rename).toHaveBeenCalledTimes(1)
+  })
+
+  it('★ `#207` — and the way out is NOT gated by the fact that silences the pencil', () => {
+    /* THE MUTANT THIS EXISTS FOR: gate the back control on `heading.projectName !== null` too and
+       the dead address becomes a dead end. The row's own docblock is explicit that the control
+       survives the load-error branch, and a branch with no way off it is worse than the raw
+       validator sentence this unit came to remove. */
+    render(<Workspace project={{ heading: { ...PROJECT_HEADING, projectName: null } }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to projects' }))
+    expect(screen.getByTestId('where').textContent).toBe('/projects')
+  })
+
+  it('★ `#207` — the deliberate "Your project" fallback on a chat is untouched', () => {
+    /* NOT PART OF THE DEFECT, and the issue says so. A project deleted out from under an open
+       chat leaves the breadcrumb with no name, and the row deliberately says "Your project"
+       rather than leaving a gap that shifts the layout when a fetch lands. The pencil gate is
+       allowed to read the same `null`; it is not allowed to change what the slot says. */
+    render(<Workspace entry="/chat/c1" chat={{ heading: { ...CHAT_HEADING, projectName: null } }} />)
+
+    expect(row().textContent).toContain('Your project')
+    expect(title().textContent).toBe('Add an out-time column')
+    expect(screen.getByRole('button', { name: 'Back to project' })).toBeTruthy()
+    // Rename is a project-screen control; a chat address never had it, name or no name.
+    expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
+  })
 })
 
 describe('the row does not wake with the composer', () => {

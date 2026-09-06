@@ -316,6 +316,32 @@ export interface TakeBack {
  * them: they write into the SURFACE, which outlives this pane's controls and needs the answer. So a
  * citizen who clicks away during the two-minute stop wait produces no state update and no crash,
  * and the server sequence — which is running server-side anyway — still completes.
+ *
+ * ═══ `mounted` IS NOT ENOUGH, BECAUSE THE PANE DOES NOT UNMOUNT ═══
+ *
+ * `AppPane` is a SIBLING of the Outlet, not a child of it — that is the whole point of the shell,
+ * and it is why leaving a build chat for the project screen does not reload the running app. The
+ * consequence for this hook is that a move from `/projects/A` to `/projects/B`, or from a project
+ * to a chat, runs no cleanup here at all: the same `useState`s carry straight over. Without an
+ * identity, A's hand-over dialog stands over B's pane naming A's holder, and A's `working` flag
+ * leaves B's control busy for a sequence that was never about B.
+ *
+ * So the sequence is OWNED BY A PROJECT, and the owner is `report.projectId` — the same field
+ * `sameReport` compares, the same field `useWorkspaceAddress` retires a stale address by, and the
+ * same field `useWorkspaceState` guards its own late writes with. Two halves, and both are needed:
+ *
+ *  - A CHANGE OF OWNER CLEARS THE SEQUENCE, during the render that first sees it rather than in an
+ *    effect afterwards, so no committed frame ever carries A's dialog over B's pane.
+ *  - EVERY LATE WRITE NAMES THE OWNER IT STARTED UNDER (`ifStillOurs`). Clearing alone would be
+ *    undone a moment later: A's stop is still running server-side, and its refusal, its narration
+ *    and its `finally` would all land in B's state. The report's handlers are still called
+ *    unguarded, exactly as above — they belong to A's surface and A's surface still wants them.
+ *
+ * `null` COUNTS AS A CHANGE, unlike `useWorkspaceAddress`'s "no claim is not a different project".
+ * The two rules are about different things. There, a `null` project must not tear down a running
+ * app somebody is looking at. Here, a report of `null` means the surface that raised this question
+ * is gone — a cold open of a chat address publishes exactly that for its first frames — and a
+ * modal about a project nobody is showing any more is the defect, not the remedy.
  */
 export function useTakeBack(report: WorkspaceReport | null): TakeBack {
   const [working, setWorking] = useState(false)
@@ -339,8 +365,40 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
   const askingRef = useRef(asking)
   askingRef.current = asking
 
-  const ifStillHere = (write: () => void) => {
-    if (mounted.current) write()
+  // WHOSE SEQUENCE THIS IS. A ref rather than state because every reader of it is either this
+  // render or a callback firing after one, which is the same reason `usePublishAddress` keeps its
+  // standing in a ref and assigns it during render.
+  const shownProject = report?.projectId ?? null
+  const owner = useRef(shownProject)
+  if (owner.current !== shownProject) {
+    owner.current = shownProject
+    // ADJUSTED DURING RENDER, which React documents for exactly this case and which an effect
+    // cannot do: an effect commits one frame first, and that frame is A's modal standing over B's
+    // pane. The guards are so a project change with nothing running re-renders nothing.
+    if (working) setWorking(false)
+    if (asking) setAsking(null)
+    if (step) setStep(null)
+    // AND THE PRESS GUARD GOES WITH IT, or B's control is dead: A's sequence is still running, so
+    // the flag is still raised, and every press on the new project would be swallowed as a double
+    // press. Two projects are two sequences; what keeps them from writing over each other is
+    // `ifStillOurs` below, not this flag.
+    inFlight.current = false
+  }
+
+  /**
+   * WRITE ONLY IF THIS PANE IS STILL HERE AND STILL ABOUT THE PROJECT THAT ASKED.
+   *
+   * `theirs` is the project the caller captured when its sequence began. `mounted` covers the
+   * citizen closing the workspace; this covers the citizen moving to another project, which the
+   * pane survives — see the docblock.
+   *
+   * THE PRESS GUARD IS RELEASED THROUGH HERE TOO, and under the same ownership rule rather than a
+   * second one: a sequence that began on A and ended after the move must not un-arm a flag B
+   * raised, or B's take-back becomes pressable twice — the exact double press this ref exists to
+   * collapse.
+   */
+  const ifStillOurs = (theirs: string, write: () => void) => {
+    if (mounted.current && owner.current === theirs) write()
   }
 
   /**
@@ -362,7 +420,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       // second leaves one commit in which the state says running and the pane has no address.
       if (res.previewUrl) rep.onStarted(res.previewUrl)
       rep.onStartOutcome(res.ready ? null : { kind: 'not-painted' })
-      ifStillHere(() => setAsking(null))
+      ifStillOurs(projectId, () => setAsking(null))
     } catch (err) {
       const blocked = asReclaimBlocked(err)
       if (blocked) {
@@ -371,7 +429,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
         // and it is a return to the CHOICE screen with new data, never the dialog's generic caught
         // error. The caller force-remounts on the holder's id, so the copy and the focus move
         // together.
-        ifStillHere(() => setAsking(blocked))
+        ifStillOurs(projectId, () => setAsking(blocked))
         return
       }
       rep.onStartOutcome({
@@ -379,7 +437,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
         reason: err instanceof BuildSessionAlreadyActiveError ? BUILD_ALREADY_RUNNING : reasonFor(err),
         stoppedHolder,
       })
-      ifStillHere(() => setAsking(null))
+      ifStillOurs(projectId, () => setAsking(null))
     }
   }
 
@@ -393,10 +451,12 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       try {
         await askForTheWorkspace(rep, projectId, null)
       } finally {
-        inFlight.current = false
         // THE PANE RE-ARMS THE MOMENT THE DIALOG IS UP. The citizen is deciding, not waiting, and
         // a Cancel that left both controls inert would be a dead end.
-        ifStillHere(() => setWorking(false))
+        ifStillOurs(projectId, () => {
+          inFlight.current = false
+          setWorking(false)
+        })
       }
     })()
     // Every value it reads comes through a ref, so this identity is correct for the life of the
@@ -422,7 +482,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       try {
         await handOverWorkspace(holder.projectId, save, {}, (next) => {
           reached = next
-          ifStillHere(() => setStep(next))
+          ifStillOurs(projectId, () => setStep(next))
         })
       } catch (err) {
         rep.onStartOutcome({
@@ -432,19 +492,19 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
           reason: reasonFor(err),
           stoppedHolder: reached === 'stopping' ? null : holder.projectName,
         })
-        ifStillHere(() => setAsking(null))
+        ifStillOurs(projectId, () => setAsking(null))
         rep.onRefresh()
         return
       }
-      ifStillHere(() => setStep('starting'))
+      ifStillOurs(projectId, () => setStep('starting'))
       await askForTheWorkspace(rep, projectId, holder.projectName)
       // THE READING IS STALE WHATEVER JUST HAPPENED. The slot was released, so `slot_taken` is no
       // longer the answer — on the ending where the relaunch failed the pane needs the fresh
       // reading to reach `start-failed` rather than sitting on a hand-over that is over.
       rep.onRefresh()
     } finally {
-      inFlight.current = false
-      ifStillHere(() => {
+      ifStillOurs(projectId, () => {
+        inFlight.current = false
         setWorking(false)
         setStep(null)
       })

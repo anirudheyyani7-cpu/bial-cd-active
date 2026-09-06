@@ -58,6 +58,12 @@
  * whenever no surface wants the pane, and a modal drawn inside it would be announced as absent and
  * be unreachable by keyboard on the one screen where it is the only thing that matters.
  *
+ * AND THE SAME LIFETIME IS WHY THE HOOK IS HANDED THE WHOLE `report` RATHER THAN A HANDLER OR TWO.
+ * This pane outlives the WAIT, which is what the modal needs — but it also outlives the PROJECT,
+ * because it is a sibling of the Outlet and a move between two projects re-renders it without ever
+ * unmounting it. So the sequence needs an identity of its own or it carries over, and the identity
+ * it uses is `report.projectId`. See `useTakeBack`'s docblock; nothing about it is decided here.
+ *
  * ═══ L10 — DO NOT ASSUME THE APPS ROUTER SERVES A BRANDED PAGE ═══
  *
  * ACA wildcard DNS answers for hostnames whose container is long gone, so an "app is gone" 404 is
@@ -153,6 +159,10 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   const visible = useWorkspacePaneVisible()
   // THE TAKE-BACK'S WHOLE SEQUENCE (`#196`) — held here because this is what outlives it. See the
   // docblock. `null` when nobody has computed a state; the hook is unconditional, as hooks are.
+  //
+  // THE WHOLE REPORT, NOT ITS HANDLERS: the hook reads `projectId` off it to know whose sequence
+  // it is holding, and a pane that outlives a navigation would otherwise carry one project's
+  // dialog and busy flag onto the next.
   const takeBack = useTakeBack(report)
   // THE APP THE CITIZEN IS TRYING TO OPEN — issue `#161`'s framing half, which the dialog leads
   // with. Published by the routes (`ProjectPage` / `ChatRoute`), not by the surfaces, so it is read

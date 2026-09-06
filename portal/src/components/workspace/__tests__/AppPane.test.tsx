@@ -873,4 +873,99 @@ describe('★ taking the workspace back (#196)', () => {
     expect(takeBack().getAttribute('aria-disabled')).toBe('false')
     expect(openHolder().getAttribute('aria-disabled')).toBe('false')
   })
+
+  /**
+   * ★ THE SEQUENCE IS OWNED BY A PROJECT, BECAUSE THE PANE OUTLIVES ONE.
+   *
+   * `AppPane` is a SIBLING of the Outlet in `WorkspaceShell`, never a child of it — that is the
+   * whole reason leaving a build chat for the project screen does not reload the running app. The
+   * cost is that a move from one project to another runs NO cleanup here: the same `useState`s
+   * carry straight over, and until this fix nothing in `useTakeBack` named a project. A citizen who
+   * opened the take-back on A and then went to B was left reading A's hand-over question over B's
+   * pane, or holding B's control in a busy state belonging to A's sequence.
+   *
+   * BOTH TESTS PUBLISH B ONTO THE SAME CHANNEL AND NEVER RE-RENDER THE TREE, which is exactly what
+   * the router does — a re-render with a new report and no unmount. Rendering a second pane would
+   * test a remount, which is the one case that was never broken.
+   */
+  describe('★ moving to another project does not inherit this one`s take-back', () => {
+    /** What the router publishes on arriving at another project — itself held, by someone else. */
+    const arriveAtTheOtherProject = (channel: WorkspaceChannel) =>
+      act(() =>
+        channel.workspace.set({
+          ...reportFor(
+            reading({
+              state: 'slot_taken',
+              occupyingProjectName: 'Roster',
+              occupyingProjectId: 'pB',
+              restorable: true,
+            }),
+          ),
+          projectId: 'p2',
+        }),
+      )
+
+    const othersTakeBack = () => screen.getByRole('button', { name: /^Stop “Roster” and open this app instead$/ })
+    const othersOpenHolder = () => screen.getByRole('button', { name: /^Open “Roster”$/ })
+
+    it('★ the question does not follow the citizen — A`s dialog closes and B draws its own arm', async () => {
+      const { channel } = await askTheQuestion()
+      expect(dialog()).toBeTruthy()
+
+      arriveAtTheOtherProject(channel)
+
+      // A's question named A's holder and asked what to do with A's unsaved work. Standing over B
+      // it is a modal about a project nobody is looking at, whose Save and Stop buttons act on a
+      // container the citizen did not come here to touch.
+      expect(dialog()).toBeNull()
+      // LIVENESS. The absence above is a dialog that closed, not a pane that stopped rendering:
+      // B really did arrive, on its own held arm, with both of its own ways out.
+      expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe(
+        'held-by-another-project',
+      )
+      expect(othersTakeBack().getAttribute('aria-disabled')).toBe('false')
+      expect(othersOpenHolder().getAttribute('aria-disabled')).toBe('false')
+    })
+
+    it('★ nor does the busy flag, and A`s sequence cannot write back into B', async () => {
+      const hold = deferred<void>()
+      api.handOverWorkspace.mockImplementation(async (_id, _s, _d, narrate: (s: HandoverStep) => void) => {
+        narrate('stopping')
+        await hold.promise
+      })
+      // The relaunch that CLOSES A's sequence is refused by a third project. Chosen deliberately:
+      // it is the one ending that opens a dialog rather than reporting an outcome, so a sequence
+      // that could still write would raise a question over B's pane naming a project B has never
+      // heard of — the leak's worst shape.
+      api.relaunchPreview.mockRejectedValue(blocked({ projectId: 'pC', projectName: 'Gate pass' }))
+      const { channel } = await askTheQuestion()
+      fireEvent.click(screen.getByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+      await screen.findByTestId('reclaim-step')
+
+      arriveAtTheOtherProject(channel)
+
+      // B's control is idle: it has not renamed itself to "Taking your workspace back…", it claims
+      // no busy state, and it is pressable — as is its neighbour, which A's sequence had made inert.
+      expect(othersTakeBack().getAttribute('aria-busy')).toBe('false')
+      expect(othersTakeBack().getAttribute('aria-disabled')).toBe('false')
+      expect(othersOpenHolder().getAttribute('aria-disabled')).toBe('false')
+      expect(dialog()).toBeNull()
+
+      // AND A'S SEQUENCE FINISHING CHANGES NONE OF IT. It still runs to the end server-side — the
+      // relaunch that closes it fires, exactly as the unmount case above — but every state write
+      // names the project it began under, so none of them lands on B.
+      await act(async () => {
+        hold.settle()
+        await Promise.resolve()
+      })
+      await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(2))
+      expect(dialog()).toBeNull()
+      expect(othersTakeBack().getAttribute('aria-busy')).toBe('false')
+      expect(othersTakeBack().getAttribute('aria-disabled')).toBe('false')
+      // LIVENESS again, after the settle: still B's own held arm, still both of B's controls.
+      expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe(
+        'held-by-another-project',
+      )
+    })
+  })
 })

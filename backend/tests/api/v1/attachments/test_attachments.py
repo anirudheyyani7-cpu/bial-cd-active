@@ -299,7 +299,10 @@ def test_attachments_openapi_documents_codes() -> None:
 
     paths = create_app().openapi()["paths"]
     upload = set(paths["/v1/attachments"]["post"]["responses"])
-    assert {"400", "401", "404", "413", "429", "501", "500"} <= upload
+    # "415" IS THE POINT OF THIS LINE. The subset operator makes every code here opt-in, so a
+    # status the route raises without declaring passes unnoticed — which is exactly what the
+    # locked-PDF 415 did until a review caught it. Anything raised gets named here.
+    assert {"400", "401", "404", "413", "415", "429", "501", "500"} <= upload
     dl = set(paths["/v1/attachments/{attachment_id}"]["get"]["responses"])
     assert {"400", "404", "401", "500"} <= dl
     delete = set(paths["/v1/attachments/{attachment_id}"]["delete"]["responses"])

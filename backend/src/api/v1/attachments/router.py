@@ -450,6 +450,11 @@ async def _handle_deck_upload(
         (400, ErrorEnvelope, "Invalid attachment id, conversation id, name, type, or bytes"),
         (404, ErrorEnvelope, "conversationId not found (or not owned by the caller)"),
         (413, ErrorEnvelope, "Attachment too large, over the PDF page cap, or storage full"),
+        # DECLARED BECAUSE IT IS RAISED — the locked-PDF arm above answers 415, and a status the
+        # route really sends but the schema never mentions is the generated client's problem
+        # later. It is 415 and not 413 for the reason given there: nothing about the SIZE was
+        # wrong. (This route's own contract test asserts a SUBSET, so it did not catch the gap.)
+        (415, ErrorEnvelope, "The PDF is password-protected and cannot be read"),
         (501, ErrorEnvelope, "PowerPoint attachments are not enabled"),
         (429, ErrorEnvelope, "Too many attachment requests"),
         AUTH_401,

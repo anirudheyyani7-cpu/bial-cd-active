@@ -49,6 +49,13 @@ def _new_maintenance_engine(url: str | URL) -> AsyncEngine:
         url,
         isolation_level="AUTOCOMMIT",
         poolclass=NullPool,
+        # Same no-parameters-in-logs rule as `db/base.py` (#187), and this engine is the one
+        # closest to credentials: its statements are cluster DDL carrying database names,
+        # role names and the generated role PASSWORD as bound values. A failed
+        # `CREATE ROLE ... PASSWORD` would otherwise render that password into
+        # `StatementError.__str__`, which every logger that touches the exception then
+        # writes out.
+        hide_parameters=True,
         # Bound every hang the way every other external client here does (Foundry 10s
         # connect, Redis 2s). asyncpg spelling: `timeout` is the connect ceiling;
         # per-session `statement_timeout`/`lock_timeout` go through `server_settings`.

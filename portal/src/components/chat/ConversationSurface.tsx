@@ -58,7 +58,8 @@ import { fetchSaveState, saveProject, handOverWorkspace, asReclaimBlocked, fetch
 import type { HandoverStep, ReclaimBlocked, PreviewState } from '../../utils/buildSessionApi'
 import { resolvePlanOptions } from '../../utils/turnStreamApi'
 import { wireMessageFromParts, buildUserParts, partsToText, countAttachments, releaseUploadedAttachments } from '../../utils/attachmentStore'
-import { validateConversationAttachmentCap } from '../../utils/attachmentInput'
+import { validateConversationAttachmentCap, validatePdfPerMessageCap } from '../../utils/attachmentInput'
+import { announceDeploymentChanged } from '../../hooks/usePublishState'
 
 import { loadBuilds, getBuild, deriveTitle } from '../../utils/builderHistory'
 import { outcomeSummary } from '../../utils/messageTypes'
@@ -636,6 +637,12 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     setSaveError(null)
     try {
       await saveProject(activeProjectId)
+      // THE SAME NUDGE THE PROJECT SCREEN'S SAVE RAISES (#205). `usePublishState` listens for it
+      // and reconciles the toolbar chip, which mounts on this screen too — without it a save from
+      // a chat leaves the chip one read behind until its next focus or visibility read. Raised
+      // unconditionally rather than under the id guard below: the event names the project it is
+      // about, and a citizen who navigated away still wants the chip they left behind corrected.
+      announceDeploymentChanged(activeProjectId)
       if (projectIdRef.current === activeProjectId) {
         setSaveDirty(false)
         // There is now a snapshot to relaunch from — say so without waiting for a reload.
@@ -1896,6 +1903,11 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     if (attachments.length > 0) {
       const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
       if ('error' in cap) throw new SendRefusal(cap.error)
+      // The DOCUMENT limit, checked before the token gate can reach the same conclusion with the
+      // wrong advice (#194). The server refuses this too, at `resolve_binaries`; this is the same
+      // refusal one step earlier so the composer does not accept a message it knows will bounce.
+      const docs = validatePdfPerMessageCap(attachments)
+      if ('error' in docs) throw new SendRefusal(docs.error)
     }
 
     // R60 — THE CHAT THE COMPOSER STAMPED AT PRESS TIME, not whichever one is open when this

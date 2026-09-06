@@ -175,6 +175,40 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
   return { ok: true }
 }
 
+/**
+ * A DOCUMENT LIMIT, NOT A TOKEN LIMIT, and the distinction is the whole reason this exists (#194).
+ *
+ * A PDF is charged a flat 75,000 tokens because that is what the largest admissible one can really
+ * cost, so three of them exceed the context ceiling before a word is typed. Left to the token gate,
+ * the citizen would be told to "start a new chat" — advice that does not work, because the new chat
+ * refuses the identical message. The server already refuses the third document at `resolve_binaries`
+ * with its own sentence; this is the same refusal one step earlier, so the composer does not accept
+ * a message it knows will bounce.
+ *
+ * MIRRORS `backend/src/api/v1/conversations/_shared.py` — `MAX_PDF_BLOCKS` and
+ * `TOO_MANY_DOCUMENTS_MSG`. The server is the trust boundary and keeps its own check; if these two
+ * ever disagree the server wins and the citizen sees its sentence instead. Raising the page cap
+ * makes this stricter, not looser.
+ *
+ * Counted PER MESSAGE, not per conversation: the charge is per attached block on the send, and
+ * `MAX_ATTACHMENTS_PER_CONVERSATION` above answers the different, cumulative question.
+ */
+export const MAX_PDF_ATTACHMENTS_PER_MESSAGE = 2
+export const TOO_MANY_DOCUMENTS_MESSAGE =
+  `You can send up to ${MAX_PDF_ATTACHMENTS_PER_MESSAGE} documents in one message. Take one out and send again.`
+
+/** How many of a pending list are PDFs. Only `mediaType` is read, so a ref list works too. */
+export function countPdfAttachments(list: readonly { mediaType?: string }[] = []): number {
+  return list.filter((a) => a?.mediaType === 'application/pdf').length
+}
+
+export function validatePdfPerMessageCap(list: readonly { mediaType?: string }[] = []): AttachmentValidationResult {
+  if (countPdfAttachments(list) > MAX_PDF_ATTACHMENTS_PER_MESSAGE) {
+    return { error: TOO_MANY_DOCUMENTS_MESSAGE }
+  }
+  return { ok: true }
+}
+
 /** Read a File as raw base64 (stripping the `data:<type>;base64,` prefix). */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

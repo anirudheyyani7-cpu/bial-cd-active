@@ -7,7 +7,7 @@ in fact going fine, the citizen would retry, and the second claim would 409.
 The 503 test is the other one worth having: a provider that RAISED when publishing is
 unconfigured would surface as a 500 in the wrong envelope, so both are pinned.
 
-THE DECISION ITSELF LIVES IN `test_publish_gate.py` (U9). Every test here seeds a clean
+THE DECISION ITSELF LIVES IN `test_publish_gate.py`. Every test here seeds a clean
 stored review for the saved version so the ladder lands on rule 7 (publish) and a failure
 in this file is never the gate quietly routing."""
 
@@ -71,7 +71,7 @@ def _body(*, save_first: bool = False, **overrides: object) -> dict[str, object]
     return request
 
 
-# All-No, score 0 — the ONE shape of declaration that auto-deploys post-issue-#115 (the
+# All-No, score 0 — the ONE shape of declaration that auto-deploys (the
 # gate runs LOW score = safe = auto-deploy, HIGH score = needs a human; see
 # classification.py). Every test that is NOT about the gate sends this, so a failure
 # elsewhere is never the gate quietly refusing.
@@ -83,7 +83,7 @@ def _body(*, save_first: bool = False, **overrides: object) -> dict[str, object]
 _QUALIFIES: dict[str, object] = _body(notes="Reads the public flight board only.")
 
 # 40 + 15 = 55: well above AUTO_DEPLOY_MAX_SCORE (0), so an explanation is obligatory too
-# (issue #117 follow-up: notes-required is now tied to the same threshold). The case the
+# (notes-required is tied to the same threshold). The case the
 # gate tests below actually exercise a refusal with.
 _NEEDS_REVIEW: dict[str, object] = _body(
     credentialsSecrets=True,
@@ -156,7 +156,7 @@ def wire(app: FastAPI, db_session, monkeypatch):
     app.dependency_overrides[deploy_service_or_none] = lambda: service
     # The gate resolves the shipping commit from the snapshot blob's metadata stamp and
     # reads the stored review by that commit, so storage is no longer optional plumbing
-    # for a publish — an unbound store is a documented 503 on every branch (ASM21).
+    # for a publish — an unbound store is a documented 503 on every branch.
     app.dependency_overrides[storage_or_none_dependency] = lambda: store
     return SimpleNamespace(app=app, service=service, manager=manager, store=store)
 
@@ -245,7 +245,7 @@ async def test_a_project_with_no_app_is_refused_not_provisioned(wire, client, db
     """The build path's resolver UPSERTS a draft app; deploy must not, or a Deploy on an
     empty project would quietly mint one and then fail on the missing snapshot.
 
-    U15: this refusal is now CODED (`no_saved_build` — the pipeline's own name for the
+    This refusal is CODED (`no_saved_build` — the pipeline's own name for the
     same fact, `FAIL_NO_SNAPSHOT`), so a client asserts on `error.code` rather than
     parsing this sentence."""
     user = await UserFactory.create(db_session)
@@ -266,7 +266,7 @@ async def test_an_app_with_nothing_ever_saved_is_refused_with_the_same_code(
     """The OTHER "nothing saved" site (`_shipping_head`'s `meta is None` branch): an app
     row exists, but no snapshot has ever been written for it — a different code path
     from the test above (no app row at all), the same citizen-facing fact, and now the
-    SAME machine code (U15's coded-refusal bullet)."""
+    SAME machine code."""
     user, app_row = await _owner_with_app(db_session)  # no `wire` arg: nothing is seeded
 
     resp = await client.post(
@@ -404,7 +404,7 @@ async def test_the_terminal_classification_refusal_is_gone(wire, client, db_sess
     assert resp.status_code != 409
     assert resp.status_code != 403
     assert resp.json().get("error", {}).get("code") != "classification_below_threshold"
-    # It ROUTED (the review is clean but the citizen's own weighted Yes stands, R9), so
+    # It ROUTED (the review is clean but the citizen's own weighted Yes stands), so
     # the pipeline was correctly not started.
     assert resp.status_code == 200
     assert resp.json()["outcome"] == "routed_for_review"
@@ -438,7 +438,7 @@ async def test_a_routed_deploy_leaves_the_app_queued_at_the_version_examined(
     async def _record_save(self, db, user, project_id, *, sandbox_client) -> SaveOutcome:
         saved.append(project_id)
         # The save reports the commit it landed at, which is what the route threads into
-        # the pipeline as the expected commit (U10). The store's stamp is the same one.
+        # the pipeline as the expected commit. The store's stamp is the same one.
         return SaveOutcome(app_id=app_row.id, head_sha=_HEAD_SHA)
 
     @contextlib.asynccontextmanager
@@ -482,7 +482,7 @@ async def test_a_weighted_declaration_without_an_explanation_is_still_a_422(
     """Incomplete, not refused — unchanged in status and meaning, moved in mechanism.
 
     It used to fire at the schema boundary from the citizen's own answers; it now fires
-    inside the ladder, on the MERGED answers (ASM22), which is the only place the review
+    inside the ladder, on the MERGED answers, which is the only place the review
     can be taken into account. The distinction that mattered is preserved exactly: an
     unexplained sensitive declaration is an incomplete submission, never a rejected one."""
     user, app_row = await _owner_with_app(db_session, wire)
@@ -550,7 +550,7 @@ async def test_a_never_deployed_app_reads_as_empty_not_missing(wire, client, db_
     assert body["appId"] == str(app_row.id)
     assert body["deploymentId"] is None
     assert body["status"] is None
-    # U15: never deployed, never submitted — `draft`, not a lie borrowed from a
+    # Never deployed, never submitted — `draft`, not a lie borrowed from a
     # neighbouring state.
     assert body["publishState"] == "draft"
 
@@ -565,7 +565,7 @@ async def test_the_status_is_owner_scoped(wire, client, db_session) -> None:
 
 
 async def test_the_status_carries_the_apps_approval_state(wire, client, db_session) -> None:
-    """U12: the pending state reaches BOTH citizen publish surfaces through this one
+    """The pending state reaches BOTH citizen publish surfaces through this one
     response — the toolbar button has no app id to make a second call with, and a status
     card that reads its lifecycle once on mount is stale the moment a publish routes.
 
@@ -598,7 +598,7 @@ async def test_the_status_carries_the_apps_approval_state(wire, client, db_sessi
         "submittedSha": _HEAD_SHA,
         "submittedAt": "2026-08-19T10:00:00Z",
     }
-    # U15: PENDING wins outright, whatever a deployment row (there is none here) says.
+    # PENDING wins outright, whatever a deployment row (there is none here) says.
     assert resp.json()["publishState"] == "in_review"
 
 
@@ -616,7 +616,7 @@ async def test_the_approval_state_is_null_only_when_the_project_has_no_app(
     assert resp.status_code == 200
     assert resp.json()["approval"] is None
     assert resp.json()["appId"] is None
-    # U15: the only `PublishState` member with no approval block behind it.
+    # The only `PublishState` member with no approval block behind it.
     assert resp.json()["publishState"] == "nothing_built"
 
 
@@ -671,8 +671,8 @@ async def test_the_status_read_answers_without_a_deploy_pipeline(
 ) -> None:
     """A `DEPLOY__*`-less deployment is a SUPPORTED state, and this route used to 503 on it.
 
-    Every field it answers with is a committed row, and the ladder routes without a pipeline
-    (ASM10), so a rejection note has to reach its developer through this call.
+    Every field it answers with is a committed row, and the ladder routes without a
+    pipeline, so a rejection note has to reach its developer through this call.
 
     No `wire` and no `fake_storage` — the deploy service and the store are both unbound, the
     two postures this route must tolerate at once. `publishState` still comes back from an
@@ -728,7 +728,7 @@ async def test_publishing_still_refuses_without_a_deploy_pipeline(
     assert "not switched on" in body["message"]
 
 
-# --- U15: the one computed publish state ----------------------------------------------
+# --- the one computed publish state ------------------------------------------------
 
 
 class _CountingStorage(FakeStorage):
@@ -751,8 +751,8 @@ class _CountingStorage(FakeStorage):
 
 
 class _AlwaysBoomingStorage(FakeStorage):
-    """A store whose HEAD always raises — U15's named departure from the two shipped
-    readers' 503 (ASM21)."""
+    """A store whose HEAD always raises — the named departure from the two shipped
+    readers' 503."""
 
     async def head(self, key):
         raise StorageError("blob head blipped", provider="fake", key=key)
@@ -774,11 +774,11 @@ async def _live_deployment(
 async def test_the_status_read_issues_no_new_query_and_exactly_one_metadata_head(
     wire, client, db_session, test_engine
 ) -> None:
-    """U15's cost argument, pinned on the statement stream rather than trusted from a
+    """The cost argument, pinned on the statement stream rather than trusted from a
     docstring. `latest_deployment` already issued the owner check, the `AppRegistry`
     select and `deployment_for_app`'s select before this unit; the ONLY I/O this unit
     may add is exactly one `storage.head()` — never a second SELECT, and never a
-    `storage.get()` of the snapshot bytes (`build_sessions/manager.py:683-695` is the
+    `storage.get()` of the snapshot bytes (`build_sessions/manager.py::_saved_head` is the
     named anti-pattern this counts against). Asserted in BOTH directions: the head call
     happened once, and the download path never ran at all."""
     user, app_row = await _owner_with_app(db_session, wire)
@@ -806,7 +806,7 @@ async def test_the_status_read_issues_no_new_query_and_exactly_one_metadata_head
     assert resp.status_code == 200, resp.text
     assert resp.json()["publishState"] == "live_current"
     # Today's three reads (the project-ownership `get`, the `AppRegistry` select, and
-    # `deployment_for_app`'s select) — unit U15 must not add a fourth.
+    # `deployment_for_app`'s select) — this unit must not add a fourth.
     assert len(statements) == 3, f"expected exactly today's three SELECTs, got {statements}"
     assert store.head_calls == 1
     assert store.get_calls == 0, "the snapshot bytes must never be downloaded for this read"
@@ -815,10 +815,10 @@ async def test_the_status_read_issues_no_new_query_and_exactly_one_metadata_head
 async def test_a_storage_error_reading_the_saved_head_answers_200_not_503(
     wire, client, db_session
 ) -> None:
-    """THE named departure from ASM21 (U15). `_shipping_head` and `classification`'s own
-    reader both turn this exact exception into a 503 — correctly, because both are
-    about to ACT on the bundle. This read only answers "is there newer work", and Plan G
-    makes this endpoint the only publishing surface in the product, so a blob blip here
+    """THE named departure from the storage-down rule. `_shipping_head` and
+    `classification`'s own reader both turn this exact exception into a 503 — correctly,
+    because both are about to ACT on the bundle. This read only answers "is there newer
+    work", and this endpoint is the only publishing surface in the product, so a blip here
     must not blank the rest of the response: the approval block stays present, and the
     drift question alone falls back to `live_drift_unknown`."""
     user, app_row = await _owner_with_app(db_session, wire)
@@ -872,7 +872,7 @@ async def test_an_unstamped_bundle_also_reads_drift_unknown(wire, client, db_ses
     assert resp.json()["publishState"] == "live_drift_unknown"
 
 
-# --- U4: the citizen's own last save, on the wire --------------------------------------
+# --- the citizen's own last save, on the wire ------------------------------------------
 #
 # The rail draws three provenance rows — LIVE NOW, APPROVED, YOUR LATEST — and until this
 # unit the third one had no source: `publish_state` consumed the saved head and threw it
@@ -933,7 +933,7 @@ async def test_the_published_approved_and_saved_rows_arrive_together(
     # LIVE NOW — the commit that actually went live, off the deployment row.
     assert body["headSha"] == _HEAD_SHA
     assert body["startedAt"] is not None
-    # APPROVED — the date first, the pin beside it (U12).
+    # APPROVED — the date first, the pin beside it.
     assert body["approval"]["approvedAt"] == "2026-08-24T09:00:00Z"
     assert body["approval"]["approvedCommitSha"] == _HEAD_SHA
     # YOUR LATEST — the new pair, and the reason the row can exist at all.
@@ -992,7 +992,7 @@ async def test_a_bundle_with_no_stamped_head_reports_null_rather_than_a_guess(
     """A bundle written before the metadata stamp existed has NO claim about which commit
     it holds, and the wire says so. The client renders "cannot tell" for the id; an
     invented value (the deployment's head, the approved pin, an empty string) would make a
-    missing fact look like a present one, which is the whole of `.claude/rules/fail-first.md`.
+    missing fact look like a present one.
 
     THE TWO HALVES ARE INDEPENDENT, and that is asserted here rather than assumed: the
     store still knows WHEN that bundle was written, so the date survives while the id does
@@ -1044,7 +1044,7 @@ async def test_another_citizen_never_learns_the_saved_head_or_when_it_was_saved(
     wire, client, db_session
 ) -> None:
     """Owner scoping, asserted on the LEAK rather than only on the status code. The
-    ownership predicate is in the WHERE clause (ADR-0004), so a stranger gets a
+    ownership predicate is in the WHERE clause, so a stranger gets a
     non-leaking 404 — and this checks the two new values specifically, because a field
     added to a response is exactly the kind of change that can widen what a wrong answer
     would have said. Neither the commit id nor the save time may appear anywhere in the

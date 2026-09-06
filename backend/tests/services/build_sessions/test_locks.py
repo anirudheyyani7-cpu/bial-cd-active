@@ -1,4 +1,4 @@
-"""The C5 lock / heartbeat / registry-state primitives (deterministic fakeredis)."""
+"""The lock / heartbeat / registry-state primitives (deterministic fakeredis)."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ async def test_heartbeat_sets_ttl_and_reports_alive(fake_redis: aioredis.Redis) 
 
 
 def test_lock_ttl_has_renew_headroom() -> None:
-    # The C3-frozen constants (900/300), NOT C5's proposed 300 s lock default: a renew
+    # The frozen constants (900/300), not the 300 s lock default once proposed: a renew
     # always has head-room, so an active build never drops its lock at the cadence.
     assert LOCK_TTL_SECONDS == 900
     assert LOCK_TTL_SECONDS > LOCK_RENEW_CADENCE_SECONDS
@@ -83,15 +83,13 @@ async def test_acquire_fails_closed_on_redis_error(
 ) -> None:
     """Fail CLOSED, but SAY WHICH KIND of closed.
 
-    The fail-closed half is non-negotiable: a Redis error never hands out a
-    token. `None` is reserved for the one certain answer —
-    "the lock is genuinely held" — because the caller turns that into a 409 naming a live
-    build session. Folding an outage into the same `None` is what made every Redis blip
-    surface as "a build session is already active" for a user who had none.
-
-    `LockUnavailableError` SUBCLASSES `RedisError` (the additive `StorageUnconfiguredError`
-    shape), so a caller that only knows `except RedisError` still catches it.
-    """
+    The fail-closed half is non-negotiable: a Redis error never hands out a token. `None` is
+    reserved for the one certain answer — "the lock is genuinely held" — because the caller
+    turns that into a 409 naming a live build session. Folding an outage into the same `None`
+    is what made every Redis blip surface as "a build session is already active" for a user who
+    had none."""
+    # `LockUnavailableError` SUBCLASSES `RedisError` (the additive `StorageUnconfiguredError`
+    # shape), so a caller that only knows `except RedisError` still catches it.
 
     async def boom(*args: object, **kwargs: object) -> object:
         raise RedisError("redis is down")
@@ -157,19 +155,18 @@ async def test_every_primitive_but_acquire_still_surfaces_redis_errors(
     """`acquire_lock` is the ONLY primitive in this module that catches `RedisError`. This
     pins every other one bare, so no future guard can be added silently.
 
-    Two distinct reasons live in this one list. Most entries are ANSWER-BEARING, and a
-    swallow would manufacture a false answer out of an ambiguous store: `lock_is_held` False
-    is fail-OPEN, `read_registry` None is a phantom "no sandbox", `renew_lock` False is a
-    phantom "lock lost" that ends a healthy build, and a swallowed `mark_registry_ending`
-    lets a concurrent attach reconnect to a container the reaper is about to delete.
-
-    `release_lock_as_holder` and `write_heartbeat` are here for a DIFFERENT reason, and it
-    is the one that is easy to get wrong: they look like compensation paths
-    that deserve a guard, but every caller that wants one already guards at the call site
-    (`manager.py:365`, `:1046`, `:873`), and at `manager.py:398` / `:554` the raise is
-    precisely what triggers the container teardown. See the two
-    `test_relaunch_tears_down_the_container_when_*` tests in `test_manager.py`, which pin
-    that behaviour end to end."""
+    Two distinct reasons live in this one list. Most entries are ANSWER-BEARING, and a swallow
+    would manufacture a false answer out of an ambiguous store: `lock_is_held` False is
+    fail-OPEN, `read_registry` None is a phantom "no sandbox", `renew_lock` False is a phantom
+    "lock lost" that ends a healthy build, and a swallowed `mark_registry_ending` lets a
+    concurrent attach reconnect to a container the reaper is about to delete."""
+    # `release_lock_as_holder` and `write_heartbeat` are here for a DIFFERENT reason, and it is
+    # the one that is easy to get wrong: they look like compensation paths that deserve a guard,
+    # but every caller that wants one already guards at the call site
+    # (`_compensate_lock_and_container`, `_pardon_the_container`, `_do_finalize`), and inside
+    # `_holding_user_lock` / `relaunch_preview` the raise is precisely what triggers that
+    # compensation. See the two `test_relaunch_spares_the_container_when_*` tests in
+    # `test_manager.py`, which pin that behaviour end to end.
     monkeypatch.setattr(fake_redis, method, _boom)
     with pytest.raises(RedisError):
         await call(fake_redis)
@@ -257,8 +254,8 @@ async def test_an_abandoned_marker_expires_on_its_own(fake_redis: aioredis.Redis
 async def test_the_pipelined_read_returns_both_the_registry_and_the_marker_in_one_round_trip(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """The exact pairing `project_preview_state` spends its one Redis round trip on (C3 §8.3):
-    two commands, not two round trips."""
+    """The exact pairing `project_preview_state` spends its one Redis round trip on: two
+    commands, not two round trips."""
     await fake_redis.hset(registry_key(USER), mapping={REGISTRY_FIELD_APP_NAME: "sbx-x"})
     await locks.write_starting_marker(fake_redis, USER, PROJECT)
 

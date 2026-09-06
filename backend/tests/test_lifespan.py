@@ -1,4 +1,4 @@
-"""FastAPI lifespan: None-safe startup in dev (no REDIS__*/SANDBOX__* env — D2), and
+"""FastAPI lifespan: None-safe startup in dev (no REDIS__*/SANDBOX__* env), and
 it opens AND PROBES the app-global Redis coordination pool when configured. Shutdown
 acloses the Redis pool + the sandbox client + the object store, each a no-op when never
 opened.
@@ -64,13 +64,13 @@ def redis_configured(monkeypatch: pytest.MonkeyPatch):
     # The probe is gated on `settings.redis is not None`, and the suite deliberately runs
     # with Redis unconfigured (see the first test below), so every probe test has to opt
     # in explicitly — otherwise the branch is unreachable BY CONSTRUCTION and the test
-    # proves nothing (`.claude/rules/testing.md`).
+    # proves nothing.
     monkeypatch.setattr(settings, "redis", RedisConfig(url=SecretStr("redis://localhost:6379/0")))
 
 
 async def test_lifespan_boots_and_shuts_down_with_no_coordination_config() -> None:
     # Dev/test: settings.redis is None → startup opens no pool; shutdown acloses
-    # redis/sandbox/storage, each a no-op when never used. Must not raise (D2).
+    # redis/sandbox/storage, each a no-op when never used. Must not raise.
     assert settings.redis is None
     await redis_client.reset_redis_for_tests()
     app = create_app()
@@ -108,7 +108,7 @@ async def test_lifespan_opens_and_closes_redis_pool_when_configured(
 async def test_startup_probe_logs_a_distinguishable_event_and_still_serves(
     monkeypatch: pytest.MonkeyPatch, redis_configured
 ) -> None:
-    """Covers AE3. A wrong DSN must reach an OPERATOR at deploy time — not the first
+    """A wrong DSN must reach an OPERATOR at deploy time — not the first
     citizen developer whose build fails — WITHOUT taking the boot down: the API still
     completes its lifespan and answers requests on every route that needs no Redis.
     """
@@ -223,7 +223,7 @@ async def test_startup_probe_runs_against_the_shared_singleton(
     pinned redis 8.0.1 the retry loop lives at the CONNECTION layer
     (`conn.retry.call_with_retry`), below the public command API, so a stub whose
     `ping()` raises is called exactly once under any `Retry` and such a count would pass
-    vacuously. Retry policy is pinned on `client.get_retry()` in the U1 client tests.
+    vacuously. Retry policy is pinned on `client.get_retry()` in the client tests.
     """
     calls: list[str] = []
     ok = _PingRaises(RedisConnectionError("refused"))

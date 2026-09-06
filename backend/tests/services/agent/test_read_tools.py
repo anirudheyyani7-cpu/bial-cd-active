@@ -1,11 +1,11 @@
-"""U8 — the jailed read-only tool surface (workspace, guest-list policy, tools in-run).
+"""The jailed read-only tool surface (workspace, guest-list policy, tools in-run).
 
-Three layers, each tested where it is enforced (testing.md: test the DECISION at the site
-that makes it): the `ExtractedSnapshotWorkspace` jail (path resolution, symlink
-containment, byte caps, scrubbed subprocess env), the `check_the_guest_list` argv policy
-(allowlist, deny flags, sed script vetting, path-token vetting), and the tool layer driven
-through a REAL pydantic-ai run (FunctionModel — refusals as ModelRetry, no-app-yet as a
-truthful NORMAL result, redacted command output).
+Three layers, each tested where the DECISION is made rather than where it is observed: the
+`ExtractedSnapshotWorkspace` jail (path resolution, symlink containment, byte caps, scrubbed
+subprocess env), the `check_the_guest_list` argv policy (allowlist, deny flags, sed script
+vetting, path-token vetting), and the tool layer driven through a REAL pydantic-ai run
+(FunctionModel — refusals as ModelRetry, no-app-yet as a truthful NORMAL result, redacted
+command output).
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ async def test_list_and_search_do_not_follow_symlinks_out_of_the_tree(
 async def test_exec_readonly_refuses_a_symlink_escape(
     tree: Path, tmp_path: Path, workspace: ExtractedSnapshotWorkspace
 ) -> None:
-    # Layer 2 of the P0 jail-escape fix: even a live-workspace source (no `core.symlinks=false`
+    # Layer 2 of the jail-escape fix: even a live-workspace source (no `core.symlinks=false`
     # clone) must not let `cat`/`grep`/`find`/`sed` follow a symlink out of the tree — argv path
     # tokens are realpath-contained, unlike the LEXICAL-only guest-list vetting.
     outside = tmp_path / "outside.txt"
@@ -195,7 +195,7 @@ async def test_exec_timeout_returns_a_timeout_result(
     assert "timed out" in result.stderr
 
 
-# --- dependency lock files (U1 / R22a) ----------------------------------------
+# --- dependency lock files ----------------------------------------
 
 
 @pytest.fixture
@@ -309,7 +309,7 @@ def test_read_only_classics_are_admitted(argv: list[str]) -> None:
 
 
 def test_the_guest_list_has_no_way_to_learn_which_chat_it_is_in() -> None:
-    """★ R71, asserted from the signature — the cheapest proof there is.
+    """★ Asserted from the signature — the cheapest proof there is.
 
     A policy that takes only `argv` cannot vary by chat kind, by deps, by settings or by
     which agent resolved the toolset, because none of those are reachable from inside it.
@@ -327,7 +327,7 @@ def test_the_guest_list_has_no_way_to_learn_which_chat_it_is_in() -> None:
 async def test_the_same_refusal_reaches_two_different_agents_byte_for_byte(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
-    """★ THE ONE THAT CARRIES R71 END TO END, through two genuinely different consumers.
+    """★ THE ONE THAT CARRIES THAT GUARANTEE END TO END, through two genuinely different consumers.
 
     `read_only_toolset` is shared: a Plan chat resolves it through `toolsets_for_kind` over
     `ReadDeps`, and the classification review agent resolves it through its own accessor over
@@ -584,7 +584,7 @@ async def test_search_files_tool_rejects_a_bad_regex_with_teaching(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
-# U22 / R28 — the two mirrored output caps, proved identical from ONE table
+# The two mirrored output caps, proved identical from ONE table
 # ═══════════════════════════════════════════════════════════════════════════════════════
 #
 # `orchestrator/tools._redact_command_output` and `read_tools._cap_redact_cap` are the same
@@ -755,7 +755,7 @@ def test_the_two_mirrored_output_caps_behave_identically(
 
 
 def test_a_credential_body_in_the_tail_is_withheld_not_egressed() -> None:
-    """★ THE U22 REGRESSION, and the one case where this branch was WORSE than what it replaced.
+    """★ THE REGRESSION, and the one case where this branch was WORSE than what it replaced.
 
     `_SECRET_ASSIGN_RE`'s quoted arms deliberately span newlines, so "a credential is a shape on
     ONE line" — the assumption the line-boundary capture cut rests on — is false for those arms.

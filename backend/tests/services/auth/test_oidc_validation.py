@@ -1,6 +1,6 @@
-"""Fail-closed Entra token validation + OIDC registration (U4).
+"""Fail-closed Entra token validation + OIDC registration.
 
-Entra is mocked at the boundary (KD-9): `validate_entra_token` is a pure function
+Entra is mocked at the boundary: `validate_entra_token` is a pure function
 exercised with crafted token dicts, so there is no live tenant or forged JWKS.
 """
 
@@ -46,7 +46,7 @@ def test_valid_token_returns_identity() -> None:
 
 @pytest.mark.parametrize("token", [{}, {"userinfo": None}, {"userinfo": {}}])
 def test_missing_userinfo_rejected(token: dict[str, Any]) -> None:
-    # AE4: a token with no validated userinfo is fail-closed.
+    # A token with no validated userinfo is fail-closed.
     with pytest.raises(AuthError) as exc:
         validate_entra_token(token)
     assert exc.value.reason == REASON_INVALID_CALLBACK
@@ -60,7 +60,7 @@ def test_missing_oid_or_sub_rejected(field: str) -> None:
 
 
 def test_foreign_tenant_rejected() -> None:
-    # AE1: a token minted for a different tenant (or a personal account) is denied.
+    # A token minted for a different tenant (or a personal account) is denied.
     with pytest.raises(AuthError) as exc:
         validate_entra_token(_token(tid="ffffffff-ffff-ffff-ffff-ffffffffffff"))
     assert exc.value.reason == REASON_WRONG_TENANT

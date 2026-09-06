@@ -217,7 +217,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     expect(onToast).not.toHaveBeenCalled()
   })
 
-  // Pins the e instanceof ApiError && e.status === 404 arm (PR #93 review finding 5):
+  // Pins the e instanceof ApiError && e.status === 404 arm:
   // the duck-typed e?.status === 404 this replaced was untested on either side, so the
   // narrowing to ApiError was "equivalent today" by inspection only, not by a test.
   it('deactivate → 404 (user gone) drops the row silently, with no error toast', async () => {
@@ -245,7 +245,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
   })
 
   it('a citizen who reaches the panel sees the 403 gate message — not blank, not a suspension redirect', async () => {
-    // The suspension interceptor (U3) lives in authFetch and never fires for this body;
+    // The suspension interceptor lives in authFetch and never fires for this body;
     // fetchUsers simply throws the gate message, and the panel must show it.
     h.fetchUsers.mockRejectedValue(new ApiError('Super-admin privileges required.', 403))
     render(<UsersLimitsPanel onToast={() => {}} />)
@@ -482,7 +482,7 @@ describe('UsersLimitsPanel — review-fix regressions', () => {
   })
 
   it('a suspended super-admin shows Reactivate, not stranded behind "Protected"', async () => {
-    // role is derived at read time from the env allowlist (ADR-0005) — a suspended
+    // role is derived at read time from the env allowlist — a suspended
     // user who later lands on that allowlist is reachable with no 403 bypass, and
     // the server's reactivate_user has no super-admin guard.
     h.fetchUsers.mockResolvedValue(

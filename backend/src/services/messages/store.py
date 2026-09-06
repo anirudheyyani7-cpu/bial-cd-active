@@ -1,4 +1,4 @@
-"""The native message store (U4) — append, load, repair, mark.
+"""The native message store — append, load, repair, mark.
 
 The `messages` table holds NATIVE pydantic-ai batches (one row per persisted batch). Files
 are the ONLY transcript transformation: everything else round-trips byte-faithfully between
@@ -235,8 +235,8 @@ def dump_for_row(messages: Sequence[ModelMessage]) -> list[Any]:
     fail-first) → dump (json mode → base64 bytes, ISO datetimes) → strip instructions →
     externalize binaries → redact. Externalize FIRST so the redactor never scans base64 blobs.
 
-    Instructions are stripped at THIS seam (U9/D4): pydantic-ai stamps the run's composed
-    `instructions` onto every `ModelRequest` it returns, but the D4 contract is that prompts
+    Instructions are stripped at THIS seam: pydantic-ai stamps the run's composed
+    `instructions` onto every `ModelRequest` it returns, but the contract is that prompts
     are per-run and NEVER persisted — history loads from the DB and each new run re-injects
     its own composition, so a stored copy could only bloat rows and fossilize stale prompt
     text. Payload-level normalization (not object mutation): the live run's in-memory
@@ -318,7 +318,7 @@ def _assert_no_marker_left(node: Any) -> None:
 def attachment_rehydrator(
     db: AsyncSession, storage: ObjectStorage, user_id: uuid.UUID
 ) -> Rehydrator:
-    """The production rehydrator: owner-scoped attachment rows (ADR-0004) → object store →
+    """The production rehydrator: owner-scoped attachment rows → object store →
     magic-byte re-check (the upload path's gate, re-asserted so a swapped blob can't ride a
     stale row) → base64. The rows are authoritative for both the key and the media type.
 
@@ -377,7 +377,7 @@ def repair_dangling_tool_calls(messages: list[ModelMessage]) -> list[ModelMessag
     """Make the loaded history wire-valid for Anthropic: every `ToolCallPart` is answered by
     EXACTLY ONE `ToolReturnPart`/`RetryPromptPart` sitting in the request IMMEDIATELY after its
     response. This is the ONE choke point where history is assembled, so it closes every way the
-    U11/U12 plan-options lifecycle (a resolution appended as its own later row, not inline) can
+    plan-options lifecycle (a resolution appended as its own later row, not inline) can
     otherwise produce a replay Anthropic rejects — which wedges every later turn:
 
     * NO answer anywhere → a synthesized "interrupted" result is stitched in (a crash between a
@@ -497,7 +497,7 @@ async def load_history(
 ) -> list[ModelMessage]:
     """The conversation's full native history, ready for `message_history`: every row's
     payload in seq order, references rehydrated, validated, dangling calls repaired.
-    Owner-scoped (ADR-0004).
+    Owner-scoped.
 
     HIDDEN ROWS ARE INCLUDED. A hidden row can carry the `ToolReturnPart`
     that ANSWERS a deferred call (the plan-options resolution overlay is exactly that), and
@@ -576,7 +576,7 @@ async def load_rows(
     conversation_id: uuid.UUID,
     include_hidden: bool = False,
 ) -> Sequence[Message]:
-    """The conversation's rows in seq order — the projection/audit read (U6 builds on this).
+    """The conversation's rows in seq order — the projection/audit read.
     Hidden rows are excluded unless asked for: hiddenness is this SQL predicate, never a payload
     property. (The build-started overlay, the plan-options resolution and the turn-terminal row are
     the ones this predicate covers today.)"""
@@ -661,4 +661,4 @@ async def append_batch(
 
 
 # THE MODE-SWITCH MARKER IS GONE. A chat's kind is
-# fixed at creation now (R14/R17), so there are no mode boundaries for a marker to name.
+# fixed at creation now, so there are no mode boundaries for a marker to name.

@@ -1,7 +1,7 @@
 /**
- * ProjectDescriptionEditor (U5): the two load-bearing behaviours are
+ * ProjectDescriptionEditor: the two load-bearing behaviours are
  *   1. "Generate saves first" — a dirty field is PATCHed BEFORE generate, so the
- *      model revises what the user sees rather than a stale stored copy (R19); and
+ *      model revises what the user sees rather than a stale stored copy; and
  *   2. every failure leaves the field untouched (never optimistically cleared).
  * Plus the length gate, the whitespace→null clear, and the disable-during-billing lock.
  *
@@ -93,7 +93,7 @@ describe('ProjectDescriptionEditor — read view and pop-up open/close', () => {
   })
 
   it('tells the author, at the write surface, that this becomes public catalog copy', () => {
-    // `Project.description` was introduced as CHAT GROUNDING, and the marketplace (#145/#147)
+    // `Project.description` was introduced as CHAT GROUNDING, and the marketplace
     // republishes it verbatim org-wide and makes it full-text searchable. It can also be
     // model-written from the app's source by Generate, so the broadcast text is not
     // necessarily anything the author composed. Nothing here said so, and the notice belongs

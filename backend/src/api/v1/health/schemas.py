@@ -32,8 +32,7 @@ class HealthStatus(CamelModel):
     production (`settings.redis: RedisConfig | None`), so `not_configured` is a
     CERTAIN answer — a defined, supported dev deployment — and is reported as `ok`
     overall. Folding it into `unreachable` would 503 every storage-off dev box, which
-    is the exact collapse-two-tiers-into-one bug this codebase already shipped once
-    (`docs/solutions/best-practices/green-tests-that-prove-nothing-fixture-and-passthrough-coverage-gaps-2026-07-17.md`).
+    is the exact collapse-two-tiers-into-one bug this codebase already shipped once.
     """
 
     status: Literal["ok", "degraded"]

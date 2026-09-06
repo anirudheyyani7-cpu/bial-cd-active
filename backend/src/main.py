@@ -131,9 +131,9 @@ async def _reconcile_interrupted_deploys() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup: open AND probe the app-global Redis coordination pool when configured
-    # (the sandbox lock/heartbeat/registry ride it — C5). None-safe: a dev/test boot
-    # with no REDIS__* env opens nothing and probes nothing (D2). The per-user sandbox
-    # client (C2) is provisioned on demand by SESSION-API (Wave 1), not opened here.
+    # (the sandbox lock/heartbeat/registry ride it). None-safe: a dev/test boot
+    # with no REDIS__* env opens nothing and probes nothing. The per-user sandbox
+    # client is provisioned on demand by SESSION-API, not opened here.
     if settings.redis is not None:
         await _probe_redis()
     # Settle any deploy the LAST process died in the middle of, before serving. A pipeline
@@ -174,7 +174,7 @@ def create_app() -> FastAPI:
     from src.core.errors import register_exception_handlers
     from src.services.ratelimit import install_rate_limiting
 
-    # Hide the interactive docs + the OpenAPI schema in production (U17): the enriched
+    # Hide the interactive docs + the OpenAPI schema in production: the enriched
     # spec (full error taxonomy, named quota/rate-limit codes, admin route enumeration)
     # would otherwise be served UNAUTHENTICATED. `openapi_url=None` also makes /docs and
     # /redoc 404 since they depend on the schema URL. Dev/staging keep Swagger + ReDoc.
@@ -247,7 +247,7 @@ def create_app() -> FastAPI:
         # Nothing is framed same-origin anymore (the old runner shell that needed
         # SAMEORIGIN for its /apps/ frame was retired) — DENY everywhere. The Phase-2
         # cross-origin preview is framed from the sandbox's own Caddy via
-        # `frame-ancestors <portal-origin>` (C8), not from this control plane.
+        # `frame-ancestors <portal-origin>`, not from this control plane.
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         # Default to no-store, but let a route keep its own caching policy (e.g. the
@@ -258,7 +258,7 @@ def create_app() -> FastAPI:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
 
-    # ONE path-branching CORS layer (P2), NOT Starlette's global CORSMiddleware:
+    # ONE path-branching CORS layer, NOT Starlette's global CORSMiddleware:
     # the sandbox data route (/v1/apps/{id}/records) reflects the Origin — including
     # the opaque-origin iframe's `null` — with NO credentials, while the SPA/auth
     # routes get credentialed CORS for FRONTEND_URL only. A single global
@@ -269,7 +269,7 @@ def create_app() -> FastAPI:
     # Holds the transient OAuth state (PKCE verifier, nonce, state) BETWEEN
     # /auth/login and the callback. Named "oauth_transient" (not the default
     # "session") so it never collides with the app session-JWT cookie once __Host-
-    # drops over http in dev (KD-4). same_site="lax" (never "strict") so the
+    # drops over http in dev. same_site="lax" (never "strict") so the
     # top-level redirect back from login.microsoftonline.com still carries it.
     app.add_middleware(
         SessionMiddleware,
@@ -281,10 +281,10 @@ def create_app() -> FastAPI:
     )
 
     if settings.is_production:
-        # In production FastAPI is reachable ONLY through the edge/gateway (KD-8),
+        # In production FastAPI is reachable ONLY through the edge/gateway,
         # so the forwarded scheme/host are trusted — this makes any request.url_for
         # render https + the external host. (The callback redirect_uri itself comes
-        # from AUTH__REDIRECT_URI, not url_for, because the edge strips /api — KD-8.)
+        # from AUTH__REDIRECT_URI, not url_for, because the edge strips /api.)
         from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
         app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
@@ -333,8 +333,8 @@ def _mount_spa(app: FastAPI) -> None:
     @app.get(
         "/{full_path:path}",
         include_in_schema=False,
-        # Documents the two bare HTTPException(404) raises below for SonarQube S8415
-        # (U15). The route is out-of-schema, and the body stays FastAPI's default
+        # Documents the two bare HTTPException(404) raises below for SonarQube S8415.
+        # The route is out-of-schema, and the body stays FastAPI's default
         # `{"detail":"Not Found"}` — no envelope migration, HTTPException is idiomatic here.
         responses=error_responses((404, DetailBody, "Not Found")),
     )

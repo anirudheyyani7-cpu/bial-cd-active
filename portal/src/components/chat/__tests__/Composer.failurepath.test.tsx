@@ -1,23 +1,23 @@
 /**
- * ISSUE #154's FOUR DEFECTS, AS PROPERTIES RATHER THAN PATCHES (R57–R60).
+ * THE COMPOSER'S FOUR PRE-EXISTING DEFECTS, AS PROPERTIES RATHER THAN PATCHES.
  *
  * All four reproduced on `main`. They are defects in code this work replaces, so they land as
  * requirements of the new composer rather than as fixes to a file about to be deleted — which is
- * why #154's open pull request was closed rather than merged.
+ * why the earlier fix's open pull request was closed rather than merged.
  *
  * ══ WHY MOST OF THEM CANNOT BE RE-INTRODUCED HERE ══
  *
  * Three of the four came from the same root: `ChatPage` EMPTIED the composer optimistically and
- * then tried to put things back. R58's blind `setText(rawText)` overwrote whatever the citizen had
+ * then tried to put things back: a blind `setText(rawText)` overwrote whatever the citizen had
  * typed since (and, because the input was fully controlled, the browser's undo stack could not
- * recover it); R59's in-flight `fileToBase64` resolved into a composer that had already been
- * cleared; R57's restore merged past the per-message cap.
+ * recover it); an in-flight `fileToBase64` could resolve into a composer that had already been
+ * cleared; and a restore could merge past the per-message cap.
  *
  * This composer clears NOTHING until the server confirms. So there is no restore path, nothing to
  * race with, and the tests below are shaped as "the failure changed nothing" rather than as "the
  * restore put the right things back". That difference is the fix.
  *
- * R57's clamp lives in the attachment adapter now and is tested where it runs — in
+ * The per-message clamp lives in the attachment adapter now and is tested where it runs — in
  * `ComposerBox.test.tsx`, against a drop and a multi-file gesture. The hook that used to carry it
  * had no caller left once this composer became the library's box, and went with it.
  */
@@ -74,7 +74,7 @@ describe('AE26 — a second message typed during a failing upload survives it', 
 
     fail()
 
-    // R58: the old code blind-`setText`'d the FIRST message back over this, and a controlled
+    // The old code blind-`setText`'d the FIRST message back over this, and a controlled
     // input meant the browser's undo could not recover it. Nothing is put back here because
     // nothing was taken away.
     await waitFor(() =>

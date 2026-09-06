@@ -1,11 +1,11 @@
-"""Role-scoped settings profiles — the boot matrix (U23).
+"""Role-scoped settings profiles — the boot matrix.
 
 WHAT THIS PROTECTS. `src/config.py` used to be one `Settings` carrying every field every
 subsystem might need, behind seven production gates. A worker importing it had to satisfy the
 union of everything, so the natural operator response was to narrow `ENVIRONMENT=development` to
 dodge the gates — and that is the single most dangerous misconfiguration available to this
 platform. With object storage unconfigured, `manager.py`'s bundle check answers *"CONFIRMED
-absent"*, which the reclamation destroy path (U14) reads as *"nothing to preserve, safe to
+absent"*, which the reclamation destroy path reads as *"nothing to preserve, safe to
 delete"*. A worker booted that way would delete the entire fleet while believing it had verified
 each container.
 
@@ -18,10 +18,10 @@ with a plain left-to-right `dict.update` (`pydantic._internal._config.ConfigWrap
 and *every* `BaseSettings` subclass owns a complete 37-key config dict with explicit `None`
 defaults. A profile composed from several `BaseSettings` bases can therefore have `env_file` and
 `env_nested_delimiter` silently reset to `None` — it then boots, reads no env file, and ignores
-every nested `X__Y` variable. U24 made each manifest single-inheritance, so there is now no merge
-to clobber it and the redeclaration was dropped; these tests stay because they pin the OUTCOME
-(the delimiter and env file survive) rather than the mechanism, and they are what would catch a
-manifest that later gains a second base without reasserting the config.
+every nested `X__Y` variable. A later change made each manifest single-inheritance, so there is
+now no merge to clobber it and the redeclaration was dropped; these tests stay because they pin
+the OUTCOME (the delimiter and env file survive) rather than the mechanism, and they are what
+would catch a manifest that later gains a second base without reasserting the config.
 """
 
 from __future__ import annotations
@@ -76,8 +76,8 @@ _AUTH: dict[str, str] = {
     "AUTH__REDIRECT_URI": "http://localhost:8000/api/v1/auth/callback",
 }
 _ADMINS: dict[str, str] = {"SUPERADMIN_EMAILS": "admin@bial.com"}
-# U24 — required of the API with no default, so every API profile built here needs it or
-# the "boots with X" tests would fail for a reason that has nothing to do with X.
+# `SUPPORT_CONTACT_EMAIL` is required of the API with no default, so every API profile built here
+# needs it or the "boots with X" tests would fail for a reason that has nothing to do with X.
 _SUPPORT: dict[str, str] = {"SUPPORT_CONTACT_EMAIL": "help@bial.com"}
 _APP_DB: dict[str, str] = {
     "APP_DB__MAINTENANCE_DSN": "postgresql+asyncpg://maint:p@localhost:5432/postgres",
@@ -146,7 +146,7 @@ def test_the_profile_kept_its_env_config_through_the_mro_merge(
 
 def test_the_worker_refuses_to_boot_without_object_storage() -> None:
     """THE test of this unit. Mutation-check: make `object_store` optional on WorkerSettings and
-    this must go red — because that reversion is what lets a misconfigured worker answer U14's
+    this must go red — because that reversion is what lets a misconfigured worker answer the
     durable-copy gate with "confirmed absent" for every container and delete the fleet."""
     env = {k: v for k, v in _WORKER_ENV.items() if not k.startswith("OBJECT_STORE__")}
     with pytest.raises(ValidationError) as excinfo:

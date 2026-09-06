@@ -1,4 +1,4 @@
-"""record when a published app's container was taken down (unpublish, #113)
+"""record when a published app's container was taken down (unpublish)
 
 Revision ID: 0028_deployment_unpublished_at
 Revises: 0027_worker_passes

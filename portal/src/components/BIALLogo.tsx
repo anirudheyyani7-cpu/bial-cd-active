@@ -1,7 +1,7 @@
 /**
  * The BIAL brand mark (Kempegowda International Airport Bengaluru), served from /public.
  *
- * ONE component, so every screen renders it identically (#158 §6). It already was shared —
+ * ONE component, so every screen renders it identically. It already was shared —
  * the navbar and the login panel both use it — but two things made it sit badly:
  *
  *  1. THE IMAGE WAS INLINE. An `<img>` defaults to `display: inline`, so it sits on the

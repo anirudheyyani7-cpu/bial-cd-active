@@ -32,7 +32,7 @@ import enum
 
 
 class BaselineIdentity(enum.StrEnum):
-    """Whether an app's root route is still the seeded golden-template baseline (U6, R9).
+    """Whether an app's root route is still the seeded golden-template baseline.
 
     THREE VALUES because "we could not tell" is a real answer and must not be spelled as either of
     the other two. `STILL_THE_BASELINE` is the only one that may block a completion claim, and
@@ -58,6 +58,6 @@ class WorkspaceState(enum.StrEnum):
     #: luck can wedge a user out of their project.
     UNREADABLE = "unreadable"
     #: Structural — retrying cannot help. Proceed under alarm with one plain sentence, never
-    #: restore, and U3 refuses this turn's recovery write so an unexplained tree cannot become
-    #: the newest copy of the user's work.
+    #: restore, and this state refuses this turn's recovery write so an unexplained tree cannot
+    #: become the newest copy of the user's work.
     UNVERIFIABLE = "unverifiable"

@@ -10,7 +10,7 @@ Two entry points sharing one primitive:
 * `salt_the_earth()` — sever, then `DROP DATABASE ... WITH (FORCE)`, then `DROP ROLE`. It
   runs POST-commit on the delete paths, where the registry row is already gone and there is
   nothing left to roll back, so it is best-effort per step with its own logging and
-  NEVER raises (`.claude/rules/naming.md`: the name encodes the behaviour).
+  NEVER raises (the name encodes the behaviour).
 
 Both are idempotent, both take plain name scalars (captured pre-commit by the caller —
 `services/projects/delete.py` shape), and both classify errors by SQLSTATE, never by
@@ -51,8 +51,7 @@ class TeardownHandles:
 
     Frozen and scalar-only ON PURPOSE (the `ProjectCascadeCleanup` value-type idiom): the
     delete paths read these BEFORE their commit and use them AFTER it, and touching an ORM
-    attribute across a commit triggers lazy I/O on a closed greenlet
-    (`docs/solutions/design-patterns/prefer-returning-over-refresh-across-commit-2026-07-14.md`).
+    attribute across a commit triggers lazy I/O on a closed greenlet.
     Deleting the project cascades the `project_databases` row away, so post-commit there is
     nothing left to read them from either way.
     """

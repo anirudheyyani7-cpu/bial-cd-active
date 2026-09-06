@@ -1,10 +1,10 @@
-// Mock C1 supervisor — a faithful stand-in for the in-sandbox supervisor HTTP API
-// (docs/engineering/contracts/C1-supervisor-http-api.md), built from the CONTRACT ALONE.
-// A Wave-1 orchestrator (BRAIN) can drive this exactly as it would drive the real
+// Mock supervisor — a faithful stand-in for the in-sandbox supervisor HTTP API,
+// built from the CONTRACT ALONE.
+// An orchestrator (BRAIN) can drive this exactly as it would drive the real
 // supervisor: same paths, same request/response shapes, same bearer auth, same status
 // codes. It runs no real processes — /exec and /dev/* return canned shapes.
 //
-// This is the "mocked helper" leg of the walking skeleton: it proves the C1 seam is
+// This is the "mocked helper" leg of the walking skeleton: it proves the contract seam is
 // buildable-to-the-doc (the anti-"both sides invent the shape" check). The REAL supervisor
 // is sandbox/supervisor/app.py (forked byte-identical from the proven spike).
 
@@ -14,7 +14,7 @@ const TOKEN = process.env.SUPERVISOR_TOKEN || 'skeleton-mock-token'
 const PORT = Number(process.env.MOCK_SUP_PORT || 9000)
 
 // A tiny in-memory dev-server state machine so /dev/status flips ready after /dev/start,
-// mirroring C1's "ready = 'Ready in' marker seen AND process alive".
+// mirroring the contract's "ready = 'Ready in' marker seen AND process alive".
 const dev = { running: false, ready: false, pid: 0, logs: [] }
 
 function readJson(req) {
@@ -41,7 +41,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
   const path = url.pathname
 
-  // GET /health is UNAUTH (C1); everything else needs `Authorization: Bearer {TOKEN}`.
+  // GET /health is UNAUTH; everything else needs `Authorization: Bearer {TOKEN}`.
   if (path === '/health' && req.method === 'GET') return send(res, 200, { ok: true })
   if (req.headers.authorization !== `Bearer ${TOKEN}`) {
     return send(res, 401, { detail: 'bad or missing bearer token' })
@@ -50,8 +50,9 @@ const server = http.createServer(async (req, res) => {
   if (path === '/exec' && req.method === 'POST') {
     const body = await readJson(req)
     if (!body || !Array.isArray(body.cmd)) return send(res, 422, { detail: 'cmd must be a list' })
-    // Non-zero exit is a NORMAL 200 in C1 (self-heal reads exit/stderr off a 200). The mock
-    // returns exit 0 for a known-good command and a non-zero exit for `false`, to exercise both.
+    // Non-zero exit is a NORMAL 200 in the contract (self-heal reads exit/stderr off a 200).
+    // The mock returns exit 0 for a known-good command and a non-zero exit for `false`, to
+    // exercise both.
     const exit = body.cmd.join(' ') === 'false' ? 1 : 0
     return send(res, 200, { stdout: `mock exec: ${body.cmd.join(' ')}\n`, stderr: '', exit })
   }

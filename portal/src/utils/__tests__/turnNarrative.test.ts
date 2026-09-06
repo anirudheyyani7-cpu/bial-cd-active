@@ -3,8 +3,8 @@
  * is spent.
  *
  * `turnPhase` REPLACES `narrativeStatus`, whose `isBuild` parameter had to be TOLD by a caller
- * that knew the chat's kind. One surface now serves both kinds and consults no kind anywhere
- * (R72), so the frames answer instead. That parameter also only ever arrived as the literal
+ * that knew the chat's kind. One surface now serves both kinds and consults no kind anywhere,
+ * so the frames answer instead. That parameter also only ever arrived as the literal
  * `true`, which made the read-turn arm unreachable in the shipped product — the arm is reachable
  * here, and asserted, for the first time.
  */
@@ -163,7 +163,7 @@ describe('atLimitSendState', () => {
   it('the SEND control will not act, and its title names when sending works again', () => {
     // THE COMPOSER STAYS ENABLED — this describes the send control only. A citizen who is
     // refused mid-thought has usually just typed something worth keeping, and disabling the
-    // textarea takes their draft hostage until midnight (and, per KTD-3, blurs focus to the
+    // textarea takes their draft hostage until midnight (and blurs focus to the
     // document body).
     //
     // Mutation check: return `null` unconditionally from `atLimitSendState` and this goes red.

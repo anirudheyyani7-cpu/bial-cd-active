@@ -1,4 +1,4 @@
-"""Journey — multiple apps for ONE user, one app PER PROJECT (KD-4 fan-out).
+"""Journey — multiple apps for ONE user, one app PER PROJECT.
 
 One citizen builds two independent tools. Under one-app-per-project, each tool is its own
 PROJECT, and each project holds exactly one app. Minting in each project fans out cleanly:
@@ -11,13 +11,13 @@ Two layers of assertion here:
 * The FAN-OUT + IDEMPOTENCY layer (distinct ids/keys, exactly two owned rows, a repeat
   resolve in a project is a no-op) is the truth the whole platform stands on.
 
-* The ADDRESSING layer (KD-4): each app is addressed flat by its OWN appId (its uuid7 PK),
+* The ADDRESSING layer: each app is addressed flat by its OWN appId (its uuid7 PK),
   never by a conversation id. `appId != conversationId`, and each app submits into the
-  queue independently — through the submit SERVICE since U8 retired the citizen route
-  (`services/approvals/submit`, the publish gate's call), keyed by that same appId.
+  queue independently — through the submit SERVICE, now that the citizen-facing route was
+  retired (`services/approvals/submit`, the publish gate's call), keyed by that same appId.
 
-The app row is minted by `resolve_app_for_project` — the build session's path, and since
-U6 the only one (`POST /apps/provision` had no production caller and is gone).
+The app row is minted by `resolve_app_for_project` — the build session's path, and now the
+only one (`POST /apps/provision` had no production caller and is gone).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ async def _auth_user(db: AsyncSession, **overrides: object):
 
 
 async def test_one_user_fans_out_into_two_independent_apps(client, app, db_session) -> None:
-    # One citizen, two independent tools → two PROJECTS (one app per project, KD-4).
+    # One citizen, two independent tools → two PROJECTS (one app per project).
     store = FakeStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
     # Both storage seams to ONE store: routes that document a 503 take the None-tolerant
@@ -82,7 +82,7 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
 
     # --- FAN-OUT: two distinct apps, two distinct publishable keys --------------
     assert app_id_a != app_id_b
-    # Each app has its OWN id, never a conversation id (KD-4).
+    # Each app has its OWN id, never a conversation id.
     assert app_id_a != conv_a.id
     assert app_id_b != conv_b.id
     assert row_a.app_key != row_b.app_key
@@ -120,8 +120,8 @@ async def test_one_user_fans_out_into_two_independent_apps(client, app, db_sessi
     ).scalar_one()
     assert still_two == 2
 
-    # --- ADDRESSING (KD-4): each app is submittable at its OWN appId, through the
-    # --- one remaining writer (U8's submit service — the publish gate's call) ----
+    # --- ADDRESSING: each app is submittable at its OWN appId, through the
+    # --- one remaining writer (the submit service — the publish gate's call) ----
     store.objects[snapshot_key(app_id_a)] = _BUNDLE
     store.objects[snapshot_key(app_id_b)] = _BUNDLE
     declaration = {"citizen": {}, "review": {}, "differences": [], "explanation": ""}

@@ -1,5 +1,5 @@
 /**
- * Admin-side registry client + the OWNER-SURFACE INERTNESS GUARD (flipped, APPROVAL R20).
+ * Admin-side registry client + the OWNER-SURFACE INERTNESS GUARD (flipped).
  *
  * The owner group (provisionApp / submitApp / getAppStatus / getAppSource) was retired
  * with the JSX-era submit flow: the open-sandbox submit lives in the typed
@@ -68,7 +68,7 @@ describe('markDeployed', () => {
   it.each([['', 'blank'], [undefined, 'omitted']])(
     'sends NO deployedUrl key when the url is %s (%s) — the server keeps the recorded one',
     async (url) => {
-      // A bare `{}` is the pre-R5 wire shape AND the "leave the URL alone" signal.
+      // A bare `{}` is the wire shape AND the "leave the URL alone" signal.
       // Sending `deployedUrl: ''`/`null` instead would 422 (or blank a live link).
       const fetchImpl = vi.fn(async () => marked())
       await registry.markDeployed('a1', url, deps(fetchImpl))

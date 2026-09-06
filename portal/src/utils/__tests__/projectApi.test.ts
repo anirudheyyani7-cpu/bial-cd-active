@@ -39,7 +39,7 @@ describe('listProjects', () => {
     const fetchImpl = fetchReturning(200, { items: [sampleProject], page: 1, pageSize: 25, total: 1, totalPages: 1 })
     const page = await listProjects({}, deps(fetchImpl))
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/projects')
-    // N7: the wire sample carries no `hasRelaunchableSnapshot` — the list never computes one —
+    // The wire sample carries no `hasRelaunchableSnapshot` — the list never computes one —
     // and the narrower defaults it to `null`, the "cannot say" answer that withholds the claim.
     expect(page).toEqual({
       items: [{ ...sampleProject, hasRelaunchableSnapshot: null, isServing: false }],
@@ -141,7 +141,7 @@ describe('deleteProject', () => {
 
     const init = fetchImpl.mock.calls[0][1]
     expect(init?.method).toBe('DELETE')
-    // The server requires it (#158 §13.2) and refuses independently of the dialog, so the
+    // The server requires it and refuses independently of the dialog, so the
     // client sending it is not optional — a DELETE with no body is a 422.
     expect(JSON.parse(String(init?.body))).toEqual({
       remark: 'Superseded by the new gate pass tool',

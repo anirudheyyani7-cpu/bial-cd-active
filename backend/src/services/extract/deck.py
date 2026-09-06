@@ -1,4 +1,4 @@
-"""Deck (pptx) → PDF conversion via a Gotenberg sidecar (R17; ports `deck-convert.js`).
+"""Deck (pptx) → PDF conversion via a Gotenberg sidecar.
 
 A deck is a VISUAL medium, so it is NOT text-extracted — it is rendered to a PDF (LibreOffice via
 Gotenberg) that the model reads as vision.

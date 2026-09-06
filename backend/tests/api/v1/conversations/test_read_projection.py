@@ -1,9 +1,9 @@
-"""U6 — GET /v1/conversations/{id} returns the display projection + the `activeTurn` seam.
+"""GET /v1/conversations/{id} returns the display projection + the `activeTurn` seam.
 
 The projection derivation itself is proven in `tests/services/messages/test_projection.py`;
-this file proves the READ: one request rebuilds the chat (header + items), the U10 seam is
-present-and-null, and the read is owner-scoped. The populated-while-running `activeTurn`
-test lands with U10's turn engine (no registry exists yet to populate it).
+this file proves the READ: one request rebuilds the chat (header + items), the `activeTurn`
+seam is present-and-null, and the read is owner-scoped. The populated-while-running `activeTurn`
+test lands with the turn engine (no registry exists yet to populate it).
 """
 
 from __future__ import annotations
@@ -75,11 +75,11 @@ async def test_get_returns_header_projection_and_null_active_turn(client, db_ses
     body = resp.json()
 
     assert body["conversation"]["_id"] == str(conversation.id)
-    # What the chat IS, chosen at creation and never changed (R14/R16). There is no second
+    # What the chat IS, chosen at creation and never changed. There is no second
     # field beside it: `mode` came off the header with the concept.
     assert body["conversation"]["kind"] == "build"
     assert "mode" not in body["conversation"]
-    assert body["activeTurn"] is None  # the U10 seam: present, and null until the engine lands
+    assert body["activeTurn"] is None  # the seam: present, and null until the engine lands
 
     projection = body["projection"]
     assert [item["type"] for item in projection] == ["user_text", "assistant_text", "banner"]
@@ -88,8 +88,9 @@ async def test_get_returns_header_projection_and_null_active_turn(client, db_ses
     assert projection[2]["banner"] == "completed"
     assert projection[2]["previewUrl"] == PREVIEW  # camelCase on the wire
     # `seq` still identifies the row. The per-item kind stamp is GONE from the wire rather than
-    # renamed: nothing ever rendered it, no requirement asks for a per-message kind (R16 is
-    # about CHATS being listed, and the header carries that), and every item type carried one.
+    # renamed: nothing ever rendered it, no requirement asks for a per-message kind — kind
+    # classification concerns CHATS being listed, and the header already carries that — and
+    # every item type carried one.
     assert all("seq" in item for item in projection)
     assert all("mode" not in item and "kind" not in item for item in projection)
 

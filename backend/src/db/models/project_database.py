@@ -1,5 +1,5 @@
 """The `project_databases` table — one row per project that has (or is getting) its own
-PostgreSQL database and login role (ADR-0028).
+PostgreSQL database and login role.
 
 A dedicated table, not columns on `projects`, for three reasons: **absence is clean** (no
 row at all means "never provisioned", so nothing has to distinguish NULL-because-new from
@@ -18,7 +18,7 @@ A marker that flipped early would claim a wall that does not exist.
 the orphan reconciler keep working against rows minted under an older derivation.
 
 No `OwnedByUserMixin`: the `projects` row is the ownership anchor and already carries
-`user_id` (ADR-0004), so every user-facing query reaches this table through a join on
+`user_id`, so every user-facing query reaches this table through a join on
 `projects` — the `user_id` predicate lives there and is never dropped here.
 No `relationship()` — the repo uses explicit selects/joins everywhere.
 """

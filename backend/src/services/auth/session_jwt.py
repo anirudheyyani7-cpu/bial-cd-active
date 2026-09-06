@@ -1,15 +1,15 @@
 """Session JWT — mint + decode with the algorithm PINNED (joserfc, HS256).
 
 The backend's OWN session token (distinct from the Entra id_token, which is
-validated and discarded — R5). It carries the minimum needed to authenticate a
-request and support instant revocation (KD-6): `sub` (user id), `token_version`,
+validated and discarded). It carries the minimum needed to authenticate a
+request and support instant revocation: `sub` (user id), `token_version`,
 and `iat`/`exp`. No email/role claim — that would go stale; `current_user`
 re-reads live user state instead.
 
-joserfc is the single JOSE stack (Authlib's own OIDC dependency, non-deprecated —
-KD-1). The algorithm is pinned to HS256 on BOTH encode and decode: `jwt.decode`
+joserfc is the single JOSE stack (Authlib's own OIDC dependency, non-deprecated).
+The algorithm is pinned to HS256 on BOTH encode and decode: `jwt.decode`
 is given `algorithms=["HS256"]`, so a token forged with `alg=none` (or any other
-algorithm) is rejected before its claims are read (R18). Every JOSE failure —
+algorithm) is rejected before its claims are read. Every JOSE failure —
 bad signature, expiry, missing essential claim — maps to a typed `AuthError`
 that leaks no detail (fail closed).
 """
@@ -48,7 +48,7 @@ class _ExpiryBlindClaimsRegistry(JWTClaimsRegistry):
     validly-signed but expired session cookie still yields its `sub` to identify
     whose refresh-token family to revoke. NEVER used to authenticate a request:
     logout only ever removes access, so trusting an expired-but-signed token for
-    revocation is safe (KD-6)."""
+    revocation is safe."""
 
     def validate_exp(self, value: int) -> None:
         # Same numeric-shape guard as the base registry (parity), but the expiry
@@ -76,7 +76,7 @@ class SessionClaims:
 
 def _session_key() -> OctKey:
     # The single session secret (>= 32 chars, enforced by AuthConfig) signs the
-    # HS256 session JWT. Unwrapped only here, at the JOSE boundary (security.md).
+    # HS256 session JWT. The secret is unwrapped only here, at the JOSE boundary.
     return OctKey.import_key(settings.auth.session_secret.get_secret_value())
 
 
@@ -102,7 +102,7 @@ def decode_session_jwt(token: str, *, verify_exp: bool = True) -> SessionClaims:
     `verify_exp=False` skips ONLY the expiry comparison (signature, HS256 pin, and
     every other claim check stay intact). It exists for revocation-only logout:
     the decoded `sub` identifies whose token family to revoke, and is NEVER used
-    to authenticate a request (KD-6)."""
+    to authenticate a request."""
     registry = _CLAIMS_REGISTRY if verify_exp else _CLAIMS_REGISTRY_IGNORE_EXP
     try:
         decoded = jwt.decode(token, _session_key(), algorithms=[_ALG])

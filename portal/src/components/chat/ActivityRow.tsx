@@ -1,9 +1,9 @@
 /**
- * ONE ROW INSIDE AN ACTIVITY GROUP (R35b, R36's rendering half, R66).
+ * ONE ROW INSIDE AN ACTIVITY GROUP.
  *
  * The row vocabulary is VERB + TARGET + STATE, and the row is allowed to read exactly two things:
  * the server's friendly label and the state. Nothing else is available to it — `convertMessage`
- * never copies `detail`, `args` or `result` onto the part, so R36's wall is upstream of this file
+ * never copies `detail`, `args` or `result` onto the part, so that wall is upstream of this file
  * and this component could not leak a file path if it tried. That is deliberate: a promise at the
  * draw site is only as good as the next person editing the draw site.
  *

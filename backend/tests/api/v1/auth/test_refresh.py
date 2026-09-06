@@ -1,4 +1,4 @@
-"""POST /auth/refresh — rotation, reuse-detection, CSRF, absolute lifetime (U7)."""
+"""POST /auth/refresh — rotation, reuse-detection, CSRF, absolute lifetime."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ async def test_reuse_returns_401_and_revokes_family(client, db_session) -> None:
     first = await client.post("/v1/auth/refresh", headers=_headers(refresh=raw, csrf=csrf))
     successor = _cookie_value(_set_cookies(first)["refresh"])
 
-    # Replaying the ORIGINAL token -> reuse -> 401 + whole family revoked (AE2).
+    # Replaying the ORIGINAL token -> reuse -> 401 + whole family revoked.
     replay = await client.post("/v1/auth/refresh", headers=_headers(refresh=raw, csrf=csrf))
     assert replay.status_code == 401
 

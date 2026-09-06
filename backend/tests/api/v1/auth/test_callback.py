@@ -1,6 +1,6 @@
-"""GET /auth/callback — fail-closed validation, provisioning, session mint (U5).
+"""GET /auth/callback — fail-closed validation, provisioning, session mint.
 
-Entra is mocked at the Authlib seam (KD-9): `get_oauth` is overridden with a fake
+Entra is mocked at the Authlib seam: `get_oauth` is overridden with a fake
 whose `authorize_access_token` returns a crafted token dict (or raises), so the
 full callback logic runs with no live tenant.
 """
@@ -75,7 +75,7 @@ def _cookie_value(raw: str) -> str:
     return raw.split("=", 1)[1].split(";", 1)[0]
 
 
-# --- provisioning (AE5) --------------------------------------------------------
+# --- provisioning --------------------------------------------------------
 
 
 async def test_first_signin_provisions_user_and_sets_cookies(app, client, db_session) -> None:
@@ -121,7 +121,7 @@ async def test_returning_signin_updates_profile_preserves_token_version(
     assert existing.token_version == 5  # revocation state preserved
 
 
-# --- fail-closed paths (AE1 / AE4) ---------------------------------------------
+# --- fail-closed paths ---------------------------------------------
 
 
 async def test_wrong_tenant_redirects_to_login_error(app, client, db_session) -> None:
@@ -179,7 +179,7 @@ async def test_entra_error_fails_closed_not_500(app, client, boom: Exception) ->
     assert resp.headers.get_list("set-cookie") == []
 
 
-# --- optional-email handling (KD-3) --------------------------------------------
+# --- optional-email handling --------------------------------------------
 
 
 async def test_missing_email_provisions_via_preferred_username(app, client, db_session) -> None:

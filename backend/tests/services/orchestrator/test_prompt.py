@@ -1,6 +1,6 @@
-"""The open-sandbox system prompt + repair template (U3) — a cheap, COARSE guard against prompt
-drift on the load-bearing bits (R18): the injected ENV, the don't-restart-dev-server rule, the SAS
-server-side rule, and the real-data-only rule (R4). Prompt copy is not behavioral, so the
+"""The open-sandbox system prompt + repair template — a cheap, COARSE guard against prompt
+drift on the load-bearing bits: the injected ENV, the don't-restart-dev-server rule, the SAS
+server-side rule, and the real-data-only rule. Prompt copy is not behavioral, so the
 assertions stay loose to avoid brittleness."""
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ _SandboxOf = Callable[[RunContext[Any]], SandboxSession]
 """The accessor shape `sandbox_toolset` takes — spelled once so the mutation wrappers below
 can wrap the real factory without a type suppression."""
 
-# Repo-root/sandbox/template — the hand-maintained golden template the manifest mirrors (KD-10).
+# Repo-root/sandbox/template — the hand-maintained golden template the manifest mirrors.
 # test file: backend/tests/services/orchestrator/test_prompt.py → parents[4] is the repo root.
 _TEMPLATE_ROOT = Path(__file__).resolve().parents[4] / "sandbox" / "template"
 
@@ -60,16 +60,17 @@ _TEMPLATE_ROOT = Path(__file__).resolve().parents[4] / "sandbox" / "template"
 def test_system_prompt_reflects_the_open_sandbox_model() -> None:
     prompt = BUILD_SYSTEM_PROMPT
     lowered = prompt.lower()
-    # Retired constrained-model language is gone (R18).
+    # Retired constrained-model language is gone.
     assert "no shell or command access" not in lowered
     assert "never run `npm install`" not in lowered
     assert "single swappable module" not in lowered
     # The open model is documented: a real shell + on-demand install + the new tool.
     assert "run_command" in prompt
     assert "npm install" in prompt  # now a capability, not a prohibition
-    # The injected app ENV the model writes its own data/storage code against (R20). The old
-    # shared-data-service pair is deliberately NOT here: the prompt stopped teaching it in U4,
-    # and U6 retired the injection itself (ADR-0028).
+    # The injected app ENV the model writes its own data/storage code against. The old
+    # shared-data-service pair is deliberately NOT here: once generated apps got their own
+    # per-project database, the prompt stopped teaching that pair, and the runtime stopped
+    # injecting it.
     for name in (
         "BIAL_APP_ID",
         "BIAL_DATABASE_URL",
@@ -79,13 +80,13 @@ def test_system_prompt_reflects_the_open_sandbox_model() -> None:
         assert name in prompt
     # The dev server must still NOT be restarted (load-bearing for the harness verify).
     assert "already running" in lowered and "restart" in lowered
-    # The write-capable SAS is flagged server-side-only (R13/R14).
+    # The write-capable SAS is flagged server-side-only.
     assert "server-side" in lowered
     assert "declare_done" in prompt
 
 
 def test_system_prompt_forbids_seeded_dummy_data() -> None:
-    """R4 — the build agent must never seed invented records; it builds honest empty/loading/error
+    """The build agent must never seed invented records; it builds honest empty/loading/error
     states and lets real data arrive by upload or user entry. This is a client-collateral
     promise."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
@@ -102,7 +103,7 @@ def test_system_prompt_forbids_seeded_dummy_data() -> None:
 
 
 def test_data_integrity_is_truthful_and_carries_the_never_mutate_rule() -> None:
-    """U1/R1 — the old "ships with NO data" claim was FALSE for a change build against a live
+    """The old "ships with NO data" claim was FALSE for a change build against a live
     database (it licensed the model to treat rows as disposable), and no rule forbade
     improvised mutations. The rewrite must state the truthful may-hold-records reality, the
     never-mutate verification rule, and the feature-removal condition for drops (migrations
@@ -118,18 +119,19 @@ def test_data_integrity_is_truthful_and_carries_the_never_mutate_rule() -> None:
     assert "type-checking and rendering" in lowered
     assert "requirements remove that feature" in lowered
     assert "say so plainly" in lowered
-    # Single source: the rules block is the reusable constant (U9 composes it into Write mode).
+    # Single source: the rules block is the reusable constant that Write mode's prompt
+    # composes too.
     assert DATA_INTEGRITY_RULES in BUILD_SYSTEM_PROMPT
 
 
 def test_system_prompt_carries_the_generated_app_quality_rules() -> None:
-    """U1/U11 — the additive rules the generated apps inherit: AFTER A WRITE (the
+    """The additive rules the generated apps inherit: AFTER A WRITE (the
     user sees their own mutation without a reload), HONEST UI (no false "live"/"shared" claims
     without a real refetch), REMOVE SCAFFOLDING (ship only the requested feature), and RESPONSIVE
     (no horizontal overflow at 390px). Coarse marker check — the copy is a probabilistic nudge,
     not a behavioral contract, so assert the load-bearing phrases only."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
-    # AFTER A WRITE (U11): the unconditional own-mutation refetch, hoisted out of HONEST UI.
+    # AFTER A WRITE: the unconditional own-mutation refetch, hoisted out of HONEST UI.
     assert "after a write" in lowered
     # HONEST UI: names the no-realtime reality and the required refetch remedy.
     assert "honest ui" in lowered
@@ -143,18 +145,14 @@ def test_system_prompt_carries_the_generated_app_quality_rules() -> None:
 
 
 def test_system_prompt_tells_the_agent_who_is_reading() -> None:
-    """★ THE SCENARIO THE MOVE EXISTS TO MAKE SAFE (U5/R79).
+    """★ THE SCENARIO THE MOVE EXISTS TO MAKE SAFE. The audience contract is shared by both chat
+    kinds now and lives in `mode_prompts._base()` — which this prompt CANNOT call, since
+    `_base(context)` needs a `PromptContext` the standalone build harness has no source for. It
+    therefore names `NARRATION_VOICE` itself, and this test guards that line from deletion.
 
-    The audience contract is shared by both chat kinds now, so it lives in
-    `mode_prompts._base()` — which this prompt CANNOT call, because `_base(context)` needs a
-    `PromptContext` the standalone build harness has no source for. It therefore names
-    `NARRATION_VOICE` itself, and this test is what stands between that line and its deletion.
-
-    `== 1`, NOT `in` AND NOT `<=`. The failure mode here is a count of ZERO — the block lifted
-    out of `BUILD_WORKING_RULES_TAIL` and never named at this site, which silently deletes the
-    audience contract from a live prompt and reinstates the defect it was written for. An `in`
-    assertion catches that; a `<= 1` does not, and the pair also catches the
-    opposite slip of naming it twice."""
+    `== 1`, NOT `in` AND NOT `<=`: the failure mode is a count of ZERO — the block lifted out of
+    `BUILD_WORKING_RULES_TAIL` and never named here, silently deleting the audience contract —
+    and `in` alone would miss it while `<= 1` also misses the opposite slip of naming it twice."""
     from src.core.prompt_blocks import NARRATION_VOICE
 
     assert BUILD_SYSTEM_PROMPT.count(NARRATION_VOICE) == 1
@@ -167,7 +165,7 @@ def test_system_prompt_tells_the_agent_who_is_reading() -> None:
     lowered = BUILD_SYSTEM_PROMPT.lower()
     assert "talking to the user" in lowered
     assert "plain, everyday words" in lowered
-    # The register holds on the turns where jargon actually leaks — the failures (R20).
+    # The register holds on the turns where jargon actually leaks — the failures.
     assert "when something goes wrong" in lowered
 
 
@@ -183,24 +181,14 @@ def _completion_block(prompt: str) -> str:
 
 
 def test_completion_promises_no_round_trip_after_declare_done() -> None:
-    """★ U18 / R30 — THE PROMPT MOVED WITH THE BEHAVIOUR, WHICH IS THE WHOLE POINT.
+    """★ THE PROMPT MOVED WITH THE BEHAVIOUR, WHICH IS THE WHOLE POINT. `declare_done` is
+    terminal on a passing check now; the old wording ("...you will receive the diagnostic")
+    invited the model to write its closing message in a follow-up reply this unit no longer
+    buys — the good message was thrown away with the round-trip.
 
-    `declare_done` is terminal on a passing check now. A model still told "the harness then
-    verifies … if it is not green yet you will receive the diagnostic" reads that as an
-    invitation to write its closing message in the reply that follows — a reply this unit has
-    just stopped buying. It would then withhold that message from `summary`, the harness would
-    render the fallback, and the citizen would end a working build on a generic sentence while
-    the good one was thrown away with the round-trip. The stale instruction does not merely
-    mislead here; it defeats the feature.
-
-    TWO HALVES, DELIBERATELY. The inertness half searches for the retired phrasing and requires
-    zero hits. The liveness half requires the repair arm's promise to still be there, because it
-    is still TRUE (ASM14) — and an inertness guard alone would pass just as happily against a
-    COMPLETION block someone had deleted outright.
-
-    Asserted on the COMPOSED prompt rather than on `prompt_blocks`, so a composition site that
-    stopped including the block would be caught here too. The Write mode segment composes the
-    same single source (`BUILD_WORKING_RULES_TAIL`), which is what makes one assertion enough."""
+    TWO HALVES: inertness requires the retired phrasing gone; liveness requires the repair arm's
+    still-true promise to survive, or an inertness guard alone would pass against a gutted
+    COMPLETION block, caught because assertions run on the COMPOSED prompt."""
     completion = _completion_block(BUILD_SYSTEM_PROMPT)
 
     # INERTNESS — the retired round-trip promise, gone.
@@ -215,7 +203,7 @@ def test_completion_promises_no_round_trip_after_declare_done() -> None:
     assert "ENDS THE TURN" in completion
     assert "passing check" in completion
 
-    # R22/AE13 — and what the summary must BE, since it is now the last thing the user reads.
+    # And what the summary must BE, since it is now the last thing the user reads.
     assert "the last thing the user reads" in completion
     assert "what they can now do" in completion
     # THE VOCABULARY CLAUSE IS GONE, and its absence is asserted rather than merely unmentioned.
@@ -232,19 +220,14 @@ def test_completion_promises_no_round_trip_after_declare_done() -> None:
 
 
 def test_the_type_check_is_prohibited_not_merely_unnecessary() -> None:
-    """★ U19 / R25 — THE INVITATION IS NOW A PROHIBITION.
+    """★ THE INVITATION IS NOW A PROHIBITION. The old line ended "...you do not need to run
+    `tsc` yourself, though you may" — an invitation wearing a reassurance the model acted on,
+    spending a slow command re-deriving a diagnostic the harness already hands it for free.
 
-    The line used to end "That is your verification signal — you do not need to run `tsc`
-    yourself, though you may." That is an invitation wearing a reassurance, and the model took it:
-    it spent a slow command and a screenful of output per turn re-deriving the exact diagnostic
-    the harness hands it for free the moment the turn ends. The agent does not do work the
-    platform already does.
-
-    THREE PARTS, and the third is why this is not one `not in`. The retired permission must be
-    gone; the replacement must actually FORBID rather than merely omit (a block someone deleted
-    passes an inertness check just as happily); and the TRUE half — the harness really does
-    type-check between turns — must survive, or the model is left with no verification story at
-    all and starts inventing one."""
+    THREE PARTS: the retired permission must be gone; the replacement must actually FORBID
+    rather than merely omit (a deleted block passes an inertness check too); and the TRUE half
+    — the harness really does type-check between turns — must survive, or the model invents
+    its own verification story."""
     prompt = BUILD_SYSTEM_PROMPT
     lowered = prompt.lower()
 
@@ -261,7 +244,7 @@ def test_the_type_check_is_prohibited_not_merely_unnecessary() -> None:
 
 
 def test_completion_never_makes_type_checking_the_agents_job() -> None:
-    """U19 / R25, the other half of the same rule: the closing guidance must not hand the
+    """The other half of the same rule: the closing guidance must not hand the
     verification back to the model at the last moment.
 
     Sliced to the COMPLETION block on purpose (see `_completion_block`): "type-check" is
@@ -278,20 +261,20 @@ def test_completion_never_makes_type_checking_the_agents_job() -> None:
 
 
 def test_prompt_has_no_stale_app_records_demo_reference() -> None:
-    """U11/R16 — the `app/records` demo route was removed from the template, so the prompt must
+    """The `app/records` demo route was removed from the template, so the prompt must
     no longer tell the model to hunt for and delete it. Only the stale REMOVE SCAFFOLDING
     parenthetical ever referenced it, and it is gone."""
     assert "app/records" not in BUILD_SYSTEM_PROMPT
 
 
 def test_prompt_names_no_demonstration_data_model_or_example_component() -> None:
-    """U21/R27/AE15 — two inertness guards modelled on
+    """Two inertness guards modelled on
     `test_prompt_has_no_stale_app_records_demo_reference` just above. The template's
     demonstration data model (`items`/`item_status`/`audit_events`, the tables the old baseline
     migration created) and the deleted worked-reference component must never resurface in the
-    composed prompt: the first is the demonstration table AE15 forbids the agent's first schema
-    change from dropping, the second is the 271-line file the agent no longer has any reason to
-    open."""
+    composed prompt: the first is the demonstration table the agent's first schema change is
+    forbidden from dropping, the second is the 271-line file the agent no longer has any reason
+    to open."""
     prompt = BUILD_SYSTEM_PROMPT
     lowered = prompt.lower()
     # GUARD 1 — the deleted worked-reference component, in either spelling.
@@ -304,7 +287,7 @@ def test_prompt_names_no_demonstration_data_model_or_example_component() -> None
 
 
 def test_the_golden_template_manifest_names_no_removed_path() -> None:
-    """U21/R27 — the other half of the manifest tripwire.
+    """The other half of the manifest tripwire.
     `test_every_golden_template_manifest_file_exists` proves every path the manifest names still
     exists; it says nothing about a path the template used to ship staying named after it is
     deleted. Pinned separately so reverting only the manifest edit (and not the file deletions)
@@ -315,7 +298,7 @@ def test_the_golden_template_manifest_names_no_removed_path() -> None:
 
 
 def test_responsive_advice_survives_the_deleted_reference_component() -> None:
-    """U21/R27 — deleting `components/example-request-board.tsx` must not silently delete the
+    """Deleting `components/example-request-board.tsx` must not silently delete the
     three-patterns advice it introduced (the RESPONSIVE block used to point at the file's own
     docstring for this). TWO HALVES: the inertness half is the "copy from it, into your own
     route" sentence naming the now-deleted file; the liveness half beside it is the toolbar/
@@ -337,16 +320,14 @@ def test_responsive_advice_survives_the_deleted_reference_component() -> None:
 
 
 def test_the_publish_path_still_finds_a_drizzle_directory() -> None:
-    """U21/ASM11 — Prerequisite 4's answer, recorded as a passing assertion rather than built as
-    a guard: `backend/src/services/deploy/assets/next.config.ts`'s `outputFileTracingIncludes`
-    globs `./drizzle/**`, and ASM27 keeps `drizzle/meta/_journal.json` (emptied, not deleted), so
-    `drizzle/` is never an empty directory and that glob always matches something. No change to
-    `next.config.ts` was needed — this just proves the premise still holds against the actual
-    template tree.
+    """Records a design premise as a passing assertion rather than a guard:
+    `next.config.ts`'s `outputFileTracingIncludes` globs `./drizzle/**`, and the prompt's own
+    rule keeps `drizzle/meta/_journal.json` (emptied, not deleted), so `drizzle/` is never empty
+    and that glob always matches something — this just proves the premise still holds today.
 
-    Checked as FILES, not merely directory entries: `rglob("*")` also yields the empty `meta/`
-    subdirectory itself, which would make this pass even with the journal file gone — the exact
-    state `./drizzle/**` needs a real file under, to actually match something."""
+    Checked as FILES, not directory entries: `rglob("*")` also yields the empty `meta/`
+    subdirectory itself, which would pass even with the journal gone — the glob needs a real
+    file under `drizzle/` to actually match something."""
     drizzle_dir = _TEMPLATE_ROOT / "drizzle"
     assert drizzle_dir.is_dir()
     files = [path for path in drizzle_dir.rglob("*") if path.is_file()]
@@ -355,26 +336,14 @@ def test_the_publish_path_still_finds_a_drizzle_directory() -> None:
 
 
 def test_app_boots_with_the_emptied_journal_and_prints_no_migration_failure() -> None:
-    """★ AE15 / ASM27 — THE ASSERTION THAT MUST NOT BE SKIPPED.
+    """★ THE ASSERTION THAT MUST NOT BE SKIPPED. Runs the REAL `scripts/db-migrate.mjs`, exactly
+    as `npm run dev` runs it on every boot, against the template's real (emptied, not deleted)
+    `drizzle/meta/_journal.json`. Drizzle's `readMigrationFiles` throws when the journal is
+    absent, and the script swallows every failure and exits 0 by design — a missing journal
+    would silently print that failure into every app's dev-server stdout on every boot.
 
-    Runs the REAL, unmodified `scripts/db-migrate.mjs` exactly the way `npm run dev` runs it on
-    every boot, against the template's actual (emptied, not deleted) `drizzle/meta/_journal.json`.
-    Drizzle's vendored `readMigrationFiles` (`node_modules/drizzle-orm/migrator.js`) throws
-    `Can't find meta/_journal.json file` when the journal is absent, and `db-migrate.mjs` catches
-    every failure and still exits 0 by design (see its own file header) — so a missing journal
-    would print that failure into every app's dev-server stdout on EVERY boot, silently, straight
-    into the stream the self-heal verify tails.
-
-    `BIAL_DATABASE_URL` points at a closed local port so this needs no live Postgres: the journal
-    read happens before any database round-trip (`migrate()` calls `readMigrationFiles`
-    synchronously first), so a fast, deterministic connection-refused failure AFTER a successful
-    journal read is exactly the boundary this test is pinned to.
-
-    Mutation-checked by hand: with `meta/_journal.json` renamed away, this identical invocation
-    prints `Can't find meta/_journal.json file` to stderr and still exits 0 — the regression this
-    guards against. Skipped, not failed, when `node` is not on PATH, so an environment gap can
-    never read as a pass; it is not skipped when the environment (this repo's checked-in
-    `sandbox/template/node_modules`) is present, which it is."""
+    No live Postgres needed: the journal read happens before any DB round-trip. Skipped, not
+    failed, when `node` is off PATH, so an environment gap can never read as a pass."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not on PATH — cannot boot the template's db-migrate.mjs")
@@ -409,7 +378,7 @@ def test_prompt_teaches_the_drizzle_migration_discipline() -> None:
     lowered = prompt.lower()
     assert "db/schema.ts" in prompt
     assert "drizzle-kit" in prompt and "generate" in lowered
-    # U23: the applying half is the composite now, not `npm run db:migrate` spelled out.
+    # The applying half is the composite now, not `npm run db:migrate` spelled out.
     assert APPLY_SCHEMA_CHANGE_TOOL in prompt
     # The ban is doctrine — and it is stated WITHOUT the literal command, so a repo-wide
     # `grep "drizzle-kit push"` stays a clean "nothing invokes it" check.
@@ -421,7 +390,7 @@ def test_prompt_teaches_the_drizzle_migration_discipline() -> None:
 
 
 def test_prompt_makes_no_claim_that_the_starter_ships_demo_routes() -> None:
-    """U11/R16 — the template ships only `app/{globals.css,layout.tsx,page.tsx}` plus lib/config,
+    """The template ships only `app/{globals.css,layout.tsx,page.tsx}` plus lib/config,
     NO example or demo routes. REMOVE SCAFFOLDING's old premise ("the starter ships example and
     demo routes") is false and must not send the model hunting scaffolding that does not exist."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
@@ -430,14 +399,14 @@ def test_prompt_makes_no_claim_that_the_starter_ships_demo_routes() -> None:
 
 
 def test_refetch_after_every_write_appears_exactly_once() -> None:
-    """U11/R15 — exactly ONE rule owns the after-write mechanic. The clause was hoisted OUT of
+    """Exactly ONE rule owns the after-write mechanic. The clause was hoisted OUT of
     HONEST UI into the unconditional AFTER A WRITE rule; if a future edit re-adds it to HONEST UI
     (two rules prescribing the same behaviour) this count trips."""
     assert BUILD_SYSTEM_PROMPT.lower().count("refetch after every write") == 1
 
 
 def test_after_write_requirement_is_unconditional() -> None:
-    """U11/R14 — the after-write refetch applies to EVERY app, not only ones that claim liveness.
+    """The after-write refetch applies to EVERY app, not only ones that claim liveness.
     It lives in its own AFTER A WRITE rule, above HONEST UI, and is NOT gated behind the
     live/shared/real-time conditional that owns interval/focus refetch."""
     prompt = BUILD_SYSTEM_PROMPT
@@ -451,7 +420,7 @@ def test_after_write_requirement_is_unconditional() -> None:
 
 
 def test_honest_ui_keeps_its_claim_matching_argument() -> None:
-    """U11 — HONEST UI keeps ONLY the claim-matching argument: interval and window-focus refetch
+    """HONEST UI keeps ONLY the claim-matching argument: interval and window-focus refetch
     stay CONDITIONAL on actually claiming a view is live/shared/real-time (the price of the
     claim), which is distinct from the unconditional own-mutation rule."""
     prompt = BUILD_SYSTEM_PROMPT
@@ -463,16 +432,15 @@ def test_honest_ui_keeps_its_claim_matching_argument() -> None:
 
 
 def test_every_golden_template_manifest_file_exists() -> None:
-    """U11/R16 durable guard: every path the manifest advertises as an editable starting point
-    must actually exist under `sandbox/template/`, so a future template change that drops or
-    renames a file cannot leave the prompt pointing at a phantom. Walks the manifest text in the
-    rendered prompt and stats each path — the `components/ui/*.tsx` glob and the comma-list line
-    included.
+    """Durable guard: every path the manifest advertises as an editable starting point must
+    exist under `sandbox/template/`, so a template change that drops or renames a file cannot
+    leave the prompt pointing at a phantom. Walks the manifest text and stats each path, glob
+    and comma-list entries included.
 
-    `sql` is in the extension set on purpose: the generated migrations under `drizzle/` are the
-    one manifest entry that is BUILT rather than hand-written, so it is the entry most likely to
-    go missing (an over-eager `.gitignore` line, a fresh clone). Without `sql` here the manifest
-    could advertise a migrations directory that does not exist and nothing would notice."""
+    `sql` is in the extension set on purpose: the generated migrations under `drizzle/` are
+    BUILT rather than hand-written, so they are most likely to go missing (an over-eager
+    `.gitignore`, a fresh clone) — without `sql` here a missing migrations directory would go
+    unnoticed."""
     manifest = BUILD_SYSTEM_PROMPT[BUILD_SYSTEM_PROMPT.index("The app starts from a minimal") :]
     tokens = re.findall(r"[\w./*-]+\.(?:tsx|ts|css|json|mjs|sql)", manifest)
     assert tokens, "manifest path extraction found nothing — the regex drifted from the manifest"
@@ -488,8 +456,7 @@ def test_every_golden_template_manifest_file_exists() -> None:
 
 
 def test_system_prompt_never_instructs_the_app_to_authenticate() -> None:
-    """Regression guard for the opaque-origin sandbox learning
-    (docs/solutions/architecture-patterns/sandboxed-app-auth-session-injection-2026-07-09.md):
+    """Regression guard for the opaque-origin sandbox learning:
     the host owns authentication and injects identity downward. A prompt that tells generated code
     to sign users in produces an in-sandbox login form that can never reach an auth endpoint from
     `origin: null`. The prompt is part of the trust boundary — keep sign-in out of it entirely."""
@@ -519,11 +486,11 @@ def test_repair_prompt_embeds_the_redacted_diagnostic() -> None:
     assert error.title in repair
     assert error.cleaned_stack in repair
     assert "declare_done" in repair
-    # The retired 'do not run any commands' line is gone — run_command exists now (R18).
+    # The retired 'do not run any commands' line is gone — run_command exists now.
     assert "run any commands" not in repair.lower()
 
 
-# F4 — TWO MODEL-FACING SOURCES TELL THE MODEL HOW TO CHANGE THE SCHEMA, and they must agree.
+# TWO MODEL-FACING SOURCES TELL THE MODEL HOW TO CHANGE THE SCHEMA, and they must agree.
 # The re-test patched the build prompt and missed the SQL sentinel's refusal, so the model was
 # corrected by one voice and mis-taught by the other. That is the half-landed-fix failure mode
 # this file's assertion exists to make impossible.
@@ -538,7 +505,7 @@ def _database_block(prompt: str) -> str:
 
 
 def test_both_model_facing_sources_prescribe_the_same_one_call() -> None:
-    """★ U23 — the two voices that tell the model how to change a schema still agree, and what
+    """★ The two voices that tell the model how to change a schema still agree, and what
     they now agree ON is the composite rather than the two-command sequence.
 
     This is the check that caught the last half-landed fix: the re-test patched the prompt and
@@ -562,15 +529,15 @@ _A_GENERATE_SPELLING = re.compile(r"drizzle-kit[\"\',\s]+generate(.{0,24})")
 
 
 def test_the_prompt_prescribes_no_generate_command_for_the_model_to_run() -> None:
-    """★ U20 / ASM28, finished by U23 — ONE SPELLING, EVERYWHERE THE MODEL LOOKS, and it is now
-    the tool rather than the command.
+    """★ ONE SPELLING, EVERYWHERE THE MODEL LOOKS — it is now the tool rather than the command.
+    The prompt used to carry a `run_command` example with the bare
+    `["npx","drizzle-kit","generate"]`, forbidden two blocks earlier in the same prompt; that
+    example is gone, and the prescription is removed altogether: `apply_schema_change` runs the
+    command now, so the prompt has no reason to spell it.
 
-    U20 removed a `run_command` example carrying the bare `["npx","drizzle-kit","generate"]` the
-    DATABASE block forbade two blocks earlier in the same prompt. U23 removes the prescription
-    altogether: `apply_schema_change` runs the command, so the prompt has no reason to spell it.
-    The rule survives as an INERTNESS guard — any generate spelling that comes back must carry
-    the flag — plus the liveness assertion that says what replaced it, because an inertness
-    assertion alone is green against a prompt that stopped teaching migrations at all."""
+    The rule survives as an INERTNESS guard — any bare generate spelling that comes back must
+    carry the flag — plus a liveness assertion, since inertness alone is green against a prompt
+    that stopped teaching migrations at all."""
     for tail in _A_GENERATE_SPELLING.findall(BUILD_SYSTEM_PROMPT):
         assert "--name" in tail, f"a bare `drizzle-kit generate` survives in the prompt: {tail!r}"
     assert "run_command([" not in _database_block(BUILD_SYSTEM_PROMPT)
@@ -579,7 +546,7 @@ def test_the_prompt_prescribes_no_generate_command_for_the_model_to_run() -> Non
 
 
 def test_the_template_offers_no_second_spelling_of_the_generate_command() -> None:
-    """★ U20 / ASM28, the template half. `package.json` shipped `"db:generate": "drizzle-kit
+    """★ The template half. `package.json` shipped `"db:generate": "drizzle-kit
     generate"` — the bare spelling again, this time as a script the model could reach for by
     name. It cannot be repaired in place (`--name <what_changed>` needs a value per invocation,
     which no fixed npm script can carry), so the script is gone and
@@ -632,7 +599,7 @@ def test_the_prompt_teaches_the_split_that_actually_unblocked_the_wedged_build()
 
 
 def test_the_drizzle_artifacts_instruction_is_emitted_exactly_once() -> None:
-    """U20 — the same rule was printed twice in one prompt: once in the golden-template manifest
+    """The same rule was printed twice in one prompt: once in the golden-template manifest
     (`drizzle/*.sql … versioned artifacts that must stay in the workspace`) and once in the
     DATABASE block. Counting is the point — an `in` assertion is green at one copy and at two."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
@@ -642,26 +609,21 @@ def test_the_drizzle_artifacts_instruction_is_emitted_exactly_once() -> None:
     assert "never hand-edit one that has already been applied" in lowered
 
 
-# --- U23 / R29: one operation for applying a database change ---------------------------------
+# --- One operation for applying a database change ---------------------------------------------
 
 
 def test_the_two_step_sequence_is_no_longer_the_taught_path_but_the_tty_defences_still_are() -> (
     None
 ):
-    """★ U23 — the prompt-trim inertness guard, WITH the liveness assertion it needs beside it.
+    """★ The prompt-trim inertness guard, WITH the liveness assertion it needs beside it. The
+    DATABASE block dictates one `apply_schema_change` call now instead of two raw
+    `run_command([...])` invocations — the inert half.
 
-    The DATABASE block used to dictate two `run_command([...])` invocations. It dictates one tool
-    call now, and that is the inert half: neither raw command may be prescribed as the path, or
-    the model is being taught the sequence whose zero exit codes lie.
-
-    The liveness half is a different file entirely, and it is the one this unit could break by
-    accident. The composite's cleanest failure — the rename resolver — is only FAST because of
-    three defences in `sandbox/supervisor/app.py`: `CI=1` (well-behaved tools refuse to prompt),
-    `stdin=DEVNULL` (drizzle-kit's prompt renderer probes `process.stdin.isTTY` and fails fast
-    against a closed one), and `_refuse_a_manufactured_tty` (which closes the agent's `pty.spawn`
-    workaround). Remove any one and this tool's crispest detection becomes a wedged command
-    running to its timeout — with every assertion in this file still green, because none of them
-    is about that file. This one is."""
+    The liveness half lives in a different file and is what this unit could break by accident:
+    the rename resolver stays FAST only because of three defences in
+    `sandbox/supervisor/app.py` (`CI=1`, `stdin=DEVNULL`, and `_refuse_a_manufactured_tty`).
+    Remove any one and the crispest detection becomes a wedged command running to its timeout —
+    the one assertion elsewhere in this file that would catch it."""
     database = _database_block(BUILD_SYSTEM_PROMPT)
     # INERTNESS — the sequence is not the prescribed path any more.
     assert "run_command([" not in database
@@ -678,7 +640,7 @@ def test_the_two_step_sequence_is_no_longer_the_taught_path_but_the_tty_defences
 
 
 async def test_the_composite_is_offered_and_its_line_is_its_own_first_sentence() -> None:
-    """★ U23 — the composite reaches the model as a REGISTERED TOOL, and the sentence the prompt
+    """★ The composite reaches the model as a REGISTERED TOOL, and the sentence the prompt
     spends on it is the same string its registration carries.
 
     The generic drift check covers every tool at once; this names the one this unit adds, so a
@@ -694,14 +656,15 @@ async def test_the_composite_is_offered_and_its_line_is_its_own_first_sentence()
     assert "truthfully" in line and "failed" in line
 
 
-# --- U20 / R26: the TOOL SURFACE block is GENERATED, and this is the check that keeps it so ---
+# --- The TOOL SURFACE block is GENERATED, and this is the check that keeps it so --------------
 #
-# R26 asks for a check that fails when a DESCRIBED behaviour and the actual behaviour diverge.
-# A name-set comparison cannot make that promise, and U18 is the proof: it changed what
-# `declare_done` does while the sentence describing it still promised a follow-up round-trip, and
-# every name-based assertion in this repo stayed green. So the block is rendered from the tool
-# definitions pydantic-ai hands the model at registration, and the drift check is a snapshot
-# assertion over that rendering plus a per-mode membership assertion against `toolsets_for_kind`.
+# The goal is a check that fails when a DESCRIBED behaviour and the actual behaviour diverge.
+# A name-set comparison cannot make that promise: the `declare_done` fix above is the proof — it
+# changed what `declare_done` does while the sentence describing it still promised a follow-up
+# round-trip, and every name-based assertion in this repo stayed green. So the block is
+# rendered from the tool definitions pydantic-ai hands the model at registration, and the drift
+# check is a snapshot assertion over that rendering plus a per-mode membership assertion against
+# `toolsets_for_kind`.
 
 
 def _tool_surface_block(prompt: str) -> str:
@@ -713,7 +676,7 @@ async def _the_drift_check() -> None:
     """THE DRIFT CHECK ITSELF, factored out so the mutation tests can require it to go RED.
 
     An equality assertion proves the snapshot is right today; it does not prove the assertion
-    would notice if it stopped being — which is exactly the property that failed under U18. The
+    would notice if it stopped being — which is exactly the property that failed. The
     two mutation tests below run THIS function against a deliberately-mutated registry."""
     generated = await render_tool_surface(ChatKind.BUILD)
     assert WRITE_TOOL_SURFACE == generated, (
@@ -834,9 +797,9 @@ async def test_the_drift_check_fails_when_a_tools_docstring_is_reworded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ DELIBERATE MUTATION 2 — the same tools, one of them described differently. THIS is the
-    assertion U18 proves is necessary, so the mutation is U18's own regression put back: a
-    `declare_done` that promises the follow-up round-trip the harness stopped buying. Every
-    name-based check in this repo is green against it; this one is not."""
+    assertion the `declare_done` fix above proves is necessary, so the mutation reintroduces that
+    exact regression: a `declare_done` that promises the follow-up round-trip the harness stopped
+    buying. Every name-based check in this repo is green against it; this one is not."""
     registers_the_six = sandbox_toolset
 
     def describes_declare_done_the_old_way(sandbox_of: _SandboxOf) -> FunctionToolset[Any]:
@@ -874,17 +837,18 @@ async def test_a_tool_without_a_docstring_fails_the_render_rather_than_shipping_
 
 
 async def test_run_commands_dev_server_rule_is_registered_copy_as_well_as_prompt_copy() -> None:
-    """★ THE LIVENESS GUARD ON THE DOCSTRINGS THEMSELVES (U14 / U19 carried into U20).
+    """★ THE LIVENESS GUARD ON THE DOCSTRINGS THEMSELVES.
 
     The docstrings are prompt text now, so trimming one is a prompt edit. This sentence is what
-    covers the agent starting a dev server through `/exec` without U14's marker — the supervisor's
-    child env carries nothing that would tell a second `next dev` apart from the real one — so it
-    must survive in BOTH voices: the tool's own description, and the ENVIRONMENT block."""
+    covers the agent starting a dev server through `/exec` without the "already running" marker
+    — the supervisor's child env carries nothing that would tell a second `next dev` apart from
+    the real one — so it must survive in BOTH voices: the tool's own description, and the
+    ENVIRONMENT block."""
     definitions = await registered_tool_definitions(ChatKind.BUILD)
     described = (definitions["run_command"].description or "").lower()
     assert "do not start or restart the dev server" in described
     assert "already running" in described
-    # And the prompt's own wording (U19's guard, restated here because the two travel together).
+    # And the prompt's own wording carries the same guard, because the two travel together.
     assert "do not start, restart, or kill it" in BUILD_SYSTEM_PROMPT.lower()
 
 

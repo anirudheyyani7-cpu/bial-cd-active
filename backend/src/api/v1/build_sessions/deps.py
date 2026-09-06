@@ -1,24 +1,22 @@
-"""DI seams for the C3 control surface.
+"""DI seams for the control surface.
 
-The brain + sandbox client + session manager are resolved through FastAPI `Depends` (KTD-9) so
-`app.dependency_overrides` reach them in tests — the router threads the resolved objects into
-the SessionManager rather than letting the manager call the deps inline (a plain in-service call
-would bypass the overrides).
+WHY THIS EXISTS
+The brain + sandbox client + session manager are resolved through FastAPI `Depends` so
+`app.dependency_overrides` reach them in tests — the router threads the resolved objects into the
+SessionManager rather than letting the manager call the deps inline (a plain in-service call would
+bypass the overrides).
 
 Redis is the ONE exception and there is no `Depends` seam for it: the lock/heartbeat routes call
 `get_redis()` LAZILY inside `build_coordination_or_503()`, because `get_redis()` raises on a
 Redis-off deployment and an eagerly-solved dependency would raise before that seam — or the
-route's own 404 — ever ran, turning the documented 503 into an undocumented 500. The
-`redis_dependency` / `RedisDep` pair that used to live here was deleted once its last consumer
-moved into the seam; nothing binds Redis through DI, and `fake_redis` binds the accessor
-singleton instead. See
-`docs/solutions/design-patterns/eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`.
+route's own 404 — ever ran, turning the documented 503 into an undocumented 500. Nothing binds
+Redis through DI; `fake_redis` binds the accessor singleton directly instead.
 
-C3 §3 mandates signed double-submit CSRF on the mutating POSTs (`start` / `stop` / all
-lock ops / `internal/reap`), a deliberate divergence from the chat-relay precedent that
-the frozen contract requires; the `status` GET and the SSE GET are exempt. That gate now
-lives in `src/api/deps_csrf.py` — the conversations domain is its second consumer — and is
-re-exported here so this module stays the C3 router's single dependency import.
+The frozen contract mandates signed double-submit CSRF on the mutating POSTs (`start` / `stop` /
+all lock ops / `internal/reap`), a deliberate divergence from the chat-relay precedent; the
+`status` GET and the SSE GET are exempt. That gate now lives in `src/api/deps_csrf.py` — the
+conversations domain is its second consumer — and is re-exported here so this module stays the
+single dependency import for this domain's router.
 """
 
 from __future__ import annotations
@@ -48,17 +46,14 @@ def sandbox_dependency() -> SandboxClient:
 
 
 def sandbox_or_none_dependency() -> SandboxClient | None:
-    """The configured sandbox client, or **`None` when it is unconfigured** (dev/test) — the
-    None-tolerant twin of `sandbox_dependency`, mirroring `OptionalStorage` in `src/api/deps.py`.
-
-    It still resolves eagerly; it just cannot FAIL eagerly. `SandboxNotConfiguredError` subclasses
-    `SandboxError`, so `relaunch_preview`'s `except (..., SandboxError) -> 503` *would* have caught
-    it — one frame later. Resolved eagerly it escaped to the catch-all instead, and the route that
-    advertises "The sandbox or build coordination is temporarily unavailable" answered an
+    """The configured sandbox client, or `None` when unconfigured (dev/test) — the None-tolerant
+    twin of `sandbox_dependency`, mirroring `OptionalStorage` in `src/api/deps.py`. It still
+    resolves eagerly; it just cannot FAIL eagerly. `SandboxNotConfiguredError` subclasses
+    `SandboxError`, so `relaunch_preview`'s `except (..., SandboxError) -> 503` would have
+    caught it a frame later — instead it escaped eager resolution to the catch-all, answering an
     undocumented 500 with the wrong envelope. Sandbox-off is supported outside production
-    (`_require_sandbox_in_production` only gates prod), so the break was live exactly where nobody
-    watches. See
-    `docs/solutions/design-patterns/eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`."""
+    (`_require_sandbox_in_production` only gates prod), so the break was live exactly where
+    nobody watches."""
     try:
         return get_sandbox()
     except SandboxNotConfiguredError:
@@ -76,28 +71,29 @@ _orchestrator: BuildOrchestrator | None = None
 
 def _build_model(config: FoundryConfig) -> Model:
     """The Foundry-backed Pydantic AI model — the same wiring the conversation routes use
-    (`conversations/_shared.py::chat_model`). A named seam so the C7 integration test can swap
+    (`conversations/_shared.py::chat_model`). A named seam so the integration test can swap
     in a scripted `FunctionModel` while still exercising the REAL dependency below."""
     return build_foundry_model(config)
 
 
 async def _live_session_spec(session_id: uuid.UUID) -> BuildSpec:
-    """The KD-13 run-context provider: resolve the LIVE session's prompt + app_id from the
+    """The run-context provider: resolve the LIVE session's prompt + app_id from the
     in-process SessionManager — the same singleton the router registered the session in,
     keyed by `session_id` from the manager's own store (already user-validated at start),
     so no DB lookup and no new scoping surface. FAILS CLOSED on a missing session; the
-    harness funnels the raise to an `internal_error` escalation (KD-12)."""
+    harness funnels the raise to an `internal_error` escalation."""
     session = get_session_manager().get(session_id)
     if session is None:
         raise LookupError(f"no live build session {session_id} for run-context resolution")
     if not session.attachments:
-        # No attachments → a bare `str` prompt, byte-identical to the pre-R3 path.
+        # No attachments → a bare `str` prompt, byte-identical to what this returned before
+        # attachments existed.
         return BuildSpec(
             prompt=session.prompt,
             app_id=session.app_id,
             conversation_id=session.conversation_id,
         )
-    # R3 — the multimodal prompt: each attachment's content FIRST (fenced office/csv text, or
+    # THE MULTIMODAL PROMPT: each attachment's content FIRST (fenced office/csv text, or
     # `BinaryContent` for image/PDF vision), then the instruction text. Attachments-before-text
     # is Anthropic's documented vision ordering and matches the portal's own `buildContent`
     # ("text after files"), so the build path and the send path ground a model the same way —
@@ -113,15 +109,13 @@ async def _live_session_spec(session_id: uuid.UUID) -> BuildSpec:
 
 
 async def run_build_dependency() -> RunBuild | None:
-    """The BRAIN entry point (the C7 join). Foundry configured → the real
-    `BuildOrchestrator`'s bound `run_build`; unconfigured → `None`, which the router maps
-    to 503 BEFORE touching Redis or the lock (KTD-9), so a misconfigured brain never leaks
-    a lock. Tests override this dependency with the mock brain.
-
-    Deliberately `async` despite having no awaits: FastAPI runs async deps on the event
-    loop (a sync `def` goes to the threadpool), so the check-then-set below is atomic and
-    "built once per process" holds — two concurrent first requests can never
-    double-construct the orchestrator (orphaning an unclosed httpx client)."""
+    """The BRAIN entry point. Foundry configured → the real
+    `BuildOrchestrator`'s bound `run_build`; unconfigured → `None`, which the router maps to 503
+    before touching Redis or the lock, so a misconfigured brain never leaks a lock. Tests
+    override this dependency with the mock brain. Deliberately `async` despite having no awaits:
+    FastAPI runs async deps on the event loop (a sync `def` goes to the threadpool), so the
+    check-then-set below is atomic and "built once per process" holds — two concurrent first
+    requests can never double-construct the orchestrator (orphaning an unclosed httpx client)."""
     global _orchestrator
     if settings.foundry is None:
         return None

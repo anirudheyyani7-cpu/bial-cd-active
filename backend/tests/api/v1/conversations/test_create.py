@@ -1,11 +1,11 @@
-"""POST /v1/conversations — create the row BEFORE the first turn (U7).
+"""POST /v1/conversations — create the row BEFORE the first turn.
 
 The stateless relay 404s unknown conversations, so the SPA creates the row it minted, then
 streams. The contract under test: 201 on create, idempotent 200 on the same mint, one
 non-leaking 409 for any id that exists under different ownership/parentage, 404 for a
 project the caller does not own, CSRF enforced.
 
-AND IT IS THE ONLY PLACE A CHAT'S KIND IS EVER SET (R15). There is no route that changes it
+AND IT IS THE ONLY PLACE A CHAT'S KIND IS EVER SET. There is no route that changes it
 afterwards, so this boundary is where a wrong value has to be refused rather than coerced —
 including every value the retired three-valued enums used to accept.
 """
@@ -147,7 +147,7 @@ async def test_create_with_anothers_id_is_a_non_leaking_409(client, db_session) 
     )
     assert resp.status_code == 409
     # Same message as the owned-but-different-parentage arm — existence under another
-    # owner is not distinguishable (ADR-0004).
+    # owner is not distinguishable.
     assert resp.json() == {"error": {"message": "This conversation id is already in use."}}
 
 

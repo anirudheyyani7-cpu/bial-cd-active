@@ -1,10 +1,10 @@
-"""Minimal in-sandbox supervisor for the BIAL sandbox spike (ADR-0014 contract).
+"""Minimal in-sandbox supervisor for the BIAL sandbox spike.
 
 Exposes the supervisor HTTP API the production orchestrator will drive, guarded by a
 per-session bearer token that lives ONLY in this (root) process's environment. Every child
 it spawns (`npm`, `next dev`) runs as an unprivileged UID with a SCRUBBED environment, so the
 untrusted generated app cannot read the token or drive the supervisor — the in-sandbox-RCE
-closure ADR-0014 lines 47-52 require.
+gap this isolation closes.
 
 Routing: an in-container Caddy proxy fronts a single ACA ingress port (8080) and routes
 `/_sup/*` here (127.0.0.1:9000) and everything else to `next dev` (127.0.0.1:3000, with
@@ -17,8 +17,8 @@ Endpoints:
   POST /dev/start  {cmd?:[..], cwd?}              -> {"pid": N}
   GET  /dev/status                                -> {"running","ready","port","exit_code"}
   GET  /dev/logs?since=N                          -> {"lines":[..], "next": M}
-  GET  /dev/compile   -> {"state","errors","reason","connect_generation"}   (R17/R18)
-  GET  /served                                    -> {"served": N, "truncated": bool}   (R14)
+  GET  /dev/compile   -> {"state","errors","reason","connect_generation"}
+  GET  /served                                    -> {"served": N, "truncated": bool}
 
 Injected secret values (the Blob SAS, the app credential, the per-project database DSN) are
 REDACTED from every observable output surface — `/exec` stdout+stderr, each `/dev/logs` line, and
@@ -26,7 +26,7 @@ REDACTED from every observable output surface — `/exec` stdout+stderr, each `/
 what goes in the set. This is the accidental-leak guard, and the real isolation boundary is
 container-scope + TTL (and, for the database, the `REVOKE CONNECT` wall), not redaction.
 
-Written LF-only with pathlib to satisfy the ADR-0015 Windows-built-image rule.
+Written LF-only with pathlib to satisfy the Windows-built-image rule.
 
 WHY THIS EXISTS — readiness is a SERVED RESPONSE, and the spawn guard is about a second server.
 
@@ -101,10 +101,10 @@ _ENV_ALLOW_PREFIXES = ("LC_", "NODE_", "NEXT_", "CHOKIDAR_", "WATCHPACK_", "npm_
 # The SINGLE source of truth for the injected-env contract: (name, description, secret?). ACA
 # injects these BIAL_* vars at provision — the ONLY BIAL_* the child may read. The two views below
 # (child-env allowlist, redaction set) are DERIVED from this table so they can't drift.
-# `description` stays even though `/env/manifest` — its one reader — is gone (U29, dead code:
+# `description` stays even though `/env/manifest` — its one reader — is gone (dead code:
 # nothing ever called it): the table remains the documented contract surface. Listed EXPLICITLY
 # (not via a suffix rule) because several end in `_URL`, which a denylist would wrongly drop; the
-# SAS is a bearer CAPABILITY, not an identity label (C9 §6). Add a row here or the child never
+# SAS is a bearer CAPABILITY, not an identity label. Add a row here or the child never
 # sees the var (fail closed).
 class InjectedEnvVar(NamedTuple):
     name: str
@@ -139,7 +139,7 @@ _INJECTED_ENV: tuple[InjectedEnvVar, ...] = (
 _BIAL_INJECTED_KEYS = tuple(v.name for v in _INJECTED_ENV)
 # The names whose VALUES are secret bearer credentials — redacted from observable output.
 _SECRET_ENV_NAMES = tuple(v.name for v in _INJECTED_ENV if v.secret)
-# A shorter value can't be a real SAS/credential; redacting it would blank ordinary text (KTD-8).
+# A shorter value can't be a real SAS/credential; redacting it would blank ordinary text.
 _MIN_SECRET_LEN = 8
 
 # The exact shape the router will actually route: `/a/` plus the container app's own name, which
@@ -340,7 +340,7 @@ def _dev_port_bound(port: int = _DEV_PORT, timeout: float = _READY_CONNECT_TIMEO
     taken, falls back to the next free port, prints "Ready in" and mints a child Caddy never
     proxies — and it does that whether or not the incumbent has finished compiling. Asking
     "did anything answer within a second?" therefore reads a mid-recompile server as absent and
-    spawns the very duplicate the guard exists to prevent. U1's relaunch attach arm and U2's
+    spawns the very duplicate the guard exists to prevent. The relaunch attach arm and the
     Write-turn boot-at-attach both call `/dev/start` against containers that are ALREADY running
     a dev server, so that window is now walked routinely rather than exotically — and two
     Turbopack processes in a memory-capped ACA container is how `exit_code 137` gets into the
@@ -686,7 +686,7 @@ def _pump(proc: subprocess.Popen[str]) -> None:
                 _Dev.ready = True
 
 
-# --- R17/R18: the dev server's own compile state, read off its HMR socket --------------------
+# --- the dev server's own compile state, read off its HMR socket --------------------
 #
 # WHY A SOCKET AND NOT THE LOG TAIL. `/dev/logs` was the only compile signal the platform had,
 # which means string-matching a human-formatted stream at whatever cadence the control plane
@@ -1113,7 +1113,7 @@ def files(body: FilesBody) -> dict[str, Any]:
         start, end = 1, len(lines)
         if body.view_range:
             start, end = body.view_range
-            if end == -1:  # C2/C7 tool promise: -1 = end of file (not an empty range)
+            if end == -1:  # tool contract: -1 = end of file (not an empty range)
                 end = len(lines)
             start = max(1, start)
         numbered = "\n".join(
@@ -1125,7 +1125,7 @@ def files(body: FilesBody) -> dict[str, Any]:
     if body.action == "str_replace":
         if body.old_str is None or body.new_str is None:
             raise HTTPException(400, "str_replace needs old_str and new_str")
-        # Normalize to LF on both sides (CRLF has burned BIAL twice — ADR-0015).
+        # Normalize to LF on both sides (CRLF has burned BIAL twice).
         text = p.read_text(encoding="utf-8").replace("\r\n", "\n")
         old = body.old_str.replace("\r\n", "\n")
         new = body.new_str.replace("\r\n", "\n")
@@ -1189,11 +1189,11 @@ def dev_start(body: DevStartBody) -> dict[str, Any]:
         body.cmd,
         cwd=cwd,
         # NEXT_PRIVATE_DISABLE_DEV_OVERLAY_UX (Next 16.3+, PR #94346) suppresses BOTH the compile
-        # and the runtime error overlay (ASM15) — defence in depth behind plan one's portal cover
-        # (U12) and client-error arm (U13), which is why this can't land before those do (a
+        # and the runtime error overlay — defence in depth behind plan one's portal cover
+        # and client-error arm, which is why this can't land before those do (a
         # runtime crash would otherwise go silent end-to-end). Set here, as a literal `extra`
         # entry rather than an image env var, so it's baked outside `/workspace/app`: the agent's
-        # write surface (R19) never reaches it, and a restore can't overlay it away.
+        # write surface never reaches it, and a restore can't overlay it away.
         env=_child_env(
             {"PORT": "3000", "HOST": "0.0.0.0", "NEXT_PRIVATE_DISABLE_DEV_OVERLAY_UX": "1"}
         ),
@@ -1258,7 +1258,7 @@ def dev_logs(since: int = 0) -> dict[str, Any]:
 @app.get("/dev/compile", dependencies=[Depends(_auth)])
 def dev_compile() -> dict[str, Any]:
     """Is the app currently compiling, compiled, or broken? — the signal the platform covers
-    the preview frame with (R17/R18).
+    the preview frame with.
 
     `state` is one of `building` | `clean` | `failed` | `unknown`, and `unknown` is a real
     answer, not an error: the consumer has not connected yet, the socket is down between
@@ -1281,7 +1281,7 @@ def dev_compile() -> dict[str, Any]:
         }
 
 
-# --- R14: what the generated app actually served -----------------------------------------
+# --- what the generated app actually served -----------------------------------------
 #
 # Caddy logs to this file from a SITE-LEVEL logger, and `/_sup/*` opts out of it with `log_skip`.
 # The app block is therefore still the only thing recorded — but by exclusion, not because the
@@ -1336,7 +1336,7 @@ def _served_request_count(raw: str) -> int:
 
 @app.get("/served", dependencies=[Depends(_auth)])
 def served() -> dict[str, Any]:
-    """How many requests the generated app has served, excluding control-plane probes (R14).
+    """How many requests the generated app has served, excluding control-plane probes.
 
     A COUNT AND A TIMESTAMP, never a path. The control plane compares successive counts to decide
     whether anyone is using this app; it has no business knowing which pages they visited, and a

@@ -5,12 +5,11 @@ Revises: 0001_enable_extensions
 Create Date: 2026-07-02
 
 The first real tables in the control-plane. `users` fulfils the promise
-`OwnedByUserMixin` already FKs; `refresh_tokens` carries the rotation/reuse-detection
-state denormalized onto each row (family_id + used_at + revoked + absolute_expires_at
-— KD-7, no separate token_families table). Hand-finalized from an autogenerate
-starting point (ADR-0013). `users` is created before `refresh_tokens` for the FK;
-`downgrade()` drops them in reverse. No enums this phase (role/RBAC deferred), so no
-DROP TYPE.
+`OwnedByUserMixin` already FKs; `refresh_tokens` denormalizes rotation/reuse-detection
+state onto each row (family_id, used_at, revoked, absolute_expires_at) instead of a
+separate token_families table. Hand-finalized from an autogenerate starting point;
+`users` is created before `refresh_tokens` for the FK, and `downgrade()` drops them
+in reverse. No enums this phase (role/RBAC deferred), so no DROP TYPE.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ def upgrade() -> None:
     op.create_table(
         "refresh_tokens",
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), nullable=False),
-        # OwnedByUserMixin — the single-tenant ownership boundary (ADR-0004), FK to
+        # OwnedByUserMixin — the single-tenant ownership boundary, FK to
         # users.id with ON DELETE CASCADE (a deleted user's tokens go with it).
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("family_id", sa.Uuid(), nullable=False),

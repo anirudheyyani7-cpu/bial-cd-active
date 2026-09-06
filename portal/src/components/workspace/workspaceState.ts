@@ -22,8 +22,8 @@
  * Three members: start, retry, and go to the project that holds the workspace. There is no restore
  * verb, no rebuild verb and no teardown verb anywhere in the type, so an unknown state, a readiness
  * timeout, a `ready: false` and a missing field all land on "try again" — not because a guard
- * checks something first, but because "try again" and "start" are the only verbs that exist (R5,
- * L3, L7). Enforcement expressed as a type rather than as a rule somebody has to remember.
+ * checks something first, but because "try again" and "start" are the only verbs that exist.
+ * Enforcement expressed as a type rather than as a rule somebody has to remember.
  *
  * BE PRECISE ABOUT WHAT THAT BUYS. It closes the CLIENT half of the recorded data-loss path and
  * only the client half. What `POST /relaunch` does when the word is pressed is the server's
@@ -31,14 +31,15 @@
  * "this component made no restore call" would pass in the very state that loses work — the
  * component was never the thing that could have destroyed it.
  *
- * ═══ THE COPY RULE (R-16) ═══
+ * ═══ THE COPY RULE ═══
  *
  * The pane says what IS, never what is not. The stopped state's headline is "Your app is saved."
  * — full stop. Not "saved but not running", not "stopped". `not running` survives as an INTERNAL
- * state name, here and on the wire; it is never rendered. And R4a is taken literally: no sentence
- * names a duration the platform has not measured, so the starting state says what it is doing and
- * carries no number. If a measured cold-start baseline ever exists it arrives from one constant,
- * in one place, and not by somebody typing "about half a minute" into a string here.
+ * state name, here and on the wire; it is never rendered. And the no-invented-durations rule is
+ * taken literally: no sentence names a duration the platform has not measured, so the starting
+ * state says what it is doing and carries no number. If a measured cold-start baseline ever
+ * exists it arrives from one constant, in one place, and not by somebody typing "about half a
+ * minute" into a string here.
  */
 import type { PreviewLifeState, PreviewState } from '../../utils/buildSessionApi'
 import { assertNever } from '../../utils/assertNever'
@@ -82,9 +83,9 @@ export function isTerminalReading(preview: Pick<PreviewState, 'state' | 'restora
  * How the most recent press of the start control ended — and only the endings that are this map's
  * business. A start that SUCCEEDED produces none of these: the read takes over and reports
  * `alive` on its own. A reclaim refusal produces none either — it opens the hand-over dialog
- * (U5), which is a question, not a state of the workspace.
+ * which is a question, not a state of the workspace.
  *
- * R4b in one type: a start that does not end in a running app says WHICH WAY it ended. Three ways,
+ * A start that does not end in a running app says WHICH WAY it ended. Three ways,
  * three sentences, one shared remedy.
  */
 export type StartOutcome =
@@ -109,7 +110,7 @@ export type WorkspaceAction =
   | { readonly kind: 'retry'; readonly label: string }
   | { readonly kind: 'go-to-project'; readonly label: string; readonly projectId: string }
 
-/** R-16: the person's word for the thing is their app. "Preview" is the developer's word. */
+/** The person's word for the thing is their app. "Preview" is the developer's word. */
 export const LAUNCH_LABEL = 'Launch Application'
 const RETRY_LABEL = 'Try again'
 
@@ -122,7 +123,7 @@ const RETRY: WorkspaceAction = { kind: 'retry', label: RETRY_LABEL }
  * INTERNAL NAMES, NEVER RENDERED. They exist so a test, a log line and a `switch` can talk about a
  * state without quoting its copy — and so the copy can be rewritten without a rename cascade.
  * `not-running` is the one to watch: it is a state name here and on the wire, and it is the exact
- * phrase R-16 forbids on screen.
+ * phrase the copy rule forbids on screen.
  */
 export type WorkspaceStateName =
   | 'never-built'
@@ -208,10 +209,10 @@ export interface WorkspaceInputs {
  *  2. `alive` → running. A live container outranks any stale start outcome, because a start
  *     that reached `alive` succeeded whatever it reported on the way.
  *  3. `starting` → starting. Same reasoning, one step earlier.
- *  4. `slot_taken` → the hand-over states. This outranks a start outcome deliberately: R4b says
- *     another project holding the workspace offers the REMEDY, never a plain retry, and a retry
+ *  4. `slot_taken` → the hand-over states. This outranks a start outcome deliberately: another
+ *     project holding the workspace offers the REMEDY, never a plain retry, and a retry
  *     against an occupied slot can only fail the same way again.
- *  5. a start outcome → its own sentence (R4b).
+ *  5. a start outcome → its own sentence.
  *  6. `unknown` → could not read.
  *  7. `asleep` / `never_built` → resolved against whether anything can be brought back.
  *
@@ -286,7 +287,7 @@ function heldElsewhere(preview: PreviewState): WorkspaceState {
 }
 
 /**
- * R4b — three endings, three sentences, one remedy.
+ * Three endings, three sentences, one remedy.
  *
  * All three offer the plain retry, and that is the whole of what the client may offer: none of
  * them is evidence the container is gone, so none of them may reach a verb that assumes it is.
@@ -342,7 +343,7 @@ function atRest(preview: PreviewState, projectHasSavedBuild: boolean | null): Wo
   if (canRestore === true) {
     return {
       name: 'not-running',
-      // R-16, VERBATIM AND CLIENT-APPROVED. Full stop after "saved". No negation follows it, and
+      // VERBATIM AND CLIENT-APPROVED. Full stop after "saved". No negation follows it, and
       // the sentence beneath carries the rest without one.
       headline: 'Your app is saved.',
       detail: 'It stays running while you work, so you only do this once.',
@@ -367,7 +368,7 @@ function atRest(preview: PreviewState, projectHasSavedBuild: boolean | null): Wo
  * signal we could not interpret.
  */
 /**
- * R4a, TAKEN LITERALLY. This sentence says what is happening and names no number, because nobody
+ * THE NO-INVENTED-DURATIONS RULE, TAKEN LITERALLY. This sentence says what is happening and names no number, because nobody
  * has measured one. The canvas's "about thirty seconds" and the register's "about half a minute"
  * are both deliberately dropped; a duration arrives from a measured constant or not at all.
  *

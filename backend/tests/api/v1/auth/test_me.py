@@ -1,4 +1,4 @@
-"""current_user + GET /auth/me — cookie auth, fail-closed 401s, revocation (U6)."""
+"""current_user + GET /auth/me — cookie auth, fail-closed 401s, revocation."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ async def test_unknown_user_returns_401(client) -> None:
 
 async def test_stale_token_version_returns_401(client, db_session) -> None:
     # Simulate a post-logout revocation: the JWT carries an older token_version
-    # than the user's current value (KD-6).
+    # than the user's current value.
     user = await UserFactory.create(db_session, token_version=1)
     stale = mint_session_jwt(user.id, 0, _TTL)  # minted against version 0
     resp = await client.get("/v1/auth/me", headers=_cookie(stale))
@@ -68,7 +68,7 @@ async def test_me_response_exposes_no_secret_fields(client, db_session) -> None:
     user = await UserFactory.create(db_session, upn="secret-upn@rvaiglobal.com")
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
     resp = await client.get("/v1/auth/me", headers=_cookie(jwt))
-    # `is_admin` (derived hint) + `limits` (effective) + `chat_kinds` (the U16 catalogue) are
+    # `is_admin` (derived hint) + `limits` (effective) + `chat_kinds` (the catalogue) are
     # exposed; upn/token_version stay hidden.
     assert set(resp.json()) == {"id", "email", "display_name", "is_admin", "limits", "chat_kinds"}
 
@@ -108,7 +108,7 @@ async def test_me_limits_reflect_per_user_override(client, db_session) -> None:
 async def test_me_carries_exactly_two_chat_kinds_each_with_a_value_name_and_description(
     client, db_session
 ) -> None:
-    """U16/R73's happy path: the once-cached bootstrap the portal already fetches before first
+    """The happy path: the once-cached bootstrap the portal already fetches before first
     paint carries the WHOLE chat-kind catalogue, so `chatKind.ts` never needs a second fetch —
     and never needs a second, hand-written copy of the wording — to know what Plan and Build
     chats are."""
@@ -154,7 +154,7 @@ def test_auth_openapi_documents_carve_out_models_and_codes() -> None:
     )
     # ...but the nested ProfileLimits IS camelCase (reparented onto CamelModel).
     assert "dailyTokenLimit" in components["ProfileLimits"]["properties"]
-    # ...and the U16 catalogue entry is plain lowercase — no snake/camel seam to cross.
+    # ...and the catalogue entry is plain lowercase — no snake/camel seam to cross.
     assert {"value", "name", "description"} <= set(components["ChatKindInfo"]["properties"])
     # refresh/logout: documented-only 200 model + the {"detail"} error codes.
     assert {"200", "401", "403"} <= set(paths["/v1/auth/refresh"]["post"]["responses"])

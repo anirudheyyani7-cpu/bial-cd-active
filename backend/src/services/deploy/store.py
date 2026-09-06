@@ -214,13 +214,12 @@ async def fail(
 ) -> bool:
     """Write the terminal failure. True iff this call was the one that settled the row.
 
-    NOT EVERY FAILED ROW IS A BROKEN DEPLOY, and the `code` is the only thing that tells
-    them apart (U10/ASM20). The drift re-check's `routed_for_review` settles here too:
-    that deploy did exactly what it should have — it stopped and put the version in front
-    of an administrator — and a reader (or a dashboard) that treats `status = failed` as
-    "something went wrong" will mis-report it. Adding a fourth `DeploymentStatus` instead
-    would move what `uq_deployments_one_in_flight`'s partial index covers, which is a real
-    schema decision this outcome does not need to make."""
+    NOT EVERY FAILED ROW IS A BROKEN DEPLOY, and `code` is the only thing that tells them apart.
+    The drift re-check's `routed_for_review` settles here too: that deploy did exactly what it
+    should — it stopped and put the version in front of an administrator, so a reader (or a
+    dashboard) that treats `status = failed` as "something went wrong" will mis-report it.
+    Adding a fourth `DeploymentStatus` instead would move what `uq_deployments_one_in_flight`'s
+    partial index covers, which is a real schema decision this outcome does not need to make."""
     return await _finish(
         db,
         deployment_id,
@@ -264,36 +263,14 @@ async def _finish(
 
 
 async def unpublish(db: AsyncSession, deployment_id: uuid.UUID, *, at: datetime) -> bool:
-    """Mark a deployment as taken down. True iff this call was the one that set it — a
-    repeat call (or one that lost a race with a concurrent unpublish of the same row)
-    touches zero rows and returns False, which the caller reads as "already unpublished"
-    rather than an error (#113's idempotency requirement). Takes the timestamp as a
-    parameter, rather than `sa.func.now()`, so the caller's response can report the exact
-    value written without a second read.
-
-    NO STATUS GUARD, deliberately: the route resolves the row through `latest_for_app`, so
-    a FAILED attempt whose container was created before the readiness check failed is a
-    legitimate target. Which row is stampable is the caller's decision; this function's job
-    is to make the stamp exactly once.
-
-    THE `unpublished_at IS NULL` PREDICATE IS THE WHOLE CONCURRENCY STORY. The return value,
-    not a prior read of the column, is what tells the caller whether it won — a read is
-    stale the moment it lands, and under audit-first ordering (see the route) the caller's
-    in-memory row is a pre-commit snapshot besides.
-
-    DOES NOT COMMIT — unlike this module's pipeline writers (`_finish`, `heartbeat`, …),
-    which each own their transaction outright. This one is called mid-request from
-    `deploy/router.py`'s `unpublish` route, which sequences several commits of its own and
-    branches on this return value before choosing where the next boundary falls; committing
-    here would take that decision away from the only caller in a position to make it.
-
-    NOT the same reason as `admin/router.py`'s `_transition`, despite the identical shape.
-    That helper is commit-less so its UPDATE lands in the SAME transaction as the audit row
-    that follows it. This one does not share a transaction with any audit write: the route
-    commits its accountability row BEFORE calling Azure (so the trail survives a 504), which
-    means the stamp necessarily lands in a later transaction than the audit. The atomicity
-    that ordering buys is "the audit cannot be lost", not "the two writes are atomic" — and
-    they are deliberately not."""
+    """Mark a deployment as taken down. True iff this call set it — a repeat, or one that lost a
+    race with a concurrent unpublish, touches zero rows and returns False, read as "already
+    unpublished" rather than an error. Takes the timestamp as a parameter so the caller can
+    report the exact value written. NO STATUS GUARD: the route resolves the row via
+    `latest_for_app`, so even a FAILED attempt is a legitimate target, and the RETURN VALUE
+    alone — never a prior read, stale the instant it lands — tells the caller whether it won.
+    DOES NOT COMMIT: it runs mid-request from the router's `unpublish` route, which sequences
+    its own commits and decides the next boundary from this value."""
     result = await db.execute(
         sa.update(Deployment)
         .where(Deployment.id == deployment_id, Deployment.unpublished_at.is_(None))
@@ -319,7 +296,7 @@ async def latest_for_app(db: AsyncSession, *, app_id: uuid.UUID) -> Deployment |
 
 async def in_flight(db: AsyncSession, *, app_id: uuid.UUID) -> uuid.UUID | None:
     """The running deployment id for this app, if any. Used to block unpublish while a
-    deploy is in progress (#113) — letting it through would race the in-flight pipeline's
+    deploy is in progress — letting it through would race the in-flight pipeline's
     own `create_or_update`, which could silently re-publish the app moments after an admin
     tears it down."""
     running: uuid.UUID | None = await db.scalar(

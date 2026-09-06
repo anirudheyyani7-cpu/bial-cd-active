@@ -4,7 +4,7 @@ A super-admin (email allowlist: admin@bial.com) drives the whole review desk the
 portal `AppRegistryPanel` / `AuditDrawer` / feedback panel do:
 
   * walk the lifecycle state machine — approve one app, reject another, disable+re-enable a
-    third — and prove **every gated action wrote an audit row** (accountability, ADR-0005);
+    third — and prove **every gated action wrote an audit row** (accountability);
   * read the per-app audit trail back through the admin API, the way `AuditDrawer` does;
   * read the cross-user feedback stream, newest-first, each row carrying the author email.
 
@@ -17,11 +17,11 @@ Three concerns, one file (mirrors `test_journey_build_deploy_render.py`'s green+
     the stream newest-first with each item's author email. PASSES today.
   * `test_admin_apps_list_exposes_owner_username_for_spa` — RED. `AppRegistryPanel` renders the
     Owner cell from `app.ownerUsername`, but `AdminAppOut` projects only `ownerId` (a raw uuid),
-    so the cell is always the `—` fallback. CAPTURES BUG (Journey 2.1).
+    so the cell is always the `—` fallback. CAPTURES BUG.
   * `test_admin_audit_events_carry_spa_fields` — RED. `AuditDrawer` keys each row on `ev._id`,
     times it via `ev.at`, names the actor via `ev.username`, and reads `ev.count` top-level, but
     `AuditEventOut` emits `id`/`createdAt`/`actorId` and buries `count` under `detail`. Every row
-    renders with an undefined key, a `—` time, and `anonymous`. CAPTURES BUG (Journey 3.1–3.4).
+    renders with an undefined key, a `—` time, and `anonymous`. CAPTURES BUG.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def _pending_seed(**extra: object) -> dict[str, object]:
 
 
 def _stage_bundle(store: FakeStorage, row: AppRegistry) -> None:
-    """Seed the immutable submission blob approve's R11 head-check verifies."""
+    """Seed the immutable submission blob approve's head-check verifies."""
     assert row.source_submission_id is not None
     store.objects[submission_key(row.id, row.source_submission_id)] = b"# v2 git bundle\ngov"
 
@@ -101,7 +101,7 @@ async def _audited_action(db: AsyncSession, app_id: object, action: str) -> Audi
 async def test_admin_governance_walk_is_audited(client, app, db_session) -> None:
     """approve -> reject -> disable -> enable; each transition writes its audit row.
 
-    This is the accountability contract (ADR-0005): a permission-gated action MUST leave a
+    This is the accountability contract: a permission-gated action MUST leave a
     durable audit row naming the actor. The admin audit API also reads those rows back (the
     data the `AuditDrawer` renders — even though it renders them under the wrong keys, see the
     RED test below).
@@ -133,7 +133,7 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
         approved_commit_sha=_SHA,
     )
 
-    # 1. approve (pending -> approved) — pins EXACTLY the reviewed submission (D5).
+    # 1. approve (pending -> approved) — pins EXACTLY the reviewed submission.
     approved = await client.post(
         f"/v1/admin/apps/{to_approve.id}/approve",
         json={"submissionId": str(to_approve.source_submission_id)},
@@ -143,8 +143,8 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
     assert approved.json() == {"appId": str(to_approve.id), "status": "approved"}
     assert (await _audited_action(db_session, to_approve.id, "approve")).actor_id == admin.id
 
-    # 2. reject (pending -> rejected) — stores the note, which since U13 must clear the
-    #    20-character floor (P3: a rejection is the only thing that travels back).
+    # 2. reject (pending -> rejected) — stores the note, which must clear the
+    #    20-character floor (a rejection is the only thing that travels back).
     rejected = await client.post(
         f"/v1/admin/apps/{to_reject.id}/reject",
         json={"note": "Not yet — this needs a named data owner first."},
@@ -238,7 +238,7 @@ async def test_admin_audit_events_carry_spa_fields(client, app, db_session) -> N
     row = await _owned_app(db_session, owner, login_required=False, **_pending_seed())
 
     # Two audited actions so the drawer has rows to render, including a count-bearing
-    # one. Approve verifies the reviewed blob exists (R11), so stage it in a wired store.
+    # one. Approve verifies the reviewed blob exists, so stage it in a wired store.
     store = FakeStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
     # Both storage seams to ONE store: routes that document a 503 take the None-tolerant

@@ -4,39 +4,25 @@ Revision ID: 0023_drop_data_records
 Revises: 0022_project_database_registry
 Create Date: 2026-07-21
 
-The end of the shared data plane. Every app's data now lives in the project's OWN
-PostgreSQL database (ADR-0028, registry added in 0022), so the shared `data_records`
-JSONB table — and the `WHERE app_id` predicate that was its only isolation control —
-has no reader and no writer left. `clear_data_tokens` existed solely to gate the
-admin clear-data op over that table and goes with it. The four `app_registry` counter
-columns (`data_count` / `data_bytes` / `file_count` / `file_bytes`) were the per-app
-quota ledger for the same plane, and for the `app_files` model retired in 0017.
+WHY THIS EXISTS
+Every app's data now lives in the project's OWN PostgreSQL database, so the shared
+`data_records` JSONB table, its `WHERE app_id` isolation predicate, `clear_data_tokens`
+(which existed only to gate the admin clear-data op over it), and the four `app_registry`
+per-app quota-ledger counter columns have no reader or writer left. Consumers were
+removed FIRST, in the change that ships this revision.
 
-Consumers were removed FIRST, in the change that ships this revision: the records
-router and its schemas, the `X-App-Key` chain, the app-serving quota helper, the
-`the_purge` governance op, the admin data-summary / clear-data endpoints, and the ORM
-models (so `Base.metadata` and the schema never disagree).
-
-DESTRUCTIVE: `upgrade` deletes real rows and real columns. A pre-drop safety gate —
-a row-count check, or an export of `data_records` per `app_id` for any app whose owner
-still needs its contents — MUST run in the target environment BEFORE this is applied
-there. `downgrade` recreates the STRUCTURE (both tables, their indexes, and the four
-columns with their zero defaults) but NOT the data: restored counters read 0 and the
-restored tables are empty.
+DESTRUCTIVE: `upgrade` deletes real rows and real columns. A pre-drop safety gate — a
+row-count check, or an export of `data_records` per `app_id` for any app whose owner
+still needs its contents — MUST run in the target environment BEFORE this is applied.
+`downgrade` recreates the STRUCTURE only: restored counters read 0, restored tables are empty.
 
 RELEASE ORDER IS A THREE-STEP WINDOW: `0022` -> new image -> `0023`. `0022` must already be
-applied before the new image serves (build-start provisioning fail-firsts on the missing
-registry table when `APP_DB__*` is configured); this migration (`0023`) must run only after
-the old image is gone. Deploy the reader-free image BETWEEN the two: applying `0023` while
-the previous image still serves is a CONTROL-PLANE-WIDE 500, not a records-API 500 — the
-admin app-listing projection SELECTs `data_count`/`data_bytes` on every admin page load. See
-`docs/engineering/deployment/DEPLOYMENT-FACTS.md`.
+applied before the new image serves; this migration must run only after the old image is
+gone — applying it while the previous image still serves is a CONTROL-PLANE-WIDE 500,
+because the admin app-listing projection SELECTs the counter columns on every page load.
 
-Mirrors 0011_data_records and 0013_clear_data_token in reverse (their upgrades are this
-downgrade, their downgrades are this upgrade), plus the four columns 0010_app_registry
-created. Those three revisions stay exactly where they are — 0012 and 0014 name 0011 and
-0013 as `down_revision`. Hand-finalized (ADR-0013).
-"""
+Mirrors 0011_data_records, 0013_clear_data_token, and the four columns 0010_app_registry created
+— 0012 and 0014 name 0011 and 0013 as `down_revision`, so those three stay exactly put."""
 
 from __future__ import annotations
 

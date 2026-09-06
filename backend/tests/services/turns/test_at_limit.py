@@ -132,7 +132,7 @@ async def _head_in_recovery_slot(store: FakeStorage) -> str | None:
 async def test_the_at_limit_sentence_says_what_happened_when_it_comes_back_and_who_to_ask(
     store: FakeStorage,
 ) -> None:
-    """★ AE18. The three facts a citizen needs, and the platform used to supply none of them
+    """The three facts a citizen needs, and the platform used to supply none of them
     properly: what happened, when they can carry on, and a real address to ask for more.
 
     "Contact your administrator" was the previous answer to the third, and it names a ROLE. A
@@ -159,7 +159,8 @@ async def test_the_at_limit_sentence_says_what_happened_when_it_comes_back_and_w
 async def test_the_message_carries_no_file_path_command_library_or_framework_term(
     store: FakeStorage,
 ) -> None:
-    """R31's testable half, applied to the RENDERED sentence rather than to the template.
+    """The half of the no-developer-jargon rule that checks the RENDERED sentence, not the
+    template.
 
     `test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon` already sweeps the copy
     module, but it can only see the template — and the one substitution this message makes comes
@@ -292,7 +293,7 @@ async def test_a_recovery_write_that_fails_still_tells_the_citizen_and_alarms_it
 async def test_a_refused_promotion_never_claims_the_work_is_safe(
     store: FakeStorage, alarms: list[tuple[str, dict[str, object]]]
 ) -> None:
-    """A tree with no ancestry to the copy on record is DIVERTED by U3's guard, not promoted.
+    """A tree with no ancestry to the copy on record is DIVERTED by the guard, not promoted.
 
     The bytes survive under the divert prefix, but what a restore would hand this citizen is still
     the older tree — so "nothing you did today is lost" would be false in the most damaging way
@@ -525,7 +526,7 @@ def test_a_configured_address_is_stripped_rather_than_trusted_verbatim() -> None
 
 
 # =============================================================================
-# U13 / R91 — the same securing path, carrying a second sentence
+# The same securing path, carrying a second sentence
 # =============================================================================
 #
 # The per-run spend bound has to end a turn exactly the way the daily budget does: copy taken

@@ -1,8 +1,8 @@
 /**
  * The seam's own tests. What they pin, in order of how expensive the failure is:
  *
- *  - the same fixture converts identically whether it arrived live or on reload (AE43);
- *  - a step carries LABEL AND STATE and nothing else (R36's wall, asserted on the object);
+ *  - the same fixture converts identically whether it arrived live or on reload;
+ *  - a step carries LABEL AND STATE and nothing else (a wall, asserted on the object);
  *  - a duplicate id throws here rather than silently losing a turn inside the runtime;
  *  - the predicate that decides whether the library mints an id of its own.
  */

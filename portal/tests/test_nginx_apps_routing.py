@@ -1,4 +1,4 @@
-"""Behavioural tests for the portal edge's apps router (plan units U2 and U3).
+"""Behavioural tests for the portal edge's apps router.
 
 Every test here drives a real nginx with the real `portal/nginx.conf` against a stub app
 container. The sibling Vitest suite pins the config's shape; this pins what it DOES.
@@ -56,7 +56,7 @@ def _host(body: str) -> str:
 
 
 # --------------------------------------------------------------------------------------
-# U2 — the keyed arm
+# the keyed arm
 # --------------------------------------------------------------------------------------
 
 
@@ -77,7 +77,7 @@ def test_config_passes_nginx_t_after_substitution(router: Router) -> None:
 
 @pytest.mark.parametrize("key", [SBX_KEY, PUB_KEY])
 def test_keyed_request_reaches_its_app_with_the_prefix_intact(router: Router, key: str) -> None:
-    """AE1. The prefix is real end to end: the router forwards it unchanged rather than
+    """The prefix is real end to end: the router forwards it unchanged rather than
     stripping it, because the app is configured to live at it."""
     status, _, body = router.request(f"/a/{key}/dashboard?tab=1")
     assert status == 200
@@ -96,7 +96,7 @@ def test_upstream_host_is_the_container_not_the_browser_host(router: Router) -> 
 
 
 def test_post_body_and_method_survive_the_hop(router: Router) -> None:
-    """R6 — method and body are preserved, not just the path."""
+    """Method and body are preserved, not just the path."""
     status, _, body = router.request(
         f"/a/{SBX_KEY}/submit",
         method="POST",
@@ -119,7 +119,7 @@ def test_post_body_and_method_survive_the_hop(router: Router) -> None:
     ],
 )
 def test_a_malformed_key_is_404_and_never_another_app(router: Router, bad: str) -> None:
-    """R8. The narrow match is what turns a mistyped key into a 404 rather than a DNS lookup
+    """The narrow match is what turns a mistyped key into a 404 rather than a DNS lookup
     for an attacker-named host — and, just as importantly, it must not fall through to the
     keyless arm, which would resolve it from a cookie and serve SOMEONE ELSE'S app under the
     address the person typed."""
@@ -137,7 +137,7 @@ def test_dot_dot_normalizes_before_location_matching(router: Router) -> None:
 
 
 def test_unknown_but_wellformed_key_is_404_and_names_no_upstream(router: Router) -> None:
-    """AE3. The router holds no registry, so an unknown key fails as a DNS MISS. Left alone
+    """The router holds no registry, so an unknown key fails as a DNS MISS. Left alone
     that is a 502 whose body and headers can name the composed upstream and hand anyone who
     reaches the gateway the environment's naming convention."""
     status, headers, body = router.request(f"/a/{GHOST_KEY}/")
@@ -160,7 +160,7 @@ def test_the_404_page_has_a_body_and_a_way_back(router: Router) -> None:
 
 @pytest.mark.parametrize("target", ["/_sup/health", "/_sup", f"/a/{SBX_KEY}/_sup/health"])
 def test_supervisor_surface_is_refused_at_the_router(router: Router, target: str) -> None:
-    """The supervisor is bearer-guarded downstream, but this plan claims as an invariant that
+    """The supervisor is bearer-guarded downstream, but this router claims as an invariant that
     it is unreachable from a browser, and an invariant should be enforced where it is claimed
     rather than depend on a check designed for a different threat."""
     status, _, body = router.request(target, headers={"Cookie": f"bial_app={SBX_KEY}"})
@@ -169,7 +169,7 @@ def test_supervisor_surface_is_refused_at_the_router(router: Router, target: str
 
 
 def test_websocket_upgrade_is_answered_101_on_the_keyed_arm(router: Router) -> None:
-    """AE6. Live reload rides this. Without `proxy_http_version 1.1` in THIS server block nginx
+    """Live reload rides this. Without `proxy_http_version 1.1` in THIS server block nginx
     defaults to HTTP/1.0 and answers the upgrade as an ordinary request — with the `Upgrade`
     header still forwarded, which is why only a real 101 proves anything."""
     status, head = router.websocket(f"/a/{SBX_KEY}/_next/webpack-hmr")
@@ -187,7 +187,7 @@ def test_apps_site_proxies_nothing_to_the_backend(router: Router) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# U2 — the portal site must be unaffected (regression)
+# the portal site must be unaffected (regression)
 # --------------------------------------------------------------------------------------
 
 
@@ -215,12 +215,12 @@ def test_apps_host_does_not_serve_the_spa(router: Router) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# U3 — the keyless arm
+# the keyless arm
 # --------------------------------------------------------------------------------------
 
 
 def test_keyless_request_is_prefixed_not_merely_routed(router: Router) -> None:
-    """AE2, and the one assertion this whole arm exists for.
+    """The one assertion this whole arm exists for.
 
     Under `basePath` Next gates every route behind the prefix, route handlers included. A
     request proxied to the right container as `/api/items` is answered with the framework's own
@@ -343,7 +343,7 @@ def test_a_signal_naming_a_vanished_app_is_404_not_502(router: Router) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# U3 — the fallback cookie
+# the fallback cookie
 # --------------------------------------------------------------------------------------
 
 
@@ -435,7 +435,7 @@ def test_the_keyless_arm_never_writes_the_cookie(router: Router) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# U2 — the boot guard. A malformed input must be a REFUSED BOOT, not a config that loads.
+# The boot guard. A malformed input must be a REFUSED BOOT, not a config that loads.
 # --------------------------------------------------------------------------------------
 
 _GOOD_ENV = {
@@ -490,7 +490,7 @@ def test_the_good_environment_actually_boots(images: None, docker_network: str) 
 
 
 # --------------------------------------------------------------------------------------
-# U2 — the operator's only way to tell the two 404s apart
+# The operator's only way to tell the two 404s apart
 # --------------------------------------------------------------------------------------
 
 

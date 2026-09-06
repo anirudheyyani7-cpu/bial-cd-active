@@ -1,4 +1,4 @@
-"""The classification review agent (U5): schema discipline, settings, prompt split, and
+"""The classification review agent: schema discipline, settings, prompt split, and
 the snapshot-only toolset — all under scripted models, never a live call."""
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def test_field_order_is_evidence_then_reason_then_verdict() -> None:
 
 
 def test_unanswered_with_a_reason_is_accepted() -> None:
-    # R5's abstention shape: a returned `unanswered` carrying its reason is valid.
+    # Abstention shape: a returned `unanswered` carrying its reason is valid.
     output = ReviewOutput.model_validate(
         {
             "completeness": "complete",

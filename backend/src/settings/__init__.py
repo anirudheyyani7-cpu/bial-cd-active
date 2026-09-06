@@ -1,4 +1,4 @@
-"""Role-scoped application settings (U23/U24, ADR-0029 §9).
+"""Role-scoped application settings.
 
 ONE FILE PER PROCESS. To find out what a process needs in order to boot, open the file named after
 it — `api.py` or `worker.py` — and read it top to bottom. `core.py` holds only what is required of

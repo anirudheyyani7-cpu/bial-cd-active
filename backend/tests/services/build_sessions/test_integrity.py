@@ -1,4 +1,4 @@
-"""The workspace-integrity probes: the baseline-identity check and the agent watermark (U6, U9).
+"""The workspace-integrity probes: the baseline-identity check and the agent watermark.
 
 WHY A FILE OF ITS OWN. Both probes are one exec plus a pure parse, and the parse is where all the
 edge cases live — a root commit that is not the seeded template, a file the baseline never held, a
@@ -140,7 +140,7 @@ async def test_the_probe_asks_about_the_root_route_and_nothing_else() -> None:
 
 
 # =============================================================================
-# the watermark (U9)
+# the watermark
 # =============================================================================
 
 
@@ -170,7 +170,7 @@ def test_the_watermark_ignores_the_files_the_toolchain_rewrites_by_itself() -> N
     """★ `next dev` regenerates `next-env.d.ts` and normalises `tsconfig.json` on every boot —
     that is why `FRAMEWORK_CHURN` exists at all. Left in, "the agent changed something" is true
     on essentially every pass whether it did or not, and a watermark that is always true is not a
-    watermark: U9's re-check would fire on every red verdict rather than on the stale ones.
+    watermark: the re-check would fire on every red verdict rather than on the stale ones.
 
     Mutation check: remove either prune and this goes red."""
     assert "-name next-env.d.ts -prune" in _CHANGED_SINCE_GUARDED

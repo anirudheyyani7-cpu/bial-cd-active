@@ -1,35 +1,26 @@
 """Row operations on `classification_reviews` — the claim-or-return, and the terminal write.
 
-The claim is the interesting one, and it is a different animal from the deploy store's:
-that claim serializes ATTEMPTS (append-only rows, a partial index as the one-in-flight
-guard), while this one settles which single row an app carries and whether the caller is
-the one who must now go run a review. Three outcomes, resolved in Postgres so a control
-plane restart or a concurrent dialog cannot double-run:
+WHY THIS EXISTS
+This claim differs from the deploy store's: that one serializes ATTEMPTS as append-only
+rows behind a partial index; this one settles which single row an app carries. Three
+outcomes, resolved in Postgres so a restart or a concurrent dialog cannot double-run:
 
-* no row, or a row stamped a DIFFERENT version → the row is created / replaced wholesale,
-  marked running, attempt reset to 1 — the caller claimed a run (R6a: a new claim replaces
-  what was there, whatever it was);
-* a FAILED row for the SAME version → re-claimed, attempt incremented — R19's "ask again
-  without re-saving". The store counts faithfully and caps nothing: the three-runs-per-
-  version ceiling is service policy, and policy enforced in two places is policy enforced
-  in neither;
-* a RUNNING or COMPLETE row for the SAME version → returned untouched, `claimed=False`
-  (R6: re-opening the form for an unchanged version returns the stored answers without
-  running again; a run already in flight is never doubled).
+* no row, or a different version → replaced wholesale, attempt reset to 1;
+* a FAILED row, same version → re-claimed, attempt incremented (the form can ask again
+  without re-saving; the three-runs-per-version ceiling is service policy, enforced in
+  exactly one place);
+* a RUNNING or COMPLETE row, same version → returned untouched, `claimed=False` (an
+  unchanged version returns the stored answers without re-running; a live run is never
+  doubled).
 
-THE TERMINAL WRITES ARE GUARDED ON THE VERSION AND THE ATTEMPT, NOT JUST ON `running` —
-and that is the load-bearing difference from `deploy/store._finish`. A deployment attempt
-is its own row, so `id + status` identifies it; here the row SURVIVES being taken over (a
-newer claim rewrites it in place), so a zombie runner's `review_id` still points at a live
-row. Its stale `head_sha` (the version moved) or stale `attempt` (a re-claim of the same
-version) is what makes its late write touch zero rows instead of dressing a new claim in
-an old run's verdicts.
+Terminal writes are guarded on the version AND the attempt, not just `running`: unlike
+`deploy/store._finish`, this row SURVIVES a takeover (a newer claim rewrites it in
+place), so a stale `head_sha` or `attempt` is what makes a zombie runner's late write
+touch zero rows instead of overwriting a newer claim's verdicts.
 
-Every write commits its own work: the runner is a detached task that outlives its request
-(the deploy service's shape), so it opens short sessions of its own rather than borrowing
-one it does not own. And every function returns plain scalars or a frozen dataclass,
-NEVER a live ORM instance across the commit boundary — the repo-documented MissingGreenlet
-hazard (prefer-returning-over-refresh).
+Every write commits on its own — the runner is a detached task with its own session.
+Every function returns plain scalars or a frozen dataclass, never a live ORM instance
+across the commit boundary, to avoid a MissingGreenlet after commit.
 """
 
 from __future__ import annotations
@@ -119,7 +110,7 @@ def _fresh_run_values(*, head_sha: str, user_id: uuid.UUID) -> dict[str, Any]:
 
     `started_at` is renewed because the wall-clock ceiling is measured from it, and the
     verdict/failure/usage fields are cleared because the durable history lives in the
-    per-run audit records (R6a), not here — a re-claimed row carrying its predecessor's
+    per-run audit records, not here — a re-claimed row carrying its predecessor's
     failure text would read as the CURRENT run's state, which it is not."""
     return {
         "user_id": user_id,
@@ -225,7 +216,7 @@ async def _try_claim(
         await db.commit()
         return _record(replaced)
 
-    # 3. Same version, FAILED → re-claim it (R19: ask again without re-saving). The
+    # 3. Same version, FAILED → re-claim it (ask again without re-saving). The
     #    status predicate is the race guard — of two concurrent retries, the second
     #    finds the row RUNNING and falls through to the stored-row read.
     reclaimed = (
@@ -299,18 +290,14 @@ async def fail(
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
 ) -> bool:
-    """Write the terminal FAILED — the bucket, its (already-redacted) detail, and what
-    the run spent learning nothing. True iff this call was the one that settled the row.
+    """Write the terminal FAILED, its (already-redacted) detail, and what the run spent
+    learning nothing. True iff this call settled the row.
 
-    A failure is stored ON the row (stamped with the version it attempted, R6a) so the
-    form can say what happened and the gate can route — but it is stored as a BUCKET,
-    never as an answer set: `verdicts` stays NULL, because "the check couldn't run" must
-    never be readable as six No's (R19). THE ONE EXCEPTION is the Tier A floor (P8's
-    second obligation, written by U6's runner): when the model never returned but the
-    credential scan holds a high-confidence hit, the runner passes a `verdicts`/
-    `evidence` pair carrying credentials=yes-from-the-scan while the other five stay
-    `unanswered` — still never readable as six No's, and the row's FAILED status still
-    routes (R20)."""
+    Stored ON the row as a BUCKET, never an answer set: `verdicts` stays NULL, because
+    "the check couldn't run" must never be readable as six No's. THE ONE EXCEPTION is
+    the Tier A floor: when the model never returned but the credential scan holds a
+    high-confidence hit, the runner passes credentials=yes-from-the-scan with the other
+    five `unanswered` — still never six No's."""
     return await _finish(
         db,
         review_id=review_id,
@@ -380,8 +367,8 @@ async def get_for_app(db: AsyncSession, *, app_id: uuid.UUID) -> ReviewRecord | 
     """The app's one review row, frozen, or None if no review was ever claimed.
 
     The record carries its `head_sha` and the CALLER compares it to the version in hand —
-    a stored row for an older version must never be read as the answer for a newer one
-    (R6), and the store cannot know which version the caller is asking about."""
+    a stored row for an older version must never be read as the answer for a newer one,
+    and the store cannot know which version the caller is asking about."""
     row = (
         await db.execute(sa.select(*_RECORD_COLUMNS).where(ClassificationReview.app_id == app_id))
     ).one_or_none()

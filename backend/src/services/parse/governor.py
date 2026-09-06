@@ -1,4 +1,4 @@
-"""Killable process governor for untrusted-file parsing (R26, bound 4).
+"""Killable process governor for untrusted-file parsing.
 
 A thread cannot preempt a CPU-bound C-extension parse (openpyxl/lxml) or contain its
 OOM, so each parse runs in a FRESH `multiprocessing` process (spawn — never fork the

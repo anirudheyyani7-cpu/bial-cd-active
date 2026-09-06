@@ -53,8 +53,8 @@ describe('buildSessionEvents — dispatch (C7 §3)', () => {
   })
 
   it('drops a retired `log` frame (U29 — the server can no longer emit one) without throwing, and a known frame still lands right after it (liveness)', () => {
-    // FLIPPED: `log` used to be a recognized C7 member; U29 removed it end to end because no
-    // production BRAIN path had ever emitted one. The wire-level consumer must now treat it
+    // FLIPPED: `log` used to be a recognized envelope member; it was removed end to end because no
+    // production orchestrator path had ever emitted one. The wire-level consumer must now treat it
     // exactly like any other unrecognized `type` — dropped defensively, never a throw — and a
     // frame arriving right after it must still dispatch normally (this is not a dead transport).
     const { fake, envelopes, errors } = setup()

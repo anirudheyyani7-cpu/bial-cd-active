@@ -1,4 +1,4 @@
-"""`token_usage.kind` against the REAL migrated schema (U15).
+"""`token_usage.kind` against the REAL migrated schema.
 
 The test DB carries the column from `alembic upgrade head` (revision
 0031_token_usage_kind), so the shape assertions exercise the actual DDL — a native
@@ -53,7 +53,7 @@ async def test_kind_lands_not_null_with_the_build_default(db_session) -> None:
             )
         )
     ).one()
-    # The kind is the NATIVE enum (ADR-0008), not a varchar with a check…
+    # The kind is the NATIVE enum, not a varchar with a check…
     assert row.data_type == "USER-DEFINED"
     assert row.udt_name == "token_usage_kind"
     # …and it is NOT NULL with `build` as the database-side default: `build` is the
@@ -93,13 +93,13 @@ async def test_uniqueness_is_user_date_kind_and_the_old_constraint_is_gone(db_se
     ).all()
     # The upsert's conflict target widened: one row per user per IST day PER KIND. The
     # old two-column uniqueness must be GONE — were both present, a same-day review row
-    # would violate the old one and the U15 second row could never exist.
+    # would violate the old one and the second row could never exist.
     assert {row.conname for row in rows} == {"uq_token_usage_user_date_kind"}
     assert rows[0].condef == "UNIQUE (user_id, usage_date, kind)"
 
 
 async def test_a_second_same_day_row_exists_per_kind_and_only_per_kind(db_session) -> None:
-    # The widened constraint holds exactly what U15 needs: same user + same day is fine
+    # The widened constraint holds exactly what is needed: same user + same day is fine
     # across kinds (two rows), and still ONE row within a kind (the fold's target).
     user = await UserFactory.create(db_session)
     await record_usage(db_session, user.id, input_tokens=10, output_tokens=1)

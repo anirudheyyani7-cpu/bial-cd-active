@@ -1,5 +1,5 @@
 /**
- * THE LIBRARY'S ATTACHMENT ADAPTER, OVER THIS PROJECT'S OWN PIPELINE (plan 002, U5).
+ * THE LIBRARY'S ATTACHMENT ADAPTER, OVER THIS PROJECT'S OWN PIPELINE.
  *
  * ═══ WHY THIS EXISTS AT ALL ═══
  *
@@ -27,10 +27,10 @@
  * ═══ `send` IS NOT ON THIS PROJECT'S SEND PATH, AND THAT IS DELIBERATE ═══
  *
  * `composer.send()` sets `_text = ""` BEFORE it awaits anything and restores it only if the
- * ATTACHMENT tasks throw — never if the append itself does. That is precisely the defect that
- * destroyed a citizen's typed message and their staged files one day before this plan was written
- * (`docs/solutions/logic-errors/refused-send-destroys-composer-message-2026-09-01.md`), and this
- * plan deliberately makes a send wait LONGER, which widens exactly that window.
+ * ATTACHMENT tasks throw — never if the append itself does. That is precisely the defect that has
+ * already destroyed a citizen's typed message and their staged files, and OUR validation plus OUR
+ * base64 read (the `add` above) run long enough to widen exactly that window if `composer.send()`
+ * ever drove them.
  *
  * So the composer's own send is not used. `ComposerBox` reads the staged attachments off the
  * runtime at press time, performs the send itself, and clears only once the server has accepted.
@@ -126,7 +126,7 @@ export function createAttachmentAdapter({ accept, staged, onRefused }: Attachmen
    * fan out with `Promise.all(files.map(…))`, so every file in one gesture starts its `add` in the
    * SAME tick. `staged()` cannot see any of them, because the runtime appends an attachment only
    * once `add` has resolved. So eight files dropped at once each validated against an empty list
-   * and all eight went through — the cap bypass R57 records, reintroduced by the gap between a
+   * and all eight went through — a cap bypass reintroduced by the gap between a
    * synchronous check and an asynchronous read.
    *
    * Counting what THIS adapter has accepted closes it, because the accept and the count happen in

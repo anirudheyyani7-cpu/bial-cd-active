@@ -23,7 +23,7 @@ from pydantic import (
 
 class FoundryConfig(BaseModel):
     """Azure AI Foundry (Claude) model access — the ONLY sanctioned path to the model; the public
-    Anthropic API is never used (R11 / AE5). Populated from one `FOUNDRY__*` env block, mirroring
+    Anthropic API is never used. Populated from one `FOUNDRY__*` env block, mirroring
     `services/auth/config.py`.
 
     `extra="forbid"` fails a mistyped nested key at startup; `SecretStr` masks the key; required

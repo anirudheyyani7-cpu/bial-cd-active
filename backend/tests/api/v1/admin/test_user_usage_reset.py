@@ -97,7 +97,7 @@ async def test_reset_does_not_touch_other_days(client, db_session) -> None:
 async def test_reset_deletes_only_the_build_row_review_attribution_survives(
     client, db_session
 ) -> None:
-    # U15: the reset exists to let the citizen BUILD again today, and the gate reads
+    # The reset exists to let the citizen BUILD again today, and the gate reads
     # build spend only — so the same-day `review` row is left alone. Deleting it would
     # change nothing the cap measures while erasing the attribution record that is the
     # whole point of metering review cost.
@@ -145,7 +145,7 @@ async def test_reset_on_a_user_with_no_usage_is_idempotent_not_a_conflict(
 
 
 async def test_super_admin_can_reset_their_own_usage(client, db_session) -> None:
-    # Unlike deactivate (AE6), resetting usage carries no self/peer-admin guard.
+    # Unlike deactivate, resetting usage carries no self/peer-admin guard.
     admin = await UserFactory.create(db_session, email="admin@bial.com")
     await record_usage(db_session, admin.id, input_tokens=10, output_tokens=5)
     await db_session.flush()

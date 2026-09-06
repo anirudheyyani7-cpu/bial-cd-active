@@ -44,7 +44,7 @@ APP_CONTAINER_SAS_TTL: Final = MAX_SIGNED_URL_TTL
 # tells the two apart by error code: the transient name-lock gets a bounded retry (a re-provision
 # shortly after a project delete would otherwise fail the fail-first birth path), a real
 # already-exists is idempotent success. Azurite does not model the name-lock, so the retry path is
-# exercised only against real Azure (D7); the unit test drives it with a ResourceExistsError
+# exercised only against real Azure; the unit test drives it with a ResourceExistsError
 # carrying this error code.
 _CONTAINER_BEING_DELETED: Final = "ContainerBeingDeleted"
 _RECREATE_MAX_ATTEMPTS: Final = 6
@@ -58,7 +58,7 @@ DEPLOY_POLICY_PREFIX: Final = "deploy-"
 
 
 def _mint_deploy_policy_id() -> str:
-    """A fresh id for one deploy credential's stored access policy. Secure-random (ADR-0006), not
+    """A fresh id for one deploy credential's stored access policy. Secure-random, not
     a counter or a timestamp: this is the handle a leaked SAS is revoked BY, so two mints must
     never be able to land on the same id."""
     return f"{DEPLOY_POLICY_PREFIX}{secrets.token_hex(8)}"
@@ -94,7 +94,7 @@ class AppContainerStore:
     def container_url(self, app_id: uuid.UUID, *, base_url: str | None = None) -> str:
         """The app's container URL, `{base}/app-{app_id}`. `base_url` defaults to the signing
         account's `account_url`; callers that must hand a *sandbox-reachable* host to the running
-        app pass the sandbox-facing Blob base instead (KTD-2 — a container SAS is signed by account
+        app pass the sandbox-facing Blob base instead (a container SAS is signed by account
         *name*, not host, so the same SAS is valid against either host)."""
         base = (base_url if base_url is not None else self._config.account_url).rstrip("/")
         return f"{base}/{container_name(app_id)}"

@@ -1,6 +1,6 @@
 """IS THIS APP LIVE? — the question, answered in one place.
 
-"Live" was settled on the #158 call and it is a deployment fact, not a lifecycle one:
+"Live" is settled by one exact definition, and it is a deployment fact, not a lifecycle one:
 
 >   we have live = deployed / published — if the application is published and has url we
 >   will show that status
@@ -13,8 +13,8 @@ them would tell a citizen their app is live when it may never have been deployed
 THREE SURFACES ASK THIS, and they must not drift:
 
   * the marketplace catalog — an app is IN it because it is live (`marketplace/router.py`)
-  * the projects list's status column (#158 §10)
-  * the dashboard's "In production" count (#158 §1)
+  * the projects list's status column
+  * the dashboard's "In production" count
 
 A count computed over a different predicate than the rows it describes is the failure the
 marketplace docstring already argues against — page numbers you can click and find empty.
@@ -67,7 +67,7 @@ def live_app_ids(*, owner_user_id: uuid.UUID | None = None) -> sa.Select[Any]:
     re-deriving it.
 
     `owner_user_id`, WHEN GIVEN, NARROWS THE COLLAPSE ITSELF rather than being applied by the
-    caller afterward — and that placement is the whole fix for a real bug (#173 round 4).
+    caller afterward — and that placement is the whole fix for a real bug.
     `list_projects`/`project_counts` used to build this UNSCOPED and filter by `user.id` in a
     join outside it; the `DISTINCT ON` collapse below has no way to know that predicate exists,
     so it evaluates over every deployment row the PLATFORM has ever recorded before the caller's
@@ -94,7 +94,7 @@ def live_app_ids(*, owner_user_id: uuid.UUID | None = None) -> sa.Select[Any]:
         # plan cannot prove `status = $1` implies `ix_deployments_success_collapse`'s
         # `status = 'succeeded'` predicate. It drops the index and Seq Scans a table that
         # grows with every deploy attempt the platform has ever made. Measured at 5.2k apps
-        # / 52k rows: 13-15ms for executions 1-5, then 27-30ms (#147 round 3).
+        # / 52k rows: 13-15ms for executions 1-5, then 27-30ms.
         #
         # `literal_execute` rather than `sa.text`: identical SQL, but the value stays the
         # ENUM, so renaming SUCCEEDED moves the predicate with it instead of leaving a

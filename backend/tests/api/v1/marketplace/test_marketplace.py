@@ -1,8 +1,8 @@
-"""The marketplace catalog and its keyword search (#145).
+"""The marketplace catalog and its keyword search.
 
 The load-bearing tests here are the two that no other suite in this repo can have: that a
 read DELIBERATELY crosses the ownership boundary, and that crossing it exposes exactly four
-fields and nothing else. Every other list is scoped by `user_id` (ADR-0004), so "user B can
+fields and nothing else. Every other list is scoped by `user_id`, so "user B can
 see user A's row" is normally a bug; here it is the feature, and the cost of getting the
 second half wrong is leaking one citizen's work to another.
 
@@ -97,7 +97,7 @@ async def _redeploy(
     `_published_app` mints exactly one row per app, and every one of the original 16 tests
     used it — so no test represented an app that had been redeployed, which is an ordinary
     thing the append-only table explicitly supports. That gap is exactly what let both the
-    duplicate-listing and unpublish-bypass bugs ship green (#147 review).
+    duplicate-listing and unpublish-bypass bugs ship green.
     """
     row = Deployment(
         app_id=prior.app_id,
@@ -166,7 +166,7 @@ async def test_the_entry_exposes_four_fields_and_no_more(app, client, db_session
 
 
 async def test_an_unpublished_app_leaves_the_catalog(app, client, db_session) -> None:
-    """`unpublished_at` is a SECOND AXIS from `status` (#113): a taken-down app keeps its
+    """`unpublished_at` is a SECOND AXIS from `status`: a taken-down app keeps its
     `succeeded` status, so a catalog filtering on status alone would keep listing an app an
     admin deliberately pulled.
 
@@ -186,7 +186,7 @@ async def test_an_unpublished_app_leaves_the_catalog(app, client, db_session) ->
 
 
 async def test_a_redeployed_app_is_listed_once(app, client, db_session) -> None:
-    """The duplicate-listing blocker (#147 review). `deployments` is APPEND-ONLY — a
+    """The duplicate-listing blocker. `deployments` is APPEND-ONLY — a
     redeploy adds a SECOND succeeded row for the same app, it does not replace the first —
     and the URL is identical across both because `published_app_name` derives the
     container name from the immutable `app_id`. Before the collapse in `_live_catalog`,
@@ -212,7 +212,7 @@ async def test_a_redeployed_app_is_listed_once(app, client, db_session) -> None:
 
 
 async def test_unpublish_survives_a_redeploy(app, client, db_session) -> None:
-    """The unpublish-bypass blocker (#147 review). Admin unpublish stamps `unpublished_at`
+    """The unpublish-bypass blocker. Admin unpublish stamps `unpublished_at`
     on the NEWEST deployment row for the app (`deploy/router.py`'s `unpublish`, via
     `store.latest_for_app`) — so on a redeployed app, only the second row carries the
     stamp. A catalog that filtered a flat `unpublished_at IS NULL` across every row would
@@ -401,7 +401,7 @@ async def test_a_successful_republish_brings_the_app_back(app, client, db_sessio
         # `standing=True` the row is excluded by the other predicate, so reverting
         # `notin_((DISABLED, REJECTED))` to `!= DISABLED` would stay green and the receipt
         # would be lost. Review suggested re-parametrising this case rather than adding one;
-        # that would have dropped the very receipt it was meant to keep (#147 round 3).
+        # that would have dropped the very receipt it was meant to keep.
         ("rejected-standing-cleared", AppStatus.REJECTED, False, False),
         ("disabled", AppStatus.DISABLED, False, False),
     ],
@@ -409,9 +409,9 @@ async def test_a_successful_republish_brings_the_app_back(app, client, db_sessio
 async def test_the_catalog_lists_by_app_status(
     app, client, db_session, case: str, app_status: AppStatus, standing: bool, listed: bool
 ) -> None:
-    """EVERY lifecycle state, not just the one the predicate was written for (#147 round 3).
+    """EVERY lifecycle state, not just the one the predicate was written for.
 
-    The round-2 version of this test seeded `DISABLED` alone, which hid two things at once:
+    An earlier version of this test seeded `DISABLED` alone, which hid two things at once:
     that DRAFT is the ORDINARY catalog member (one-click deploy never writes `status` —
     `deployment.py`: "a self-deployed app is still `draft`"), and that REJECTED was being
     advertised org-wide with nothing to stop it.
@@ -471,7 +471,7 @@ async def test_a_second_takedown_after_a_republish_still_removes_the_app(
 
     Every other test in this file stamps at most one `unpublished_at` per app, so the oldest
     and newest stamps are the same row and the `.desc()` in `last_unpublished` is doing no
-    observable work — a surviving mutant (#147 round 3). This is the case that separates
+    observable work — a surviving mutant. This is the case that separates
     them: taken down, republished (which legitimately re-lists it), then taken down AGAIN.
 
     Reachable rather than contrived: unpublish -> redeploy is the documented recovery path,
@@ -558,7 +558,7 @@ async def test_search_ranks_the_best_description_match_first(app, client, db_ses
 async def test_an_app_without_a_description_is_unsearchable_but_still_listed(
     app, client, db_session
 ) -> None:
-    """The knowingly-accepted consequence of not generating descriptions (#145): an app with
+    """The knowingly-accepted consequence of not generating descriptions: an app with
     none cannot be FOUND by typing, but it is still IN the catalog. Both halves matter — the
     second is what stops a missing description hiding an app entirely."""
     headers = await _signed_in(db_session, "viewer@rvaiglobal.com")
@@ -781,7 +781,7 @@ async def test_a_q_containing_a_nul_byte_is_a_422_not_a_500(app, client, db_sess
     authenticated endpoint, while this route's `responses=` declares a 422 for a bad `q`.
 
     Fixed in the SHARED `clean_search`, so `/v1/projects` and the admin roster stop 500ing on
-    the same input too (#147 round 3 — pre-existing, flagged here because this is the route
+    the same input too (pre-existing, flagged here because this is the route
     that documents the contract it broke).
 
     Mutation receipt: drop the NUL-byte check from `clean_search` and this goes red with a 500."""
@@ -813,7 +813,7 @@ async def test_the_success_collapse_predicate_renders_a_literal(app, client, db_
     switches to a generic plan, which cannot prove `status = $1` implies
     `ix_deployments_success_collapse`'s `status = 'succeeded'` predicate — and silently stops
     using the index the 0034 migration exists to provide. Measured at 5.2k apps / 52k rows:
-    13-15ms for executions 1-5, then 27-30ms (#147 round 3).
+    13-15ms for executions 1-5, then 27-30ms.
 
     Asserting on the COMPILED SQL rather than on a plan keeps this a unit test: reproducing the
     plan flip needs a seeded table and either `plan_cache_mode` forced or six executions on one

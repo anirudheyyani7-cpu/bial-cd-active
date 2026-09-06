@@ -1,4 +1,4 @@
-"""The admin unpublish kill-switch (#113): `POST /v1/admin/apps/{app_id}/unpublish`.
+"""The admin unpublish kill-switch: `POST /v1/admin/apps/{app_id}/unpublish`.
 
 No real Azure anywhere — `PublishedAppRemover` is a `Protocol`
 (`services/deploy/aca_publish.py`) exactly so a fake can stand in for it, the same
@@ -238,7 +238,7 @@ async def test_happy_path_unpublishes_and_audits(app, client, db_session) -> Non
     assert row is not None
     assert row.unpublished_at is not None
 
-    # ONE row, not two. The pre-ARM `unpublish` row already carries the whole ADR-0005
+    # ONE row, not two. The pre-ARM `unpublish` row already carries the whole audit
     # payload; "and it worked" is durable in `unpublished_at` and the log line, so a second
     # success row would only double the volume of the most-read resource type.
     # Pins router.py's single `append_audit` on the success path.
@@ -316,7 +316,7 @@ async def test_an_unobserved_teardown_leaves_unpublished_at_unset_and_retry_succ
     assert row.unpublished_at is None
 
     # The ATTEMPT is still on record, because it was committed before Azure was called. This
-    # is the accountability contract (ADR-0005): an admin who pressed the button and got a 503
+    # is the accountability contract: an admin who pressed the button and got a 503
     # must not leave an empty audit log behind — that was the gap where a repeated failing
     # episode was invisible.
     # Pins router.py: move the `append_audit(action="unpublish")` + `db.commit()` back below
@@ -510,7 +510,7 @@ async def test_app_not_found_is_404(app, client, db_session) -> None:
 
 
 async def test_unpublish_store_write_does_not_commit_on_its_own(db_session) -> None:
-    """Review finding on #120: `store.unpublish` used to `db.commit()` on its own, which
+    """`store.unpublish` used to `db.commit()` on its own, which
     took the transaction boundary away from the route that owns it.
 
     Note what this does and does not claim NOW. The original fix was described as making the
@@ -722,7 +722,7 @@ async def test_publishing_unconfigured_is_a_503_that_does_not_say_try_again(
 
 
 async def test_the_citizen_read_surface_reports_the_takedown(app, client, db_session) -> None:
-    """#2 of the re-review: `unpublished_at` was write-only on the wire. The POST response
+    """`unpublished_at` was write-only on the wire. The POST response
     carried it, but `GET /v1/projects/{id}/deployment` — the one surface the portal actually
     polls — did not, so a killed app kept rendering as live with a clickable dead URL.
 
@@ -815,7 +815,7 @@ async def test_the_audit_names_the_container_even_when_the_row_never_recorded_on
 async def test_settling_a_running_row_clears_a_takedown_stamp_it_raced_into(
     db_session: AsyncSession,
 ) -> None:
-    """#3 of the re-review: the kill-switch jamming on a live app.
+    """The kill-switch jamming on a live app.
 
     `unpublish` resolves through `latest_for_app`, which has no status predicate, so a
     takedown landing in the window after `in_flight` returned None can stamp the NEW running

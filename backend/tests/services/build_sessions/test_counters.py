@@ -1,17 +1,18 @@
-"""U25 — the outcomes this plan's success criteria name, counted where an operator can read them.
+"""The operational outcomes that must be counted where an operator can read them.
 
-R32. There is no metrics system in this deployment, so an outcome is observable only if the
+WHY THIS EXISTS
+There is no metrics system in this deployment, so an outcome is observable only if the
 platform writes it down. After a week in production, "did the verdict block a false claim, how
 often did we restore, and did any turn fail to reach a durable copy" has to be answerable from
 this table alone — that is the acceptance condition, and it is what these tests pin.
 
 THE TWO THAT MATTER MOST:
 
-* `test_a_counter_that_did_not_exist_at_migration_time_still_writes` — the companion plan emits
+* `test_a_counter_that_did_not_exist_at_migration_time_still_writes` — another feature emits
   three counters of its own and ships no migration. A counter that needs a schema change to exist
   is a counter that does not get added.
 * `test_a_broken_counter_never_fails_the_thing_it_is_counting` — every call site is on a path
-  doing something else. This whole plan exists because a platform lied about an app; a metric that
+  doing something else. These counters exist because a platform lied about an app; a metric that
   turns into a second incident is the wrong lesson to draw from it.
 """
 
@@ -82,7 +83,7 @@ async def test_each_counter_increments_on_its_own_event_and_no_other(
 async def test_a_counter_that_did_not_exist_at_migration_time_still_writes(
     db_session: AsyncSession,
 ) -> None:
-    """★ THE PROPERTY THE SHAPE EXISTS FOR. The companion plan emits three adoption counters at
+    """★ THE PROPERTY THE SHAPE EXISTS FOR. Another feature emits three adoption counters at
     the tool boundary and ships no migration of its own; with a column per counter, each of those
     would need one, and a counter that needs a schema change is a counter that does not get added.
 
@@ -95,7 +96,7 @@ async def test_a_counter_that_did_not_exist_at_migration_time_still_writes(
 
 
 async def test_the_per_build_token_counter_reads_as_one_number(db_session: AsyncSession) -> None:
-    """★ R32 asks for "a counter to watch", and a number that takes a join and a judgement call to
+    """★ THE COUNTER MUST BE WATCHABLE: a number that takes a join and a judgement call to
     read is not one — it will not be watched. One query, one value, for one build."""
     await count(HarnessCounter.BUILD_TOKENS, value=1200, build_id=BUILD)
     await count(HarnessCounter.BUILD_TOKENS, value=800, build_id=BUILD)
@@ -129,7 +130,7 @@ async def test_a_broken_counter_never_fails_the_thing_it_is_counting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ Every call site is on a path doing something else — finishing a turn, refusing a claim,
-    restoring a workspace. This whole plan exists because a platform lied about an app; a metric
+    restoring a workspace. These counters exist because a platform lied about an app; a metric
     that turns into a second incident is the wrong lesson to draw from it.
 
     Mutation check: narrow the `except` to a database error and this goes red, because the thing
@@ -158,7 +159,7 @@ def test_every_counter_name_is_distinct() -> None:
     assert len(values) == len(set(values))
 
 
-# --- U15 / R103: the turn's own attach, the seam the explicit start control cannot see ------
+# --- The turn's own attach, the seam the explicit start control cannot see ------
 #
 # `relaunch_preview` counts one way a container comes up; a turn counts the other, and the two
 # never fire on the same path (the relaunch route is `relaunch_preview`'s only caller). These
@@ -254,15 +255,14 @@ async def test_a_turn_that_brings_a_container_up_is_one_attempt_that_reached(
     _sandbox_configured: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE HAPPY PATH R103 IS ABOUT — a container that comes up on the way to answering.
+    """★ THE HAPPY PATH: a container that comes up on the way to answering. One attempt row and one
+    reached row, both carrying the app id so an operator can read the ratio back per app, and NO
+    duration row: the turn's two start arms have different budgets, and the explicit start control
+    asks that duration question separately.
 
-    One attempt row and one reached row, both carrying the app id so Plan E can read the ratio
-    back per app, and NO duration row: the turn's two start arms have different budgets and a
-    mean over both would describe neither (R102 is the explicit control's question).
-
-    Mutation check: drop the `not session.attached` guard on the attempt emit and the joining
-    turn in the next test files a second attempt; drop the `started_a_container` guard on the
-    numerator and that same turn reports a start it never made."""
+    Mutation check: drop the `not session.attached` guard on the attempt emit and the joining turn
+    in the next test files a second attempt; drop the `started_a_container` guard on the numerator
+    and that same turn reports a start it never made."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     user = await UserFactory.create(db_session, email="u15a@rvaiglobal.com")
     project = await ProjectFactory.create(db_session, user.id)
@@ -298,15 +298,15 @@ async def test_a_turn_that_joins_a_container_already_serving_started_nothing(
     _sandbox_configured: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ THE ARM THAT WOULD HAVE RUINED THE RATIO. `_attach_sandbox` runs on EVERY turn of
-    EVERY kind, and on most of them the container is already up — the second message in a chat,
-    and every message after it. Those turns start nothing.
+    """★ THE ARM THAT WOULD HAVE RUINED THE RATIO. `_attach_sandbox` runs on EVERY turn of EVERY
+    kind, and on most of them the container is already up — the second message in a chat, and
+    every message after it. Those turns start nothing.
 
-    Counting them would make the denominator "turns" rather than "starts" and hand R103 a ratio
-    near 1 that means nothing, which is the failure this gate exists to prevent. It is also the
-    plan's third outcome arriving by a different mechanism than expected: not a turn joining an
-    in-flight start, but one joining a start that already finished. Either way it is neither an
-    attempt nor a success, and it is excluded from both."""
+    Counting them would make the denominator "turns" rather than "starts" and hand the ratio this
+    counter feeds a value near 1 that means nothing — the failure this gate exists to prevent.
+    This is also an outcome arriving differently than expected: not a turn joining an in-flight
+    start, but one joining a start that already finished. Either way it is neither an attempt nor
+    a success, and it is excluded from both."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     user = await UserFactory.create(db_session, email="u15b@rvaiglobal.com")
     project = await ProjectFactory.create(db_session, user.id)
@@ -338,17 +338,14 @@ async def test_a_turn_that_joins_a_container_already_serving_started_nothing(
 async def test_a_container_that_never_serves_is_an_attempt_that_did_not_reach(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ THE GAP THE COUNTER EXISTS TO EXPOSE, and the reason the numerator is not the handle's
-    own `ready` flag.
-
-    A framable URL is not a running app. `SandboxHandle.ready` is hard-coded False on both birth
+    """★ THE GAP THE COUNTER EXISTS TO EXPOSE: the numerator is not the handle's own `ready` flag.
+    A framable URL is not a running app — `SandboxHandle.ready` is hard-coded False on both birth
     arms and, on the attach arm, is a `/dev/status` snapshot taken BEFORE the turn's own
-    `dev_start` — so reading it here would report a near-zero success rate and make R103 measure
-    the container's birth rather than the app. What the turn actually learns is the watcher's
-    first SERVED poll, and a container that never serves one produces no numerator row at all.
-
-    Mutation check: count on `state.sandbox.handle.ready` instead and this stays green while the
-    happy-path test above goes red — which is why both exist."""
+    `dev_start`, so reading it here would measure the container's birth rather than the app. What
+    the turn actually learns is the watcher's first SERVED poll; a container that never serves one
+    produces no numerator row at all. Mutation check: count on `state.sandbox.handle.ready`
+    instead and this stays green while the happy-path test above goes red — which is why both
+    exist."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     never_serves = _ServesAfter(negative_polls=10_000)
     state = _state_watching(never_serves, started_a_container=True)

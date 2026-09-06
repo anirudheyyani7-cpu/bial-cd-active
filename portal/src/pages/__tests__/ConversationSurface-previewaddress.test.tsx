@@ -1,9 +1,9 @@
 /**
- * CHARACTERIZATION — the preview address, exactly as it resolves today (Plan A, U1).
+ * CHARACTERIZATION — the preview address, exactly as it resolves today.
  *
  * WHAT THIS FILE IS FOR. The workspace-shell extraction moves the pane out of this page: the
- * three-source precedence becomes a named resolver called from above the chat (U2), and the iframe
- * becomes a shell-mounted host whose identity is that address plus its reload nonce (U4). Both
+ * three-source precedence becomes a named resolver called from above the chat, and the iframe
+ * becomes a shell-mounted host whose identity is that address plus its reload nonce. Both
  * moves are claimed to be behaviour-preserving, and a suite that only exercised the happy path
  * would let a resolver that "tidied" the two predicates into one pass unnoticed. So this file pins
  * the address AS IT IS — including the asymmetry that looks like a bug and is not.
@@ -21,14 +21,19 @@
  *
  * WHAT IS DELIBERATELY NOT RE-PINNED HERE, because it is already pinned once and two assertions of
  * one fact drift apart:
- *  - the composer draft across a panel hide/show — `ConversationSurface-panel.test.jsx:57`;
- *  - the scroll position across the same cycle — `:86`, the one that actually discriminates a
+ *  - the composer draft and the scroll position across a hide/show cycle — this surface owns no
+ *    collapse any more, so both hold at the shell:
+ *    `components/workspace/__tests__/ProjectWorkspace.test.tsx`, "keeps the rail MOUNTED while
+ *    collapsed, so nothing inside it is discarded", the one that actually discriminates a
  *    CSS-hide from an unmount;
- *  - a send refused while a turn runs — `ConversationSurface-composer.test.jsx:179`,
- *    `ConversationSurface-session.test.jsx:316,338`;
- *  - cross-project isolation of the build gate — `ConversationSurface-session.test.jsx:543`;
+ *  - a send refused while a turn runs — `ConversationSurface-composer.test.jsx` ("Enter is refused
+ *    by handleSend itself, not by an attribute") and `ConversationSurface-session.test.jsx` ("a
+ *    send is REFUSED while the build runs");
+ *  - cross-project isolation of the build gate — `ConversationSurface-session.test.jsx`, "a Send
+ *    in a DIFFERENT project does NOT tear down another project's live build";
  *  - the reload nonce's two legitimate bumps, a turn ending over a live preview and the manual
- *    Reload — `components/__tests__/LivePreview.test.jsx:355` and `:375`.
+ *    Reload — `components/__tests__/LivePreview.test.jsx`, "re-requests the SAME url after a
+ *    repair turn ends" and "remounts the frame when the shell asks it to reload".
  *
  * The pane is the REAL LivePreview, so the address is read off the actual iframe rather than off a
  * stubbed marker; a thin recording wrapper captures the props on the way through, because the
@@ -101,7 +106,7 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
   fetchPreviewState: (...a: unknown[]) => h.fetchPreviewState(...a),
   fetchSaveState: (...a: unknown[]) => h.fetchSaveState(...a),
   // `StartAppControl.tsx` imports `relaunchPreview` DIRECTLY from this module rather than through
-  // the injected C3 client — it predates the client and was never moved onto it (Plan F, U3). This
+  // the injected client — it predates the client and was never moved onto it. This
   // suite's vehicle for a relaunched URL is that control now (`RelaunchAffordance` is gone), so its
   // call has to land on the same `h.relaunchPreview` the fixtures below already prime.
   relaunchPreview: (...a: unknown[]) => h.relaunchPreview(...a),
@@ -142,7 +147,7 @@ afterEach(() => cleanup())
 /**
  * Bring up a page whose RELAUNCH arm is live and stamped to `projectId`.
  *
- * RE-POINTED (Plan F, U3/U4). The old vehicle clicked a "Relaunch" button `LivePreview` rendered
+ * RE-POINTED. The old vehicle clicked a "Relaunch" button `LivePreview` rendered
  * inside its own terminal placeholder, fed by `handleRelaunch` — which stamped `sessionProjectRef`
  * as a side effect of the click itself. All of it is gone now: `RelaunchAffordance` and its four
  * render sites went first, `handleRelaunch` had no caller after that because `onRelaunch` was a
@@ -310,8 +315,9 @@ describe('BuilderPage — the app-scoped props are NOT narrowed to the open chat
 
 describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else', () => {
   it('re-rendering at the same address keeps the SAME iframe node and does not re-issue its src', async () => {
-    // AE4's mechanism, at the page level. `LivePreview` pins that a same-key render keeps the node
-    // (`LivePreview.test.jsx:143`); what is unproven without this is that the PAGE keeps handing it
+    // This pins the same-key-render mechanism at the page level: `LivePreview` pins that a same-key render keeps the node
+    // (`LivePreview.test.jsx`, "re-rendering with the SAME previewUrl but a changed prop keeps the
+    // SAME DOM node"); what is unproven without this is that the PAGE keeps handing it
     // the same address across an ordinary re-render — the property the shell extraction must not
     // lose, since after it the pane outlives the route entirely.
     const view = await relaunchFramedAt('chat-A', 'pA')

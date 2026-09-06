@@ -1,6 +1,7 @@
 """What EVERY process needs, and the one env-source config they all share.
 
-Split out of `src/config.py` by U23 (ADR-0029 §9). The old single `Settings` carried every field
+WHY THIS EXISTS
+Split out of `src/config.py`. The old single `Settings` carried every field
 every subsystem might need, so a worker importing it had to satisfy the union of everything —
 and the natural operator response to that is to narrow `ENVIRONMENT=development` to dodge the
 production gates. That is the most dangerous misconfiguration this platform has: with object
@@ -34,7 +35,7 @@ from src.services.sandbox.base import base_path_for
 # The single env-source contract, shared verbatim by every profile.
 #
 # `SettingsConfigDict` rather than a bare dict literal ON PURPOSE: it is a TypedDict, so all four
-# type gates (ADR-0003) catch a misspelled config key that a plain dict would silently swallow.
+# type gates catch a misspelled config key that a plain dict would silently swallow.
 #
 # Declared here and INHERITED by each role manifest, which is safe only because every manifest has
 # exactly ONE base. pydantic merges `model_config` along the MRO with a plain left-to-right
@@ -68,7 +69,7 @@ class CoreSettings(BaseSettings):
 
     Required settings carry NO default, so pydantic-settings raises at construction when they are
     missing — the process fails at startup in every environment rather than booting in dev and
-    exploding in prod (`.claude/rules/fail-first-python.md`). `ENVIRONMENT` is a closed `Literal`
+    exploding in prod. `ENVIRONMENT` is a closed `Literal`
     for the same reason: a default would silently disable every `is_production` gate.
     """
 
@@ -82,7 +83,7 @@ class CoreSettings(BaseSettings):
     DATABASE_URL: SecretStr
 
     # How DATABASE_URL authenticates. "password" (default) = the password embedded in the DSN
-    # (local Docker Postgres, tests, and — per ADR-0027 as amended — the deployment too).
+    # (local Docker Postgres, tests, and the deployment too).
     # "entra" = Azure Flexible Server with Microsoft Entra: no static password, a short-lived
     # token fetched per new connection via managed identity (db/base.py::attach_entra_token).
     # The default is correct everywhere it is used, so it stays a plain knob with no prod gate.

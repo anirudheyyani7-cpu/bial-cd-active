@@ -1,15 +1,14 @@
 /**
  * THE publishing surface. One chip beside the project name, one server-computed field,
- * one sentence and at most one action (R37, R38, R39).
+ * one sentence and at most one action.
  *
  * IT REPLACES THREE CONTROLS THAT COULD DISAGREE — the Publish card, the Review & approval
  * card and the builder's toolbar button — and, more to the point, it replaces the thing
  * that made them disagree: each of them re-decided, in the browser, something the server
  * had already decided. That mirror has produced the same class of bug four times in this
- * one feature (`docs/solutions/ui-bugs/publish-dialog-scored-unmerged-answers-2026-08-21.md`),
- * most recently promising "this can publish automatically" beside a Publish button moments
- * before the server routed the app to an administrator. Nine labels were nine assertions
- * about server behaviour. They now have one source.
+ * one feature, most recently promising "this can publish automatically" beside a Publish
+ * button moments before the server routed the app to an administrator. Nine labels were
+ * nine assertions about server behaviour. They now have one source.
  *
  * SO THE ONE RULE HERE IS: `presentationFor` switches on `publishState` and on NOTHING
  * ELSE. No status, no `unpublishedAt`, no failure code, no approval lineage, no pin. The
@@ -23,7 +22,7 @@
  * publishing directly where the button said "Send update for review" reads as the better
  * outcome, not as a contradiction.
  *
- * ── THE CONTRACT PLAN F INHERITS ────────────────────────────────────────────────────
+ * ── THE CONTRACT THE FUTURE WORKSPACE HEADER INHERITS ───────────────────────────────
  * Stated here so the workspace header can re-parent this component without reading a line
  * of its internals:
  *   · It takes a project id and nothing else. It reads no router state, no rail mode and
@@ -37,8 +36,9 @@
  *     rather than merely tolerated. There are two mount SITES today — this project page and
  *     the builder's pane toolbar — but they are sibling routes under one Outlet, so only
  *     ever one of them is live.
- *   · Plan F's only obligation is to place it beside the project name and drop the mount
- *     that dies with the builder page. Nothing here changes when F collapses the screens.
+ *   · The future workspace header's only obligation is to place it beside the project name
+ *     and drop the mount that dies with the builder page. Nothing here changes when the
+ *     project page and the builder page collapse into one screen.
  * ────────────────────────────────────────────────────────────────────────────────────
  *
  * WHERE THE COPY COMES FROM. Nine sentences are the design canvas's own, from its
@@ -64,7 +64,7 @@ import {
 } from '../utils/publishPresentation'
 import type { DeployOutcome, PublishState } from '../utils/deployApi'
 
-/* THE PRESENTATION LAYER MOVED TO `utils/publishPresentation.ts` (plan 002, U4). What lived
+/* THE PRESENTATION LAYER MOVED TO `utils/publishPresentation.ts`. What lived
    here — the action labels, the state-to-words map with all of its copy reasoning, the version
    rows and the date format — is now shared with the rail's APP STATUS panel, which the boards
    make the fuller of the two surfaces. Neither renders the other; both read the same decision,
@@ -283,7 +283,7 @@ export default function PublishStatusChip({
             data-testid="publish-chip"
             data-publish-state={state}
             // The state is IN the accessible name, so a screen reader user learns it
-            // without opening anything — R39's "visible without opening the chip" is not
+            // without opening anything — "visible without opening the chip" is not
             // a sighted-only guarantee.
             aria-label={`Publish status: ${presentation.label}`}
             // A 999px PILL WITH ITS OWN COLOUR PAIR AND A LEADING DOT, per the board that is
@@ -354,8 +354,8 @@ export default function PublishStatusChip({
                   type="button"
                   data-testid="publish-save-and-publish"
                   onClick={() => void doSaveAndPublish()}
-                  // R64/D1: marked unavailable, never hard-disabled. Disabling a control
-                  // that has focus blurs it to `document.body` (KTD-2), which is how a
+                  // Marked unavailable, never hard-disabled. Disabling a control
+                  // that has focus blurs it to `document.body`, which is how a
                   // keyboard user loses their place mid-flight. `doSaveAndPublish` is the
                   // enforcement; this is affordance only.
                   aria-disabled={saving}
@@ -398,7 +398,7 @@ export default function PublishStatusChip({
           )}
 
           {/* AT MOST ONE ACTION. A state with nothing to do renders NO button — not a
-              disabled one. R64's "mark unavailable rather than switch off" governs a
+              disabled one. "Mark unavailable rather than switch off" governs a
               control that is temporarily away and will come back, which is a different
               thing from a state where nothing can be done. */}
           {presentation.action !== null && unsaved === null && !confirmingWithdraw && (

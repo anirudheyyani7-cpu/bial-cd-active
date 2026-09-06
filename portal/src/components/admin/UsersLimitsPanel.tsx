@@ -225,7 +225,7 @@ function EditModal({ user, defaults, onClose, onSaved, onToast }: EditModalProps
           />
         </div>
 
-        {/* Propagation reality (docs/solutions: per-user-limits daily-vs-context). The two
+        {/* Propagation reality: the two
             per-conversation numbers now propagate DIFFERENTLY and the difference is the user's
             to know about: the hard stop is read from the database on every send, so it bites
             immediately; the warning threshold rides the profile the browser cached at sign-in,
@@ -293,7 +293,7 @@ interface UsersKeysetPage extends KeysetPage<UserLimitsOut> {
  * caller is always a super-admin) is surfaced as a MISSING action on an ACTIVE
  * super-admin's row — a visible affordance, not a 403 discovered after the click.
  * A SUSPENDED super-admin is the one exception: role is derived at read time from
- * the env allowlist (ADR-0005), so that state is reachable with no 403 bypass (e.g.
+ * the env allowlist, so that state is reachable with no 403 bypass (e.g.
  * suspended as a citizen, later added to the allowlist), and the server's
  * reactivate_user has no super-admin guard — so suspended wins over the guard and a
  * live Reactivate is offered instead of a permanent "Protected" dead end
@@ -455,7 +455,7 @@ export default function UsersLimitsPanel({ onToast }: UsersLimitsPanelProps) {
   // Idempotent server-side (no 409) — resetting an already-zero day is a no-op — so
   // unlike deactivate/reactivate there is no "conflicting state" branch to reconcile.
   //
-  // instanceof ApiError narrowing (PR #93 review finding 5) extended here too, past
+  // instanceof ApiError narrowing extended here too, past
   // this action's original merge: release/1.5.0 added onResetUsage with the same
   // duck-typed `e?.status === 404` the review flagged on deactivate/reactivate.
   // Leaving this one site unnarrowed while the other two were fixed would be worse

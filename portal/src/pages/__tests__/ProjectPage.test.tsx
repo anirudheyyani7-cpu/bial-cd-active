@@ -84,7 +84,7 @@ vi.mock('../../utils/buildSessionApi', async (importOriginal) => ({
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 // Nothing on this page frames a preview; the stub keeps a transitive import from mounting one.
 vi.mock('../../components/LivePreview', () => ({ default: () => null }))
-// THE BADGE'S WORDS COME FROM THE SERVER NOW (U16): `chatKindFor` reads the kind catalogue off
+// THE BADGE'S WORDS COME FROM THE SERVER NOW: `chatKindFor` reads the kind catalogue off
 // the cached bootstrap profile, so a suite that does not stand one up gets the honest fallback
 // ("Chat") on every row and every badge assertion below fails for a reason that has nothing to
 // do with this page. The words are DELIBERATELY the product ones here — these tests assert what
@@ -163,9 +163,9 @@ describe('ProjectPage — the composer is unconditional', () => {
 
     expect(await screen.findByTestId('rail-app-status')).toBeTruthy()
     // The composer is present whether or not the project has an app — the exact regression that
-    // caused the reverted app-first fold. (F6: no idea-starter cards inside a dedicated project.)
+    // caused the reverted app-first fold. (No idea-starter cards inside a dedicated project.)
     expect(screen.getByPlaceholderText(/Describe the change you need/i)).toBeTruthy()
-    // The description block — a read view with an Edit button (U7: the pop-up editor).
+    // The description block — a read view with an Edit button (the pop-up editor).
     expect(within(screen.getByTestId('description-rail')).getByRole('button', { name: /edit/i })).toBeTruthy()
     // The passive-artefact affordances stay gone.
     expect(screen.queryByRole('button', { name: /view app/i })).toBeNull()
@@ -454,7 +454,9 @@ describe('ProjectPage — the project-open mark (U4; R104, R105)', () => {
   }
 
   it('marks the project open ONCE under StrictMode’s double mount', async () => {
-    // R105's denominator, in the mode the app actually runs in during development.
+    // The project-open count that feeds the project-to-chat drop-off ratio tracked for
+    // observability (`1 − project_opened_chat / project_opened`), in the mode the app
+    // actually runs in during development.
     //
     // TWO THINGS PROTECT THIS AND THEY ARE NOT THE SAME THING, which is worth saying so nobody
     // reads a green here as proof of the guard: the load effect's own `active` flag already
@@ -488,7 +490,8 @@ describe('ProjectPage — the project-open mark (U4; R104, R105)', () => {
   })
 
   it('★ starts no first-view clock for a project with nothing built', async () => {
-    // The project is still OPENED — it belongs in R105's denominator — but it has no app to
+    // The project is still OPENED — it belongs on the project-opened side of the drop-off
+    // ratio (`1 − project_opened_chat / project_opened`) — but it has no app to
     // first-see, so a later reveal must record nothing. Emitting for it would make this number
     // and the sandbox-first number answer different questions.
     h.getProject.mockResolvedValue(makeProject({ id: 'p-noapp', appId: null }))

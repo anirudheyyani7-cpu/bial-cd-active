@@ -1,11 +1,11 @@
-"""The review runner (U6), end to end against the real store, real Postgres, and
+"""The review runner, end to end against the real store, real Postgres, and
 scripted models.
 
 What is under test is the ORDER and the OUTCOMES: the scan runs first and its hits reach
 the prompt (never a value), a truncation short-circuits at the model seam instead of
 burning the agent's own retries, every failure lands in its taxonomy bucket, the Tier A
 floor stands exactly when it should, the throwaway extraction is gone on every exit path,
-the citizen's build budget is untouched, and every terminal run leaves a P7 audit row.
+the citizen's build budget is untouched, and every terminal run leaves an audit row.
 
 The extract seam is faked (it materializes a real tree into whatever `cache_root` the
 runner hands it, and records that root) so the tests can assert on the run's OWN
@@ -249,7 +249,7 @@ async def _audit_rows(db, *, app_id) -> list[AuditLog]:
 
 
 def _detail(row: AuditLog) -> dict[str, Any]:
-    """The audit row's detail, narrowed — every P7 row must carry one."""
+    """The audit row's detail, narrowed — every row must carry one."""
     detail = row.detail
     assert detail is not None
     return detail
@@ -319,7 +319,7 @@ async def test_the_extraction_directory_is_gone_after_a_successful_run(wire, db_
 async def test_a_caller_owned_extraction_is_used_and_never_deleted(
     wire, db_session, tmp_path
 ) -> None:
-    # U10's drift path hands over a tree it already extracted and still needs for
+    # The drift path hands over a tree it already extracted and still needs for
     # packing — ownership stays with whoever created it.
     user, app = await _citizen_app(db_session)
     root = tmp_path / "deploy-extract" / app.id.hex / _V1
@@ -359,7 +359,7 @@ async def test_concurrent_same_commit_consumers_keep_disjoint_roots(
 
 
 # ---------------------------------------------------------------------------------------
-# The scan feeding the prompt (P8)
+# The scan feeding the prompt
 # ---------------------------------------------------------------------------------------
 
 
@@ -439,9 +439,10 @@ async def test_a_tier_b_overrule_records_nothing(wire, db_session) -> None:
 
 
 async def test_a_tier_a_hit_stands_in_when_the_model_never_returned(wire, db_session) -> None:
-    # P8's floor: the row is FAILED (it still routes), but the stored verdicts carry
-    # credentials=Yes from the scan with canned copy while the other five stay
-    # unanswered — shaped so U7/U9 read "the Tier A floor stands" off the record.
+    # The guaranteed floor: the row is FAILED (it still routes), but the stored verdicts
+    # carry credentials=Yes from the scan with canned copy while the other five stay
+    # unanswered — shaped so anything reading the record afterward can tell the Tier A
+    # floor stands.
     user, app = await _citizen_app(db_session)
     wire.extractor.files = {**_CLEAN_FILES, "app/db.ts": _TIER_A_LINE}
     wire.models.queue(_raising(ModelHTTPError(status_code=500, model_name="opus", body="boom")))
@@ -500,7 +501,7 @@ async def test_an_incomplete_scan_is_recorded_on_a_complete_review(wire, db_sess
 
 
 # ---------------------------------------------------------------------------------------
-# Evidence validation and redaction (R4, R3's backstop)
+# Evidence validation and redaction
 # ---------------------------------------------------------------------------------------
 
 
@@ -800,7 +801,7 @@ async def test_version_drift_fails_closed_with_its_own_code(wire, db_session) ->
 
     assert stored.status is ClassificationReviewStatus.FAILED
     assert stored.failure_code == FAIL_VERSION_DRIFT
-    assert stored.head_sha == _V1  # stamped with the version it ATTEMPTED (R6a)
+    assert stored.head_sha == _V1  # stamped with the version it ATTEMPTED
     assert wire.models.calls == 0
     assert not _own_root(wire).exists()
 
@@ -881,7 +882,7 @@ async def test_start_unwedges_an_orphaned_running_row_instead_of_hanging(wire, d
 
 
 # ---------------------------------------------------------------------------------------
-# The attempt cap and the per-run records (P7)
+# The attempt cap and the per-run records
 # ---------------------------------------------------------------------------------------
 
 
@@ -935,7 +936,7 @@ async def test_every_terminal_run_writes_an_app_scoped_audit_row(wire, db_sessio
     row = audits[0]
     assert row.actor_id == user.id
     assert row.resource_type == "app"
-    assert row.resource_id == str(app.id)  # app-scoped: visible in the admin drawer (ASM7)
+    assert row.resource_id == str(app.id)  # app-scoped: visible in the admin drawer
     detail = _detail(row)
     assert detail["appId"] == str(app.id)
     assert detail["email"] == user.email  # survives the actor reference nulling
@@ -1006,7 +1007,7 @@ async def test_a_newer_start_supersedes_and_the_old_runs_completion_writes_nothi
     assert stored.verdicts is not None
     assert stored.verdicts["questions"]["credentials_secrets"]["verdict"] == "no"  # run 2's
     audits = await _audit_rows(db_session, app_id=app.id)
-    assert len(audits) == 2  # both RUNS are on the trail (P7 counts runs, not rows)
+    assert len(audits) == 2  # both RUNS are on the trail
     superseded = [row for row in audits if _detail(row).get("superseded")]
     assert len(superseded) == 1
     assert _detail(superseded[0])["headSha"] == _V1

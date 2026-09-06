@@ -21,14 +21,14 @@
  * guards at the boundary — never cast, never `any`.
  */
 
-// ─── C3: the control-plane status enum (camelCase surface) ───────────────────
+// ─── The control-plane status enum (camelCase surface) ───────────────────────
 
 /**
- * The five members of the build-session lifecycle (C3 §1). Wire value == the
+ * The five members of the build-session lifecycle. Wire value == the
  * lowercase member name. `provisioning → building → ready` is the forward path;
  * `ended` (graceful: stop / idle / quota) and `failed` (unrecoverable / escalated)
  * are the two DISTINCT absorbing terminals — a quota breach resolves to `ended`,
- * never `failed` (C7 §8).
+ * never `failed`.
  */
 export type BuildSessionStatus = 'provisioning' | 'building' | 'ready' | 'ended' | 'failed'
 
@@ -58,7 +58,7 @@ export interface RelaunchPreviewResponse {
   previewUrl: string
   status: BuildSessionStatus
   /**
-   * U6's "last saved version" signal: the project's NEWEST recorded build outcome was FAILED, so
+   * The "last saved version" signal: the project's NEWEST recorded build outcome was FAILED, so
    * the restored snapshot is the last SAVED state — not that build's intent. The preview pane
    * surfaces this so the user isn't silently shown older code as an unqualified "ready".
    */
@@ -87,10 +87,10 @@ export interface StopBuildResponse {
 /**
  * `GET /v1/build-sessions/{id}` → 200. The poll surface and the source of the
  * framable `previewUrl`. `previewUrl` is null until `ready`, then STABLE. `lastSeq`
- * is the highest C7 `seq` emitted so far (the reconnect cursor), or null before the
+ * is the highest envelope `seq` emitted so far (the reconnect cursor), or null before the
  * first envelope. On connect/reattach the owning hook seeds preview continuity from
  * here, so a `preview_ready` that fired before the client connected still frames the
- * app (C3 §2.3, KTD-1).
+ * app.
  */
 export interface BuildSessionStatusResponse {
   sessionId: string
@@ -115,10 +115,10 @@ export interface ForceEndResponse {
   status: BuildSessionStatus
 }
 
-// ─── C7: the tagged-union progress envelope (snake_case surface) ─────────────
+// ─── The tagged-union progress envelope (snake_case surface) ─────────────────
 
 /**
- * Where a self-heal-relevant error came from (C7 §3). `client` is the browser client-error
+ * Where a self-heal-relevant error came from. `client` is the browser client-error
  * arm — LIVE, and rendered through the same split-audience path as every other class: its
  * report text stays agent-only, the citizen reads the platform's sentence for the class.
  */
@@ -131,7 +131,7 @@ export interface BuildError {
   cleaned_stack: string
 }
 
-/** `step` — a high-level phase marker driving the feed's spinner → check/cross (C7 §3.1). */
+/** `step` — a high-level phase marker driving the feed's spinner → check/cross. */
 export interface StepEvent {
   type: 'step'
   seq: number
@@ -139,13 +139,14 @@ export interface StepEvent {
   label: string
   state: 'started' | 'ok' | 'failed'
   /**
-   * F3/U3 — read-only + housekeeping steps are dropped from the VISIBLE feed. Optional so the
-   * type stays back-compat with pre-U3 emitters (a missing value reads as "not hidden").
+   * Read-only and housekeeping steps are dropped from the VISIBLE feed. Optional so the
+   * type stays back-compat with older emitters that predate this field (a missing value
+   * reads as "not hidden").
    */
   hidden?: boolean
 }
 
-/** `error` — the structured, self-heal-relevant error BRAIN reacts to (C7 §3.3). */
+/** `error` — the structured, self-heal-relevant error the orchestrator reacts to. */
 export interface ErrorEvent {
   type: 'error'
   seq: number
@@ -154,15 +155,15 @@ export interface ErrorEvent {
   cleaned_stack: string
   /** True when this came off the turn stream as a `diagnostic` — the turn is NOT failing, a
    *  repair run follows — so it renders as a retry, never as the terminal red block. Absent
-   *  on the legacy C7 feed, which keeps its historical red rendering. */
+   *  on the legacy build-session feed, which keeps its historical red rendering. */
   recovering?: boolean
   /**
-   * U16 — the CITIZEN-facing half of the split. `title` and `cleaned_stack` above are the
+   * The CITIZEN-facing half of the split. `title` and `cleaned_stack` above are the
    * model's: `title` is built to be the compiler's own first meaningful line, so it names a
    * file and a framework construct by design. These two are what the feed renders instead —
    * a plain sentence about the app, and something the reader can actually do.
    *
-   * OPTIONAL, because the legacy C7 feed emits neither. A committed fallback pair is supplied
+   * OPTIONAL, because the legacy build-session feed emits neither. A committed fallback pair is supplied
    * where they are rendered (the surface's diagnostic row, via `DIAGNOSTIC_FALLBACK`) when they
    * are missing, so an error status is never rendered without an action clause — that is the
    * invariant, not the presence of these fields.
@@ -171,7 +172,7 @@ export interface ErrorEvent {
   user_action?: string
 }
 
-/** `preview_ready` — the dev server is live and framable. Flips status → `ready` and triggers the iframe (re)load (C7 §3.4). */
+/** `preview_ready` — the dev server is live and framable. Flips status → `ready` and triggers the iframe (re)load. */
 export interface PreviewReadyEvent {
   type: 'preview_ready'
   seq: number
@@ -180,7 +181,7 @@ export interface PreviewReadyEvent {
 
 /**
  * `preview_reconnecting` — the dev-server PROCESS crashed (port closed) after the preview was
- * framed (F8/U5). A status SIGNAL, not a feed row: the owning hook routes it to a distinct
+ * framed. A status SIGNAL, not a feed row: the owning hook routes it to a distinct
  * `reconnecting` flag (never the "building" spinner), and a following `preview_ready` clears it.
  * Excluded from `FeedEnvelope` alongside `preview_ready`.
  */
@@ -189,7 +190,7 @@ export interface PreviewReconnectingEvent {
   seq: number
 }
 
-/** `escalation` — the self-heal loop gave up; informational, the terminal boundary is the following `ended` (C7 §3.5). */
+/** `escalation` — the self-heal loop gave up; informational, the terminal boundary is the following `ended`. */
 export interface EscalationEvent {
   type: 'escalation'
   seq: number
@@ -198,7 +199,7 @@ export interface EscalationEvent {
   last_error: BuildError | null
 }
 
-/** `quota_exceeded` — the per-user daily token cap was hit; BRAIN then GRACEFULLY ends (C7 §3.6, §8). */
+/** `quota_exceeded` — the per-user daily token cap was hit; the orchestrator then GRACEFULLY ends the build. */
 export interface QuotaExceededEvent {
   type: 'quota_exceeded'
   seq: number
@@ -216,10 +217,10 @@ export function formatDailyLimitMessage(limit: number, used: number): string {
 
 /**
  * `ended` — the terminal envelope. `status` is narrowed to the two absorbing members
- * (`ended` graceful | `failed` unrecoverable). `reason` is display copy (C7 §3.7 names
- * six values), typed loosely as `string` so a new BRAIN reason renders as text rather
+ * (`ended` graceful | `failed` unrecoverable). `reason` is display copy, typed loosely
+ * as `string` so a new orchestrator reason renders as text rather
  * than breaking the build — control decisions ride `status`, with ONE deliberate
- * exception: `reason === 'completed'` marks the pardoned preview (R2 — the server
+ * exception: `reason === 'completed'` marks the pardoned preview (the server
  * keeps a completed build's container alive under an idle lease), which is what lets the
  * pane keep framing it. An unknown reason degrades to the placeholder, never to a crash.
  */
@@ -233,11 +234,11 @@ export interface EndedEvent {
 }
 
 /**
- * The full 7-member C7 union (discriminated on `type`). A `switch` over `.type`
+ * The full 7-member envelope union (discriminated on `type`). A `switch` over `.type`
  * ending in `assertNever` is a compile error until every arm is handled.
  *
- * U29 retired `LogEvent`: no production BRAIN path had ever emitted a `log` frame, so this was
- * a consumer arm the server could never actually feed. Removing it drops the count from 8 to 7.
+ * `LogEvent` was retired: no production orchestrator path had ever emitted a `log` frame, so this
+ * was a consumer arm the server could never actually feed. Removing it drops the count from 8 to 7.
  */
 export type ProgressEnvelope =
   | StepEvent
@@ -249,10 +250,10 @@ export type ProgressEnvelope =
   | EndedEvent
 
 /**
- * The 5-member SUBSET the activity feed renders (U3). BOTH preview signals are excluded:
- * the owning hook (U4/U5) routes `preview_ready` and `preview_reconnecting` to preview STATUS
+ * The 5-member SUBSET the activity feed renders. BOTH preview signals are excluded:
+ * the owning hook routes `preview_ready` and `preview_reconnecting` to preview STATUS
  * only (frame reload / reconnecting flag), never to a feed row — so the feed's `switch` +
  * `assertNever` stays over FIVE members, and an `assertNever` over the full 7-member union would
- * (correctly) fail to compile without those two arms (C7 §3.4).
+ * (correctly) fail to compile without those two arms.
  */
 export type FeedEnvelope = Exclude<ProgressEnvelope, PreviewReadyEvent | PreviewReconnectingEvent>

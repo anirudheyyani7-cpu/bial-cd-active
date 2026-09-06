@@ -1,4 +1,4 @@
-"""U9 — the stop, as three named states and as an ask plus a status read.
+"""The stop, as three named states and as an ask plus a status read.
 
 THE DEFECT THESE EXIST FOR. `stop_active_work` returned `True` on both of its branches
 unconditionally, and `stop_user_turn_and_wait` did the same, while all three docstrings promised
@@ -10,18 +10,15 @@ to take the container.
 Two rules run through the whole file, both bought expensively:
 
 * **"Gone" and "slow" must be provably different before anything is reclaimed.** A readiness
-  timeout once condemned a live container and a restore destroyed a citizen's unsaved work
-  (`docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02`).
+  timeout once condemned a live container and a restore destroyed a citizen's unsaved work.
   So `STOPPED` here is never a deduction from elapsed time — it is a positive observation that
   nothing holds the app, read from the map `release_project_sandbox` itself refuses on.
 * **The completion barrier sits above every assertion that depends on it.** Assertions appended
-  over time land at the bottom of a block, which is often ABOVE the wait they need
-  (`docs/solutions/best-practices/e2e-harness-measure-after-the-barrier-and-refuse-vacuous-passes-2026-08-02`).
+  over time land at the bottom of a block, which is often ABOVE the wait they need.
   Each test below waits on the stop's own task — or on a bounded poll of the real condition —
   before it asks whether the stop worked.
 
-And the shape being tested is a one-container-two-projects hand-over, which is the scope split
-`docs/solutions/architecture-patterns/one-scope-became-two-2026-09-01` warns about: the stop is
+And the shape being tested is a one-container-two-projects hand-over: the stop is
 now ASKED FOR by one request and REPORTED BY another, so the thing that starts it is no longer the
 thing that watches it. That is why the manager keeps its own record of having asked — nothing else
 could tell a later poll "stopped" from "nothing was running".
@@ -221,7 +218,7 @@ async def test_the_status_read_never_says_stopped_while_the_turn_is_still_unwind
 ) -> None:
     """*However long it takes* — including after the stop's OWN budget has expired.
 
-    The sharpest version of the rule the readiness-timeout P0 taught: a wait running out says
+    The sharpest version of the rule the readiness-timeout taught: a wait running out says
     nothing about the container. Here the stop task is given a budget far shorter than the unwind,
     so it gives up and settles while the turn is still inside its cleanup. Every poll after that
     must still refuse, because the fact that decides it is the session map, not the clock."""

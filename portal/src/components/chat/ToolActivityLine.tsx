@@ -1,5 +1,5 @@
 /**
- * ToolActivityLine — the shared Mode-A atom for build/tool activity (F3/U3). ONE renderer, reached
+ * ToolActivityLine — the shared atom for build/tool activity. ONE renderer, reached
  * through `ActivityRow` for a step and `ActivityGroup`'s glyph strip for the collapsed summary, so
  * the live and reloaded halves of a build can never visually diverge. (It used to be named as
  * `BuildProgress`' and `BuilderPage`'s shared atom; both were deleted with the two-page era.)

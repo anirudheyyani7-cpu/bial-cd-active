@@ -1,13 +1,13 @@
 /**
- * The marketplace catalog client (#145).
+ * The marketplace catalog client.
  *
  * Mirrors `projectApi.ts` deliberately — same `authFetch` + `readApiError` + tolerant
  * `to*` parse shape — because the only thing that differs about this surface is WHOSE apps
  * come back, and that difference belongs on the server, not in a bespoke client.
  *
  * The parsers coerce rather than throw on a missing optional field: a catalog entry whose
- * builder has no display name, or whose app has no description, is a normal row here (#145
- * accepts that descriptions are not guaranteed), not a response we should refuse to render.
+ * builder has no display name, or whose app has no description, is a normal row here,
+ * not a response we should refuse to render.
  * That tolerance extends to a whole row: this is the ONE list on the platform every user
  * shares, so one unparseable entry drops itself rather than blanking the catalog for the
  * entire org.
@@ -105,8 +105,8 @@ function toPage(value: unknown): MarketplacePage {
             // Dropping the row is the right trade — one bad entry must not blank an
             // org-wide catalog — but doing it SILENTLY makes `total` and the rendered
             // count disagree with no signal to anyone: "10 results / Page 1 of 3"
-            // rendering 9 cards indefinitely, indistinguishable from a correct page
-            // (#147 round 3). This does not turn it into a REPORTED failure — the portal
+            // rendering 9 cards indefinitely, indistinguishable from a correct page.
+            // This does not turn it into a REPORTED failure — the portal
             // captures no console output, so in practice it helps whoever already has
             // devtools open. That is still the difference between a diagnosable page and a
             // mystery, but it is not telemetry, and the empty-state copy in

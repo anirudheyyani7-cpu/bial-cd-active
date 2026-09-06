@@ -22,9 +22,9 @@ const deps = (fetchImpl: typeof fetch) => ({ fetchImpl, getToken: () => null, re
 describe('the citizen submit verb is gone', () => {
   /**
    * A GUARD, not a deletion. This block used to POST `/api/apps/:id/submit` and pin its
-   * narrowed result and its 409 copy; the route it called was retired backend-side in U8
-   * and the control that called it lost its button in U12, because R15a allows exactly
-   * ONE route into the review queue and it runs through the publish request — which
+   * narrowed result and its 409 copy; the route it called was retired backend-side and
+   * the control that called it lost its button, because only one route into the review
+   * queue is allowed, and it runs through the publish request — which
    * attaches both answer sets and the citizen's explanation. The retired route attached
    * none of that, so a queue item could reach an administrator with nothing to read.
    *
@@ -94,7 +94,7 @@ describe('withdrawSubmission', () => {
 
 describe('the app-scoped status read is gone', () => {
   /**
-   * A GUARD, not deleted coverage (plan 001, unit 6). `getApprovalStatus` was the typed client
+   * A GUARD, not deleted coverage. `getApprovalStatus` was the typed client
    * for `GET /apps/:id/status`, written for the approval card at the foot of the chat — the
    * canvas's `Removals` board took that card out, and nothing reached the getter, its
    * `AppApprovalStatus` interface or its narrower afterwards. The publish and review surfaces

@@ -1,7 +1,7 @@
 /**
  * THE RELAUNCH CHAIN IS INERT — the characterization this unit was allowed to delete against.
  *
- * `RelaunchAffordance` and its four render sites went in Plan F, U4, and `LivePreview` was left
+ * `RelaunchAffordance` and its four render sites went in, and `LivePreview` was left
  * ACCEPTING `onRelaunch` and never reading it. Everything above that unread prop — the surface's
  * `handleRelaunch`, the session hook's `relaunch()`, the two `409` arms that set `blocked`, and the
  * block banner with its Force-end button — was therefore reachable-looking code hanging off a
@@ -89,7 +89,7 @@ const SANDBOX_URL_2 = 'https://app-abc.example.azurecontainerapps.io/'
 const CHAT_ID = 'build-X'
 
 /**
- * The injected C3 client, assembled HERE rather than through `makeClient`, so this file decides
+ * The injected client, assembled HERE rather than through `makeClient`, so this file decides
  * which members exist — `makeClient` no longer carries `start` at all, and this scenario needs to
  * hand one in to prove nothing reaches it. An extra member on the bag is inert: the hook only ever
  * calls what it names.
@@ -131,7 +131,7 @@ afterEach(cleanup)
 describe('the block banner cannot reach the tree — from EITHER producer', () => {
   it('arm 1, start’s 409: a send is a TURN, so the C3 start that raised `blocked` never fires', async () => {
     // The 409 is armed on the start the injected client exposes. If any path on this surface still
-    // provisioned a C3 session, this would raise the banner — which is exactly the point: none does.
+    // provisioned a session, this would raise the banner — which is exactly the point: none does.
     h.start.mockRejectedValue(new BuildSessionAlreadyActiveError('You already have a build running.', 'sess-9'))
     h.readTurnStream.mockImplementation(turnStreaming(planReply()))
 
@@ -173,7 +173,7 @@ describe('the block banner cannot reach the tree — from EITHER producer', () =
 })
 
 describe('frame survival — the case where an unmount kills a live container', () => {
-  // A framed, pardoned preview: `status: 'ended'` + `completedLive` is the #13/R2 state in which
+  // A framed, pardoned preview: `status: 'ended'` + `completedLive` is the state in which
   // the server is STILL SERVING the container under an idle lease. `showTerminal` must stay false,
   // `frameContext` true and `framePending` true, or the iframe comes down over a live app.
   const framedAndPardoned = (props = {}) =>

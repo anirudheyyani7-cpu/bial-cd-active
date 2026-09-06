@@ -1,8 +1,8 @@
 /**
  * ONE vocabulary for what state an app is in — the words, in one place.
  *
- * #158 §10 is explicit that the projects list must borrow the project page's words and
- * "should not invent a second set". `PublishStatusChip` is that first set, and it is richer
+ * The projects list must borrow the project page's words and must not invent a second
+ * set. `PublishStatusChip` is that first set, and it is richer
  * than anything a list row can support: it reads a per-project deployment fetch and can say
  * `Starting up`, `Live · newer work saved` and `Taken offline`. A list cannot — one request
  * per row is an N-way fan-out on the landing screen — so this module is the SUBSET the list
@@ -10,7 +10,7 @@
  *
  * That is the whole design constraint: same words, fewer of them, never different ones.
  *
- * TWO FACTS, NOT ONE. Whether an app is LIVE is a deployment fact — settled on the #158
+ * TWO FACTS, NOT ONE. Whether an app is LIVE is a deployment fact — settled on a
  * call as "live = deployed / published — if the application is published and has url" —
  * and it is NOT derivable from `appStatus`:
  *
@@ -21,7 +21,7 @@
  * history (`services/deploy/liveness.py`), which is the same predicate the marketplace and
  * the dashboard's "In production" count read.
  *
- * The board for #158 drew `NOT SENT` and `LIVE`; the words below are the chip's instead,
+ * The board drew `NOT SENT` and `LIVE`; the words below are the chip's instead,
  * confirmed on the call — "the mocks are just for reference, exact terminology is not
  * finalised yet, use explainable and simple language".
  */

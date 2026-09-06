@@ -39,7 +39,7 @@ const fmtWhen = (iso: string | null): string => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
-// Advisory on-disk size of the app's own database (ADR-0028). Null is a real value —
+// Advisory on-disk size of the app's own database. Null is a real value —
 // "no number to show" (never provisioned, not yet ready, or the cluster was unreachable) —
 // and renders as "—", never "0 B", which would read as an empty database.
 const fmtBytes = (n: number | null): string => {
@@ -55,7 +55,7 @@ function StatusBadge({ status }: { status: AppStatus }) {
   return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
 }
 
-/** The one thing this screen is for (P3), said out loud. An administrator who thinks
+/** The one thing this screen is for, said out loud. An administrator who thinks
  *  they are code-reviewing will either approve everything or block everything. */
 const THE_CRITERION =
   'Decide whether an app holding this kind of data is acceptable to publish. You are not ' +
@@ -78,9 +78,9 @@ const NOTHING_IN_DISPUTE_COPY =
 /**
  * Review a pending SUBMISSION.
  *
- * READING ORDER (R15): what is in DISPUTE first, then the automatic check's reason for
+ * READING ORDER: what is in DISPUTE first, then the automatic check's reason for
  * each, then the developer's explanation. The disagreement is the thing to read first —
- * the metadata is provenance, and the criterion (P3) is what the whole screen is for.
+ * the metadata is provenance, and the criterion is what the whole screen is for.
  *
  * Approve sends EXACTLY the submission id on display, so the server's reviewed-id guard
  * has something to check: a re-submit since this review 409s, never a silent promotion of
@@ -98,12 +98,12 @@ const NOTHING_IN_DISPUTE_COPY =
  * default `min-height:auto` refuses to shrink below its content, which silently restores
  * the original bug.
  *
- * EVIDENCE LOCATIONS ARE NEVER RENDERED (OD-B) — and structurally cannot be: they live in
+ * EVIDENCE LOCATIONS ARE NEVER RENDERED — and structurally cannot be: they live in
  * a separate document that no call reaching this screen makes.
  */
 interface ReviewModalProps {
   app: RegistryApp
-  /** The developer pulled this submission back while the modal was open (P6). Set by the
+  /** The developer pulled this submission back while the modal was open. Set by the
    *  panel, which is the only thing that sees the failure; non-null replaces the actions
    *  entirely, because there is nothing left to decide and a button that can only fail
    *  again is worse than a sentence saying so. */
@@ -268,8 +268,8 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
             this review, the server refuses the approval rather than silently promoting a build
             you never saw.{' '}
             {app.approvalRoute === 'self_publish' ? (
-              // R17a: for this lineage there IS no runbook, and the previous copy sent the
-              // administrator to run one — instructing exactly what R17a forbids.
+              // For this lineage there IS no runbook, and the previous copy sent the
+              // administrator to run one — exactly the mistake corrected here.
               <span data-testid="review-self-publish-note">
                 Approving does not publish it — the developer publishes this approved version
                 themselves, and there is no go-live runbook for you to run.
@@ -317,7 +317,7 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
                       rejection, which the marketplace reads — so a live app vanishes from
                       the catalog while its URL keeps working, and only the OWNER can
                       re-submit to undo it. An admin rejecting a re-submission of an
-                      already-approved app had no way to know that (#147 round 3 review). */}
+                      already-approved app had no way to know that. */}
                   {app.deployedUrl && (
                     <p data-testid="reject-delists-warning" className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
                       This app is live. Rejecting removes it from the Marketplace but leaves
@@ -415,7 +415,7 @@ function AuditDrawer({ app, onClose }: AuditDrawerProps) {
  * the admin-gated /api/admin/apps endpoints. Loads via useCallback+useEffect.
  */
 export interface AppRegistryPanelProps {
-  // U15: severity is optional (default 'ok' on the AdminPage side) so a plain confirmation
+  // severity is optional (default 'ok' on the AdminPage side) so a plain confirmation
   // call reads exactly as it always has — only `act()`'s catch branch below passes 'problem'.
   onToast: (msg: string, severity?: 'ok' | 'problem') => void
 }
@@ -426,11 +426,11 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [review, setReview] = useState<RegistryApp | null>(null)
-  // Non-null once the developer withdraws the submission under review (P6). Cleared
+  // Non-null once the developer withdraws the submission under review. Cleared
   // whenever a different item is opened, so one race can never haunt the next review.
   const [withdrawn, setWithdrawn] = useState<string | null>(null)
   const [auditing, setAuditing] = useState<RegistryApp | null>(null)
-  // The waiting count, mirrored from the nav badge onto the Pending tab (P1). `null` =
+  // The waiting count, mirrored from the nav badge onto the Pending tab. `null` =
   // not asked yet or the ask failed; never rendered as a number.
   const [waiting, setWaiting] = useState<number | null>(null)
   // A SET of in-flight app ids, not one shared lock: acting on row A must never
@@ -470,7 +470,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   // needs the error's `code`, and re-throwing after already toasting would have made the
   // one caller that cares wrap every call in a second try.)
   //
-  // U15: this is the one channel a confirmation AND a raw failure both travel down —
+  // this is the one channel a confirmation AND a raw failure both travel down —
   // `okMsg` on the happy path, `e`'s message on the catch. They must not render the same
   // way: an administrator reading a channel that looks identical either way cannot tell,
   // without reading the words, whether the action they just took worked.
@@ -483,7 +483,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 
   /** Close the review modal on success; on the withdrawal race, keep it open and let it
    *  say what happened instead. Every other failure is already a toast and leaves the
-   *  modal alone — on the D5 409 the admin still needs the submission metadata. */
+   *  modal alone — on the 409 the admin still needs the submission metadata. */
   const settleReview = (failure: unknown): void => {
     if (failure === null) { setReview(null); setWithdrawn(null); return }
     if (failure instanceof ApiError && failure.code === 'submission_withdrawn') {
@@ -494,7 +494,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   // Approve carries the submission id ON DISPLAY (the reviewed-id guard's input):
   // the server 409s with "re-submitted since you reviewed it" copy, which `act`
   // surfaces verbatim via the toast — never a generic failure. Close the modal ONLY
-  // on success: on the D5 409 the admin needs the submission metadata to re-review.
+  // on success: on the 409 the admin needs the submission metadata to re-review.
   //
   // app.submissionId is nullable in the general RegistryApp schema, but the Review
   // button (and so this call) only ever fires for a 'pending' app, which always
@@ -505,7 +505,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   const onToggleLogin = (app: RegistryApp) => act(app.appId, () => patchApp(app.appId, { loginRequired: !app.loginRequired }), `Login ${app.loginRequired ? 'disabled' : 'required'} for “${appLabel(app)}”`)
   const onDisable = (app: RegistryApp) => act(app.appId, () => disableApp(app.appId), `“${appLabel(app)}” disabled`)
   const onEnable = (app: RegistryApp) => act(app.appId, () => enableApp(app.appId), `“${appLabel(app)}” re-enabled`)
-  // The deployed URL is DATA, not automation (R5): the operator pastes what the go-live
+  // The deployed URL is DATA, not automation: the operator pastes what the go-live
   // runbook produced. Prompting (like `onDelete`'s confirm) keeps this on the runbook's
   // own rhythm — mark the deploy the moment it lands, address in hand. Cancel aborts
   // entirely; a blank answer still records the deploy and leaves any existing URL alone,
@@ -553,7 +553,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
             className={`text-xs font-medium px-3 py-1.5 rounded-md transition inline-flex items-center gap-1.5 ${tab === t ? 'bg-white text-primary shadow-sm border border-bial-border' : 'text-neutral hover:text-primary'}`}
           >
             {STATUS[t].label}
-            {/* Mirrors the nav badge (P1), same component and same accessible name. */}
+            {/* Mirrors the nav badge, same component and same accessible name. */}
             {t === 'pending' && <WaitingCountBadge count={waiting} where="tab" />}
           </button>
         ))}
@@ -613,7 +613,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                         {app.status === 'approved' && app.redeployNeeded && (
                           <span data-testid={`redeploy-needed-${app.appId}`} title="The approved build has not been deployed (or was re-approved since the last deploy) — run the go-live runbook, then mark it deployed" className="inline-flex items-center text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-100 text-amber-700">Deploy needed</span>
                         )}
-                        {/* R17a: the self-publish lineage has NO runbook step, so it gets
+                        {/* The self-publish lineage has NO runbook step, so it gets
                             neither the prompt above (the server already forces
                             `redeployNeeded` false for it) nor this control — which the
                             server refuses anyway. An affordance whose only outcome is a

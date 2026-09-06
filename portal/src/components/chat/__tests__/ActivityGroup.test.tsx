@@ -1,7 +1,7 @@
 /**
- * ACTIVITY GROUPS — drawn by the parts, sealed by adjacency (R30–R35c).
+ * ACTIVITY GROUPS — drawn by the parts, sealed by adjacency.
  *
- * The two cases worth reading first are AE15 and the two-group case: they are what prove the
+ * The two cases worth reading first are the no-tool-calls case and the two-group case: they are what prove the
  * grouping is structural rather than conditional. A turn with no tool parts renders no element
  * because there is nothing to render, not because a renderer decided to hide a bar; and text
  * between two runs of tool calls produces two groups because the primitive coalesces ADJACENT
@@ -235,7 +235,7 @@ describe('R31 — a live group names what is happening NOW and grows in place', 
   })
 
   it('★ keeps its height as icons fill it, so the transcript never jumps', () => {
-    // U8's last scenario. jsdom lays nothing out, so what is asserted is the MECHANISM that keeps
+    // The last scenario here. jsdom lays nothing out, so what is asserted is the MECHANISM that keeps
     // the row exactly one line tall while steps accumulate into it: a strip that never shrinks,
     // tiles of a FIXED 22px square rather than content-sized ones, and each tile after the first
     // pulled back over its neighbour so a long run stays compact instead of wrapping onto a second
@@ -419,7 +419,7 @@ describe('groupLabel — the wording, unit-tested away from the DOM', () => {
 })
 
 /**
- * R66's SECOND ANNOUNCEMENT.
+ * THE SECOND ANNOUNCEMENT.
  *
  * The surface used to pass a hardcoded `null` for this, under a comment saying the group announced
  * it itself. The group had no live region and no announcer, so the effect could never fire outside
@@ -481,7 +481,7 @@ describe('a group reports what it amounted to, once, as it seals', () => {
   })
 
   it('says nothing for a group that was ALREADY finished when the chat opened', () => {
-    // THE ONE THAT MATTERS. R66 announces what just happened. A finished chat with past builds in
+    // THE ONE THAT MATTERS: it announces what just happened. A finished chat with past builds in
     // it renders sealed groups on mount, and announcing those meant a reader who opened a
     // conversation heard a summary of work nobody had just done — once per historical group, the
     // last of them winning the live region.

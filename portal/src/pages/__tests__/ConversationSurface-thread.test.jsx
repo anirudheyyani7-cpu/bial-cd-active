@@ -1,5 +1,5 @@
 /**
- * The unified-chat thread behaviors (U11/U13) that only the PAGE can prove:
+ * The unified-chat thread behaviors that only the PAGE can prove:
  *
  *  - a send is a chat turn; the plan streams as PROSE and the card renders beside it —
  *    no fence anywhere, and nothing builds until the card is clicked;
@@ -8,9 +8,9 @@
  *    refine/build → settled, older-than-newest → expired) — no local state to resync;
  *  - a used card cannot re-fire — Build it is now a HANDOFF, so "cannot re-fire" is proven
  *    by the press ending in a navigation to a brand-new build chat, not by a settled local state;
- *  - U19 deleted the in-composer mode switcher along with the `mode` it displayed (U1 collapsed
- *    ConversationMode into the fixed-at-creation ChatKind) — this file's own guard for that is
- *    below, under "the U13 header".
+ *  - the in-composer mode switcher and the `mode` it displayed are gone, now that
+ *    ConversationMode has collapsed into the fixed-at-creation ChatKind — this file's own
+ *    guard for that is below, under "the header".
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testing-library/react'
@@ -22,7 +22,7 @@ import {
 } from './_builderSession.jsx'
 import { ApiError } from '../../utils/apiError'
 
-// The id `handleBuildIt` mints for every Build-it press in this file (U12: the id is CLIENT
+// The id `handleBuildIt` mints for every Build-it press in this file (the id is CLIENT
 // minted via `uuidv7`, then echoed back by the server as `BuildFromPlanOutcome.chatId` — the
 // mock below mirrors that echo). One fixed id is enough here because no single test in this
 // file presses Build it twice — a second, distinguishable mint only matters for the cross-tab
@@ -104,7 +104,7 @@ beforeEach(() => {
   h.buildUserParts.mockImplementation(async (text) => [{ type: 'text', text }])
   h.uuidv7.mockReturnValue(MINTED_BUILD_CHAT_ID)
   primeTurn(h)
-  // U12: buildFromPlan hands off to a NEW chat and echoes the caller's minted id back as
+  // buildFromPlan hands off to a NEW chat and echoes the caller's minted id back as
   // `chatId` — the shared harness's `primeTurn` still answers the pre-handoff shape (a bare
   // `turnId`, no `chatId`), so every test in this file needs the real contract's shape.
   h.buildFromPlan.mockResolvedValue({ outcome: 'started', chatId: MINTED_BUILD_CHAT_ID, turnId: 'bt-1' })
@@ -124,7 +124,7 @@ describe('the routing rule — a send is a chat turn, never a build', () => {
     expect(h.buildFromPlan).not.toHaveBeenCalled()
 
     fireEvent.click(build)
-    // Three positional args now (U12): the third is the CLIENT-MINTED id of the brand-new build
+    // Three positional args now: the third is the CLIENT-MINTED id of the brand-new build
     // chat this press hands off to.
     await waitFor(() =>
       expect(h.buildFromPlan).toHaveBeenCalledWith('thread-1', PLAN_CARD_ID, MINTED_BUILD_CHAT_ID),
@@ -155,7 +155,7 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     })
     renderThread()
 
-    // FLIPPED (Plan D U16/U17). Two stored offers used to render as two cards in the transcript,
+    // FLIPPED. Two stored offers used to render as two cards in the transcript,
     // the older one drawn "expired" and informational. There is ONE control now and it lives on
     // the composer, so the newest offer is the only one on screen — which is a stronger form of
     // the same rule ("only the newest is actionable"): an expired card is a dead button a reader
@@ -182,7 +182,7 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     })
     renderThread()
 
-    // FLIPPED (D2, Plan D U16). Settled cards used to render settled COPY and lose their buttons.
+    // FLIPPED. Settled cards used to render settled COPY and lose their buttons.
     // A spent strip stays and stays PRESSABLE now — pressing it again is an ordinary request that
     // creates another Build chat — so what marks it is `data-spent`, not the removal of the
     // control. That is the deliberate change: "only one offer is live" is about which one blocks
@@ -201,7 +201,7 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     // AN INERTNESS GUARD, not a deleted test (L8). This used to prove a failed Build-it press
     // left the card in a special `build_failed` state that showed the failure ("another build
     // is already running") and let the citizen retry from the SAME card. Neither half of that
-    // survives U12: `build_failed` and its `reason` field are gone from `PlanOptionsItem`
+    // survives: `build_failed` and its `reason` field are gone from `PlanOptionsItem`
     // (turnStreamApi.ts), because Build-it now fails inside the one handoff call that would
     // have produced this outcome — there is nothing left to persist. The deleted card's own
     // docblock said why: "a press that fails records nothing — the card was never spent, and
@@ -225,7 +225,7 @@ describe('a restored thread re-renders every card from its STORED state', () => 
     expect(screen.queryByText(/another build is already running/i)).toBeNull()
     // …and so is the shell copy the card used to carry around its buttons.
     expect(screen.queryByText(/ready to build this plan/i)).toBeNull()
-    // NOTHING IS EVER `disabled` HERE (R45/R64), which is the assertion that had to change rather
+    // NOTHING IS EVER `disabled` HERE, which is the assertion that had to change rather
     // than the behaviour it guards. The old card rendered a real `disabled` for an unrecognised
     // state; a real `disabled` on a focused control blurs it to `document.body`, and this surface
     // does not ship one anywhere. An unrecognised stored state simply is not `pending`, so the
@@ -241,7 +241,7 @@ describe('a used card cannot re-fire', () => {
     // build here, so "no second transition" meant the card settled to its stored `build` state
     // and its buttons vanished while everything else about the chat stayed put.
     //
-    // U12 changes what "no second transition" is EVIDENCE OF. There is no in-place settle to
+    // What "no second transition" is EVIDENCE OF has changed. There is no in-place settle to
     // observe any more — the press ends by LEAVING this chat for a brand-new one seeded with the
     // plan (handleBuildIt's own docblock: "the only place [the build's] narrative can honestly be
     // watched is there"). So the card itself is gone from the screen not because it settled, but
@@ -294,7 +294,7 @@ describe('the reload half of the build narrative (U15)', () => {
     h.getStatus.mockRejectedValue(new ApiError('Build session not found.', 404))
     const { container } = renderThread()
 
-    // The stored step renders through the SAME activity group the live path uses (AE43) — one
+    // The stored step renders through the SAME activity group the live path uses — one
     // converter, one renderer, so a build read back looks like the build watched.
     fireEvent.click(await screen.findByTestId('activity-group-trigger'))
     const step = await screen.findByText('Updated app/page.tsx')
@@ -352,9 +352,9 @@ describe('the reload half of the build narrative (U15)', () => {
 describe('the U13 header', () => {
   it('an inertness guard: no mode control mounts, and a legacy `mode` field on the header is never read', async () => {
     // AN INERTNESS GUARD, not a deleted test (L8). This used to prove the in-composer switcher
-    // (F5/U6) showed the server-saved `mode` as its trigger label ("Mode: Ask"). U1 collapsed the
-    // three-valued ConversationMode into a ChatKind fixed at creation, and U19 deleted
-    // `ModeSwitcher` with it (see ModeSwitcher.test.tsx for the tree-wide "nothing imports or
+    // showed the server-saved `mode` as its trigger label ("Mode: Ask"). The three-valued
+    // ConversationMode collapsed into a ChatKind fixed at creation, and `ModeSwitcher` was
+    // deleted with it (see ModeSwitcher.test.tsx for the tree-wide "nothing imports or
     // mounts it" guard). There is no per-thread setting left to display or switch.
     //
     // What THIS page's own render can still pin: a header payload that happens to carry a
@@ -542,7 +542,7 @@ describe('R8 live clause — a reload MID-TURN re-attaches to the running reply'
     renderThread()
 
     // Liveness: the composer mounted — this used to wait on the now-retired mode pill, which
-    // served the same "hydration settled" role; see the U13-header guard above for why it's gone.
+    // served the same "hydration settled" role; see the header guard above for why it's gone.
     await screen.findByPlaceholderText(/ask for another change/i)
     await waitForGateOpen()
     expect(h.readTurnStream).not.toHaveBeenCalled()

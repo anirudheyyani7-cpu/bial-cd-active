@@ -1,6 +1,6 @@
-"""The build-harness counters, read by an operator (U25, R32).
+"""The build-harness counters, read by an operator.
 
-WHAT THIS ROUTE IS FOR, in the words of the plan's success criteria: after a week in production,
+WHAT THIS ROUTE IS FOR: after a week in production,
 "did the verdict block a false claim, how often did we restore, and did any turn fail to reach a
 durable copy" has to be answerable. There is no metrics system in this deployment, so if these are
 not readable here they are not readable anywhere.

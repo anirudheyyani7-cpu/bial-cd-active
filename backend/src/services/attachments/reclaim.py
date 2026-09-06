@@ -1,26 +1,25 @@
-"""Reclaim never-sent attachment uploads so they stop consuming the owner's quota (R10 / U9).
+"""Reclaim never-sent attachment uploads so they stop consuming the owner's quota.
 
+WHY THIS EXISTS
 An upload is reachable only by a client-minted token buried in a message's payload JSONB, so
-a file that is uploaded and never sent is referenced by no delete path and consumes the owner's
-50 MB quota forever. This is the missing sweep: a user-scoped service that deletes a user's
-ORPHANED uploads — and their object-store blobs — and is directly testable (its own
-service-layer test, ADR-0010). It is now driven in prod by the operator reconcile sweep, once per
-owning user (`admin/router.py::_reclaim_orphans_for_all_users`, U10), so the leak it fixes is
-actually reclaimed and not merely reclaimable.
+a file uploaded and never sent has no delete path and consumes the owner's 50 MB quota forever.
+This service closes that gap: it deletes one user's orphaned uploads and their object-store
+blobs, with its own service-layer test. It runs in prod via the operator reconcile sweep, once
+per owning user (`admin/router.py::_reclaim_orphans_for_all_users`), so the leak is actually
+reclaimed, not merely reclaimable.
 
-Eligibility, exactly (both required):
-  (a) referenced by NO sent message — the `_referenced_attachment_ids` scan over the native
-      `Message.payload` (attachment ref markers, U4), REUSED from the conversation cascade so
-      the reclaimer and the cascade can never drift; and
-  (b) older than `NEVER_SENT_RECLAIM_WINDOW` — a file attached seconds ago and not yet sent is
-      still needed (mid-composition), so age is half the rule.
+Eligibility, exactly (both required): (a) referenced by NO sent message — the
+`_referenced_attachment_ids` scan over the native `Message.payload`, REUSED from the
+conversation cascade so the reclaimer and the cascade can never drift; and (b) older than
+`NEVER_SENT_RECLAIM_WINDOW` — a file attached seconds ago and not yet sent is still needed
+(mid-composition), so age is half the rule.
 
 A NULL `conversation_id` is NEVER on its own an eligibility signal: NULL means *legacy*, not
 *never-sent*, and every legacy row is by definition past the window, so criterion (a) decides
-it exactly as it decides a linked row. The column narrows the candidate set / backstops the row;
-it does not answer (a).
+it exactly as it decides a linked row. The column narrows the candidate set; it does not
+answer (a) on its own.
 
-BOTH halves are user-scoped (ADR-0004). `attachment_id` is a client-minted token unique only
+Every query here is scoped by `user_id`. `attachment_id` is a client-minted token unique only
 per owner (`uq_attachments_owner_attachment`), so a reference scan across ALL users' messages
 would let a colliding token in user B's message shield user A's orphan from reclamation — the
 exact cross-user leak the scoping closes.
@@ -44,16 +43,16 @@ from src.db.models.message import Message
 from src.services.conversations.delete import _blob_keys_for, _referenced_attachment_ids
 from src.services.storage import ObjectStorage, sweep_blobs
 
-# The err-long window (KD-7 posture). Too short deletes a file the user is still composing;
+# A window that errs long. Too short deletes a file the user is still composing;
 # too long costs a few hours of stored bytes. 48h is a large multiple of any realistic
-# upload-then-send interval, and consistent with the reconciler's err-long grace.
+# upload-then-send interval, and consistent with the reconciler's long-erring grace.
 NEVER_SENT_RECLAIM_WINDOW = datetime.timedelta(hours=48)
 
 
 @dataclass(frozen=True)
 class AttachmentReclaimResult:
-    """What one reclamation pass over a user did. Counts only — no key list (R13 posture:
-    a report never leaks the internal object layout)."""
+    """What one reclamation pass over a user did. Counts only — no key list: a report
+    never leaks the internal object layout."""
 
     reclaimed: int  # orphan rows deleted
     freed_bytes: int  # SUM(size) reclaimed — the quota this pass gave back
@@ -71,7 +70,7 @@ async def reclaim_orphaned_attachments(
     and best-effort sweep their blobs; return the counts.
 
     Commit + sweep are owned here (this is the whole operation, not a step inside a larger
-    cascade). Rollback-safe (KD-8): blob keys and freed bytes are captured BEFORE the delete
+    cascade). Rollback-safe: blob keys and freed bytes are captured BEFORE the delete
     and commit — `expire_on_commit` would make a post-commit attribute read raise
     `MissingGreenlet` — then the blobs are swept AFTER the commit, so a rolled-back delete
     never destroys a blob a restored row still points at. `now` is injectable for tests.
@@ -79,7 +78,7 @@ async def reclaim_orphaned_attachments(
     cutoff = (now or datetime.datetime.now(datetime.UTC)) - NEVER_SENT_RECLAIM_WINDOW
 
     # (a) every attachmentId this user has referenced in ANY of their sent messages (native
-    # payload ref markers, U4). Scoped by `user_id` on this half too — a colliding token in
+    # payload ref markers). Scoped by `user_id` on this half too — a colliding token in
     # another user's message must not count.
     payload_rows = (
         (await db.execute(sa.select(Message.payload).where(Message.user_id == user_id)))
@@ -106,7 +105,7 @@ async def reclaim_orphaned_attachments(
     if not orphans:
         return AttachmentReclaimResult(reclaimed=0, freed_bytes=0, swept_keys=0)
 
-    # Capture everything read post-commit BEFORE the delete/commit (KD-8).
+    # Capture everything read post-commit BEFORE the delete/commit.
     blob_keys = _blob_keys_for(orphans)
     freed_bytes = sum(att.size for att in orphans)
     reclaimed = len(orphans)

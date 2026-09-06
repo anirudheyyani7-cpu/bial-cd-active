@@ -3,13 +3,13 @@
 Mirrors the object-storage accessor (`services/storage/accessor.py`): `get_redis()`
 reads `settings.redis`, builds ONE pooled `redis.asyncio` client, and memoises it;
 `aclose_redis()` closes the pool and drops the singleton on FastAPI lifespan
-shutdown (U9). Construction is lazy and None-safe — a dev/test boot with no
-`REDIS__*` env never opens a pool (D2), and `aclose_redis()` is a no-op when the
+shutdown. Construction is lazy and None-safe — a dev/test boot with no
+`REDIS__*` env never opens a pool, and `aclose_redis()` is a no-op when the
 pool was never used (mirrors `aclose_storage`).
 
-`decode_responses=True` so keys and hash fields round-trip as `str` (the C5
+`decode_responses=True` so keys and hash fields round-trip as `str` (the key
 builders emit `str`); the DSN is unwrapped from its `SecretStr` only here, at the
-SDK boundary (security.md).
+SDK boundary.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def create_redis(config: RedisConfig) -> aioredis.Redis:
     The `Retry` class MUST be `redis.asyncio.retry.Retry`, never the identically
     named `redis.retry.Retry`. They are different classes, and the async connection
     calls `await self.retry.call_with_retry(do, ...)` where `do` returns a COROUTINE
-    (`redis/asyncio/connection.py:351`). The sync class's `call_with_retry` is not a
+    (`redis/asyncio/connection.py`). The sync class's `call_with_retry` is not a
     coroutine function: its `try/except` sees only the coroutine being CREATED, never
     awaited, so no error ever reaches its retry loop — it hands the coroutine straight
     back and the caller awaits it outside any retry. The policy then looks correct on
@@ -100,8 +100,8 @@ def get_redis() -> aioredis.Redis:
 
 async def aclose_redis() -> None:
     """Close the pooled client and drop the singleton. Wired into the FastAPI
-    lifespan shutdown (U9). A no-op when the pool was never opened. The close is
-    isolated: if it raises we log it (fail-first.md — never a silent swallow) but
+    lifespan shutdown. A no-op when the pool was never opened. The close is
+    isolated: if it raises we log it — never a silent swallow — but
     STILL reset the singleton, so a restart never reuses a half-closed pool."""
     global _redis_singleton
     if _redis_singleton is None:

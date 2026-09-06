@@ -1,5 +1,5 @@
 /**
- * THE RUNTIME, MOUNTED ONCE PER CONVERSATION, AROUND EVERYTHING THAT READS IT (plan 002, U5).
+ * THE RUNTIME, MOUNTED ONCE PER CONVERSATION, AROUND EVERYTHING THAT READS IT.
  *
  * It used to be built inside `ChatThread`, whose provider therefore wrapped only the transcript.
  * That was fine while the composer was entirely hand-rolled — it read nothing from the runtime. It
@@ -22,7 +22,7 @@ export interface ChatRuntimeProviderProps {
   messages: readonly ChatMessage[]
   isRunning: boolean
   onNew: (message: AppendMessage) => Promise<void>
-  /** R55's relocated stop, as the runtime sees it. Passing it is what registers `cancel`. */
+  /** The relocated stop control, as the runtime sees it. Passing it is what registers `cancel`. */
   onCancel: () => Promise<void>
   children: ReactNode
 }

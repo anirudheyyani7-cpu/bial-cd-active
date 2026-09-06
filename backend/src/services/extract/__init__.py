@@ -1,4 +1,4 @@
-"""Untrusted-file extraction: office (docx/xlsx → Markdown) + deck (pptx → PDF) (R17). Public
+"""Untrusted-file extraction: office (docx/xlsx → Markdown) + deck (pptx → PDF). Public
 surface via explicit re-exports."""
 
 from src.services.extract.deck import DeckConvertError as DeckConvertError

@@ -1,4 +1,4 @@
-// ESLint v9 flat config for the portal (U9/R9).
+// ESLint v9 flat config for the portal.
 //
 // `package.json` has shipped a `lint` script since before this file existed, but with no config
 // on disk `eslint .` could not run AT ALL — it died on the v9 migration error, so "lint passes"
@@ -49,13 +49,13 @@ export default tseslint.config(
       // (refs / set-state-in-effect / immutability / preserve-manual-memoization), which flag
       // 67 findings across a codebase written years before that bar existed. Adopting them is
       // a real refactor with real regression risk — a separate, deliberate piece of work, not
-      // a side effect of making `npm run lint` executable again (U9 defers the burn-down).
+      // a side effect of making `npm run lint` executable again.
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
       // The new JSX transform: no `import React` needed, and React is not a runtime global.
       'react/react-in-jsx-scope': 'off',
       'react/jsx-uses-react': 'off',
-      // The .jsx surface is untyped by choice (ADR: portal stays JS-first outside the typed
+      // The .jsx surface is untyped by choice: the portal stays JS-first outside the typed
       // utils/hooks); prop-types would be noise on every component in the tree.
       'react/prop-types': 'off',
       // Off by choice, not by fatigue. It fires on ordinary apostrophes in user-visible copy

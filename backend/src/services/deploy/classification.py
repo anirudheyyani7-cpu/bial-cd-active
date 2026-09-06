@@ -3,7 +3,7 @@
 Six yes/no questions about what data an app handles, each with a sensitivity weight. A
 declaration whose weighted total is AT OR BELOW `AUTO_DEPLOY_MAX_SCORE` is safe enough
 to publish with no human in the loop; anything above it needs a person. Since the
-pre-publish review (U9) the answer set the gate scores is no longer the citizen's alone:
+pre-publish review, the answer set the gate scores is no longer the citizen's alone:
 the publish request merges the citizen's declaration with the platform's own stored
 review of the saved code (`services/classification/merge`, stricter-of per question) and
 a weighted Yes on the MERGED set ROUTES the app into the admin approve queue — a real
@@ -11,12 +11,12 @@ queue entry an administrator will see, not a refusal and not an out-of-band "ask
 someone". This module stays what it always was: the table, the threshold, and the pure
 scoring functions both the gate and the merge read their weights from.
 
-FIXED post-#104 (issue #115): the gate previously ran the other way — `>= 50` auto-
+THIS WAS FIXED: the gate previously ran the other way — `>= 50` auto-
 deployed, so an app that HONESTLY declared it handled Credentials + Confidential
 Business data (score 55) published to a live URL with zero review, while an app
 declaring nothing sensitive (score 0) was refused. A since-retired `refusal_message()`
 compounded it by coaching the citizen toward declaring MORE sensitive categories to get
-published (it was retired with the terminal refusal it explained, in U9 — a routed app
+published (it was retired with the terminal refusal it explained — a routed app
 gets a queue entry, so a sentence promising nothing would happen next stopped being
 true). The weights are sensitivity values (see below) — a safety gate must let the
 LOW-sensitivity case through automatically and route the HIGH-sensitivity case to a
@@ -27,10 +27,10 @@ precondition on ONE action — publishing — so the policy belongs beside the t
 gates, and the gate itself runs inside the deploy route as a precedence ladder
 (`api/v1/deploy/router.py`). An earlier revision of this docstring said the admin
 `submit`/`approve`/`reject` surface was "deliberately untouched"; that stopped being
-true in U9 and the sentence was rewritten rather than left to mislead: the ladder ROUTES
+true and the sentence was rewritten rather than left to mislead: the ladder ROUTES
 a weighted merged Yes into that surface through the approvals submit service (the one
-route into the queue, R15a), and an administrator's approval of the exact shipping
-version is what satisfies the gate on the next publish (R17). The automatic decision
+route into the queue), and an administrator's approval of the exact shipping
+version is what satisfies the gate on the next publish. The automatic decision
 still lives here; the human decision still lives there; the ladder is the seam where one
 hands the app to the other.
 
@@ -40,8 +40,8 @@ advisory decoration, bypassable by any caller that skipped straight to deploy. T
 answers therefore ride in the deploy request body, and both answer sets AND the merge
 outcome are computed inside the same request that publishes, so passing the gate and
 being deployed are the same event (the request schema carries no review field at all —
-the gate reads the stored review by app and version, never a browser-supplied copy,
-R12). A portal may recompute the total locally to drive its own affordances (enabling
+the gate reads the stored review by app and version, never a browser-supplied copy).
+A portal may recompute the total locally to drive its own affordances (enabling
 Confirm, prompting for an explanation); that copy is a convenience and is never the
 decision.
 
@@ -72,12 +72,12 @@ DATA_CLASSIFICATION_QUESTIONS: tuple[tuple[str, str, int], ...] = (
     ("public_data", "Public Data", 0),
 )
 
-# AT OR BELOW this total the deploy proceeds automatically — set to 0 (issue #115): ANY
+# AT OR BELOW this total the deploy proceeds automatically — set to 0: ANY
 # weighted category answered Yes routes to a human, deliberately, not a graduated scale.
 # "Nothing sensitive declared" is the one shape of answer set safe enough to publish with
 # no one looking at it; every other combination needs a person, however small the total.
 #
-# TIED to `notes_required()` (issue #117 follow-up): every declaration that fails this
+# TIED to `notes_required()`: every declaration that fails this
 # gate is now ALSO obliged to explain itself — there is no longer a band that is refused
 # but never asked why, nor one that must explain itself but is not refused. Before this,
 # `NOTES_REQUIRED_AT` (25) sat strictly inside the refused region: an explanation could be
@@ -123,8 +123,8 @@ def qualifies_for_deploy(flags: Mapping[str, bool]) -> bool:
     Rejects an INCOMPLETE mapping outright rather than scoring it — `total_weight`'s
     per-key omission tolerance exists for reading an old stored answer set, not for
     letting a partial declaration through the gate: a mapping missing every key scores
-    0 and would otherwise silently qualify for auto-deploy, the fail-open shape of
-    exactly the bug issue #115 was about.
+    0 and would otherwise silently qualify for auto-deploy — exactly the fail-open shape
+    the original scoring bug had.
     """
     if any(key not in flags for key in CLASSIFICATION_KEYS):
         raise ValueError("incomplete declaration cannot be scored for auto-deploy")
@@ -157,7 +157,7 @@ def declared_categories(flags: Mapping[str, bool]) -> tuple[str, ...]:
     over-answered by mistake. Zero-weight categories are omitted — `Public Data` never
     moves the score either way, so listing it would be noise presented as advice.
 
-    NOTE: `refusal_message`, this projection's original consumer, was retired in U9
+    `refusal_message`, this projection's original consumer, was retired
     with the terminal refusal it explained (a weighted Yes now ROUTES to the admin
     queue instead of refusing). What stays is the flags-shaped reading of the same
     table; a caller that already holds the KEYS it wants named asks `labels_for`.

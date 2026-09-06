@@ -31,8 +31,8 @@ import type { AuthFetchDeps } from './projectApi'
 import type { ClassificationKey } from './deployApi'
 
 /**
- * The citizen-facing state of the review. `nothing_to_review` is R21's "no saved code
- * yet"; `not_reviewed` means saved code with no review ever claimed (a GET-only state —
+ * The citizen-facing state of the review. `nothing_to_review` is the "no saved code
+ * yet" state; `not_reviewed` means saved code with no review ever claimed (a GET-only state —
  * the ensure-POST is what claims one); an aged-out running review arrives as `failed`
  * with the `review_abandoned` code, never as an immortal `running`.
  */
@@ -43,7 +43,7 @@ export type ClassificationReviewStatus =
   | 'complete'
   | 'failed'
 
-/** `unanswered` is a real verdict, distinct from `no` (R5): the review answers only
+/** `unanswered` is a real verdict, distinct from `no`: the review answers only
  *  where it has evidence, and an unanswered question is the citizen's alone to decide. */
 export type ReviewVerdict = 'yes' | 'no' | 'unanswered'
 
@@ -224,7 +224,7 @@ export function mergeWithReview<K extends string>(
   for (const key of keys) {
     const own = citizen[key] ?? null
     // A review Yes is the only verdict that overrides; `no` and `unanswered` both hand the
-    // question back to the developer (R5), and so does a review that never landed.
+    // question back to the developer, and so does a review that never landed.
     merged[key] = verdicts?.[key]?.verdict === 'yes' ? true : own
   }
   return merged

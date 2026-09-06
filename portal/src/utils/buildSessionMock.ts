@@ -1,10 +1,10 @@
 /**
  * `FakeEventSource` — a hand-driven `EventSourceLike` test double (no `EventSource`
  * exists in jsdom). Tests emit frames / trigger the error arms on it directly and
- * inject it through the `eventSourceFactory` deps seam (KTD-6).
+ * inject it through the `eventSourceFactory` deps seam.
  *
- * This module once also carried scripted C7 envelope sequences and a canned/coordinated
- * C3 mock client, built while SESSION-API's real endpoints did not exist yet. Nothing
+ * This module once also carried scripted progress-envelope sequences and a canned
+ * build-session mock client, built while SESSION-API's real endpoints did not exist yet. Nothing
  * consumed that surface once the real endpoints landed (each test suite primes its own
  * `vi.fn()` client bag instead), so it was deleted — the fake transport below is the
  * only export anything imports.
@@ -49,7 +49,7 @@ export class FakeEventSource implements EventSourceLike {
     this.emit(JSON.stringify(env))
   }
 
-  /** The never-opened admission failure (401/404, C3 §4.1): CLOSED + `error`, no retry. */
+  /** The never-opened admission failure (401/404): CLOSED + `error`, no retry. */
   failNeverOpened(): void {
     this.readyState = READY_STATE.CLOSED
     this.onerror?.(new Event('error'))

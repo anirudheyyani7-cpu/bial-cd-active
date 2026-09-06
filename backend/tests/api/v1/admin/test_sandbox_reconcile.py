@@ -7,8 +7,8 @@ what the wire body looks like, what reaches the audit trail, and which failures 
 It exists because the first cut had none — the endpoint shipped with unit coverage of
 `take_sandbox_inventory` and nothing that ever issued the request, so the gate, the envelope
 and the audit row were correct only by inspection. Its two siblings
-(`test_storage_reconcile.py`, `test_database_reconcile.py`) each carry this set, and
-`.claude/rules/testing.md` asks for RBAC to be tested explicitly rather than reasoned about.
+(`test_storage_reconcile.py`, `test_database_reconcile.py`) each carry this set, because
+RBAC needs to be tested explicitly rather than reasoned about.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""The open-sandbox write gate + read ignore set (U1/U2, KD-9/KD-10) — the whole workspace is
+"""The open-sandbox write gate + read ignore set — the whole workspace is
 writable, so the guard only keeps the model out of `.git/**` and any absolute/`..` escape."""
 
 from __future__ import annotations
@@ -9,16 +9,16 @@ from src.services.orchestrator import constants
 
 
 def test_frozen_budgets_are_in_module_not_config() -> None:
-    # The self-heal budget + per-run ceiling are in-module constants (KD-7); none reads config.py.
+    # The self-heal budget + per-run ceiling are in-module constants; none reads config.py.
     assert constants.SELF_HEAL_MAX_RETRIES == 3
     assert constants.MODEL_TURN_CEILING > 0
     assert constants.TYPECHECK_CMD == ("npx", "tsc", "--noEmit")
-    assert constants.EXEC_TIMEOUT_S < 900  # within C1's hard exec cap
+    assert constants.EXEC_TIMEOUT_S < 900  # within the supervisor contract's hard exec cap
     assert constants.TEMPERATURE == 0.0
 
 
 def test_cache_ttl_is_the_one_hour_tier() -> None:
-    # R1: the prompt-cache TTL is the 1h tier, NOT the 5m one `True` selects. The loop's steps are
+    # The prompt-cache TTL is the 1h tier, NOT the 5m one `True` selects. The loop's steps are
     # far apart (a 600s `run_command` npm install, an EXEC_TIMEOUT_S tsc, readiness polls), so a 5m
     # entry would expire between steps — every step paying the write premium for zero reads.
     assert constants.CACHE_TTL == "1h"
@@ -27,8 +27,8 @@ def test_cache_ttl_is_the_one_hour_tier() -> None:
 
 
 def test_cache_settings_are_module_constants_not_config_fields() -> None:
-    # The cache knobs live in THIS module (rule §5.9 / the config surface is frozen for this
-    # track) — U1 must not have grown the Settings surface a cache field to be misconfigured.
+    # The cache knobs live in THIS module, not in Settings — the config surface is deliberately
+    # frozen here, so a cache field must never leak into Settings as a misconfiguration.
     from src.config import Settings
 
     assert not [name for name in Settings.model_fields if "cache" in name.lower()]
@@ -100,7 +100,7 @@ def test_read_ignored(path: str) -> None:
     ["app/page.tsx", "db/schema.ts", "components/ui/button.tsx", "README.md"],
 )
 def test_read_allowed(path: str) -> None:
-    # A read can't mutate (KD-10) — even the never-edit files are readable so the model can learn
+    # A read can't mutate — even the never-edit files are readable so the model can learn
     # the data API before composing against it.
     assert constants.is_read_ignored(path) is False
 
@@ -109,7 +109,7 @@ def test_read_allowed(path: str) -> None:
     "path",
     [
         "/etc/passwd",  # absolute — must be denied, not read as a relative path
-        "/proc/self/environ",  # the supervisor token lives here (KD-9); never readable
+        "/proc/self/environ",  # the supervisor token lives here; never readable
         "/workspace/.env",  # absolute into the workspace root
         "app/../../etc/shadow",  # `..` escape out of the workspace
         "..",  # bare parent

@@ -1,15 +1,14 @@
-"""The per-run dependency bundles the sandbox tools and the build harness receive (KD-4 / KD-9 /
-KD-13).
+"""The per-run dependency bundles the sandbox tools and the build harness receive.
 
-Two dataclasses, split along the seam U5 needs:
+Two dataclasses, split along the seam between what each consumer needs:
 
 * `SandboxSession` — EVERYTHING the eight sandbox tools touch, and nothing else. It is held by
-  `BuildDeps.sandbox` (the legacy `/build-sessions` harness) and, from U5, by a Write chat turn's
+  `BuildDeps.sandbox` (the legacy `/build-sessions` harness) and, by a Write chat turn's
   own deps, so ONE tool body serves both consumers (`tools.sandbox_toolset`).
 * `BuildDeps` — the harness-only surround: the owner `user_id`, the single `ProgressEmitter` (so
-  tools and the harness share ONE seq source, KD-12), and the claim-once preview-frame guard.
+  tools and the harness share ONE seq source), and the claim-once preview-frame guard.
 
-There are deliberately NO caches (KD-10): an uncached `view` is always correct; a cache without
+There are deliberately NO caches: an uncached `view` is always correct; a cache without
 invalidation risks stale content mid-self-heal.
 """
 
@@ -30,7 +29,7 @@ from src.services.sandbox import SandboxClient, SandboxHandle
 @dataclass(frozen=True)
 class HeldOutput:
     """One command's output, held for this turn so `fetch_output_slice` can read the middle the
-    cap removed (U22 / R28).
+    cap removed.
 
     `lines` IS ALREADY REDACTED, AND THAT IS THE WHOLE SECURITY PROPERTY OF THIS CLASS. It is the
     output of `scrub_untrusted` — capped, de-escaped, credential-masked — split on newlines, and
@@ -52,9 +51,9 @@ class HeldOutput:
 @dataclass
 class SandboxSession:
     """Everything the eight sandbox tools touch, and nothing else. Mutable so `declare_done` can
-    flip the done-signal; the harness resets it at the start of each run (KD-6).
+    flip the done-signal; the harness resets it at the start of each run.
 
-    SECRET-SAFETY RULE (KD-9). `handle.token` is the LIVE supervisor bearer. Never `log()`,
+    SECRET-SAFETY RULE. `handle.token` is the LIVE supervisor bearer. Never `log()`,
     `repr()`, or return `SandboxSession` or `SandboxHandle` wholesale, and never render
     `handle.token` into an error message or a model-visible tool result. Exception logging binds
     only `session_id` / `user_id` / `app_id` — never `handle` / `handle.token`.
@@ -62,7 +61,7 @@ class SandboxSession:
 
     sandbox_client: SandboxClient
     handle: SandboxHandle
-    # From the KD-13 run-context, so `BuildResult.app_id` is populated and the BRAIN trace binds.
+    # From the run-context, so `BuildResult.app_id` is populated and the BRAIN trace binds.
     app_id: uuid.UUID
     # ── Mutable per-run signals the tools set and the loop reads ──────────────────────────────
     done_requested: bool = False
@@ -72,7 +71,7 @@ class SandboxSession:
     # question. A Write turn that only read files is an ordinary chat turn and must not pay for a
     # verify pass or a self-heal nudge.
     workspace_touched: bool = False
-    # ── U22 / R28: the per-turn output buffer and the repeat-run memory ───────────────────────
+    # ── The per-turn output buffer and the repeat-run memory ──────────────────────────────────
     # NEITHER IS PERSISTED. Both die with the session the harness rebuilds at the start of each
     # run, which is exactly the stated lifetime of a slice handle: a handle from a previous run
     # resolves to nothing and the model is told to re-run the command. Nothing here reaches the
@@ -82,11 +81,11 @@ class SandboxSession:
     # the OLDEST handle when the ring is full, so the notice the model just read always still
     # resolves.
     held_outputs: OrderedDict[str, HeldOutput] = field(default_factory=OrderedDict)
-    # Redacted command strings already run this turn — the repeat-run adoption counter's memory
-    # (U22). Redacted, not raw, for the same reason `HeldOutput.lines` is: an argv token can carry
+    # Redacted command strings already run this turn — the repeat-run adoption counter's memory.
+    # Redacted, not raw, for the same reason `HeldOutput.lines` is: an argv token can carry
     # a credential, and this lives on the session for the whole turn.
     commands_seen: set[str] = field(default_factory=set)
-    # The legacy C7 build feed. `None` on a chat turn, where the turn ENGINE emits the step frames
+    # The legacy build feed. `None` on a chat turn, where the turn ENGINE emits the step frames
     # from the run's own tool events — see `tools._step` for why emitting both would double-render.
     emitter: ProgressEmitter | None = None
 
@@ -120,13 +119,13 @@ class SandboxSession:
 @dataclass
 class BuildDeps:
     """The legacy build harness's per-run agent dependencies: the sandbox session the tools resolve
-    through, plus the harness-only surround (owner scope, the C7 emitter, the preview-frame
+    through, plus the harness-only surround (owner scope, the emitter, the preview-frame
     guard)."""
 
     sandbox: SandboxSession
     emitter: ProgressEmitter
     user_id: uuid.UUID
-    # F8/U5 — the SHARED "preview is framed" guard, hoisted out of the `_run_loop` local it used to
+    # The SHARED "preview is framed" guard, hoisted out of the `_run_loop` local it used to
     # be so ALL THREE initial-frame emit sites consult ONE flag: (a) the warm-resume immediate
     # emit, (b) the decoupled early readiness watcher, (c) the between-steps verify. Seeded from
     # `handle.ready` in `__post_init__` so a warm/resumed sandbox that emits `preview_ready`
@@ -146,7 +145,7 @@ class BuildDeps:
         across the initial-frame emit sites. The test-and-set has NO `await` between the "is it
         set?" check and the "set it" write, so the early watcher and the between-steps loop can
         never both see it unset and both emit `preview_ready` with two different seqs (a
-        double-frame). This is what makes a second concurrent emitter safe (KD-12)."""
+        double-frame). This is what makes a second concurrent emitter safe."""
         if self.preview_framed:
             return False
         self.preview_framed = True

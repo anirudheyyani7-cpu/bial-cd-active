@@ -1,9 +1,9 @@
-"""Owner-scoped project resolution (R2, ADR-0004).
+"""Owner-scoped project resolution.
 
 Project-first is the product model: every app and conversation belongs to exactly
 one project the caller owns, so `project_id` is REQUIRED at every create seam —
 there is no fallback project. A missing and a cross-user id are the same
-non-leaking 404 (indistinguishable, ADR-0004). Shared by the projects CRUD router,
+non-leaking 404. Shared by the projects CRUD router,
 app `provision`, and conversation `append_message`'s create branch.
 """
 

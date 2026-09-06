@@ -154,7 +154,7 @@ export default function WorkspaceToolbar({
                   build chat — `BuildChat`, `NewBuildChat`, `PlainAnswer`, `ChatStarting` — draws
                   BUILD as the word alone. That is why the catalogue answers this with its own
                   `pillIcon` rather than with the picker's `Icon`: the row must not branch on a
-                  chat's kind (R72), so the difference has to live in the one table that holds the
+                  chat's kind, so the difference has to live in the one table that holds the
                   kinds. Decorative beside the word it accompanies, hence `aria-hidden`. */}
               {PillIcon && <PillIcon size={11} aria-hidden="true" className="flex-shrink-0" />}
               {kind.word}

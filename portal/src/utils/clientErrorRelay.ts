@@ -1,5 +1,5 @@
 /**
- * The relay leg of the app's own client-error reporting (U13, R17 runtime half).
+ * The relay leg of the app's own client-error reporting.
  *
  * A generated app can answer 200 and still die in the browser before it paints — a bad hook
  * order, a null read in a render, a rejected fetch nobody caught. Every health signal the
@@ -12,10 +12,10 @@
  * WHAT REACHES THE USER FROM HERE: nothing. The report goes to the build harness, where it makes
  * the health verdict not-green, and to the agent, which can act on it. The user's only visible
  * consequence is that the completion claim does not appear. A JS stack trace under a file path
- * is not a product surface, and this plan removes developer surfaces rather than adding one.
+ * is not a product surface, and this module removes developer surfaces rather than adding one.
  *
  * TRUST BOUNDARY. The origin check that decides whether a message is even seen lives in
- * `LivePreview` (C8 §3) and is not repeated here — this module is reached only for messages that
+ * `LivePreview` and is not repeated here — this module is reached only for messages that
  * already passed it. What it does add is SHAPE validation: passing the origin check proves where
  * the bytes came from, not what they are, and the sender is unreviewed agent-authored code
  * running next to unreviewed npm.

@@ -4,7 +4,7 @@ THE SPLIT IS THE TESTABILITY ARGUMENT. `reclaim.py` decides and touches nothing;
 touches everything and decides nothing. Every safety property is proven in the pure half against a
 synthetic fleet; this half is the plumbing that feeds it, and fakes exercise it.
 
-THREE SOURCES, AND THEY DISAGREE ON PURPOSE. **Azure** is the fleet of record (ADR-0029): what it
+THREE SOURCES, AND THEY DISAGREE ON PURPOSE. **Azure** is the fleet of record: what it
 says exists, exists. **Redis** is a spare-list ONLY, never an inventory — a container missing from
 it is not thereby an orphan, it is a container with no claim on it. **Postgres** answers "does an
 app row match this container", which decides whether an unclaimed container waits one hour or

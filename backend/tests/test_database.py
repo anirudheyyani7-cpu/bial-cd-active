@@ -43,7 +43,7 @@ def test_timestamp_columns_declared() -> None:
 
 def test_owned_by_user_is_scoped_and_indexed() -> None:
     # Single-tenant ownership boundary: user_id present, non-nullable, indexed —
-    # and NO org_id anywhere (ADR-0004).
+    # and NO org_id anywhere.
     col = _OwnedThing.__table__.c.user_id
     assert col.nullable is False
     assert col.index is True

@@ -1,37 +1,26 @@
-"""The browser client-error report store — the receiving half of the app's own error reporter
-(U13, R17 runtime half, AE11).
+"""The browser client-error report store — the receiving half of the app's own error reporter.
 
-The generated app captures its own `window.onerror` / `unhandledrejection` / `console.error`
-and relays them to the framing portal. This module is the consumer on the other end: the portal
-POSTs what it caught to the ingest route, the report lands here, and `selfheal.verify` drains it
-as part of the health verdict, so an app that answers 200 and then dies in the browser can no
-longer be called green.
+WHY THIS EXISTS
+The generated app captures its own `window.onerror` / `unhandledrejection` / `console.error` and
+relays them to the framing portal, which POSTs what it caught to the ingest route here;
+`selfheal.verify` then drains the store as part of the health verdict, so an app that answers 200
+and then dies in the browser can no longer be called green. A report arrives on its own HTTP
+request, in a task separate from the turn that is building the app, with nothing in-flight to hand
+it to — the turn may be mid-run, between runs, or already finished. Parking it for the next verify
+to collect covers all three cases without resurrecting a finished turn; nothing here pushes, and an
+unclaimed report just waits for the next verify or expires unread.
 
-WHY A STORE AND NOT A DIRECT CALL INTO THE TURN. A report arrives on its own HTTP request, in a
-different task from the turn that is building the app, and there is no in-flight thing to hand it
-to: the turn may be mid-run, between runs, or finished for the last time. Parking the report and
-letting the next verify come and collect it is what lets all three cases work without any of them
-knowing about this feature — and it is also, structurally, the answer to "a late report must not
-resurrect a finished turn". Nothing here PUSHES. A report that lands after a turn's last verify
-simply waits for the next one, or expires unread.
+The store lives in-process, deliberately, because a build session exists only in the process that
+started it (`SessionManager` keeps live sessions in a plain dict); a Redis-backed store would be
+the one cross-process piece of an otherwise per-process feature. It is also bounded three ways,
+since the writer is a crashing browser and a crash loop is the normal shape of this input: at most
+`MAX_REPORTS_PER_APP` reports per app, `MAX_APPS` apps tracked at once, and reports older than
+`REPORT_TTL_S` dropped unread. The per-app cap keeps the FIRST reports, not the newest, since a
+repeating error is many copies of one diagnostic and the first copy sits closest to the fault.
 
-IN-PROCESS, deliberately. A build session already exists only in the process that started it —
-`SessionManager` holds live sessions in a plain dict and `manager.get(session_id)` reads it — so
-a Redis-backed store here would be the one cross-process component of a per-process feature, and
-would still be read by a verify running in the process that owns the session anyway.
-
-BOUNDED THREE WAYS, because the writer is a crashing browser and a crash LOOP is the ordinary
-shape of this input: at most `MAX_REPORTS_PER_APP` reports are kept per app, at most `MAX_APPS`
-apps are tracked at once, and a report older than `REPORT_TTL_S` is dropped unread. Note which
-reports survive the per-app cap: the FIRST ones in the window, not the newest. A render loop that
-throws the same error four hundred times is four hundred copies of one diagnostic, and the first
-copy is the one closest to the fault; keeping the newest would mean a fast loop could push the
-original cause out of its own report.
-
-Everything in a report is UNTRUSTED TEXT produced by code running inside the generated app —
-third-party npm, fetched content, a compromised dependency. This module stores it verbatim and
-makes no claim about it; the redaction, the truncation and the data-only frame that stops it
-reading as instructions all live at the point of use (`errors.from_client`).
+Everything in a report is UNTRUSTED TEXT produced by code running inside the generated app. It is
+stored verbatim, with no claim made about it; redaction, truncation, and treating it as data rather
+than instructions all happen at the point of use (`errors.from_client`).
 """
 
 from __future__ import annotations

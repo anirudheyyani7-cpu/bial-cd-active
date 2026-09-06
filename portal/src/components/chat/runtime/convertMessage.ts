@@ -3,8 +3,10 @@
  *
  * One function maps our `ChatMessage` — server id, seq, role, parts[] — onto assistant-ui's
  * `ThreadMessageLike`. Both the live stream and the reload projection produce the SAME
- * `ChatMessage`, so both arrive here and both render identically. That is R72's surface half and
- * AE43, and it is a property of there being one converter rather than a rule anyone enforces.
+ * `ChatMessage`, so both arrive here and both render identically. That is the rendering half of
+ * the guarantee that nothing here branches on a chat's kind, and it is also what makes a live
+ * message and a reloaded one render identically — a property of there being one converter rather
+ * than a rule anyone enforces.
  *
  * ══ FIVE IDENTITY TRAPS, ALL VERIFIED IN THE INSTALLED 0.15.17 SOURCE ══
  *
@@ -31,12 +33,12 @@
  *     "activity groups flicker and disappear" failure: the record of tool calls lives outside the
  *     loop reading the stream, so a chunk carrying only text cannot erase earlier calls.
  *  5. `setMessages` IS NOT FREE. Providing it switches on `switchToBranch` AND `delete`. It is
- *     never provided, and U4's exact-equality capability test is what keeps it that way.
+ *     never provided, and an exact-equality capability test is what keeps it that way.
  *
  * ══ WHAT A PART BECOMES ══
  *
  * `text`      → a text part. Prose is prose.
- * `step`      → a `tool-call` part carrying LABEL AND STATE ONLY (R36; see the redaction note).
+ * `step`      → a `tool-call` part carrying LABEL AND STATE ONLY (see the redaction note).
  * `reasoning` → a reasoning part carrying the platform's own status sentence and nothing else.
  *               The library's own renderer for that kind is reached only when a message actually
  *               carries one, which is why a boolean on the turn cannot drive the working status
@@ -44,14 +46,14 @@
  *               part has nowhere for reasoning text to sit — see `REASONING_STATUS_TEXT`.
  * others      → nothing. `build`, `build_in_progress` and `plan_options` are not transcript prose:
  *            the first two are replaced by the activity group's own terminal handling, and
- *            `plan_options` is the offer, which U16 renders on the composer rather than inline.
+ *            `plan_options` is the offer, which renders on the composer rather than inline.
  *            Dropping a part is not the same as dropping a message — a message whose parts all
  *            drop still exists, with empty content, and the thread renders no element for it.
  *
- * ══ R36's WALL IS HERE, NOT AT THE DRAW SITE ══
+ * ══ THE REDACTION WALL IS HERE, NOT AT THE DRAW SITE ══
  *
  * A step becomes a tool-call part with `toolName` and a `state`, and NOTHING ELSE. No `args`, no
- * `result`, no `detail`. The expander (R33) therefore has nothing to leak even if someone later
+ * `result`, no `detail`. The expander therefore has nothing to leak even if someone later
  * renders every field a part holds — which is the point of putting the wall at the converter
  * rather than trusting a promise at the component. `toStepItem` in `turnStreamApi.ts` already
  * narrows `detail` away on both paths, so this is the second of two walls, not the only one.
@@ -65,8 +67,8 @@ export type ActivityState = 'running' | 'ok' | 'failed'
 
 /**
  * The tool-call args we allow onto a part. Deliberately a closed shape rather than the step's
- * own fields: this object IS what an expander can render, so it holds only what R35b says a row
- * may read — the server's friendly label and the state.
+ * own fields: this object IS what an expander can render, so it holds only what a row may read
+ * — the server's friendly label and the state.
  */
 export type ActivityArgs = {
   label: string
@@ -140,7 +142,7 @@ export function convertPart(part: MessagePart): LibraryPart | null {
       toolCallId: `step-${seq}`,
       toolName: TOOL_NAME,
       args,
-      // NOTHING ELSE — no `result`, no `artifact`, no `detail`. That omission is R36's wall.
+      // NOTHING ELSE — no `result`, no `artifact`, no `detail`. That omission is the redaction wall.
     }
   }
 

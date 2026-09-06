@@ -44,7 +44,7 @@ const ENDED_QUOTA: ProgressEnvelope = { type: 'ended', seq: 4, status: 'ended', 
  *     re-pointed onto `relaunchPreview` in `utils/__tests__/buildSessionApi.test.ts`;
  *   · the `blocked` banner those 409s fed is deleted, and `pages/__tests__/relaunch-chain-retired`
  *     drives BOTH producers to prove it cannot come back;
- *   · the server's verbatim 503 copy (R6) is asserted where it is now read — the live restore path
+ *   · the server's verbatim 503 copy is asserted where it is now read — the live restore path
  *     in `components/workspace/__tests__/StartAppControl.test.tsx`;
  *   · the mid-flight-unmount guard (FIX 1) is re-pointed onto `reattach` below, which carries the
  *     identical `mountedRef` bail.

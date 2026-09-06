@@ -1,9 +1,9 @@
-"""The shared signed double-submit CSRF gate for mutating data-plane POSTs (ADR-0007).
+"""The shared signed double-submit CSRF gate for mutating data-plane POSTs.
 
 Lives here — beside `deps_rbac.py`, the other cross-domain gate — rather than inside one
-domain: it started as the C3 control surface's own dependency (KTD-4), and the canonical
+domain: it started as the control surface's own dependency, and the canonical
 builder-thread endpoint (`api/v1/conversations`) is the second consumer, which is what
-earns it a shared home (ADR-0010: present-tense reuse, never speculative).
+earns it a shared home (present-tense reuse, never speculative).
 
 It is deliberately NOT universal: a route opts IN by declaring `RequireCsrf`. That used to
 be justified by the legacy chat relay, which carried no CSRF token and whose contract was
@@ -26,7 +26,7 @@ from src.services.auth.csrf import verify_csrf
 
 
 async def require_csrf(user: CurrentUser, request: Request) -> None:
-    """Signed double-submit CSRF check on a mutating POST (ADR-0007). Fails closed with
+    """Signed double-submit CSRF check on a mutating POST. Fails closed with
     the data-plane `{"error":{"message","code"}}` envelope."""
     if not verify_csrf(
         request.cookies.get(csrf_cookie_name(), ""),

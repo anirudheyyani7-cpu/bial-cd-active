@@ -1,12 +1,11 @@
-"""Build-session coordination service (contracts C5 / C7 / C9 / C4).
+"""Build-session coordination service.
 
 The one-per-user Redis lock + heartbeat + registry-state helpers (`locks`), the reaper
-ordering + reconciliation sweep (`reaper`), the C9 app-data credential mint + injection
-(`appdata`) and the per-project database half of that env (`appdb_env`), the C4 snapshot
-write (`snapshot`), the R3 conversation-attachment
-materialization (`attachments`), and the in-process session lifecycle + progress channel +
-BRAIN launch (`manager`). Public surface via explicit `from .x import Y as Y` re-exports
-(`.claude/rules/modules.md` — never `__all__`).
+ordering + reconciliation sweep (`reaper`), the app-data credential mint + injection
+(`appdata`) and the per-project database half of that env (`appdb_env`), the snapshot
+write (`snapshot`), the conversation-attachment materialization (`attachments`), and the
+in-process session lifecycle + progress channel + BRAIN launch (`manager`). Public surface
+via explicit `from .x import Y as Y` re-exports — never `__all__`.
 """
 
 from src.services.build_sessions.appdata import build_app_env as build_app_env

@@ -1,4 +1,4 @@
-"""Reusable declarative mixins (ADR-0013, ADR-0004, ADR-0006).
+"""Reusable declarative mixins.
 
 New models compose these rather than re-declaring the columns:
 
@@ -7,8 +7,8 @@ New models compose these rather than re-declaring the columns:
   `uuidv7()` server default so raw SQL inserts also get a v7 key.
 * `TimestampMixin` — `created_at` / `updated_at`, server-defaulted to `now()`.
 * `OwnedByUserMixin` — the single-tenant ownership boundary: a non-nullable,
-  indexed `user_id` FK. BIAL has NO `org_id` — the user IS the isolation boundary
-  (ADR-0004). Every query over a model carrying this mixin must filter by
+  indexed `user_id` FK. BIAL has NO `org_id` — the user IS the isolation boundary.
+  Every query over a model carrying this mixin must filter by
   `user_id`; a dropped predicate is a cross-user leak. The `users` table lands
   with auth (a later phase); this mixin stays dormant until a model composes it.
 """

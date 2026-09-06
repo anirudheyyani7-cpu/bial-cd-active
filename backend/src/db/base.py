@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine, session factory, and declarative Base (ADR-0013).
+"""Async SQLAlchemy engine, session factory, and declarative Base.
 
 One process-wide async engine (asyncpg driver) + `async_sessionmaker`. Sessions
 are opened per-request via `get_db` (`db/session.py`) — never a module-global
@@ -21,7 +21,7 @@ _OSSRDBMS_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
 
 
 def attach_entra_token(async_engine: AsyncEngine) -> None:
-    """Wire Microsoft Entra managed-identity auth onto an async engine (ADR-0027).
+    """Wire Microsoft Entra managed-identity auth onto an async engine.
 
     Azure Database for PostgreSQL Flexible Server with Entra auth has no static
     password: the app presents a short-lived Entra access token as the password.
@@ -45,7 +45,7 @@ def attach_entra_token(async_engine: AsyncEngine) -> None:
         dialect: object, conn_rec: object, cargs: object, cparams: dict[str, Any]
     ) -> None:
         # asyncpg gets a fresh token as its password + a verify-full TLS context.
-        # STATIC: never log the token or cparams (security.md).
+        # STATIC: never log the token or cparams.
         cparams["password"] = credential.get_token(_OSSRDBMS_SCOPE).token
         cparams["ssl"] = ssl_context
 

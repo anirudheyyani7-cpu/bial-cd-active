@@ -88,7 +88,7 @@ async def submit_app_for_review(
     `app` is the row the caller already resolved through its own owner-scoped 404;
     `declaration` is opaque here — the publish gate assembles it.
     """
-    # Fail-closed ownership re-check (ADR-0004): the caller's `_owned_app_or_404`
+    # Fail-closed ownership re-check: the caller's `_owned_app_or_404`
     # normally guarantees this, but a service that trusts its caller with the
     # ownership predicate is one refactor away from a cross-user write.
     if app.user_id != user_id:
@@ -151,7 +151,7 @@ async def submit_app_for_review(
         sa.update(AppRegistry)
         .where(
             AppRegistry.id == app.id,
-            # The ownership predicate (ADR-0004), in the WHERE clause.
+            # The ownership predicate, in the WHERE clause.
             AppRegistry.user_id == user_id,
             AppRegistry.status.in_(tuple(_SUBMIT_FROM)),
         )

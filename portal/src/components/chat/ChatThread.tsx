@@ -1,5 +1,5 @@
 /**
- * THE TRANSCRIPT — the portal's composition of the ported thread (R49, R50, R51, R52, R72).
+ * THE TRANSCRIPT — the portal's composition of the ported thread.
  *
  * One surface for both kinds of chat. Nothing in this file, or anywhere below it, consults the
  * chat's kind: a Plan chat's transcript cannot show a build because no build parts arrive in it,
@@ -35,13 +35,13 @@ import ActivityRow from './ActivityRow'
 
 export interface ChatThreadProps {
   /**
-   * Messages whose turn ended on an interrupted terminal (R35c). Supplied by the surface because
+   * Messages whose turn ended on an interrupted terminal. Supplied by the surface because
    * it is a fact about the turn, not about any part.
    */
   interruptedMessageIds?: ReadonlySet<string>
   /** Rendered under the viewport — the composer, the offer strip, the return-to-latest control. */
   footer?: FC | undefined
-  /** Told what an activity group amounted to as it seals — R66's second announcement. */
+  /** Told what an activity group amounted to as it seals. */
   onGroupSealed?: ((summary: string) => void) | undefined
 }
 
@@ -62,11 +62,11 @@ const TextPart: ThreadComponents['TextPart'] = ({ text, isUser }) => (
  * The reasoning text is technical and far too much for the people who read this,
  * so `useMessagePartReasoning` is not used and the group renders one plain line.
  *
- * This is a deliberate, narrow amendment to R35, recorded where it renders rather than left for an
- * implementer to trip over. R35 forbids a progress indicator on a turn that ran no tools — and it
- * was written to kill an indicator driven by TURN STATUS, which appeared on every message
- * including a plain question. This one is driven by a real signal: the model is actually
- * reasoning, and it disappears the instant it starts writing or calling something.
+ * This is a deliberate, narrow exception to the rule against showing a progress indicator on a
+ * turn that ran no tools, recorded here where it renders rather than left for an implementer to
+ * trip over. That rule exists to kill an indicator driven by TURN STATUS, which appeared on every
+ * message including a plain question. This one is driven by a real signal instead: the model is
+ * actually reasoning, and it disappears the instant it starts writing or calling something.
  *
  * IT DOES APPEAR ON A TURN THAT RUNS TOOLS. The grouping is HIERARCHICAL: `reasoning` and
  * `tool-call` share a `group-chainOfThought` parent but get separate `group-reasoning` /

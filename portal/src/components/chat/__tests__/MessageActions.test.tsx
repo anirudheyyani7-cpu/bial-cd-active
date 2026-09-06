@@ -1,5 +1,5 @@
 /**
- * N1 — EVERY ASSISTANT MESSAGE CARRIES A COPY ACTION, AND ONLY A COPY ACTION.
+ * EVERY ASSISTANT MESSAGE CARRIES A COPY ACTION, AND ONLY A COPY ACTION.
  *
  * ══ WHY THIS IS ITS OWN FILE ══
  *
@@ -13,7 +13,7 @@
  * ══ WHAT IS DELIBERATELY ABSENT ══
  *
  * No Reload, no Edit, no feedback, no More menu (which carries ExportMarkdown), no branch picker.
- * Each is driven by a capability U4's exact-equality snapshot pins to FALSE, so rendering the
+ * Each is driven by a capability that an exact-equality snapshot pins to FALSE, so rendering the
  * control would be dead chrome — and the More menu would additionally offer an export nobody
  * specified. Counting the buttons is what catches one arriving.
  */

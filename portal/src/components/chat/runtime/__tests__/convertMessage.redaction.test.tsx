@@ -1,5 +1,5 @@
 /**
- * R36's WALL IS AT THE CONVERTER, NOT AT THE DRAW SITE.
+ * THE SPLIT-AUDIENCE WALL IS AT THE CONVERTER, NOT AT THE DRAW SITE.
  *
  * ══ WHY THAT PLACEMENT IS THE REQUIREMENT ══
  *
@@ -16,12 +16,10 @@
  * was load-bearing where it is not, and merely tidy where it is.
  *
  * A promise at the component ("this row only renders the label") is only as good as the next
- * person editing that component. A converter that never copies the field means the expander (R33)
+ * person editing that component. A converter that never copies the field means the expander
  * has NOTHING TO LEAK even if someone later renders every field a part holds. That is why the
  * assertions below are made on the CONVERTED OBJECT as well as on the rendered tree: the first is
  * the guarantee, the second is only its symptom.
- *
- * Covers AE34.
  */
 import { describe, it, expect } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'

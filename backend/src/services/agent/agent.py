@@ -1,11 +1,11 @@
-"""The Pydantic AI chat agent (R10, R11, U9).
+"""The Pydantic AI chat agent.
 
 ONE module-level `Agent`, built without a bound model — the Foundry model is passed per-run
 (`agent.run_stream(prompt, model=…)`) so import never depends on a configured Foundry (dev/test
 boot without it) and tests inject a `TestModel`. `ChatDeps` is built per request and scopes any
 tool to the caller's `user_id` (a dropped scope predicate is a cross-user leak).
 
-The per-run system prompt has two sources, selected by `deps.kind` (U9/D4):
+The per-run system prompt has two sources, selected by `deps.kind`:
 
 - `kind is None` — a server-composed prompt applied verbatim. This is NOT dead: it is the
   path `services/projects/describe.py` runs on (`POST /{project_id}/description:generate`),
@@ -13,12 +13,12 @@ The per-run system prompt has two sources, selected by `deps.kind` (U9/D4):
   relay — do not remove it with one.
 - `kind` set — a turn on the turn engine (which always sets it): BASE + that kind's segment
   composed by `mode_prompts.compose_kind_prompt` from `deps.prompt_context`. BOTH kinds: a
-  Build turn is an ordinary turn with more tools (U5's convergence), so it composes here like
+  Build turn is an ordinary turn with more tools, so it composes here like
   a Plan turn and carries a `SandboxSession` in `deps.sandbox`.
 
 Either way the text is applied through `instructions`, NOT `system_prompt`: instructions are
 never baked into stored message history, so prompts evolve without rewriting history — the
-same boundary that keeps U14's ephemeral reminders out of the DB.
+same boundary that keeps ephemeral reminders out of the DB.
 """
 
 from __future__ import annotations

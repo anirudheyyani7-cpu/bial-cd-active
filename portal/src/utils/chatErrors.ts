@@ -21,14 +21,13 @@ import { TurnStartError } from './turnStreamApi'
  * cannot help; the chat must leave. Distinct from a save failure the user can recover from.
  *
  * TWO ERROR CLASSES, because this predicate now has TWO CALLERS reading TWO different
- * transports (R-18, plan 006 U13). It was written for `createBuild`'s REST call, which throws
- * `ApiError` — and that write is retired, its own 404 carried over into `fireRelayTurn`'s
- * `startTurn` catch on the belief that the same predicate would still recognise it. It would
- * not have: `startTurn` throws `TurnStartError` for every non-ok response, never `ApiError`, so
- * an unwidened check here would have silently stopped firing the moment the call it read moved —
- * the exact "carried the treatment over, the shape changed underneath it" bug this file exists to
- * avoid. `TurnStartError` has no `ApiError` in its prototype chain (they are siblings, not
- * relatives), so recognising the new transport is a second `instanceof` arm, not a supertype fix.
+ * transports. It was written for `createBuild`'s REST call (`ApiError`); that call is retired,
+ * and its 404 handling carried over into `fireRelayTurn`'s `startTurn` catch on the assumption
+ * the same predicate would still recognise it. It would not have: `startTurn` throws
+ * `TurnStartError`, never `ApiError`, so an unwidened check would have silently stopped firing
+ * the moment the call it read moved — the exact "carried the treatment over, the shape changed
+ * underneath it" bug this file exists to avoid. `TurnStartError` has no `ApiError` in its
+ * prototype chain, so recognising it needs a second `instanceof` arm, not a supertype fix.
  */
 export function isConversationGone(err: unknown): boolean {
   if (err instanceof ApiError) return err.status === 404

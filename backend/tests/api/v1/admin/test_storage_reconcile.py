@@ -1,4 +1,4 @@
-"""POST /v1/admin/apps/reconcile-storage — the operator-invoked reconciling sweep (U10).
+"""POST /v1/admin/apps/reconcile-storage — the operator-invoked reconciling sweep.
 
 Superadmin-only, audited, report-only on `submissions/` + `apps/`. The pins that MUST run through
 the real upload path live here (`POST /attachments`): a hand-set `storage_key` hides the
@@ -184,11 +184,11 @@ async def test_deck_sibling_survives_via_pptx_path(client, app, db_session, monk
     assert await store.get(pdf_key) == b"%PDF-1.4 rendered deck"
 
 
-# --- U9: never-sent-upload reclaim folded into the sweep ------------------------
+# --- never-sent-upload reclaim folded into the sweep ---------------------------
 
 
 async def test_never_sent_orphan_is_reclaimed_by_the_sweep(client, app, db_session) -> None:
-    # U9/U10: a never-sent upload (row intact, referenced by NO sent message, past the 48h window)
+    # A never-sent upload (row intact, referenced by NO sent message, past the 48h window)
     # is reclaimed by the operator sweep. The blob-vs-row pass alone cannot close this — it treats
     # any still-rowed upload as OWNED — so this pins the reclaim fold that now runs in prod.
     store = _wire_shared_storage(app)
@@ -264,7 +264,7 @@ async def test_submissions_reported_never_deleted_body(client, app, db_session) 
     body = (await client.post(_RECONCILE, headers=admin)).json()
     assert body["submissions"]["deleted"] == 0
     assert body["ownerlessSubmissions"] == 1
-    assert ownerless in store.objects  # immutable record — surfaced, never deleted (D7)
+    assert ownerless in store.objects  # immutable record — surfaced, never deleted
 
 
 async def test_clean_system_body_is_all_zero(client, app, db_session) -> None:

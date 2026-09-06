@@ -105,7 +105,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
       restoredFromFailedBuild: false,
       ready: true,
     })
-    // A mutating POST: carries the CSRF header (KTD-2) and the projectId body to the relaunch route.
+    // A mutating POST: carries the CSRF header and the projectId body to the relaunch route.
     expect(headerOf(fetchImpl, 'X-CSRF-Token')).toBe(CSRF)
     expect(JSON.parse(optsOf(fetchImpl).body as string)).toEqual({ projectId: 'p1' })
     expect(optsOf(fetchImpl).method).toBe('POST')
@@ -169,7 +169,7 @@ describe('buildSessionApi — control operations (C3 §2)', () => {
     expect(a.previewUrl).toBe(READY_URL)
     expect(a.status).toBe('ready')
 
-    // A safe GET carries NO CSRF token and no method override (C3 §3).
+    // A safe GET carries NO CSRF token and no method override.
     expect(headerOf(after, 'X-CSRF-Token')).toBeUndefined()
     expect(optsOf(after).method).toBeUndefined()
   })
@@ -208,7 +208,7 @@ describe('buildSessionApi — lock ops + fail-closed errors (C3 §3)', () => {
     expect(JSON.parse(optsOf(withReason).body as string)).toEqual({ reason: 'user cancelled' })
 
     // A bare stop still carries a body — {} is a complete StopBuildRequest (reason
-    // defaults to None), so it always satisfies the body model (C3 §2.2). The lock
+    // defaults to None), so it always satisfies the body model. The lock
     // ops, by contrast, take NO body (asserted below via the absent Content-Type).
     const noReason = jsonFetch(200, { sessionId: 's', status: 'ended' })
     await stop('s', {}, { fetchImpl: noReason })

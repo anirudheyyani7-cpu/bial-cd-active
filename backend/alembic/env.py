@@ -46,7 +46,7 @@ async def run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
     # Migrations authenticate the same way as the app engine: in Entra mode, inject a
-    # fresh managed-identity token + verify-full TLS on every connect (ADR-0027).
+    # fresh managed-identity token + verify-full TLS on every connect.
     if settings.DB_AUTH_MODE == "entra":
         from src.db.base import attach_entra_token
 

@@ -1,4 +1,4 @@
-"""U5 — a WRITE turn on the chat engine: the convergence, tested at the engine seam.
+"""A WRITE turn on the chat engine: the convergence, tested at the engine seam.
 
 - THE SAVE. `finish_write_turn` runs on every terminal arm, including the cancelled one.
   Without it a Write turn reports success and the reaper deletes the work.
@@ -235,7 +235,7 @@ async def _run(
 async def test_a_turn_terminal_frees_the_slot_without_saving(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ THE SAVE MODEL (KTD-5e). The terminal used to snapshot, which made every message a new
+    """★ THE SAVE MODEL. The terminal used to snapshot, which made every message a new
     saved version and left the user no way to try something and walk away from it. Saving is
     their click now; the terminal's job is to free the slot and leave the container up.
 
@@ -379,9 +379,9 @@ async def test_the_daily_cap_is_checked_before_every_model_request(
     assert counts["requests"] == 2  # …and the third request NEVER fired
     assert state.status == "failed"
     assert state.end_reason == "quota_exceeded"
-    # THE WHOLE SENTENCE, not the substring "budget" — which the pre-U24 hardcoded string also
+    # THE WHOLE SENTENCE, not the substring "budget" — which the previous hardcoded string also
     # contained, so the weaker assertion stayed green through a full revert of the unit. It names
-    # what happened, that a copy was kept, when it resets, and who to ask (R31/AE18).
+    # what happened, that a copy was kept, when it resets, and who to ask.
     assert state.error_message == AT_LIMIT_TEXT.format(
         kept=KEPT_A_COPY, contact=settings.SUPPORT_CONTACT_EMAIL
     )
@@ -494,7 +494,7 @@ async def test_a_build_that_wrote_nothing_fails_instead_of_reporting_success(
     failure, not a quiet success.
 
     The copy must say plainly that nothing was built, and must not claim the work is saved —
-    there is no auto-save (KTD-5e), and here there is not even any work to save. Mutation-check:
+    there is no auto-save, and here there is not even any work to save. Mutation-check:
     restore the bare `return` in the mutation guard and `status == "completed"` goes red."""
     # Mutation-check: restore the bare `return` in the mutation guard and this goes red on `status
     # == "completed"`.
@@ -527,7 +527,7 @@ async def test_a_build_that_wrote_nothing_fails_instead_of_reporting_success(
     message = state.error_message or ""
     assert "nothing" in message.lower()  # named plainly, not as "the assistant hit a problem"
     assert "unchanged" in message  # …and the app's actual state, said out loud
-    assert "saved" not in message  # no auto-save exists to claim (KTD-5e)
+    assert "saved" not in message  # no auto-save exists to claim
     assert counts["runs"] == 1  # it ends; it does not nudge the model round again
 
 
@@ -590,7 +590,7 @@ async def test_budget_exhaustion_with_a_green_app_does_not_claim_an_error(
 ) -> None:
     """★ The green ending: every verify passed and the model simply never called
     `declare_done`. The old copy told this user their app "still has an error" — a defect
-    hunt with no defect — and claimed the work was "saved" when nothing auto-saves (KTD-5e).
+    hunt with no defect — and claimed the work was "saved" when nothing auto-saves.
     The copy the user sees must say the app checks out, and that the changes sit in the
     workspace awaiting THEIR Save click."""
     engine = _fresh_engine
@@ -616,7 +616,7 @@ async def test_budget_exhaustion_with_a_green_app_does_not_claim_an_error(
     message = state.error_message or ""
     assert "checks out" in message  # the app is fine, and the copy says so
     assert "error" not in message  # no invented defect to hunt for
-    assert "saved" not in message  # no auto-save exists to claim (KTD-5e)
+    assert "saved" not in message  # no auto-save exists to claim
     assert "workspace" in message and "Save" in message  # the truthful keep-it instruction
 
 
@@ -628,13 +628,13 @@ async def test_budget_exhaustion_with_a_red_app_still_names_the_error(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ COVERS AE7 — THE HONEST ENDING (U7/R13). The sentence this asserts replaced one that
+    """★ COVERS THE HONEST ENDING. The sentence this asserts replaced one that
     named a defect ("your app still has an error") and left the citizen to work out what they
     were looking at. What they should do next depends entirely on that: the starting template,
     their own app one change behind, and nothing at all are three different situations.
 
     The other half of the old assertion survives and matters as much: no arm may claim the work
-    is "saved". There is no auto-save (KTD-5e) — the changes sit in the workspace until the
+    is "saved". There is no auto-save — the changes sit in the workspace until the
     user's own click."""
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt12@rvaiglobal.com")
@@ -719,7 +719,7 @@ async def test_no_write_step_row_ever_carries_a_user_prompt(
 
 
 def _build_it_shaped_history() -> list[ModelMessage]:
-    """The trigger shape KTD-7 root-caused, structural to every Build-it: a DB-loaded
+    """The trigger shape behind the bug, structural to every Build-it: a DB-loaded
     ModelResponse (provider fields set, as loaded responses have) followed by THREE
     consecutive ModelRequests — the plan-options resolution appended as its own row, the
     mode-switch marker, and the seeded build prompt. pydantic-ai's `_clean_message_history`
@@ -751,7 +751,7 @@ def _build_it_shaped_history() -> list[ModelMessage]:
 
 def _flattened_pairing_violations(rows) -> list[str]:
     """Tool answers persisted with NO same-id tool-call at a strictly earlier flattened
-    (row-seq, message, part) position — each one is a stored 400 (KTD-7 / U5's orphan)."""
+    (row-seq, message, part) position — each one is a stored 400."""
     calls: dict[str, int] = {}
     violations: list[str] = []
     position = 0
@@ -784,8 +784,8 @@ async def _all_rows(db: AsyncSession, conv) -> list[Message]:
 async def test_a_build_it_run_persists_every_tool_call_its_answers_need(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ KTD-7 — the write half of the round-3 P0, asserted over RAW rows (`load_history`
-    would mask it: its U5 repair drops exactly the orphan this bug mints). With a Build-it-
+    """★ The write half of the bug, asserted over RAW rows (`load_history`
+    would mask it: its repair drops exactly the orphan this bug mints). With a Build-it-
     shaped history the pre-clean cursor overshoots by two and the run's first ModelResponse —
     the row carrying the write_file tool call — is never persisted; the stored history then
     holds a `tool_result` with no `tool_use` and Anthropic 400s every later turn.
@@ -882,16 +882,17 @@ async def test_a_genuinely_empty_delta_still_noops(
     assert await _all_rows(db_session, conv) == []
 
 
-# --- U2: the dev server boots when the turn attaches -------------------------
+# --- the dev server boots when the turn attaches -------------------------
 
 
 class _NoFreeLunchSandbox(FakeSandboxClient):
     """A container whose dev server does NOT run until somebody starts it.
 
     The shared fake answers `/dev/status` with `ready=True` unconditionally, which quietly
-    hands every test a preview nobody paid for — and would let U2's regression guard pass
-    without U2. This one couples status to start the way a real supervisor does, so "who
-    started the server, and when" becomes an observable fact rather than a fixture's gift.
+    hands every test a preview nobody paid for — and would let the regression guard below pass
+    whether or not the fix actually landed. This one couples status to start the way a real
+    supervisor does, so "who started the server, and when" becomes an observable fact rather
+    than a fixture's gift.
     """
 
     def __init__(
@@ -935,7 +936,7 @@ def _preview_ready_frames(state: _TurnState) -> list[object]:
 async def test_dev_start_fires_at_attach_before_the_model_runs(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ U2 (R2). Next's first route compile is 5-7s and it used to start only after the whole
+    """★ Next's first route compile is 5-7s and it used to start only after the whole
     model run plus a `tsc`. Booting it at attach overlaps that compile with the model's own
     first request. The assertion is on ORDERING, not on a call count: `dev_start` must land
     before request one, or the overlap it exists to buy never happens."""
@@ -1028,7 +1029,7 @@ async def test_an_already_serving_container_neither_raises_nor_double_frames(
 async def test_a_dev_start_blip_is_swallowed_and_selfheal_still_rescues(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ R6 — every new step fails open. `dev_start` at attach is an OPTIMIZATION; a supervisor
+    """★ Every new step fails open. `dev_start` at attach is an OPTIMIZATION; a supervisor
     blip there must cost the preview a few seconds, never the turn. `verify`'s dead-child
     rescue is the backstop, and it still runs."""
     engine = _fresh_engine
@@ -1131,7 +1132,7 @@ async def test_a_cancel_during_the_sandbox_terminal_still_frees_the_conversation
     await asyncio.sleep(0)
 
 
-# --- R17/R18: the compile signal's channel to the portal --------------------------------------
+# --- the compile signal's channel to the portal --------------------------------------
 #
 # The consumer half lives in the container; what is pinned here is the CHANNEL — that the state
 # reaches a subscribed client as a turn frame, on change only, and that a signal we cannot read
@@ -1292,7 +1293,7 @@ async def test_a_compile_poll_never_takes_the_preview_watcher_down(_fresh_engine
     assert state.compile_state is CompileState.UNKNOWN
 
 
-# --- R17 (runtime half): a browser crash repairs, and does not narrate ------------------------
+# --- the runtime half: a browser crash repairs, and does not narrate ------------------------
 
 
 def _diagnostic_frames(state: _TurnState) -> list[object]:
@@ -1307,7 +1308,7 @@ async def test_a_client_class_error_repairs_the_app_without_narrating_it(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ U13's verification, at the only place it can be checked: a runtime crash is visible to
+    """★ Verified at the only place it can be checked: a runtime crash is visible to
     the agent and to the verdict, and invisible to the user except as the absence of a success
     claim.
 
@@ -1356,7 +1357,7 @@ async def test_a_client_class_error_repairs_the_app_without_narrating_it(
     )
 
     # ABSENCE: nothing about the crash is narrated. The report was written by code inside the
-    # generated app; a stack trace under a file-path title is the developer surface this plan
+    # generated app; a stack trace under a file-path title is the developer surface this feature
     # exists not to create.
     assert _diagnostic_frames(state) == []
     ring_text = " ".join(str(getattr(f, "title", "")) for f in state.ring)
@@ -1418,7 +1419,7 @@ async def test_a_compile_error_still_narrates_exactly_as_before(
 
 
 # =============================================================================
-# U7 / R13 — the honest ending, and U8 / R14 — the workspace note
+# the honest ending, and the workspace note
 # =============================================================================
 
 
@@ -1545,7 +1546,7 @@ async def test_the_workspace_note_rides_a_build_turn_too(
     fake_redis: aioredis.Redis,
     fake_storage,
 ) -> None:
-    """★ COVERS AE9 — the BUILD half of the workspace note, and the reason it lives here.
+    """★ COVERS the BUILD half of the workspace note, and the reason it lives here.
 
     The note is injected once, ABOVE the branch that picks the run loop, so both kinds get the
     same message. Proving that for a Plan turn is cheap and
@@ -1816,7 +1817,7 @@ async def test_an_unanswerable_verdict_does_not_wear_the_failure_label_in_the_li
 
 
 # =============================================================================
-# U18 / R22 / R30 — `declare_done` is terminal, and the harness renders the summary
+# `declare_done` is terminal, and the harness renders the summary
 # =============================================================================
 
 # A summary in the register the rewritten COMPLETION block now asks for: what the reader can
@@ -1899,13 +1900,14 @@ async def test_a_green_declare_done_ends_the_turn_and_renders_the_summary(
     blocks = state.text_blocks()
     assert blocks == ["You can add a visitor, mark them arrived, and see the list."]
     rendered = blocks[0]
-    # …and the model's own closing prose is nowhere, because it was never written. AE13, on the
-    # one message that used to carry the worst of it: the whole completion, swept term by term.
+    # …and the model's own closing prose is nowhere, because it was never written. This check runs
+    # on the one message that used to carry the worst of it: the whole completion, swept term by
+    # term.
     for term in _FORBIDDEN_IN_CITIZEN_COPY:
         assert term not in rendered, f"{term!r} reached a citizen in the completion message"
 
     # DURABLE, not merely streamed. Without the row the completion vanishes the moment the
-    # citizen refreshes the tab — and plan one's retraction annotates a message that is gone.
+    # citizen refreshes the tab — and a retraction annotates a message that is gone.
     rows = await _all_rows(db_session, conv)
     texts = _assistant_texts(rows)
     assert any("You can add a visitor" in text for text in texts)
@@ -1932,7 +1934,7 @@ async def test_an_empty_summary_falls_back_to_a_plain_completion_never_to_silenc
     TWO THINGS IT MUST NOT FALL BACK TO, which is why this is not a bare "non-empty" assert. Not
     an EMPTY message, which ends a green build with the screen still showing whatever the last
     progress line said. And not the model's own prose scraped from elsewhere in the run: that
-    prose is exactly the register this plan removes, so reaching for it as a substitute would
+    prose is exactly the register this feature removes, so reaching for it as a substitute would
     reintroduce the defect on the fallback path.
 
     Mutation check: return `sandbox.done_summary` unconditionally and the message goes empty;
@@ -1970,7 +1972,7 @@ async def test_an_empty_summary_falls_back_to_a_plain_completion_never_to_silenc
 
 
 def test_the_harness_written_completion_carries_no_developer_jargon() -> None:
-    """★ AE13 for the one completion sentence the harness writes itself.
+    """★ Covers the one completion sentence the harness writes itself.
 
     The summary is the model's words shaped by the prompt; this sentence is ours, on the path
     where the model supplied nothing — and it is the one a citizen reads when everything else
@@ -1994,7 +1996,7 @@ async def test_a_red_verdict_after_declare_done_still_goes_to_repair(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ ASM14 — THE CONJUNCTION IS UNTOUCHED, and this is the half of it that a unit called
+    """★ THE CONJUNCTION IS UNTOUCHED, and this is the half of it that a unit called
     "make declare_done terminal" is likeliest to break.
 
     `declare_done` ends the turn on a PASSING verdict. On a failing one it ends nothing: the
@@ -2064,7 +2066,7 @@ async def test_a_red_verdict_after_declare_done_still_goes_to_repair(
 
 
 # =============================================================================
-# U17 / R24 — acknowledge immediately, and narrate long operations
+# acknowledge immediately, and narrate long operations
 # =============================================================================
 
 
@@ -2102,7 +2104,7 @@ def _step_labels(state: _TurnState, phase: str | None = None) -> list[str]:
 async def test_the_acknowledgement_is_on_the_wire_before_the_model_is_asked(
     _fresh_engine, db_session, session_factory, fake_redis: aioredis.Redis, fake_storage
 ) -> None:
-    """★ AE17, first clause — asserted on ORDERING, not on presence.
+    """★ Asserted on ORDERING, not on presence.
 
     A turn's first slow thing (a cold provision, a snapshot restore, the first model request)
     can run for tens of seconds, and an acknowledgement that arrives after any of them is not an
@@ -2351,7 +2353,7 @@ def test_write_prose_with_no_tool_call_after_it_is_still_the_citizens_answer(
 
 
 def test_a_plan_chat_streams_its_prose_exactly_as_a_build_chat_does(_fresh_engine) -> None:
-    """★ THE INVERSION (U4 / R74 / N2), and the reason it is safe to invert.
+    """★ THE INVERSION, and the reason it is safe to invert.
 
     This used to assert that a planning chat HELD its prose exactly as a build chat did: every
     paragraph buffered until the response ended, and deleted outright if a tool call followed.
@@ -2381,10 +2383,10 @@ def test_a_plan_chat_streams_its_prose_exactly_as_a_build_chat_does(_fresh_engin
 async def test_a_plan_chats_prose_between_tool_calls_reaches_the_feed_where_it_was_written(
     _fresh_engine,
 ) -> None:
-    """★ AE43, live half — the same response means the same thing in both kinds.
+    """★ Live half — the same response means the same thing in both kinds.
 
     The twin of `test_write_prose_between_tool_calls_reaches_the_feed_where_it_was_written`, one
-    chat kind over, and the pair is the whole of what N2 asks for here. In a planning chat the
+    chat kind over, and the pair is the whole of what is required here. In a planning chat the
     prose IS the deliverable, so this is the kind where deleting it was most obviously wrong:
     the citizen asked what their app does and got a row of receipts for the files that were
     read."""
@@ -2435,7 +2437,7 @@ def test_a_plan_chats_answer_with_no_tool_call_after_it_still_reaches_the_citize
 async def test_a_long_operation_gets_a_status_line_refreshed_until_it_completes(
     _fresh_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ AE17, first clause. An operation still running past `LONG_OPERATION_THRESHOLD_MS` says
+    """★ An operation still running past `LONG_OPERATION_THRESHOLD_MS` says
     so, in the citizen's own language, and keeps saying it until it finishes.
 
     The threshold and cadence are compressed here rather than waited out — the property under
@@ -2507,7 +2509,7 @@ async def test_a_fast_operation_never_flickers_a_status_line(
 async def test_a_read_that_runs_long_is_narrated_now_that_reads_are_drawn(
     _fresh_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """U5's first stillness scenario, and it exists BECAUSE the unit widened what is visible.
+    """The first stillness scenario, and it exists BECAUSE the unit widened what is visible.
 
     A read used to be hidden as a class and therefore never narrated. It is drawn now — looking
     at the app before changing it is work the citizen recognises — so a read that outruns the
@@ -2539,7 +2541,7 @@ async def test_a_read_that_runs_long_is_narrated_now_that_reads_are_drawn(
 async def test_a_housekeeping_command_that_runs_long_stays_silent(
     _fresh_engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ U5's second stillness scenario — and the reason `hidden` was NARROWED rather than
+    """★ The second stillness scenario — and the reason `hidden` was NARROWED rather than
     deleted.
 
     A hidden step renders nowhere, so narrating one would change no pixels while still burning a
@@ -2602,7 +2604,7 @@ async def test_an_unclassified_command_says_nothing_about_its_argv(_fresh_engine
     await engine._drain_long_operations(state)
 
 
-# --- U13 / R91: the spend bound, end to end -------------------------------------------------
+# --- the spend bound, end to end -------------------------------------------------
 
 
 async def test_a_build_that_reaches_the_spend_bound_ends_saying_the_app_works(
@@ -2613,7 +2615,7 @@ async def test_a_build_that_reaches_the_spend_bound_ends_saying_the_app_works(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ AE47 / R91 — the bound fires inside the loop, before a request, and ends the turn.
+    """★ The bound fires inside the loop, before a request, and ends the turn.
 
     THE SEAM IS THE POINT. It is checked at the same place the daily quota is: inside the node
     loop, before the model request fires, where the run's accumulated spend is already known and
@@ -2673,12 +2675,12 @@ async def test_the_spend_bound_names_what_was_agreed_and_not_built(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★★ AE47 / R91's second clause — "and says what remains", end to end.
+    """★★ "And says what remains", end to end.
 
     THE BOUND FIRING IS HALF THE REQUIREMENT. A run that stops where the app works, and then
     leaves the citizen to work out which of the pieces they agreed to actually landed, has done
     the mechanical half and skipped the half they can act on. This is the assertion that the
-    ending carries U12's remainder rather than merely existing.
+    ending carries the remainder rather than merely existing.
 
     THE NAMES COME FROM THE AGREED LIST. `agreed_slice` reads them off the proposal call the
     citizen read — the platform's own record — so the sentence is derived, not recalled. The

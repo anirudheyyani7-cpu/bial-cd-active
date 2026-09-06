@@ -7,13 +7,13 @@
  * ONE CALL DECIDES, AND THEN EITHER PUBLISHES OR QUEUES. The answers ride in the deploy
  * body and are merged and scored by the server inside the same request, so there is no
  * "score my answers" endpoint to call first — one that merely reported a number would be
- * advisory, and a client that skipped it would reach the pipeline unscored. Since U9 that
+ * advisory, and a client that skipped it would reach the pipeline unscored. That
  * one call has TWO success shapes (`DeployOutcome`): the deploy started, or the app was
  * routed into the administrator's queue at the exact version examined. `getDeployment` is
  * a progress poll, not a second decision: a deploy runs for minutes and the edge gateway
  * gives a request twenty seconds, so the work is detached and the client watches it.
  *
- * THE STATUS POLL ALSO CARRIES THE APP'S APPROVAL STATE (`DeploymentView.approval`, U12),
+ * THE STATUS POLL ALSO CARRIES THE APP'S APPROVAL STATE (`DeploymentView.approval`),
  * and that is not a layering slip. The citizen has two publish surfaces; the toolbar one
  * is mounted with a project id and no app id, so an app-scoped lifecycle read is not
  * addressable from it at all. Hanging the lifecycle off this response is what lets both
@@ -74,12 +74,11 @@ export const DATA_CLASSIFICATION_QUESTIONS: ReadonlyArray<
 ]
 
 /** AT OR BELOW this total the server deploys without a human — 0, so only a fully-clean
- *  declaration ever auto-publishes; any weighted category at all needs a person (issue
- *  #115: the gate previously ran the other way, auto-publishing the MORE sensitive
- *  declarations). Also the explanation threshold (issue #117 follow-up) — any total
- *  ABOVE this both needs a person AND is obliged to say why, never one without the
- *  other. Shown to set expectations — never used to disable the deploy button, because
- *  then the client would be the gate. */
+ *  declaration ever auto-publishes; any weighted category at all needs a person (the gate
+ *  previously ran the other way, auto-publishing the MORE sensitive declarations). Also
+ *  the explanation threshold — any total ABOVE this both needs a person AND is obliged to
+ *  say why, never one without the other. Shown to set expectations — never used to disable
+ *  the deploy button, because then the client would be the gate. */
 export const AUTO_DEPLOY_MAX_SCORE = 0
 
 /** The weighted total for a possibly-partial answer set; unanswered categories don't count. */
@@ -100,7 +99,7 @@ export interface StartedDeploy {
 
 /**
  * The 200 body when the publish gate ROUTED the app to an administrator instead of
- * deploying (U9). An OUTCOME, not a failure: the platform did exactly what the dialog's
+ * deploying. An OUTCOME, not a failure: the platform did exactly what the dialog's
  * "Send for review" button said it would, so it renders informationally and never wears
  * the red badge.
  */
@@ -119,7 +118,7 @@ export interface RoutedForReview {
  *  sniffing which keys happen to be present. */
 export type DeployOutcome = StartedDeploy | RoutedForReview
 
-/** The app's approval lifecycle, carried on the deploy STATUS response (U12).
+/** The app's approval lifecycle, carried on the deploy STATUS response.
  *
  *  It rides here rather than on a second, app-scoped call because the toolbar publish
  *  button is mounted with a project id and no app id — there is no second call it could
@@ -134,7 +133,7 @@ export interface ApprovalState {
    *  in one place server-side and are never apart. */
   approvedAt: string | null
   /** WHICH lineage the current submission entered through. A `runbook` approval
-   *  authorises the manual go-live runbook and never self-publishing (P5), so anything
+   *  authorises the manual go-live runbook and never self-publishing, so anything
    *  rendering "you may publish this" reads the lineage as well as the pin. */
   approvalRoute: ApprovalRoute | null
   rejectionNote: string | null
@@ -145,14 +144,13 @@ export interface ApprovalState {
 export type DeploymentStatus = 'running' | 'succeeded' | 'failed'
 
 /**
- * THE publish state (R38) — one server-computed field, spelled exactly as
+ * THE publish state — one server-computed field, spelled exactly as
  * `backend/src/api/v1/deploy/schemas.py`'s `PublishState` spells it. The server is its
  * sole author; this union is the client's whole copy, and the chip switches on it and on
  * nothing else.
  *
  * NOTHING HERE RECOMBINES ANYTHING. A client that mirrors a server decision from parts
- * has produced the same class of bug four times in this one feature
- * (`docs/solutions/ui-bugs/publish-dialog-scored-unmerged-answers-2026-08-21.md`), most
+ * has produced the same class of bug four times in this one feature, most
  * recently promising "this can publish automatically" moments before the server routed
  * the app to an administrator. `status` + `unpublishedAt` + `failureCode` + the approval
  * lineage + the pin are all still on the wire for the version rows to render, but not one
@@ -196,26 +194,26 @@ export interface DeploymentView {
   startedAt: string | null
   finishedAt: string | null
   /**
-   * Set when an administrator took the published container down (#113). This is a SECOND
+   * Set when an administrator took the published container down. This is a SECOND
    * axis, not a status: an unpublished deployment still reads `succeeded`, because that is
    * still how the attempt ended. Anything that renders a live-app link must test this too —
    * `status === 'succeeded'` alone will happily link a URL that 404s.
    */
   unpublishedAt: string | null
   /**
-   * The APP's approval lifecycle, not the deployment's (U12). Null has exactly one
+   * The APP's approval lifecycle, not the deployment's. Null has exactly one
    * meaning — this project has no app row yet — never "we couldn't read it".
    */
   approval: ApprovalState | null
   /**
-   * THE field the publish surface branches on, and the only one it branches on (R38).
+   * THE field the publish surface branches on, and the only one it branches on.
    * TOTAL — never null, in every response shape including the empty envelope: there is no
    * state in which the server declines to answer, and a drift it could not determine is
    * its own value rather than an absent field.
    */
   publishState: PublishState
   /**
-   * THE CITIZEN'S OWN LAST SAVE — which commit, and when (plan 002, U4).
+   * THE CITIZEN'S OWN LAST SAVE — which commit, and when.
    *
    * The server spends its ONE object-store metadata HEAD twice instead of once: the same read
    * that computes `publishState`'s drift now also returns the head it compared and the store's
@@ -436,7 +434,7 @@ export interface StartDeployRequest {
 }
 
 /**
- * Ask to publish. TWO success shapes since U9, discriminated by `outcome`: `started`
+ * Ask to publish. TWO success shapes, discriminated by `outcome`: `started`
  * (202, the deploy is running and this is the id to poll) and `routed_for_review` (200,
  * the app went into the administrator's queue pinned to `commitSha` and nothing was
  * published). The second is an OUTCOME, not a failure — it resolves, and both publish

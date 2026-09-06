@@ -1,4 +1,4 @@
-"""Track SANDBOX integration-harness fixtures.
+"""Sandbox integration-harness fixtures.
 
 The integration lane (`-m integration`) runs the REAL pre-baked sandbox image in Docker and,
 for the snapshot round-trip, a real Azurite. Every fixture here **skips cleanly** when its
@@ -14,7 +14,7 @@ Fixtures:
 
 `sandbox/tests/` has no `__init__.py` on purpose: pytest (prepend import mode) puts this dir on
 `sys.path`, so sibling modules (`_docker`, later `fake_storage` / `snapshot_ref_client`) import
-by bare name. The backend-`src` bridge + the Azurite fixture are added by U15 / U16.
+by bare name. The backend-`src` bridge + the Azurite fixture are added below.
 """
 
 from __future__ import annotations
@@ -26,13 +26,13 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-# --- D6 read-only bridge to backend's `src`-layout -------------------------------------------
-# The harness subclasses the FROZEN C2 ABC + the ObjectStorage port for a genuine conformance
+# --- read-only bridge to backend's `src`-layout -------------------------------------------
+# The harness subclasses the FROZEN ABC + the ObjectStorage port for a genuine conformance
 # guarantee. Backend's pytest is rooted at backend/ (its conftest HARD-REQUIRES Postgres), so we
 # CANNOT collect under it; instead we prepend the backend dir to sys.path so `src.services.*`
 # resolves here. This imports ONLY the frozen contract modules (verified: no Settings/DB triggered)
 # — never backend *test internals* (`tests/fakes.py`); FakeStorage is vendored (`fake_storage.py`).
-# An accepted, tracked coupling to backend's src-layout — NOT a `backend/` edit (R8).
+# An accepted, tracked coupling to backend's src-layout — NOT a `backend/` edit.
 _BACKEND = Path(__file__).resolve().parent.parent.parent / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
@@ -84,7 +84,7 @@ def sandbox_factory(sandbox_image: str) -> Iterator[object]:
             sbx.stop()
 
 
-# --- Azurite fixture (U16) — adapted from backend/tests/services/storage/conftest.py ----------
+# --- Azurite fixture — adapted from backend/tests/services/storage/conftest.py ----------
 # Reuses the SAME real Azurite service (backend/docker-compose.test.yml): the well-known account
 # on 127.0.0.1 (NOT `localhost` — Azurite binds IPv4, an IPv6 `localhost` probe gets refused), a
 # freshly-created container per test, reset around each test so a client built on one test's event

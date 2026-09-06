@@ -1,17 +1,16 @@
 /**
- * WHAT U17 ITSELF CLAIMS — the properties of the surface as a whole (R30, R49, R51, R52, R54, R55,
- * R72).
+ * WHAT THIS FILE ITSELF CLAIMS — the properties of the surface as a whole.
  *
  * The fifteen re-pointed page suites pin the BEHAVIOUR that came across the migration. This file
  * pins the things that are only true of the surface once the deletions have happened, and which no
  * individual behaviour test would notice going wrong:
  *
- *   - a running turn is still STOPPABLE now that the card carrying the old stop is gone (R55).
- *     U3's verification sentence is otherwise a claim about a commit that nothing checks;
- *   - exactly ONE control on the whole surface starts a build (R29a's other half);
- *   - exactly ONE scroll container inside the chat slot, and no `calc(100vh - …)` anywhere (R49);
- *   - no chat list reappeared while the pages around it were being rewritten (R54 is Plan A's;
- *     this is the assertion that it STAYED removed);
+ *   - a running turn is still STOPPABLE now that the card carrying the old stop is gone.
+ *     The verification sentence is otherwise a claim about a commit that nothing checks;
+ *   - exactly ONE control on the whole surface starts a build;
+ *   - exactly ONE scroll container inside the chat slot, and no `calc(100vh - …)` anywhere;
+ *   - no chat list reappeared while the pages around it were being rewritten (the chat list was
+ *     removed earlier; this is the assertion that it STAYED removed);
  *   - the save-state tri-state is published UNCOLLAPSED, so the shell's unsaved-work guard gets
  *     `null` as `null`.
  *
@@ -97,9 +96,10 @@ afterEach(cleanup)
 
 describe('R55 — a running turn is STILL stoppable now the card is gone', () => {
   it('the surface renders a stop control and pressing it calls the turn-stop path', async () => {
-    // THE SCENARIO THE WHOLE ORDERING EXISTS FOR. U3 shipped the relocated stop before anything
-    // was deleted so that no commit in this plan left a build startable and not stoppable; this is
-    // what checks the claim AFTER the deletion rather than trusting the sequence.
+    // THE SCENARIO THE WHOLE ORDERING EXISTS FOR. An earlier commit shipped the relocated stop
+    // before anything was deleted so that no commit in this migration left a build startable and
+    // not stoppable; this is what checks the claim AFTER the deletion rather than trusting the
+    // sequence.
     // THE SNAPSHOT IS WHAT CARRIES THE TURN ID, and every subscribe gets one first on cursor 0
     // (the server emits it before any model byte). Without it the control resolves no target and
     // correctly falls through to the legacy session stop — a real arm, but not the one under test.
@@ -184,7 +184,7 @@ describe('R49 — one scroll container, and no viewport-height assertions', () =
 
 describe('R54 — no chat list came back while the pages were being rewritten', () => {
   it('renders no list of conversations, in any state', async () => {
-    // Plan A removed the in-chat list; this is the assertion that the rewrite around it did not
+    // The chat list was removed earlier; this is the assertion that the rewrite around it did not
     // quietly restore one. Past conversations live on the project page the breadcrumb links to.
     h.listProjectConversations.mockResolvedValue([
       { id: 'other-1', kind: 'build', title: 'Another build', updatedAt: '2026-08-01T00:00:00Z' },

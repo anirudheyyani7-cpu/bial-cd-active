@@ -1,5 +1,5 @@
 /**
- * Retirement guard (flipped from the deleted DeployBar/compileJsx suites, APPROVAL R20).
+ * Retirement guard (flipped from the deleted DeployBar/compileJsx suites).
  *
  * The JSX-era deploy path — the in-browser Babel compile, the client-supplied
  * artifact, the DeployBar — is REMOVED, not hidden. This walks the real source
@@ -77,7 +77,7 @@ describe('JSX-era deploy retirement', () => {
 
   it('nothing points at the review-status anchor, which no longer exists', () => {
     // Asserted on the anchor's identifier and its HREF FORM, never on the bare substring
-    // `review-status` — that legitimately survives in two files this plan keeps: the admin
+    // `review-status` — that legitimately survives in two files: the admin
     // registry panel's own live region and the questionnaire's `dc-review-status`.
     const offenders: string[] = []
     for (const file of walk(SRC_ROOT)) {

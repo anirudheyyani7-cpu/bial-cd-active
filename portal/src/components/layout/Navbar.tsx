@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useWorkspaceExit } from '../workspace/UnsavedWorkGuard'
 // `Info` is NOT left over from the removed settings menu — it is the toast's own icon
-// (see the toast render below). The nine icons that went with #157's dead header controls
+// (see the toast render below). The nine icons that went with the deleted header controls
 // are gone; these four all have live consumers.
 import { ChevronDown, LogOut, Info, MessageSquare } from 'lucide-react'
 import type { RefObject } from 'react'
@@ -34,7 +34,7 @@ function useClickOutside(ref: RefObject<HTMLElement | null>, handler: () => void
 /**
  * Tokens at a glance for the narrow-screen meter: "48K", "1.2M". The full
  * `12,345 / 50,000 tokens` reading stays on md and up — this is the same fact, short enough
- * to survive a phone-width navbar rather than being hidden there (N4).
+ * to survive a phone-width navbar rather than being hidden there.
  */
 const _compactTokenFormat = new Intl.NumberFormat('en-US', {
   notation: 'compact',
@@ -50,7 +50,7 @@ export default function Navbar() {
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [usage, setUsage] = useState<UsageToday | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  // How many apps are waiting for an administrator (P1). `null` = we have not asked, or
+  // How many apps are waiting for an administrator. `null` = we have not asked, or
   // the ask failed — never rendered as a number, and never asked for at all unless this
   // user is a superadmin (see the effect below).
   const [waiting, setWaiting] = useState<number | null>(null)
@@ -91,13 +91,14 @@ export default function Navbar() {
     }
   }, [])
 
-  // The waiting count behind the admin entry's badge (P1). Gated on the SAME condition
+  // The waiting count behind the admin entry's badge. Gated on the SAME condition
   // as the entry itself (`user?.isAdmin`) — deliberately, not incidentally: the route is
   // superadmin-only server-side, so asking for anyone else would spend a request to earn
   // a 403 in every citizen's console. A failure leaves the count null (no badge): a badge
   // that guessed would be worse than no badge on the one surface whose job is to be
   // trusted. One fetch per mount, no polling — the panel refreshes it on every action,
-  // and a nav badge that lags by a page navigation is not the failure P1 is about.
+  // and a nav badge that lags by a page navigation is not the failure this design guards
+  // against.
   const isAdmin = user?.isAdmin === true
   useEffect(() => {
     if (!isAdmin || !isAuthenticated()) return undefined
@@ -138,7 +139,7 @@ export default function Navbar() {
   }
 
   /**
-   * SIGNING OUT GOES THROUGH THE WORKSPACE'S GUARD (plan 002, U11).
+   * SIGNING OUT GOES THROUGH THE WORKSPACE'S GUARD.
    *
    * It did not, and it is one of the two most-used exits out of a workspace: every nav LINK in
    * this bar was routed through `exit` and the one control that ends the session entirely was
@@ -160,7 +161,7 @@ export default function Navbar() {
     // wipe on logout. Release any in-memory attachment object URLs so the next
     // user's tab doesn't inherit cached blob handles (memory hygiene only).
     revokeAllAttachmentUrls()
-    // U15: a failed revoke means this browser's session MAY still be live — a fact worth
+    // A failed revoke means this browser's session MAY still be live — a fact worth
     // telling the user — but this component cannot be the one to show it. `navigate` below
     // unmounts this page in the same tick, which unmounts the navbar, which owns
     // `toastMsg` — a local toast set here would be destroyed before a single frame renders
@@ -176,14 +177,14 @@ export default function Navbar() {
         <div className="px-6 h-14 flex items-center justify-between gap-4">
           {/* Brand + Nav */}
           <div className="flex items-center gap-8">
-            {/* THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD (Plan F, U8).
+            {/* THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD.
                 `beforeunload` cannot cover these: a single-page navigation is not an unload, so
                 leaving the workspace by a nav link used to discard unsaved work in silence. Outside
                 a workspace `useWorkspaceExit` hands back a function that simply goes, which is why
                 every other page's navigation is untouched by this.
 
-                THE DESTINATION IS `/projects`, not `/dashboard`: that address is a redirect now
-                (#158 §7), and the most-clicked element in the product should not pay an extra hop
+                THE DESTINATION IS `/projects`, not `/dashboard`: that address is a redirect now,
+                and the most-clicked element in the product should not pay an extra hop
                 through it. The guard is unchanged — only where it lets you go. */}
             <NavLink
               to="/projects"
@@ -215,7 +216,7 @@ export default function Navbar() {
                   }
                 >
                   {label}
-                  {/* The queue nobody can miss (P1). Only on the admin entry, only for a
+                  {/* The queue nobody can miss. Only on the admin entry, only for a
                       superadmin, and only when there is actually something waiting. */}
                   {to === ADMIN_LINK.to && <WaitingCountBadge count={waiting} where="nav" />}
                 </NavLink>
@@ -237,12 +238,12 @@ export default function Navbar() {
               // actually spent. This is one of exactly two places the canvas uses `accent`.
               const barColor = exhausted ? 'bg-danger' : 'bg-accent'
               return (
-                // N4: NEVER `hidden md:flex`. F7 removed the in-rail meter on the grounds that
-                // "the header already shows real usage" — but the header hid it below 768px, so
-                // on a narrow screen there was no usage feedback anywhere at all. It shrinks on
-                // small screens instead of vanishing: the count drops to a compact
-                // used-of-limit and the bar narrows, so a citizen on a phone can still see
-                // their budget running out.
+                // NEVER `hidden md:flex`. An earlier version removed the in-rail meter on the
+                // grounds that "the header already shows real usage" — but the header hid it
+                // below 768px, so on a narrow screen there was no usage feedback anywhere at
+                // all. It shrinks on small screens instead of vanishing: the count drops to a
+                // compact used-of-limit and the bar narrows, so a citizen on a phone can still
+                // see their budget running out.
                 // THE BOARD'S PILL: a 1px hairline outline with NO fill, so it sits on the
                 // white header rather than on a grey chip of its own, and a 3px track in the
                 // hairline colour so the UNSPENT part of the budget is visible. It was a
@@ -274,7 +275,7 @@ export default function Navbar() {
             {/* Feedback — always visible (every authed user); icon-only on mobile.
                 Closes the user menu on the way: the button sits OUTSIDE the menu, so
                 clicking it while the menu is open left the menu rendered behind the modal
-                (pre-existing, and the dropdown union had it too — #157 review). */}
+                (pre-existing, and the dropdown union had it too). */}
             <button
               ref={feedbackBtnRef}
               onClick={() => { setUserMenuOpen(false); setFeedbackOpen(true) }}
@@ -309,7 +310,7 @@ export default function Navbar() {
                   </div>
                   {/* No border of its own: the name/email header above already carries the one
                       divider this menu needs. It sat under "My Profile" until that placeholder was
-                      removed (#157 A4); keeping `border-t` would now render a second hairline a few
+                      removed; keeping `border-t` would now render a second hairline a few
                       pixels below the first. */}
                   <div className="mt-1">
                     <button

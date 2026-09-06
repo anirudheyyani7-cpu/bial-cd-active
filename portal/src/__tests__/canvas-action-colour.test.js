@@ -3,9 +3,9 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 /**
- * THE ACTION COLOUR IS TEAL, AND NOTHING ELSE PAINTS AN ACTION (plan 002, U1).
+ * THE ACTION COLOUR IS TEAL, AND NOTHING ELSE PAINTS AN ACTION.
  *
- * Across the 41 boards of `docs/ux-canvas/`, #0D7377 fills every primary action without
+ * Across the 41 boards of the design canvas, #0D7377 fills every primary action without
  * exception — Send for review, Launch Application, Try again, Build this plan, the composer's
  * send control, Create project. The brand gold #D9A036 occurs exactly ONCE in 3,100+ literal
  * hexes, as a `:root` declaration nothing uses; the brand orange #F5A623 appears on exactly two

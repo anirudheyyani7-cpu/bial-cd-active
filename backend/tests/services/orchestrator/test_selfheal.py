@@ -147,7 +147,7 @@ async def test_verify_never_runs_next_build() -> None:
     fake = FakeSandbox()
     fake.dev_ready = True
     await _verify(fake, log_cursor=0, max_polls=3)
-    # Only `tsc` is ever run between runs — `next build` is a DEPLOY concern (D2/KD-6).
+    # Only `tsc` is ever run between runs — `next build` is a DEPLOY concern.
     assert fake.command_calls == [["npx", "tsc", "--noEmit"]]
     assert not any("build" in " ".join(cmd) for cmd in fake.command_calls)
 
@@ -156,7 +156,7 @@ async def test_verify_bounds_the_tsc_run_with_exec_timeout() -> None:
     fake = FakeSandbox()
     fake.dev_ready = True
     await _verify(fake, log_cursor=0, max_polls=3)
-    # The tsc run is bounded by EXEC_TIMEOUT_S (300s), NOT the ABC's 900s default (KD-8) — the
+    # The tsc run is bounded by EXEC_TIMEOUT_S (300s), NOT the ABC's 900s default — the
     # constant is actually threaded to the call, not merely defined.
     assert fake.command_timeouts == [constants.EXEC_TIMEOUT_S]
 
@@ -211,9 +211,9 @@ async def test_verify_dead_server_unrevivable_reports_the_death_not_a_render_bug
 
 
 async def test_verify_dead_child_crash_last_words_surface_the_crash() -> None:
-    # A crash marker in the dead child's last output is the TRUE diagnostic (KD-6: the tail
-    # since the last cursor must be clean) — it wins even when the restarted child comes up
-    # fine. The returned cursor is 0: the restart reset the C1 log ring, and re-reading the
+    # A crash marker in the dead child's last output is the TRUE diagnostic (the tail since
+    # the last cursor must be clean) — it wins even when the restarted child comes up
+    # fine. The returned cursor is 0: the restart reset the log ring, and re-reading the
     # fresh ring from 0 is what keeps the next verify's crash detection alive.
     fake = FakeSandbox()
     fake.push_dev_logs("⨯ ReferenceError: boom at module load")
@@ -270,7 +270,7 @@ async def test_verify_unowned_serving_server_is_not_restarted() -> None:
 
 def _seed_capturing_model(turns: list[ModelResponse], seeds: list[str]) -> FunctionModel:
     """Replays `turns` and records the newest user-prompt text seen at each model call into
-    `seeds` — so a test can assert the redacted diagnostic re-seeds the next run (KD-1/KD-5)."""
+    `seeds` — so a test can assert the redacted diagnostic re-seeds the next run."""
     iterator = iter(turns)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -311,7 +311,7 @@ async def test_tsc_red_across_budget_escalates_with_reseed(
     assert all(e.source == ErrorSource.TSC for e in errors)
     escalations = [e for e in sink.events if e.type == "escalation"]
     assert len(escalations) == 1 and escalations[0].reason == "self_heal_budget_exhausted"
-    assert result.reason == "build_failed"  # on the verdict; BRAIN emits no terminal (R7)
+    assert result.reason == "build_failed"  # on the verdict; BRAIN emits no terminal
     # The redacted diagnostic re-seeded the later runs (the harness→model feedback channel).
     assert any("error TS2322" in seed for seed in seeds[1:])
 
@@ -338,7 +338,7 @@ async def test_declare_done_while_red_is_rejected_then_green_completes(
     assert result.status == BuildSessionStatus.ENDED  # completed
     assert any(e.type == "error" and e.source == ErrorSource.TSC for e in sink.events)  # rejected
     assert any(e.type == "preview_ready" for e in sink.events)
-    assert result.reason == "completed"  # on the verdict; BRAIN emits no terminal (R7)
+    assert result.reason == "completed"  # on the verdict; BRAIN emits no terminal
 
 
 async def test_server_arm_seeds_a_repair_run(db_session, billing_factory, sink) -> None:
@@ -415,7 +415,7 @@ async def test_verify_transient_blip_is_retried_not_escalated(
     result = await orchestrator.run_build(uuid.uuid4(), user.id, fake, sink)
 
     assert result.status == BuildSessionStatus.ENDED
-    assert result.reason == "completed"  # on the verdict; BRAIN emits no terminal (R7)
+    assert result.reason == "completed"  # on the verdict; BRAIN emits no terminal
     assert not any(e.type == "escalation" for e in sink.events)
     tsc_runs = fake.command_calls.count(["npx", "tsc", "--noEmit"])
     assert tsc_runs == 2  # the blipped tsc attempt + the successful retry
@@ -504,10 +504,10 @@ async def test_a_clean_workspace_stays_green_and_costs_no_extra_iteration() -> N
 
 
 async def test_a_serving_probe_that_never_answers_is_indeterminate_not_broken() -> None:
-    """★ COVERS AE8. The probe swallows its own failures and answers `None`, and `None` means WE
+    """The probe swallows its own failures and answers `None`, and `None` means WE
     could not ask — never that the app could not answer.
 
-    This test replaces one that asserted the opposite conclusion from the same input: before U6 an
+    This test replaces one that asserted the opposite conclusion from the same input: previously an
     unanswered probe left the verdict green, because the status was logged and discarded. Green
     was the wrong answer for the same reason red would have been. The app is very likely serving;
     we simply do not know, so the honest verdict is the one that asks again.
@@ -534,9 +534,9 @@ async def test_a_root_route_that_500s_without_a_marker_is_now_red() -> None:
     app.
 
     The test that stood here asserted `green is True` and said in as many words that promoting a
-    non-2xx "belongs to the owner, not to this test". R9 is that decision, taken. The supervisor's
-    readiness probe fail-opens on 5xx by explicit design, so if this verdict does not call it
-    broken, nothing does.
+    non-2xx "belongs to the owner, not to this test". This test is that decision, taken. The
+    supervisor's readiness probe fail-opens on 5xx by explicit design, so if this verdict does not
+    call it broken, nothing does.
 
     Mutation check: widen the accepted range to include 5xx and this goes red on the state."""
     from structlog.testing import capture_logs
@@ -750,8 +750,8 @@ async def test_a_type_error_outranks_the_content_check() -> None:
 
 
 async def test_the_raw_served_head_is_carried_beside_the_derived_verdict() -> None:
-    """A derived metric can produce a false P0 that the raw field disproves in one step.
-    Whoever asks "but what was it actually serving?" must not have to reproduce the run to
+    """A derived metric can produce a false critical verdict that the raw field disproves in one
+    step. Whoever asks "but what was it actually serving?" must not have to reproduce the run to
     find out."""
     from structlog.testing import capture_logs
 
@@ -939,8 +939,9 @@ async def test_the_re_check_happens_once_so_a_busy_container_cannot_loop_it() ->
 
 async def test_a_died_diagnostic_that_postdates_the_watermark_is_preserved() -> None:
     """The carried-forward `died_lines` behaviour is deliberate — a crash marker in a dead child's
-    last words is the true diagnostic even when the restarted child comes up clean — and U9 must
-    not delete it. Nothing changed since the watermark, so the death stands as reported."""
+    last words is the true diagnostic even when the restarted child comes up clean — and future
+    changes must not delete it. Nothing changed since the watermark, so the death stands as
+    reported."""
     fake = FakeSandbox()
     fake.kill_dev(exit_code=137)
     fake.push_dev_logs("⨯ FATAL: out of memory while loading app/layout.tsx")
@@ -1003,8 +1004,9 @@ async def test_a_dev_server_that_never_came_up_is_not_asked_for_a_page() -> None
     """ "After readiness" is a precondition, not just an ordering. A server that never came up
     has nothing to answer with, so warming it spends the helper's whole budget re-learning what
     the readiness poll just established — up to three times per build, on exactly the red path
-    where the citizen is already waiting longest. U4's case is the opposite one: ready is TRUE,
-    `tsc` is clean, and the page is still blank."""
+    where the citizen is already waiting longest.
+    `test_a_next_only_compile_error_is_invisible_until_someone_asks_for_the_page` covers the
+    opposite case: ready is TRUE, `tsc` is clean, and the page is still blank."""
     fake = FakeSandbox()  # dev server down, and it never becomes ready
 
     outcome, _ = await _verify(fake, log_cursor=0, max_polls=2)

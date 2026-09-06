@@ -7,9 +7,11 @@
  * WHAT IS PROVEN ELSEWHERE, AND DELIBERATELY NOT RE-ASSERTED HERE:
  *  - the shared draft, and its behaviour across a reload and a sibling round trip —
  *    `components/chat/__tests__/Composer.test.tsx`, which is where the one composer now lives;
- *  - the draft surviving a hide/show cycle on the builder surface —
- *    `pages/__tests__/ConversationSurface-panel.test.jsx:57`, and the scroll position at `:86`, which is
- *    the assertion that actually discriminates a CSS hide from an unmount;
+ *  - the draft and the scroll position surviving a hide/show cycle — the builder surface owns no
+ *    collapse any more, so this holds at the shell, in
+ *    `components/workspace/__tests__/ProjectWorkspace.test.tsx` ("keeps the rail MOUNTED while
+ *    collapsed, so nothing inside it is discarded"), which is the assertion that actually
+ *    discriminates a CSS hide from an unmount;
  *  - that a route change still unmounts the conversation. It does, deliberately: the router owns
  *    which conversation is mounted and the slot keeps no stack of visited ones alive. What survives
  *    a project↔chat move is the draft and the app pane, not the component.
@@ -60,7 +62,7 @@ afterEach(() => cleanup())
 
 describe('ConversationSlot — one body, whatever the kind (R72)', () => {
   // FLIPPED, NOT DELETED. These three cases assert that the per-kind branch is gone — the
-  // mechanical form of R72's surface half — which is worth more than deleting them would be.
+  // mechanical form of that requirement's surface half — which is worth more than deleting them would be.
   it('mounts the same body for both kinds', () => {
     renderSlot({ kind: 'build' })
     expect(screen.getByTestId('conversation-body')).toBeTruthy()
@@ -71,9 +73,9 @@ describe('ConversationSlot — one body, whatever the kind (R72)', () => {
   })
 
   it('hands the resolved conversation through, INCLUDING its kind (Plan F, U6)', () => {
-    // INVERTED DELIBERATELY — the surface cannot branch on what it is never given. R11/R12 need
-    // exactly one thing from it: a Plan chat has no app pane, a Build chat shows it, and only the
-    // route knows which this is.
+    // INVERTED DELIBERATELY — the surface cannot branch on what it is never given. These
+    // requirements need exactly one thing from it: a Plan chat has no app pane, a Build chat
+    // shows it, and only the route knows which this is.
     //
     // The two scenarios either side of this one hold the rest: one BODY for both kinds, and the
     // same DOM node across a kind change. This one only proves a visibility declaration.
@@ -113,7 +115,7 @@ describe('ConversationSlot — hidden means mounted, out of reach, and out of th
   it('a hidden conversation is still in the document and still the same element', () => {
     // The distinction IS the requirement. A hidden conversation keeps its stream, its scroll
     // position and its draft precisely because it is never unmounted; the moment hiding becomes
-    // unmounting, R8a is a sentence in a document rather than a property of the code.
+    // unmounting, the requirement is a sentence in a document rather than a property of the code.
     function Toggle() {
       const [hidden, setHidden] = useState(false)
       return (

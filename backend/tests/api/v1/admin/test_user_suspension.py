@@ -1,12 +1,12 @@
-"""Local suspension (U10, R10–R14, KD-6): deactivate/reactivate endpoints and the
+"""Local suspension: deactivate/reactivate endpoints and the
 THREE enforcement seams — login callback, `current_user`, and `POST /auth/refresh`.
 
 Deactivate = `suspended_at` + a token_version bump + refresh-family revocation, so a
 live session dies instantly (the `current_user` seam 403s the old JWT — suspension is
 checked BEFORE the token_version bump so the SPA surfaces it instead of silently
-refreshing, KD-2 — while the refresh seam still 401s it), a captured refresh cookie
+refreshing — while the refresh seam still 401s it), a captured refresh cookie
 cannot re-mint, an outstanding runner token dies at the data-plane check, and a fresh
-Entra sign-in bounces to the login banner. Self/peer super-admins are protected (AE6);
+Entra sign-in bounces to the login banner. Self/peer super-admins are protected;
 both actions are audited.
 """
 
@@ -48,7 +48,7 @@ async def _reactivate(client, headers, user_id) -> Any:
     return await client.post(f"/v1/admin/users/{user_id}/reactivate", headers=headers)
 
 
-# --- the AE5 core: a live session dies immediately ------------------------------
+# --- a live session dies immediately ------------------------------
 
 
 async def test_deactivate_kills_live_session_immediately(client, db_session) -> None:
@@ -64,7 +64,7 @@ async def test_deactivate_kills_live_session_immediately(client, db_session) -> 
     assert body["suspendedAt"] is not None
 
     # The pre-suspension JWT is refused instantly. The token_version bump AND the
-    # suspended_at flag would each kill it; current_user checks suspension FIRST (KD-2), so
+    # suspended_at flag would each kill it; current_user checks suspension FIRST, so
     # the status is the 403 the SPA surfaces — not a 401 it would silently refresh past.
     resp = await client.get("/v1/auth/me", headers=live_cookie)
     assert resp.status_code == 403
@@ -86,10 +86,10 @@ async def test_current_user_seam_403s_even_a_valid_jwt(client, db_session) -> No
 
 
 async def test_current_user_401s_a_stale_token_not_suspended(client, db_session) -> None:
-    # The other side of KD-2: reordering suspended_at ahead of token_version must NOT weaken
+    # The flip side of checking suspension before token_version: that reordering must NOT weaken
     # revocation for the ordinary case. A token whose version is stale (logout, a reactivated
-    # user's old session — token_version bumped, suspended_at null) still 401s; it must never
-    # fall through the suspension check to a 200.
+    # user's old session — token_version bumped, suspended_at null) still 401s; it must never fall
+    # through the suspension check to a 200.
     citizen = await UserFactory.create(db_session, email="stale@rvaiglobal.com")
     stale_cookie = _cookie(citizen)  # signed with the CURRENT version...
     citizen.token_version += 1  # ...which a logout/revocation then bumps past
@@ -100,7 +100,7 @@ async def test_current_user_401s_a_stale_token_not_suspended(client, db_session)
     assert resp.json() != {"detail": "Account suspended"}  # a 401, not the suspension 403
 
 
-# --- refresh seam (KD-6) ---------------------------------------------------------
+# --- refresh seam ---------------------------------------------------------
 
 
 async def test_deactivate_revokes_refresh_families(client, db_session) -> None:
@@ -130,7 +130,7 @@ async def test_deactivate_revokes_refresh_families(client, db_session) -> None:
 
 async def test_refresh_seam_rejects_suspended_user_with_live_family(client, db_session) -> None:
     # Seam-specific: suspend WITHOUT revocation (direct column write) so the family
-    # is still live — the explicit `/auth/refresh` check must still refuse (R11).
+    # is still live — the explicit `/auth/refresh` check must still refuse.
     citizen = await UserFactory.create(db_session, email="sneak@rvaiglobal.com")
     raw = await issue_new_family(db_session, citizen.id)
     citizen.suspended_at = datetime.now(UTC)
@@ -224,7 +224,7 @@ async def test_reactivate_does_not_resurrect_old_sessions(client, db_session) ->
     assert (await client.get("/v1/auth/me", headers=_cookie(citizen))).status_code == 200
 
 
-# --- AE6: self / peer-admin protection --------------------------------------------
+# --- self / peer-admin protection --------------------------------------------
 
 
 async def test_admin_cannot_suspend_self(client, db_session) -> None:

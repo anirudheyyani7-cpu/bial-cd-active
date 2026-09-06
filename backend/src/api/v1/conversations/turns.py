@@ -1,4 +1,4 @@
-"""The resumable turn transport (U10): POST starts a detached turn, GET subscribes.
+"""The resumable turn transport: POST starts a detached turn, GET subscribes.
 
 `POST /conversations/{id}/turns` → 202 `{turnId}` — the run is detached the moment the
 response leaves; closing the tab changes nothing (disconnect ≠ cancel; the explicit stop
@@ -8,7 +8,7 @@ prove gap-free continuity, plain replay for one that can (`?turn=&cursor=`). Mul
 simultaneous subscribers each get the identical stream — fan-out is the engine's, the
 route only walks the ring.
 
-Wire discipline (copied from the build feed and the since-retired relay, D6): commit the
+Wire discipline (copied from the build feed and the since-retired relay): commit the
 SSE response and
 emit the first frame BEFORE any model byte (the snapshot serves that role), `: ping`
 keepalives only between complete frames, errors travel in-band, and the terminal
@@ -17,7 +17,7 @@ keepalives only between complete frames, errors travel in-band, and the terminal
 The turn plumbing this route shares with the plan→build handoff (binaries resolution, prompt
 assembly, history rehydration, the model/session-factory/storage dependencies) lives in
 `_shared.py` alongside this module — one source, no copies, and no reaching into another
-router's underscore-private names (ADR-0010).
+router's underscore-private names.
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ class NewConversation(CamelModel):
 
 
 class StartTurnBody(CamelModel):
-    """`POST /conversations/{id}/turns` — the new message (R9); the conversation id rides the
+    """`POST /conversations/{id}/turns` — the new message; the conversation id rides the
     path.
 
     `create` is present only on a chat's first message, and it is what makes R-18 true: check
@@ -332,8 +332,8 @@ async def start_turn(
     else:
         # Unchanged for every turn after the first: THIS route creates a conversation only from a
         # `create` block, so an unknown id with no parentage to build one from is a client bug —
-        # and a cross-user id is indistinguishable from it, which is one non-leaking 404
-        # (ADR-0004). Not a claim that a row can be born no other way: `POST /v1/conversations`
+        # and a cross-user id is indistinguishable from it, which is one non-leaking 404.
+        # Not a claim that a row can be born no other way: `POST /v1/conversations`
         # still creates one outright, with no message, and is deliberately retained.
         raise AppApiError(404, "Conversation not found.")
 
@@ -347,7 +347,7 @@ async def start_turn(
         return exc.as_response()
     if model is None:
         raise AppApiError(503, "Claude client not configured.")
-    # R98 — NO WORKSPACE SERVICE, SAID HERE RATHER THAN DEGRADED SILENTLY. Both kinds read the
+    # NO WORKSPACE SERVICE, SAID HERE RATHER THAN DEGRADED SILENTLY. Both kinds read the
     # project's live app and only that, so a deployment with no sandbox service has nothing for
     # either of them to read. The same shape as the refusal above it, with a machine-readable
     # code so the browser can tell it from the workspace CONFLICTS that share its status family
@@ -379,16 +379,16 @@ async def start_turn(
     # happens inside the detached turn, because blocking the POST on 30-60s recreates the dead
     # end the composer contract exists to remove.
     #
-    # IT NO LONGER READS THE CHAT'S KIND, and that is R93: every turn takes the whole workspace
+    # IT NO LONGER READS THE CHAT'S KIND: every turn takes the whole workspace
     # for as long as it runs, whatever kind of chat it was sent in. A Plan turn pins the live
-    # container exactly as a Build turn does — that is what R18 made true — so a Plan send that
+    # container exactly as a Build turn does, by design, so a Plan send that
     # slipped past this gate would take a workspace another of the user's chats was mid-build
     # in, which is the one thing this check exists to prevent.
     active = manager.active_session_for(user.id)
     if active is not None and active.conversation_id != conversation_id:
         raise AppApiError(409, BUILD_IN_FLIGHT_MSG, code=ALREADY_BUILDING_HERE_CODE)
 
-    # #83 — BOTH KINDS, not just Build, and the guard above cannot answer this one.
+    # BOTH KINDS, not just Build, and the guard above cannot answer this one.
     #
     # Two reasons it sits outside that block. `active_session_for` only sees in-process
     # sessions, so a finished build's pardoned container — warm, holding no session, no lock
@@ -402,7 +402,7 @@ async def start_turn(
     # "Your workspace could not be started right now" — no dialog, no named project, no way
     # to save. Asked here so the refusal is an HTTP 409 the client turns into a choice.
     #
-    # THE SECOND OF R19'S TWO REFUSALS, and it carries `sandbox_reclaim_blocked` where the one
+    # THE SECOND OF TWO REFUSALS, and it carries `sandbox_reclaim_blocked` where the one
     # above carries `already_building_here`. Same status, different cause, different remedy:
     # one is "your own other chat is using it", the other is "somebody's unsaved work in
     # another project is in the way". A client that could only read the status told the citizen
@@ -554,8 +554,8 @@ async def start_turn(
     if conversation is None:  # the losing arm's cross-owner id; otherwise unreachable
         raise AppApiError(404, "Conversation not found.")
 
-    # Free text while plan options are pending resolves them as an implicit "keep refining"
-    # (U11). The model must see a RESOLVED call — the dangling-call repair never has to guess
+    # Free text while plan options are pending resolves them as an implicit "keep refining".
+    # The model must see a RESOLVED call — the dangling-call repair never has to guess
     # about a card the user typed past — so when this actually writes one, the history is read
     # again. Only then: the common case is no pending card, and a second full load of a long
     # conversation on every turn to serve the rare one would be a poor trade.
@@ -647,13 +647,13 @@ async def turn_events(
     if not replay_only:
         items: list[DisplayItem] = []
         if state is not None:
-            # The turn's persisted rows (its user turn now; U12 adds mid-build steps),
-            # via the ONE U6 derivation — live and reload can never drift.
+            # The turn's persisted rows (its user turn now, plus any mid-build steps),
+            # via the one shared derivation — live and reload can never drift.
             rows = await load_rows(
                 db, user_id=user.id, conversation_id=conversation.id, include_hidden=True
             )
             projected = project_rows(rows)
-            items = projected[-8:]  # the turn's own tail; full history is the U6 GET
+            items = projected[-8:]  # the turn's own tail; full history is a separate GET
         snapshot = engine.build_snapshot(state, items=items)
 
     # Every DB read this route needs is done. Commit now so the pooled connection goes back

@@ -15,7 +15,7 @@ app is a bounded, logged leak an operator can sweep, while an exception here wou
 delete that has ALREADY COMMITTED and leave the caller believing it failed.
 
 TWO CALLERS, TWO POSTURES, and the never-raise contract serves both. The delete paths are
-best-effort as above. `deploy/router.py`'s `unpublish` (#113) is the opposite — it is a
+best-effort as above. `deploy/router.py`'s `unpublish` is the opposite — it is a
 synchronous admin lever that must FAIL LOUD — so it reads the return count back and 503s on
 zero rather than asking this function to raise. Keep it never-raising: the delete paths call
 it after their own commit, where an exception has nothing left to undo. Note what the count

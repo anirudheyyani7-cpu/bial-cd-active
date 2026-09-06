@@ -4,7 +4,7 @@
  * ═══ WHAT THIS SCREEN SHOWS, AND WHAT IT NEVER STARTS ═══
  *
  * It shows the RUNNING SANDBOX, in a pane beside the rail, behind one control the person presses
- * deliberately. Nothing starts a container because a screen was opened (R3): the pane reads a cheap
+ * deliberately. Nothing starts a container because a screen was opened: the pane reads a cheap
  * state endpoint that makes no container call, and the only thing that starts anything is a press.
  * There is no passive view of stored code, no lifecycle badge and no reroute into a chat, and the
  * suite beside this file keeps asserting their absence.
@@ -86,11 +86,12 @@ export default function ProjectPage() {
         if (!active) return
         setProject(loaded)
         setLoadError(null)
-        // R105's denominator, and the R104 clock's start. Marked HERE rather than on the raw mount
-        // because `hasApp` is only knowable once the project has loaded — a project with nothing
-        // built has no app to first-see, and starting a clock for it would make this number and the
-        // sandbox-first number answer different questions. `markProjectOpened` is idempotent per
-        // project id per page load, which is also the StrictMode guard.
+        // The chat-open ratio's denominator, and the time-to-app-visible clock's start. Marked
+        // HERE rather than on the raw mount because `hasApp` is only knowable once the project
+        // has loaded — a project with nothing built has no app to first-see, and starting a
+        // clock for it would make this number and the sandbox-first number answer different
+        // questions. `markProjectOpened` is idempotent per project id per page load, which is
+        // also the StrictMode guard.
         markProjectOpened(loaded.id, { hasApp: loaded.appId !== null })
       } catch (err) {
         if (!active) return

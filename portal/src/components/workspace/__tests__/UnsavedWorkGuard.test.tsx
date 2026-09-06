@@ -1,10 +1,10 @@
 /**
- * THE IN-PLACE UNSAVED-WORK GUARD (Plan F, U8).
+ * THE IN-PLACE UNSAVED-WORK GUARD.
  *
  * ═══ THE CASE THAT DECIDES WHETHER THIS FEATURE IS A NUISANCE ═══
  *
  * `null` has two causes and they are not the same claim. A check that RAN and could not answer is a
- * real "we could not tell", and R62 says the platform says so. A check that was NEVER ASKED is not:
+ * real "we could not tell", and the platform says so. A check that was NEVER ASKED is not:
  * `fetchSaveState` may only be called on a live workspace, so on a stopped or never-built project
  * the save state is permanently `null` because there is nothing to compare. Warning there fires "we
  * could not tell whether you have unsaved work" on every exit from every stopped project — the

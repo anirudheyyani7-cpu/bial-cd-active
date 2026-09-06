@@ -1,4 +1,4 @@
-"""U3 — `BIAL_DATABASE_URL` reaches the sandbox on every BIRTH arm (ADR-0028, R3/R4).
+"""`BIAL_DATABASE_URL` reaches the sandbox on every BIRTH arm.
 
 Two layers, both real: `provision_app_database` on its own (the env-dict shape and the
 sandbox-vs-control-plane DSN split), and the manager's three birth sites end-to-end
@@ -105,7 +105,7 @@ async def test_returns_exactly_the_one_database_var(
 async def test_returns_empty_when_the_substrate_is_unconfigured(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A deployment with no APP_DB__* is supported (KTD-2): the merge is a no-op and the app
+    # A deployment with no APP_DB__* is supported: the merge is a no-op and the app
     # simply has no persistence. The cached engine must be dropped BOTH sides —
     # `get_maintenance_engine` memoizes, so a stale engine would keep the feature on.
     await reset_maintenance_engine_for_tests()
@@ -124,7 +124,7 @@ async def test_returns_empty_when_the_substrate_is_unconfigured(
 async def test_the_injected_host_honours_the_sandbox_facing_override(
     db_session: AsyncSession, salted: list[uuid.UUID], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # KTD-2, the database twin of `blob_base_url`: the container cannot reach the control
+    # This is the database twin of `blob_base_url`: the container cannot reach the control
     # plane's own `localhost`, so the injected DSN carries the sandbox-visible host.
     assert settings.app_db is not None
     monkeypatch.setattr(

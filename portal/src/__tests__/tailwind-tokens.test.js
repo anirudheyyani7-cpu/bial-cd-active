@@ -5,7 +5,7 @@ import { stripComments } from './_stripComments'
 
 /**
  * An invented Tailwind token renders INVISIBLY, and no test that reads text content will ever
- * notice. `bg-bial-primary` shipped in the #83 dialog: the class does not exist, so the button
+ * notice. `bg-bial-primary` shipped in the dialog: the class does not exist, so the button
  * had no background, `text-white` painted white on a white card, and the primary action was
  * gone. Every unit test still passed — `getByRole` found it, `toBeEnabled()` was true, the
  * textContent matched. It was caught by looking at a screenshot from a live browser.
@@ -13,7 +13,7 @@ import { stripComments } from './_stripComments'
  * jsdom computes no Tailwind styles, so a `getComputedStyle` assertion cannot close this in the
  * unit suite. What CAN be checked cheaply is the SOURCE TEXT, and this file holds every rule of
  * that kind. There are four now; the first is the original, the other three arrived with the
- * chat-surface rebuild (Plan D, U1) because porting v4 registry sources into a v3 build makes
+ * chat-surface rebuild because porting v4 registry sources into a v3 build makes
  * the same failure reachable three new ways.
  *
  *   1. `bial-*` — the project's own colour family. A reference outside it is always a typo.
@@ -23,7 +23,7 @@ import { stripComments } from './_stripComments'
  *   3. `--color-*` VARIABLE REFERENCES. v4 names its theme variables `--color-foreground`;
  *      this portal defines `--foreground`. `var(--color-foreground)` resolves to nothing and
  *      the declaration is dropped, so the element paints transparent.
- *   4. R68 — SUB-BODY-SIZE ARBITRARY FONT SIZES, scoped (see IN_SCOPE below).
+ *   4. SUB-BODY-SIZE ARBITRARY FONT SIZES, scoped (see IN_SCOPE below).
  *
  * EACH RULE IS A PURE FUNCTION OVER SOURCE TEXT, and is asserted twice: once across the real
  * tree, and once against a fixture string that is KNOWN to violate it. Without the second, a
@@ -69,10 +69,9 @@ describe('tailwind custom tokens', () => {
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // Rule 2 — Tailwind v4 syntax
 //
-// Every entry was read out of a real registry source during the component survey
-// (`.claude/scratch/component-decisions.md`, the v4→v3 rewrite table). These are the tokens
-// actually present in `thread`, `tool-group`, `tool-fallback` and `attachment` — not a
-// speculative list of everything v4 added.
+// Every entry was read out of a real registry source during the component survey. These are
+// the tokens actually present in `thread`, `tool-group`, `tool-fallback` and `attachment` —
+// not a speculative list of everything v4 added.
 // ─────────────────────────────────────────────────────────────────────────────────────────
 const V4_ONLY = [
   {
@@ -217,24 +216,24 @@ describe('tailwind v4 syntax never reaches this v3.4.17 build', () => {
 })
 
 /**
- * R68 — nothing a person reads is smaller than the platform's body size.
+ * Nothing a person reads is smaller than the platform's body size.
  *
  * SCOPE IS DELIBERATELY A LIST, NOT THE WHOLE TREE. Sub-body-size text is widespread on
- * `main` (admin tables, the navbar's token meter, project cards) and R68 is a chat-surface
- * requirement, not a portal-wide restyle. So the rule covers exactly "the files this plan
- * authors or modifies": the whole ported tree, plus each chat file as the unit that owns it
- * opens it.
+ * `main` (admin tables, the navbar's token meter, project cards) and this is a chat-surface
+ * requirement, not a portal-wide restyle. So the rule covers exactly "the files the
+ * chat-surface rebuild authors or modifies": the whole ported tree, plus each chat file as the
+ * unit that owns it opens it.
  *
- * ADD YOUR FILE HERE WHEN YOUR UNIT OPENS IT. That is the growth the plan describes — a file
- * enters scope in the same commit that raises its type, so the guard is never committed red
- * and never quietly stops covering something.
+ * ADD YOUR FILE HERE WHEN YOUR UNIT OPENS IT. That is how the chat-surface rebuild grows this
+ * list — a file enters scope in the same commit that raises its type, so the guard is never
+ * committed red and never quietly stops covering something.
  *
  * Named scale steps are not flagged: `text-xs` and up are the platform's own ramp and moving
  * between them is a design decision, not a typo. What this catches is the ARBITRARY value —
  * `text-[11px]` — which is how a component ends up below the ramp without anyone choosing it.
  */
 const IN_SCOPE = [
-  'components/assistant-ui/', // every ported registry source, for the life of the plan
+  'components/assistant-ui/', // every ported registry source, for the life of the chat-surface rebuild
 ]
 
 function inR68Scope(file) {
@@ -271,7 +270,7 @@ describe('R68 — no text below the platform body size on the chat surface', () 
     const missing = IN_SCOPE.filter((entry) =>
       entry.endsWith('/') ? !present.some((p) => p.startsWith(entry)) : !present.includes(entry),
     )
-    // A directory entry may legitimately be empty while the plan has not created it yet;
+    // A directory entry may legitimately be empty while the chat-surface rebuild has not created it yet;
     // a named FILE that has vanished is always a hole in the guard.
     expect(missing.filter((m) => !m.endsWith('/'))).toEqual([])
   })

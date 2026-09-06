@@ -1,30 +1,23 @@
 /**
- * RENAME A PROJECT — the control that had to move rather than be dropped (plan 002, U2).
+ * RENAME A PROJECT — the control that had to move rather than be dropped.
  *
- * It lived in the rail's header, as a pencil that swapped the project's `<h1>` for an input. U3
- * replaces that header with the board's three sections — start a chat, app status, description —
- * none of which is a project name, and the name itself is in the toolbar row now.
+ * WHY THIS EXISTS
+ * It lived in the rail's header as a pencil that swapped the project's `<h1>` for an input; the
+ * rail's header is gone, so it opens this dialog instead — a shipped capability is kept even
+ * though no board currently draws a rename control inline, because the row is one 54px line
+ * shared by both screens and an inline text field would fight the title's truncation.
  *
- * NO BOARD DRAWS A RENAME CONTROL ANYWHERE. It survives on the origin's own rule: do not delete a
- * shipped capability because an older board omits it. What changed is its shape — the row is one
- * 54px line shared by both screens and an inline text field in it would have to grow the row and
- * fight the title's truncation, so the pencil opens this instead.
+ * Built on the vendored Radix `Dialog`, like the delete and create dialogs, replacing a
+ * hand-rolled `fixed inset-0` that had no real focus trap at all — Escape was wired only to the
+ * `<input>`'s own `onKeyDown`, so tabbing to Cancel or Save and pressing it did nothing. Radix
+ * gives the trap, Escape from anywhere inside, `role="dialog"`, and focus restored to the pencil
+ * that opened it — which survives a rename, so this dialog needs no `onCloseAutoFocus` override
+ * the way the delete dialog does.
  *
- * BUILT ON THE VENDORED RADIX `Dialog` (§12), like the delete and create dialogs. It used to be
- * a third hand-rolled `fixed inset-0` whose docblock claimed "the same portal-and-scrim treatment
- * as `ProjectDescriptionEditor`" — but that file implements a real container-level focus trap
- * and this one did not: there was no trap at all, and Escape was wired only to the `<input>`'s
- * own `onKeyDown`, so tabbing to Cancel or Save and pressing it did nothing (round-4 review).
- * Radix gives the trap, Escape from anywhere inside, `role="dialog"`, and focus restored to the
- * pencil that opened it — which survives a rename, so no `onCloseAutoFocus` override is needed
- * here the way the delete dialog needs one.
- *
- * IT CARRIES THE 8-WORD CAP (#158 §14), because §14's rule is "both entry points, or neither".
- * The server refuses a 9-word name on PATCH exactly as it does on POST, so a rename without a
- * client-side guard is a round trip whose only purpose is to be refused. The cap has now missed
- * this control twice by relocation — out of `ProjectPage` into the rail under #172, out of the
- * rail into this dialog under #175 — which is the argument for it living beside the input rather
- * than anywhere upstream of it.
+ * Carries the same 8-word cap the server enforces on PATCH as well as POST, because the rule is
+ * "both entry points, or neither" — a rename without the client-side guard is a round trip whose
+ * only purpose is to be refused, and the cap has already been dropped once during a prior
+ * relocation of this control, which is the argument for keeping it beside the input.
  */
 import { useEffect, useRef, useState } from 'react'
 import { patchProject } from '../../utils/projectApi'
@@ -76,10 +69,8 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
     // focused button fires two `patchProject` calls for the same rename and closes the dialog
     // twice. Same guard, same reason, as `WorkspaceToolbar`'s Save and `StartAppControl`'s press.
     //
-    // #180 and #173's round-4 review found this independently, on two branches, and fixed it
-    // the same way; this is #180's wording, which names the sibling call sites. `trimmed` is
-    // hoisted to the component body here because the disabled-state derivation below needs it
-    // too.
+    // `trimmed` is hoisted to the component body here because the disabled-state derivation below
+    // needs it too.
     if (busy) return
     // Blocked client-side BEFORE any request: the server 400s on name:null and 422s on "". A
     // whitespace-only name never reaches the wire.

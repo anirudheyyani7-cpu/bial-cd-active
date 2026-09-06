@@ -12,8 +12,8 @@ because a failed attempt must not overwrite the record of the version serving
 traffic, while a review is only ever a claim about the CURRENT saved version — a
 stored answer for an older commit is a stale answer waiting to be mistaken for a
 current one, so the row is overwritten wholesale when the version moves and the
-stamp is what makes staleness detectable (R6). The durable history lives in the
-per-run and per-publish audit records, not here (R6a).
+stamp is what makes staleness detectable. The durable history lives in the
+per-run and per-publish audit records, not here.
 
 `uq_classification_reviews_app` is both the one-row-per-app invariant and the
 claim's `ON CONFLICT` inference target: the fresh-insert race is settled in
@@ -31,7 +31,7 @@ The verdict/evidence pair is JSONB for the same reason `deployments.classificati
 is (0026): the questionnaire is expected to be reworded and reweighted, and a shape
 needing a migration per question would make that a schema conversation every time.
 
-Hand-finalized (ADR-0013).
+Hand-finalized.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ down_revision: str | None = "0028_deployment_unpublished_at"
 branch_labels: str | None = None
 depends_on: str | None = None
 
-# The native classification_review_status enum (ADR-0008). create_type=False so THIS
+# The native classification_review_status enum. create_type=False so THIS
 # migration owns the lifecycle: explicit .create() in upgrade, .drop() in downgrade.
 classification_review_status = postgresql.ENUM(
     "running",
@@ -62,7 +62,7 @@ def upgrade() -> None:
     op.create_table(
         "classification_reviews",
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), nullable=False),
-        # OwnedByUserMixin — the single-tenant ownership boundary (ADR-0004).
+        # OwnedByUserMixin — the single-tenant ownership boundary.
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("app_id", sa.Uuid(), nullable=False),
         # The version stamp: the commit the review read. NOT NULL — a row without a

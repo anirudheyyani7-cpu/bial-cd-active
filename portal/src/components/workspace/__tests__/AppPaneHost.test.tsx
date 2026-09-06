@@ -321,7 +321,7 @@ describe('AppPaneHost — a hidden pane is genuinely inert, at shell level', () 
 
     // `visibility:hidden` rather than `aria-hidden` alone: zero width and overflow:hidden clip a
     // subtree visually but leave its descendants in the tab order. Awaited because the pane draws
-    // its departure first (U6) — `aria-hidden` is the half that lands immediately.
+    // its departure first — `aria-hidden` is the half that lands immediately.
     expect(wrapper.getAttribute('aria-hidden')).toBe('true')
     await waitFor(() => expect(paneWrapper()?.className).toMatch(/invisible/))
 

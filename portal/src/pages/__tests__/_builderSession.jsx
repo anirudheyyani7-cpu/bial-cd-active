@@ -1,12 +1,13 @@
 /**
- * Shared, MOCK-FREE harness for the BuilderPage build-session suites (U5→U13). It only exports
+ * Shared, MOCK-FREE harness for the BuilderPage build-session suites. It only exports
  * plain fixtures + a render helper; each test file declares its OWN vi.hoisted mocks + vi.mock
- * (those are hoisted per-file), then feeds the C3 mock client + a FakeEventSource into BuilderPage
- * via the `buildSessionDeps` prop — the "inject the mock via the deps bag" idiom (KTD-6). The REAL
+ * (those are hoisted per-file), then feeds the mock build-session client + a FakeEventSource
+ * into BuilderPage
+ * via the `buildSessionDeps` prop — the "inject the mock via the deps bag" idiom. The REAL
  * useBuildSession hook + LivePreview + ActivityFeed + SessionControls run, so the tests assert the
  * rendered DOM, not a stubbed marker.
  *
- * U13 CHANGED THE TRANSPORT AND THE TRIGGER. A composer send is a TURN (POST /turns + the frame
+ * THE TRANSPORT AND THE TRIGGER: a composer send is a TURN (POST /turns + the frame
  * stream); the plan streams as text and `present_plan_options` renders the card; a build starts
  * only through the atomic Build-it transition. So a suite that wants a build must (a) mock
  * `../../utils/turnStreamApi` onto its `h` bag (startTurn / readTurnStream / buildFromPlan /
@@ -14,11 +15,12 @@
  * `sendAndConfirm()`. `turnStreaming` scripts the frame feed; `planReply()` is the standard
  * text-plus-card turn.
  *
- * U5 CHANGED WHAT BUILD-IT STARTS. It is no longer a C3 build SESSION — it is a WRITE TURN on the
+ * WHAT BUILD-IT STARTS: it is no longer a build SESSION — it is a WRITE TURN on the
  * same conversation, so `buildFromPlan` hands back a `turnId` (never a `sessionId`) and the page
  * subscribes to it with the very same `readTurnStream` an ordinary send uses. A build therefore
  * narrates itself through `workspace` / `step` / `preview` / `diagnostic` / `quota` / `turn_ended`
- * TURN FRAMES, not C7 envelopes: `scriptBuildTurn()` below is how a suite drives one, and the
+ * TURN FRAMES, not progress envelopes: `scriptBuildTurn()` below is how a suite drives one,
+ * and the
  * FakeEventSource is now only for the LEGACY session path (the reload-mid-build reattach).
  *
  * Not a `*.test.*` file → the runner never collects it.
@@ -29,7 +31,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ConversationSurface from '../../components/chat/ConversationSurface'
 // THE REAL SHELL, not a stub, and both helpers below mount the page THROUGH it as a layout route.
 // After the extraction the surface is an outlet child rather than a root: it renders no page frame
-// and no navbar, and — from U4 — no pane of its own. A harness that kept mounting it bare would
+// and no navbar, and no pane of its own. A harness that kept mounting it bare would
 // leave every preview assertion in fifteen suites asserting against something the product does not
 // render, which is the failure mode a stub cannot show you.
 import WorkspaceShell from '../../components/workspace/WorkspaceShell'
@@ -37,7 +39,7 @@ import WorkspaceShell from '../../components/workspace/WorkspaceShell'
 /**
  * Nest routes under the REAL workspace shell, for the suites that build their own route tables.
  *
- * The surface is an outlet child now: it renders no page frame, no navbar and — from U4 — no pane
+ * The surface is an outlet child now: it renders no page frame, no navbar and no pane
  * of its own, publishing what to frame upward instead. A table that mounts it bare therefore has
  * no pane at all, so every assertion about the preview silently asserts against something the
  * product does not render. This is one line at each such table rather than a stub, because a stub
@@ -55,7 +57,7 @@ export { FakeEventSource } from '../../utils/buildSessionMock'
 
 export const PREVIEW_URL = 'https://app-xyz.example.azurecontainerapps.io/'
 
-// C3 response builders (camelCase). `over` lets a test tweak one field.
+// Build-session response builders (camelCase). `over` lets a test tweak one field.
 // `startResp` is GONE with the `start` it answered: the client wrapper had no caller once the
 // build moved inside the turn's own transaction, so nothing on this harness can post one.
 export const statusResp = (over = {}) => ({ sessionId: 's1', projectId: 'p1', appId: 'a1', status: 'provisioning', previewUrl: null, lastSeq: null, createdAt: 'c', updatedAt: 'u', ...over })
@@ -63,9 +65,9 @@ export const ENDED_RESP = { sessionId: 's1', status: 'ended' }
 
 /** Assemble a BuildSessionClient from a per-file `h` bag of vi.fn()s.
  *
- *  FOUR MEMBERS NOW. `acquireLock` / `releaseLock` went in U28 with the keep-alive loop that was
+ *  FOUR MEMBERS NOW. `acquireLock` / `releaseLock` went with the keep-alive loop that was
  *  their only caller, and `start` has gone the same way: the build lives inside the turn's own
- *  transaction, so nothing provisions a C3 session from the browser. `forceEnd` has no control on
+ *  transaction, so nothing provisions a build session from the browser. `forceEnd` has no control on
  *  any surface either — the block banner's button went with the banner — but it stays, because it
  *  is the only thing that settles a session stuck mid-`building`.
  *
@@ -87,14 +89,14 @@ export function primeClient(h) {
   h.forceEnd.mockResolvedValue(ENDED_RESP)
 }
 
-// ─── U13: the turn half (streamed plan + the options card) ───────────────────
+// ─── The turn half (streamed plan + the options card) ───────────────────
 
 /** The plan text the scripted turn streams — the card's Build-it executes it server-side. */
 export const BRIEF = 'Build an application for BIAL that tracks visitor passes.'
 
 export const PLAN_CARD_ID = 'opt-1'
 
-// Turn-stream frame builders (camelCase — the U10 wire).
+// Turn-stream frame builders (camelCase — the wire format).
 export const T_DELTA = (text, seq = 1) => ({ type: 'text_delta', seq, text })
 export const T_CARD = (toolCallId = PLAN_CARD_ID, seq = 2) => ({
   type: 'plan_options',
@@ -120,7 +122,7 @@ export const turnStreaming = (frames, outcome = 'completed') =>
     return outcome
   }
 
-// ─── U5: the BUILD half — a Write turn, narrated by TURN FRAMES ───────────────
+// ─── The BUILD half — a Write turn, narrated by TURN FRAMES ───────────────
 
 /** The turn a Build-it starts. `sessionId` is gone from the transition's answer entirely. */
 export const BUILD_TURN_ID = 'bt-1'
@@ -230,10 +232,10 @@ export async function send(text = 'a visitor app') {
   fireEvent.keyDown(composer(), { key: 'Enter' })
 }
 
-// ─── Plan F, U3/U4: THE ONE START CONTROL, and the vehicle for pressing it from a fresh chat ──
+// ─── THE ONE START CONTROL, and the vehicle for pressing it from a fresh chat ──
 //
 // `RelaunchAffordance` — four "Relaunch preview" / "Bring it back" buttons scattered through
-// `LivePreview`'s placeholder arms — is gone (Plan F, U4). R3's one control is
+// `LivePreview`'s placeholder arms — is gone. The one control is
 // `StartAppControl.tsx`, rendered by `AppPane`'s `NoFrame` from the one computed workspace state,
 // and it speaks one vocabulary regardless of which arm handed it the action: `action.kind ===
 // 'start'` labels it "Launch Application", `'retry'` labels it "Try again", and BOTH presses call
@@ -361,7 +363,7 @@ export function renderBuilder({ deps, projectId = 'p1', hasSavedBuild = null, in
   )
 }
 
-// ─── Plan A / U1: fixtures for the PREVIEW ADDRESS and its two scoping predicates ─────────────
+// ─── Fixtures for the PREVIEW ADDRESS and its two scoping predicates ─────────────
 //
 // The address has three sources and two predicates, and a predicate is only OBSERVABLE when the
 // chat or the project on screen differs from the one the signal was attributed to. `renderBuilder`

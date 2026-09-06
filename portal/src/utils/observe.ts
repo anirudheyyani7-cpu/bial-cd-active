@@ -1,5 +1,5 @@
 /**
- * The three marks only the browser can make (R104, R105).
+ * The three marks only the browser can make.
  *
  * The server can see a start begin and a container answer. It cannot see a citizen OPEN a
  * project, cannot see them open a chat from it, and above all cannot see the moment they are
@@ -7,7 +7,8 @@
  * and this module is the whole of what it says. One file, so the measurement is legible in one
  * place rather than scattered through pages other work is about to rewrite.
  *
- * WHAT A "VISIT" IS, stated because R105's denominator turns on it: ONE PROJECT ID PER PAGE LOAD.
+ * WHAT A "VISIT" IS, stated because the chat-open ratio's denominator turns on it: ONE PROJECT ID
+ * PER PAGE LOAD.
  * The guards below live in module state, are never reset within a load, and a reload starts a new
  * visit. So a citizen who opens a project, opens a chat, comes back and opens another scores one
  * and one — and a citizen who leaves a tab open all day and returns to the same project at four
@@ -19,10 +20,10 @@
  *
  * `project_opened_chat` FIRES ONLY FOR A PROJECT ALREADY MARKED OPEN IN THIS LOAD. A deep link
  * straight to `/chat/{id}` — a bookmark, a shared link, a browser restore — resolves a project
- * that was never opened on screen, and counting it would push R105's ratio above 1. A denominator
- * smaller than its numerator is not a bias, it is a broken number.
+ * that was never opened on screen, and counting it would push the chat-open ratio above 1. A
+ * denominator smaller than its numerator is not a bias, it is a broken number.
  *
- * THE R104 CLOCK IS GATED ON THE PROJECT ALREADY HAVING AN APP. A project with nothing built has
+ * THE CLOCK IS GATED ON THE PROJECT ALREADY HAVING AN APP. A project with nothing built has
  * no app to first-see, and emitting for it would make today's number and the sandbox-first
  * number answer different questions.
  *
@@ -34,16 +35,16 @@
  * IT LIVES IN MEMORY, and the biases that follow are recorded rather than hidden. A reload
  * mid-journey abandons the measurement, so the sample tilts toward smooth journeys. A backgrounded
  * tab inflates one — and where that inflation crosses the server's ceiling the row is REFUSED
- * outright, so the effect is a lost reading, not a capped one: the R104 mean is biased toward the
+ * outright, so the effect is a lost reading, not a capped one: the mean is biased toward the
  * fast journeys twice over, once by reloads and once by the ceiling. Same for the long-lived tab
  * that returns to a project hours later: its first visit's clock is still open, so the reveal it
  * eventually gets is measured from the wrong start and refused. Those are lost rows, not wrong
- * ones, which is the right way round — but it means R104 is a floor on a healthy journey rather
- * than an average over all of them.
+ * ones, which is the right way round — but it means the number is a floor on a healthy journey
+ * rather than an average over all of them.
  *
  * There is deliberately NO visibility listener — that would be a second mechanism doing work the
  * ceiling already does at the only place it can be enforced, and it would discard a slice of
- * exactly the slow journeys R104 exists to see.
+ * exactly the slow journeys the clock exists to see.
  *
  * AND WHAT THE STOP-CLOCK DOES NOT PROMISE. `markAppVisible` fires when the preview pane is
  * SHOWING the app uncovered, which is the honest end of the wait — but a cross-origin frame's
@@ -106,7 +107,7 @@ function send(name: ObservationName, value?: number): void {
 /**
  * A project page mounted. At most one beacon per project id per page load.
  *
- * `hasApp` starts the R104 clock — a project with nothing built has nothing to first-see.
+ * `hasApp` starts the clock — a project with nothing built has nothing to first-see.
  */
 export function markProjectOpened(projectId: string, { hasApp }: { hasApp: boolean }): void {
   if (!projectId || openedProjects.has(projectId)) return
@@ -132,7 +133,7 @@ export function markChatOpened(projectId: string | null): void {
  *
  * Sends nothing when no clock was started for this project — the project had no app, or this load
  * never opened its page (a deep link straight into a chat). Defaulting a missing mark to page-load
- * time would measure a different journey and pollute the only R104 number there is.
+ * time would measure a different journey and pollute the only number there is.
  */
 export function markAppVisible(projectId: string | null): void {
   if (!projectId) return

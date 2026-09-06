@@ -84,28 +84,28 @@ _COMPILE_VALUES: Final = frozenset(m.value for m in CompileState)
 _SUP_PREFIX: Final = "/_sup"
 
 # Per-request timeouts (seconds). A command run gets the caller's `timeout_s` plus
-# head-room for the round trip so a C1 504 (which IS a `SandboxError`) is the
+# head-room for the round trip so a 504 (which IS a `SandboxError`) is the
 # supervisor's own timeout, not the transport pre-empting it. Dev/files ops are quick.
 _EXEC_TIMEOUT_BUFFER_SECONDS: Final = 30.0
 _OP_TIMEOUT_SECONDS: Final = 30.0
 
-# Readiness-poll cadence (C2): start ~0.5 s, exponential backoff capped ~5 s, poll
+# Readiness-poll cadence: start ~0.5 s, exponential backoff capped ~5 s, poll
 # until `dev/status.ready` or `timeout_s`. Module-level so tests can shrink them.
 _READY_POLL_START_SECONDS: Final = 0.5
 _READY_POLL_MAX_SECONDS: Final = 5.0
 _READY_BACKOFF_FACTOR: Final = 2.0
 
-# The first-route warm request (U3/R3). Turbopack compiles a route on its FIRST request, and
+# The first-route warm request. Turbopack compiles a route on its FIRST request, and
 # until now that request was the citizen's own — 5-7s of blank iframe at the exact moment they
 # had just been told their app was ready. The platform pays it instead.
 #
 # This bound is a LATENCY CEILING, not a safety margin, and it is sized accordingly. Every caller
-# awaits this call inline on a path a human is waiting on: the `preview_ready` frame, the
-# `POST /relaunch` response, a self-heal iteration. "It gates nothing" (R6) is true and says
-# nothing about cost — a generous budget here buys a slow app the right to hold a preview frame
-# hostage, which is the outcome U3 exists to prevent. 8s covers the measured 5-7s cold compile
-# plus a server-render against the per-project database; past that the wait is worth more than
-# the compile, and U5's on-load reveal is the frontend's own insurance either way.
+# awaits this call inline on a path a human is waiting on: the `preview_ready` frame, the `POST
+# /relaunch` response, a self-heal iteration. "It gates nothing" is true and says nothing about
+# cost — a generous budget here buys a slow app the right to hold a preview frame hostage, which is
+# exactly what this warm-up call exists to prevent. 8s covers the measured 5-7s cold compile plus a
+# server-render against the per-project database; past that the wait is worth more than the
+# compile, and the frontend's own on-load reveal is its insurance either way.
 _WARM_TIMEOUT_SECONDS: Final = 8.0
 
 # The serving half of the health verdict gets its OWN budget, wider than the warm request's.
@@ -115,10 +115,10 @@ _WARM_TIMEOUT_SECONDS: Final = 8.0
 # strictly cheaper than telling a citizen their working app did not come together.
 _SERVING_TIMEOUT_SECONDS: Final = 20.0
 
-# `dev_start` returns the child pid; on C1's 409 "already running" the running dev
-# server exposes no pid (C1 `/dev/status` = {running, ready, port}), so we confirm it
+# `dev_start` returns the child pid; on the supervisor's 409 "already running" the running dev
+# server exposes no pid (the supervisor's `/dev/status` = {running, ready, port}), so we confirm it
 # is up and return this sentinel — 0 is never a real Popen pid, so it unambiguously
-# reads as "already running, pid unknown" without raising (idempotent, C2).
+# reads as "already running, pid unknown" without raising (idempotent).
 _ALREADY_RUNNING_PID: Final = 0
 
 # `/dev/compile` is polled on the preview watcher's 1s cadence, so it gets its OWN budget
@@ -128,7 +128,7 @@ _ALREADY_RUNNING_PID: Final = 0
 # owns crash detection. Timing out is not a failure here: it is `UNKNOWN`, which holds.
 _COMPILE_TIMEOUT_SECONDS: Final = 5.0
 
-# Supervisor bearer token + registry token_ref sizing (secrets, never a UUID — ADR-0006).
+# Supervisor bearer token + registry token_ref sizing (secrets, never a UUID).
 _SUPERVISOR_TOKEN_BYTES: Final = 32
 # The container-env key the supervisor bearer is injected under at create. Named rather than
 # inlined because it is now read back as well as written: it is the token's durable home across
@@ -146,17 +146,17 @@ _PROBE_MAX_ATTEMPTS: Final = 4
 _PROBE_START_SECONDS: Final = 0.5
 _PROBE_MAX_SECONDS: Final = 4.0
 
-# The C4 restore transport (KTD-7): the base64'd git bundle is written into the
+# The restore transport: the base64'd git bundle is written into the
 # workspace, decoded, and unbundled onto the fresh container's disk, then `npm install`
-# reconciles the dynamic deps the snapshotted lockfile added on top of the pre-baked base
-# (U6 / R16). The baked node_modules survives `checkout -q -f` (there is NO `git clean`),
+# reconciles the dynamic deps the snapshotted lockfile added on top of the pre-baked base.
+# The baked node_modules survives `checkout -q -f` (there is NO `git clean`),
 # so this is a DELTA install, not a full reinstall — `npm install` (not `npm ci`, which
 # would wipe node_modules and defeat the baked base's speed). A non-zero install aborts the
 # `set -e` script → non-zero exit → `_restore_snapshot_into` raises SandboxError → the caller
-# self-cleans the container (R17). Single-line POSIX `sh -c` (the image ships LF from the
-# Windows build VM). Track SANDBOX live-validates the exact shell; here it is a mock-driven seam.
+# self-cleans the container. Single-line POSIX `sh -c` (the image ships LF from the
+# Windows build VM). This exact shell is validated live elsewhere; here it is a mock-driven seam.
 #
-# THE RECONCILE IS CONDITIONAL (#11/R4): the baked lockfile is hashed BEFORE the checkout and
+# THE RECONCILE IS CONDITIONAL: the baked lockfile is hashed BEFORE the checkout and
 # the snapshot's lockfile AFTER; when they match, the baked node_modules already satisfies the
 # snapshot exactly and the install is SKIPPED — a change build on an app that never added a
 # dependency restores with zero npm work. The two `|| echo` fallbacks are DIFFERENT sentinels
@@ -194,8 +194,8 @@ _RESTORE_SCRIPT: Final = (
     "git fetch -q /tmp/bial-app.bundle HEAD; "
     "git checkout -q -f FETCH_HEAD; "
     "snap_lock=$(sha256sum package-lock.json 2>/dev/null || echo snap-lock-missing); "
-    # Reconcile dynamic deps (U6/R16) — ONLY when the snapshot's lockfile drifted from the
-    # baked one (#11/R4); an unchanged lockfile is already satisfied by the baked node_modules.
+    # Reconcile dynamic deps — ONLY when the snapshot's lockfile drifted from the
+    # baked one; an unchanged lockfile is already satisfied by the baked node_modules.
     'if [ "$baked_lock" = "$snap_lock" ]; then '
     "echo 'lockfile unchanged - skipping npm reconcile'; "
     "else npm install --no-audit --no-fund --loglevel=error; fi; "
@@ -265,12 +265,12 @@ def _apps_hostname() -> str:
 
 
 class AcaSandboxClient(SandboxClient):
-    """The concrete C2 client. Holds one long-lived `httpx.AsyncClient` for the
+    """The concrete client. Holds one long-lived `httpx.AsyncClient` for the
     supervisor calls and (lazily) one `AcaControlPlane` for the container lifecycle.
 
     `transport` injects an `httpx.MockTransport` for the `/_sup/*` layer; `aca`
     injects a fake control plane — together they let every behavior be tested without
-    a live container or real Azure (KTD-9)."""
+    a live container or real Azure."""
 
     def __init__(
         self,
@@ -284,9 +284,9 @@ class AcaSandboxClient(SandboxClient):
         # run may legitimately last for `timeout_s` seconds, far past a default 5 s).
         self._http = httpx.AsyncClient(transport=transport, timeout=None)
         self._aca_lazy = aca
-        # token_ref (the C5 registry reference) -> the live bearer token. In-process
+        # token_ref (the registry reference) -> the live bearer token. In-process
         # only; a restart empties it -> references resolve to nothing -> SandboxGoneError
-        # -> the restore path (KTD-7). NEVER persisted to Redis.
+        # -> the restore path. NEVER persisted to Redis.
         self._token_refs: dict[str, str] = {}
         # app_name -> owning user, so teardown (which gets only a handle) can clear the
         # user-keyed registry hash for a session this process created. Empty after a
@@ -309,7 +309,7 @@ class AcaSandboxClient(SandboxClient):
         depends on, so it satisfies `inventory.FleetLister` by shape instead of by inheritance.
 
         `AcaError` is translated to `SandboxError` here because this is the PORT: no vendor type
-        crosses it (C2), and a caller that had to know about `azure.core` to catch a failure would
+        crosses it, and a caller that had to know about `azure.core` to catch a failure would
         be importing the SDK to talk to the abstraction that exists to hide it. The predecessor
         `list_sandbox_app_names` omitted this translation, so an ARM throttle during
         `reconcile-sandboxes` escaped the route's `except SandboxError` and surfaced as a 500
@@ -321,7 +321,7 @@ class AcaSandboxClient(SandboxClient):
             raise SandboxError("could not enumerate the sandbox fleet") from exc
 
     async def get_app_tags(self, *, name: str) -> dict[str, str] | None:
-        """One container's current tags — the destroy path's re-validation read (U15).
+        """One container's current tags — the destroy path's re-validation read.
 
         `AcaError` is translated at the PORT, like its neighbours: no vendor type crosses it."""
         try:
@@ -330,7 +330,7 @@ class AcaSandboxClient(SandboxClient):
             raise SandboxError("could not read the container's tags") from exc
 
     async def stamp_tags(self, *, name: str, tags: dict[str, str]) -> None:
-        """Merge C10 identity onto an existing container (the backfill's write half).
+        """Merge identity onto an existing container (the backfill's write half).
 
         A PATCH, never a PUT — a PUT would replace the resource and take a live sandbox's
         container env, and with it the supervisor bearer, down with it. The MERGE is the lower
@@ -341,7 +341,7 @@ class AcaSandboxClient(SandboxClient):
         except AcaError as exc:
             raise SandboxError(f"could not stamp identity onto {name}") from exc
 
-    # --- supervisor HTTP layer (U1) ------------------------------------------
+    # --- supervisor HTTP layer ---------------------------------------------
 
     @staticmethod
     def _auth(handle: SandboxHandle) -> dict[str, str]:
@@ -397,7 +397,7 @@ class AcaSandboxClient(SandboxClient):
             handle, "exec", body, timeout=timeout_s + _EXEC_TIMEOUT_BUFFER_SECONDS
         )
         if resp.status_code != 200:
-            # C1 504 (supervisor timeout) and any other non-200 are a SandboxError; a
+            # A supervisor 504 (timeout) and any other non-200 are a SandboxError; a
             # non-zero EXIT would have come back inside a 200 (handled below).
             raise SandboxError(f"command run failed with status {resp.status_code}")
         data: Any = resp.json()
@@ -406,13 +406,13 @@ class AcaSandboxClient(SandboxClient):
         )
 
     async def files(self, handle: SandboxHandle, op: FileOp) -> FileResult:
-        # Serialize the validated variant back to C1's flat `FilesBody` wire shape;
+        # Serialize the validated variant back to the supervisor's flat `FilesBody` wire shape;
         # `exclude_none` drops the fields this variant doesn't carry.
         body = op.model_dump(exclude_none=True)
         resp = await self._post(handle, "files", body, timeout=_OP_TIMEOUT_SECONDS)
         if resp.status_code != 200:
-            # C1 422 (0/N str_replace matches) and 400 (missing sub-field / unknown
-            # action) both surface as SandboxError (C2).
+            # A supervisor 422 (0/N str_replace matches) and 400 (missing sub-field / unknown
+            # action) both surface as SandboxError.
             raise SandboxError(f"files op failed with status {resp.status_code}")
         data: Any = resp.json()
         detail: dict[str, object] = {str(k): v for k, v in data.items() if k != "ok"}
@@ -429,7 +429,7 @@ class AcaSandboxClient(SandboxClient):
         resp = await self._post(handle, "dev/start", body, timeout=_OP_TIMEOUT_SECONDS)
         if resp.status_code == 409:
             # Idempotent: the dev server is already running. Confirm via a status probe
-            # (C2) and return the already-running sentinel — C1 exposes no pid here.
+            # and return the already-running sentinel — the supervisor exposes no pid here.
             status = await self.dev_status(handle)
             if status.running:
                 return _ALREADY_RUNNING_PID
@@ -440,11 +440,11 @@ class AcaSandboxClient(SandboxClient):
             data: Any = resp.json()
             return int(data["pid"])
         except (KeyError, TypeError, ValueError) as exc:
-            # A malformed 200 body must stay inside the C2 taxonomy, exactly as `dev_status`
-            # below already does. TWO callers now guard this call with `except SandboxError`
-            # and treat it as best-effort — the Write turn's boot-at-attach and relaunch's
-            # attach arm — so a raw `KeyError` escaping here would skip both guards and kill a
-            # turn whose workspace had already been reported ready.
+            # A malformed 200 body must stay inside the SandboxError taxonomy, exactly as
+            # `dev_status` below already does. TWO callers now guard this call with `except
+            # SandboxError` and treat it as best-effort — the Write turn's boot-at-attach and
+            # relaunch's attach arm — so a raw `KeyError` escaping here would skip both guards and
+            # kill a turn whose workspace had already been reported ready.
             raise SandboxError("dev/start returned a malformed body") from exc
 
     async def dev_status(self, handle: SandboxHandle) -> DevStatus:
@@ -463,7 +463,7 @@ class AcaSandboxClient(SandboxClient):
                 exit_code=None if raw_exit is None else int(raw_exit),
             )
         except (KeyError, TypeError, ValueError) as exc:
-            # A malformed 200 body must stay inside the C2 taxonomy: every best-effort
+            # A malformed 200 body must stay inside the SandboxError taxonomy: every best-effort
             # caller (dev_start's 409 probe, attach_existing's readiness check) guards
             # `except SandboxError` — a raw ValueError/KeyError would escape those guards.
             raise SandboxError("dev/status returned a malformed body") from exc
@@ -475,8 +475,8 @@ class AcaSandboxClient(SandboxClient):
         if resp.status_code != 200:
             raise SandboxError(f"dev/logs failed with status {resp.status_code}")
         data: Any = resp.json()
-        # Map the C1 wire field `next` -> `DevLogs.next_cursor` (renamed only to avoid
-        # shadowing the builtin); pass it back as `since` for only-new lines (C2).
+        # Map the supervisor's wire field `next` -> `DevLogs.next_cursor` (renamed only to avoid
+        # shadowing the builtin); pass it back as `since` for only-new lines.
         return DevLogs(lines=[str(line) for line in data["lines"]], next_cursor=int(data["next"]))
 
     async def wait_ready(
@@ -495,7 +495,7 @@ class AcaSandboxClient(SandboxClient):
             delay = min(delay * _READY_BACKOFF_FACTOR, _READY_POLL_MAX_SECONDS)
 
     async def compile_state(self, handle: SandboxHandle) -> CompileReport:
-        """Ask the supervisor what the dev server is compiling — C1 `GET /dev/compile`.
+        """Ask the supervisor what the dev server is compiling — `GET /dev/compile`.
 
         NEVER RAISES, and that is the contract rather than a convenience. Every failure this
         call can have — a supervisor image predating the endpoint (404), a transport error, a
@@ -539,7 +539,7 @@ class AcaSandboxClient(SandboxClient):
             return CompileReport(state=CompileState.UNKNOWN, reason="malformed_body")
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
-        """The app's public root: status plus a bounded head of the body (U6, R9).
+        """The app's public root: status plus a bounded head of the body.
 
         The SERVING half of the health verdict, and the reason it goes in the front door rather
         than through `/exec` + `curl` is the same reason its sibling below does: one Caddy on one
@@ -558,7 +558,7 @@ class AcaSandboxClient(SandboxClient):
 
         NEVER RAISES, and unlike its sibling that is load-bearing here rather than merely polite:
         `None` is a value the verdict reads, and it means `INDETERMINATE`. An app that is in fact
-        serving must not be called broken because our own request timed out (AE8). The blind
+        serving must not be called broken because our own request timed out. The blind
         `except` is the requirement; `CancelledError` is a `BaseException`, so a stopped turn still
         stops."""
         try:
@@ -610,7 +610,7 @@ class AcaSandboxClient(SandboxClient):
             return None
 
     async def someone_has_to_go_first(self, handle: SandboxHandle) -> int | None:
-        """Pay the first Turbopack route compile so the citizen's browser does not (U3, R3).
+        """Pay the first Turbopack route compile so the citizen's browser does not.
 
         Straight at the app root over the SAME public ingress the browser uses — deliberately
         NOT through the supervisor's `/exec` + `curl`. One Caddy on one FQDN fronts both
@@ -618,7 +618,7 @@ class AcaSandboxClient(SandboxClient):
         the identical round trip plus a process spawn, and it warms a path no user ever takes.
         Going in the front door means this request compiles exactly what the citizen will load.
 
-        NON-LOAD-BEARING BY CONSTRUCTION (R6). It gates nothing and raises nothing, and it
+        NON-LOAD-BEARING BY CONSTRUCTION. It gates nothing and raises nothing, and it
         carries its own timeout: the frame this precedes is worth more than the compile it pays
         for, so a warm request that hangs must cost the preview NOTHING. The status code comes
         back for callers that want the signal — a 500 here is a real compile error — but no
@@ -670,14 +670,14 @@ class AcaSandboxClient(SandboxClient):
                     )
                 return resp.status_code
         except Exception:  # noqa: BLE001 - R6: nothing from here may ever reach the caller
-            # `exc_info` is not decoration: U4's whole detection story depends on this request
+            # `exc_info` is not decoration: the whole detection story depends on this request
             # reaching the route, and a silent swallow makes restricted egress or a wedged
             # ingress look identical to a healthy build. Without the reason, the one telemetry
             # signal that says "the warm request is a no-op in production" says nothing.
             _log.warning("warm_request_failed", app=handle.app_name, exc_info=True)
             return None
 
-    # --- C5 registry helpers (frozen key builders — never a hand-typed key) --
+    # --- registry helpers (frozen key builders — never a hand-typed key) --
 
     async def _write_registry(
         self, user_uuid: uuid.UUID, *, app_name: str, fqdn: str, token_ref: str
@@ -802,7 +802,7 @@ class AcaSandboxClient(SandboxClient):
         _log.info("supervisor_token_recovered_from_container_env", app_name=app_name)
         return token
 
-    # --- ACA lifecycle (U2) --------------------------------------------------
+    # --- ACA lifecycle -----------------------------------------------------
 
     async def _safe_teardown(self, app_name: str) -> bool:
         """Best-effort ACA delete for a self-clean path. Returns True when the container is
@@ -849,7 +849,7 @@ class AcaSandboxClient(SandboxClient):
     async def _provision_container(
         self, user_uuid: uuid.UUID, app_name: str, app_env: dict[str, str]
     ) -> SandboxHandle:
-        """Create the container, write the C5 registry hash at container-create (before
+        """Create the container, write the registry hash at container-create (before
         any fallible post-create step, so a mid-provision death is reaper-visible), and
         return a `ready=False` handle. Self-cleans on a post-create failure."""
         token = secrets.token_urlsafe(_SUPERVISOR_TOKEN_BYTES)
@@ -939,7 +939,7 @@ class AcaSandboxClient(SandboxClient):
         if reg is None:
             raise SandboxGoneError("no live sandbox registered for user")
         if reg.get(REGISTRY_FIELD_STATE) == REGISTRY_STATE_ENDING:
-            # The reaper marked this ending BEFORE teardown (C5) — do NOT reconnect to a
+            # The reaper marked this ending BEFORE teardown — do NOT reconnect to a
             # dying container. Raise before probing.
             raise SandboxGoneError("sandbox is ending")
         fqdn = reg.get(REGISTRY_FIELD_FQDN, "")
@@ -982,8 +982,8 @@ class AcaSandboxClient(SandboxClient):
         )
         await self._probe_with_retry(handle)
         self._app_owners[app_name] = user_uuid
-        # `ready` reflects the ACTUAL dev-server state on reattach (C2 SandboxHandle.ready) —
-        # a resumed, already-ready sandbox drives BRAIN's initial-load preview trigger. A
+        # `ready` reflects the ACTUAL dev-server state on reattach (SandboxHandle.ready) —
+        # a resumed, already-ready sandbox drives the initial-load preview trigger. A
         # transient status error must not fail an attach that just probed healthy: fall back
         # to ready=False (the readiness poll recovers it later).
         try:
@@ -1015,7 +1015,8 @@ class AcaSandboxClient(SandboxClient):
         source_key: str | None = None,
     ) -> SandboxHandle:
         user_uuid = uuid.UUID(user_id)
-        # C9 supplies the app_id via app_env (the frozen C2 signature carries no app_id).
+        # The caller supplies the app_id via app_env (the frozen client signature carries no
+        # app_id).
         app_id = uuid.UUID(app_env["BIAL_APP_ID"])
         key = source_key or snapshot_key(app_id)
         # FETCH AND VALIDATE BEFORE DESTROYING ANYTHING. The pull used to live inside
@@ -1037,12 +1038,12 @@ class AcaSandboxClient(SandboxClient):
         # is destroyed, which is the whole point of the reorder.
         bundle = await get_storage().get(key)
         # Defensively tear down any live original BEFORE overwriting the registry, so a
-        # still-running container is never orphaned by the restore's fresh create (C2).
+        # still-running container is never orphaned by the restore's fresh create.
         existing = await self._read_registry(user_uuid)
         if existing is not None:
             old_app_name = existing.get(REGISTRY_FIELD_APP_NAME)
             if old_app_name and not await self._safe_teardown(old_app_name):
-                # ABORT rather than provision over it (U18). `_provision_container` overwrites
+                # ABORT rather than provision over it. `_provision_container` overwrites
                 # the user-keyed registry hash with the NEW app name, so continuing here would
                 # leave the OLD container running with nothing pointing at it — an anonymous,
                 # forever-billing ghost, manufactured by the recovery path itself.
@@ -1061,7 +1062,7 @@ class AcaSandboxClient(SandboxClient):
         except Exception:
             # Mid-restore death runs MORE fallible steps than provision — self-clean the
             # just-created container, then clear its registry ONLY IF the container is
-            # confirmed gone (C4, U18).
+            # confirmed gone.
             #
             # The registry drop used to be unconditional. `_safe_teardown` swallows an
             # `AcaError`, so a refused delete still dropped the record — orphaning a container
@@ -1168,7 +1169,7 @@ async def aclose_sandbox_singleton() -> None:
 
 def set_sandbox_for_tests(client: SandboxClient | None) -> None:
     """Inject (or clear) the singleton so the reaper — which resolves its client via
-    the singleton, not a `Depends` — is test-injectable (KTD-9)."""
+    the singleton, not a `Depends` — is test-injectable."""
     global _sandbox_singleton
     _sandbox_singleton = client
 

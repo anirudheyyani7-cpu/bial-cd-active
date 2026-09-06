@@ -8,12 +8,13 @@ attempt must never overwrite the record of the version still serving traffic, wh
 review is only ever a claim ABOUT the current saved version — a stored answer for an
 older commit is not history worth keeping, it is a stale answer waiting to be mistaken
 for a current one. So the row is overwritten wholesale whenever the version moves, and
-`head_sha` is what makes that staleness detectable (R6). The durable history lives in
-the audit records written per run and at publish/routing time, not here (R6a).
+`head_sha` is what makes that staleness detectable. The durable history lives in
+the audit records written per run and at publish/routing time, not here.
 
 WHY `attempt` EXISTS: the review bypasses the citizen's daily token gate, so "bounded"
-cannot rest on "once per version" — R19 deliberately lets a citizen re-request a failed
-review without re-saving, and the failing runs are the expensive ones. The counter
+cannot rest on "once per version" — the review is deliberately built to let a citizen
+re-request a failed review without re-saving, because the failing runs are the expensive
+ones. The counter
 increments on every claim of the same version and resets to 1 when the version changes;
 the SERVICE layer refuses past three model runs per version (the store exposes the
 counter faithfully and enforces nothing, so the policy lives in one place).
@@ -22,8 +23,8 @@ counter faithfully and enforces nothing, so the policy lives in one place).
 than six columns for the same reason `deployments.classification` is JSONB: the
 questionnaire is expected to be reworded and reweighted, and the keys are pinned to
 `CLASSIFICATION_KEYS`, so this is a stable shape, not a free-form bag. `evidence` is
-the machine-checkable half (R4) — stored for the gate and the audit trail, NEVER
-projected to the citizen or the administrator (OD-B).
+the machine-checkable half — stored for the gate and the audit trail, NEVER
+projected to the citizen or the administrator.
 
 `answers_complete` is a third axis, not a fourth status: a run can return COMPLETE
 while having answered fewer than six questions, and the publish gate treats a partial
@@ -64,7 +65,7 @@ class ClassificationReviewStatus(StrEnum):
 # The native PG enum type, shared by the model column and the Alembic migration.
 # `create_type=False`: the migration owns CREATE/DROP TYPE explicitly (so a downgrade
 # drops it) — the column must not try to create the type itself. Mirrors
-# `deployment.deployment_status_enum` (ADR-0008).
+# `deployment.deployment_status_enum`.
 classification_review_status_enum = sa.Enum(
     ClassificationReviewStatus,
     name="classification_review_status",
@@ -115,10 +116,10 @@ class ClassificationReview(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMix
 
     # The six verdicts with their plain-language reasons, keyed by `CLASSIFICATION_KEYS`.
     # NULL while running and after a failure — a failed run stores its bucket, never a
-    # partial answer set dressed up as one (R19).
+    # partial answer set dressed up as one.
     verdicts: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
-    # The machine-checkable evidence behind each verdict (R4). INTERNAL: stored for the
+    # The machine-checkable evidence behind each verdict. INTERNAL: stored for the
     # gate and the disagreement record, never shown to the citizen or the administrator.
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
@@ -126,7 +127,7 @@ class ClassificationReview(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMix
     # COMPLETE row carrying False is treated as failed by the publish gate's ladder.
     answers_complete: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
 
-    # The failure bucket (one of R19's five states) and its redacted, length-capped
+    # The failure bucket (one of five defined states) and its redacted, length-capped
     # detail. The detail is model- and workspace-influenced text; the writer redacts it
     # before it lands here, same as `deployments.failure_detail`.
     failure_code: Mapped[str | None] = mapped_column(sa.String(MAX_FAILURE_CODE), nullable=True)

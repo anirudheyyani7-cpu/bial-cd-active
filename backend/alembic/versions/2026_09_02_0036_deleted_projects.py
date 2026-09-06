@@ -1,4 +1,4 @@
-"""deleted_projects — a tombstone per deletion, not a soft-delete flag (#158 §13.3)
+"""deleted_projects — a tombstone per deletion, not a soft-delete flag
 
 The ask was `is_deleted` + `remark` on `projects`. This is a separate table instead, and the
 model's docstring carries the argument: the dialog tells the citizen nothing is recoverable
@@ -33,7 +33,7 @@ _TABLE = "deleted_projects"
 def upgrade() -> None:
     op.create_table(
         _TABLE,
-        # UUIDv7 like every other table (ADR-0006) — time-sortable, so an audit table read
+        # UUIDv7 like every other table — time-sortable, so an audit table read
         # newest-first orders by its primary key.
         sa.Column(
             "id",
@@ -68,7 +68,7 @@ def upgrade() -> None:
     )
     # The two ways an administrator reads this: "what did this project's deletion say" and
     # "what has this person deleted". Declared on the model too, so `--autogenerate` stays
-    # empty (the drift #147 was caught by).
+    # empty — the check that catches the model and migration falling out of sync.
     # UNIQUE: one tombstone per physical deletion. Two concurrent DELETEs both passed the
     # ownership read (no row lock) and both ran the cascade, writing two rows for one
     # deletion. The loser now fails closed here. See the model for the full argument.

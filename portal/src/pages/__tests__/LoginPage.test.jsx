@@ -12,7 +12,7 @@ function renderAt(path) {
   )
 }
 
-// U15: the other half of the sign-out-warning fix. Navbar's handleLogout hands this
+// The other half of the sign-out-warning fix. Navbar's handleLogout hands this
 // exact shape to `navigate('/login', { state })` on a failed revoke — a real in-SPA
 // `initialEntries` array entry (not just a path string) is how MemoryRouter lets a test
 // seed that router state without going through Navbar at all. `pathname`/`search` are
@@ -64,7 +64,7 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
     expect(text).not.toContain('BIAL organization')
   })
 
-  // #105 — regression test for the prototype-pollution fix (c2822c7, PR #93). Before the
+  // Regression test for the prototype-pollution fix (c2822c7). Before the
   // Object.hasOwn guard, AUTH_ERROR_BANNERS[authError] resolved a key like `__proto__` to a
   // real Object.prototype value; the `|| GENERIC_AUTH_ERROR` fallback never fired because
   // that value is truthy, and React threw "Objects are not valid as a React child" rendering
@@ -140,7 +140,7 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
     expect(screen.queryByTestId('login-notice')).toBeNull()
   })
 
-  // U15: the sign-out warning carried across the redirect as router state. This is the
+  // The sign-out warning carried across the redirect as router state. This is the
   // rendering half of the headline fix — Navbar.test.jsx proves the state reaches this
   // route at all; this proves LoginPage reads it and shows it.
   it('shows the sign-out warning carried as router state', () => {

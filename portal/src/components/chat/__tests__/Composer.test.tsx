@@ -1,5 +1,5 @@
 /**
- * ONE COMPOSER (R40–R45, R55, R57–R60, R64, R72).
+ * ONE COMPOSER.
  *
  * Nothing here is ever `disabled`; ComposerBox.tsx carries why. This file is the mechanical half —
  * `noRealDisabled` sweeps the rendered subtree in EVERY state rather than once, because the states

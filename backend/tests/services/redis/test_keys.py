@@ -1,8 +1,8 @@
-"""Byte-stable C5 key-namespace tests.
+"""Byte-stable key-namespace tests.
 
-The key strings are a cross-track contract, so these assert the exact formats recorded in
-`docs/engineering/contracts/C5-redis-key-namespace.md` and that the sandbox families are provably
-disjoint — a lock key can never be read as a heartbeat, registry or lease key.
+The key strings are a cross-track contract, so these assert the exact formats byte-for-byte,
+and that the sandbox families are provably disjoint — a lock key can never be read as a
+heartbeat, registry or lease key.
 
 Two properties of the environment segment are asserted here rather than inferred: keys for the
 SAME user never collide across environments, and no key can be built for anything that is not a
@@ -42,7 +42,7 @@ _U2 = uuid.UUID("019f1c00-0000-7000-8000-000000000002")
 _ENV = "development"
 
 
-# --- the frozen formats, character for character (C5 §"The five key families") ----------
+# --- the frozen formats, character for character ----------------------------------------
 
 
 def test_lock_key_format_is_byte_stable() -> None:
@@ -105,7 +105,7 @@ def test_one_users_key_is_never_another_families_key() -> None:
     assert regs.isdisjoint(leases)
 
 
-# --- R22: the environment segment is the whole point --------------------------------------
+# --- The environment segment is the whole point -------------------------------------------
 
 
 def test_keys_never_collide_across_environments_for_the_same_user(
@@ -175,8 +175,8 @@ def test_ns_is_the_choke_point_every_builder_goes_through() -> None:
 
 def test_registry_fields_are_the_frozen_c5_set() -> None:
     """A CHOKE POINT, and it earns its keep: adding `stay_writer` turns it red on the full run,
-    which is the only reason C5's field table and this list do not drift apart. Update the
-    contract and this literal in the same change, never one of them."""
+    which is the only reason the contract's field table and this list do not drift apart.
+    Update the contract and this literal in the same change, never one of them."""
     assert REGISTRY_FIELDS == frozenset(
         {
             "app_name",

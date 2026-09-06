@@ -1,10 +1,10 @@
-"""BRAIN's end paths — it SIGNALS, SESSION-API terminates (U8, KD-11/KD-12, R7).
+"""The orchestrator's end paths — it SIGNALS, the manager terminates.
 
-BRAIN emits NO terminal `ended` on any path: completion travels home as data on `BuildResult`
-(`status` / `reason` / `preview_url` / `last_seq`), and SESSION-API renders the single terminal
-frame in `_do_finalize` AFTER its C4 snapshot — the only point where `snapshot_committed` can be
-told truthfully. BRAIN also never runs git, tears down, or touches a lock. On stop/idle
-(cancellation) it unwinds without emitting and returns no value.
+The orchestrator emits NO terminal `ended` on any path: completion travels home as data on
+`BuildResult` (`status` / `reason` / `preview_url` / `last_seq`), and the manager renders the
+single terminal frame in `_do_finalize` AFTER its snapshot — the only point where
+`snapshot_committed` can be told truthfully. The orchestrator also never runs git, tears down, or
+touches a lock. On stop/idle (cancellation) it unwinds without emitting and returns no value.
 
 The manager side of this handoff — that the frame really is emitted post-snapshot, exactly once —
 is covered in `tests/services/build_sessions/test_manager.py`.
@@ -47,9 +47,9 @@ async def test_completed_signals_without_git_or_teardown(
     assert result.app_id == app_id
     assert not any(e.type == "ended" for e in sink.events)
     assert any(e.type == "preview_ready" for e in sink.events)
-    # last_seq hands the seq baton to SESSION-API, which continues at last_seq + 1.
+    # last_seq hands the seq baton to the manager, which continues at last_seq + 1.
     assert result.last_seq == max(e.seq for e in sink.events)
-    # BRAIN never ran git and never tore down (KD-11).
+    # The orchestrator never ran git and never tore down.
     assert not _ran_git(fake)
     assert fake.teardown_calls == 0
 
@@ -71,9 +71,10 @@ async def test_quota_emits_its_envelope_but_still_no_terminal(
 
     result = await orchestrator.run_build(uuid.uuid4(), user.id, fake, sink)
 
-    # `quota_exceeded` is informational and stays BRAIN's; only the terminal moved (R7).
+    # `quota_exceeded` is informational and stays the orchestrator's; only the terminal moved.
     assert any(e.type == "quota_exceeded" for e in sink.events)
-    assert sink.events[-1].type == "quota_exceeded"  # last thing BRAIN says, and not terminal
+    # last thing the orchestrator says, and not terminal
+    assert sink.events[-1].type == "quota_exceeded"
     assert not any(e.type == "ended" for e in sink.events)
     assert result.status == BuildSessionStatus.ENDED  # graceful, NOT failed
     assert result.reason == "quota_exceeded"
@@ -94,7 +95,7 @@ async def test_escalated_with_sandbox_gone_carries_no_error_and_no_teardown(
 
     assert result.status == BuildSessionStatus.FAILED
     assert result.reason == "escalated"
-    assert result.error is None  # infra failure legitimately carries no BuildError (open-Q I)
+    assert result.error is None  # infra failure legitimately carries no BuildError
     # `escalation` still egresses (it is not a terminal boundary); `ended` does not.
     assert sink.events[-1].type == "escalation"
     assert not any(e.type == "ended" for e in sink.events)
@@ -140,11 +141,11 @@ async def test_mid_run_sandbox_gone_escalates_as_sandbox_gone_not_internal_error
 async def test_no_brain_end_path_emits_a_terminal_frame(
     db_session, billing_factory, sink, kind, expected_status, expected_reason
 ) -> None:
-    """The BRAIN half of "no code path can emit two `ended` frames or a false
+    """The orchestrator's half of "no code path can emit two `ended` frames or a false
     `snapshot_committed`" — swept across every arm of the funnel at once. Each arm must carry its
-    outcome home on the verdict and leave the terminal frame to SESSION-API. An `ended` here would
+    outcome home on the verdict and leave the terminal frame to the manager. An `ended` here would
     be BOTH a second terminal (the manager emits its own) AND a false `snapshot_committed=false`
-    (BRAIN returns before the snapshot runs)."""
+    (the orchestrator returns before the snapshot runs)."""
     user = await UserFactory.create(db_session)
     fake = FakeSandbox()
     fake.dev_ready = True
@@ -165,8 +166,9 @@ async def test_no_brain_end_path_emits_a_terminal_frame(
     assert not any(e.type == "ended" for e in sink.events)
     assert result.status == expected_status
     assert result.reason == expected_reason
-    # The verdict's own snapshot flag is BRAIN's at-return-time view and is ALWAYS False —
-    # never the answer to "was the work saved?" (only the manager's frame carries that).
+    # The verdict's own snapshot flag is the orchestrator's at-return-time view and is
+    # ALWAYS False — never the answer to "was the work saved?" (only the manager's frame
+    # carries that).
     assert result.snapshot_committed is False
     assert not _ran_git(fake)
     assert fake.teardown_calls == 0
@@ -195,7 +197,7 @@ async def test_cancellation_unwinds_without_emitting_or_tearing_down(
     await reached.wait()  # the run is parked inside dev_start
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task  # BRAIN re-raises (returns no value) — SESSION-API owns the terminal
+        await task  # the orchestrator re-raises (returns no value) — the manager owns the terminal
 
     assert not any(e.type == "ended" for e in sink.events)  # emitted nothing further
     assert fake.teardown_calls == 0

@@ -1,19 +1,19 @@
 /**
- * THE PLAN OFFER, AS A STRIP ON THE COMPOSER (R29, R29a, R45, R64, R51a).
+ * THE PLAN OFFER, AS A STRIP ON THE COMPOSER.
  *
  * The three decisions this file exists to hold, because each is one someone would reasonably
  * undo:
  *
- *  D2 — A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool call; that is
- *       unavoidable. Pressing again is an ordinary request that creates another Build chat.
- *       "Only one offer is live" is about which one blocks the composer, never about which one a
- *       citizen may press.
- *  D3 — THE BROWSER NEVER POSTS THE PLAN TEXT BACK. The server reads it from the offering tool
- *       call's own message. A browser-supplied body would let a stale second tab write stale
- *       requirements into a permanent first message.
- *  D4 — IDEMPOTENCY WITHOUT STORAGE, and its honest boundary. The minted id lives in a ref, so a
- *       double press and a retry collide on the primary key and the server hands back the chat
- *       that already exists — and a RELOAD is out of reach, which is asserted rather than hidden.
+ *  A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool call; that is
+ *  unavoidable. Pressing again is an ordinary request that creates another Build chat.
+ *  "Only one offer is live" is about which one blocks the composer, never about which one a
+ *  citizen may press.
+ *  THE BROWSER NEVER POSTS THE PLAN TEXT BACK. The server reads it from the offering tool
+ *  call's own message. A browser-supplied body would let a stale second tab write stale
+ *  requirements into a permanent first message.
+ *  IDEMPOTENCY WITHOUT STORAGE, and its honest boundary. The minted id lives in a ref, so a
+ *  double press and a retry collide on the primary key and the server hands back the chat
+ *  that already exists — and a RELOAD is out of reach, which is asserted rather than hidden.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -125,14 +125,14 @@ describe('Build this plan', () => {
     await waitFor(() => expect(onBuild).toHaveBeenCalled())
 
     const handoff = onBuild.mock.calls[0][0]
-    // Asserted on the KEYS, not just the values: an extra field carrying the plan is exactly the
-    // thing D3 forbids, and checking only that the three expected fields are right would not see
-    // a fourth one arrive.
+    // Asserted on the KEYS, not just the values: an extra field carrying the plan text is
+    // exactly what the browser must never send back, and checking only that the three expected
+    // fields are right would not see a fourth one arrive.
     expect(Object.keys(handoff).sort()).toEqual(['conversationId', 'newChatId', 'toolCallId'])
     expect(handoff.conversationId).toBe('chat-1')
     expect(handoff.toolCallId).toBe('call-1')
-    // A UUIDv7 — the id becomes a conversation's primary key and ADR-0006 wants v7, so the shape
-    // is pinned even though the value cannot be.
+    // A UUIDv7 — the id becomes a conversation's primary key, which requires the v7 format, so
+    // the shape is pinned even though the value cannot be.
     expect(handoff.newChatId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
@@ -158,10 +158,10 @@ describe('Build this plan', () => {
   })
 
   it('a FRESH mount mints a new id — R28’s reload clause, undelivered on purpose', async () => {
-    // A ref dies with the page. The only thing that would survive a reload is a local record,
-    // which D2 forbids, so after a reload a fresh press-session mints a new id and creates a
-    // SECOND build chat. That is the honest boundary of R28, and it is asserted here rather than
-    // discovered in production — closing it needs storage, which is a decision nobody has taken.
+    // A ref dies with the page, and this component keeps no other record of a mint — so after
+    // a reload a fresh press-session mints a new id and creates a SECOND build chat. That is
+    // the honest boundary of idempotency without storage, asserted here rather than discovered
+    // in production — closing it needs storage, which is a decision nobody has taken.
     const onBuild = vi.fn().mockResolvedValue(undefined)
     draw({ onBuild })
     fireEvent.click(build())
@@ -219,7 +219,8 @@ describe('a spent strip (D2)', () => {
 
     const strip = screen.getByTestId('offer-strip')
     expect(strip.getAttribute('data-spent')).toBe('true')
-    // The whole of D2 in one assertion: spent is a TREATMENT, not a disablement.
+    // The whole of the spent-strip decision in one assertion: spent is a TREATMENT, not a
+    // disablement.
     fireEvent.click(build())
     await waitFor(() => expect(onBuild).toHaveBeenCalledTimes(1))
   })

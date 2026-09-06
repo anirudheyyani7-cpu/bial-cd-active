@@ -1,8 +1,8 @@
-"""The C7 join — the REAL `run_build_dependency` (finding #1).
+"""The join — the REAL `run_build_dependency`.
 
 Unlike every other router test, `run_build_dependency` is NOT overridden here: with
 `settings.foundry` configured the real dependency builds the real `BuildOrchestrator`
-(session factory + KD-13 run-context provider included) and hands its bound `run_build` to
+(session factory + run-context provider included) and hands its bound `run_build` to
 the router — POST /v1/build-sessions must NOT 503. Only the `_build_model` seam is swapped
 for a scripted `FunctionModel` (no live Foundry call) and the sandbox for the in-memory
 `FakeSandbox`, so the session deterministically drives to a terminal `ended`.
@@ -39,7 +39,7 @@ from tests.services.orchestrator.model_harness import scripted_model, text_turn,
 
 @pytest.fixture
 def brain_wire(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
-    """Wire the REAL C7 join: Foundry configured, `_build_model` seam scripted, sandbox
+    """Wire the REAL join: Foundry configured, `_build_model` seam scripted, sandbox
     faked — and the PROCESS-singleton SessionManager (not a dep-override one), because the
     real dependency's run-context provider resolves the live session via
     `get_session_manager()`."""
@@ -113,7 +113,7 @@ async def test_real_run_build_dependency_drives_a_session_to_terminal_ended(
     body = status.json()
     assert body["status"] == "ended"  # terminal: the full BRAIN->SESSION-API loop closed
     assert body["previewUrl"] is not None  # preview_ready flowed through the real engine
-    # U2/#13 — a COMPLETED build's container is PARDONED, not torn down: it stays live
+    # A COMPLETED build's container is PARDONED, not torn down: it stays live
     # under the bounded stay-of-execution lease so the user can use what they just built.
     # The lease itself is not asserted here: FakeSandbox never writes the Redis registry
     # the grant is guarded on (the REAL client writes it at provision), so the lease

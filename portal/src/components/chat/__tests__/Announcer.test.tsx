@@ -1,5 +1,5 @@
 /**
- * THE POLITE ACTIVITY REGION (R65, R66).
+ * THE POLITE ACTIVITY REGION.
  *
  * ══ THE RULE THAT ACTUALLY BREAKS ══
  *
@@ -9,11 +9,12 @@
  * docblocks (`TurnBanner`, `LivePreview`), which is why it is asserted here as node identity
  * rather than as "the text appeared".
  *
- * ══ R66 IS TWO ANNOUNCEMENTS AND NO MORE ══
+ * ══ TWO ANNOUNCEMENTS AND NO MORE ══
  *
  * The agent started working, and what a group amounted to when it sealed. NOT every step as it
  * happens. The old sr-only mirror throttled to one change per ten seconds with a flush branch —
- * that throttle was solving the wrong problem, and R66 removes the problem rather than tuning it.
+ * that throttle was solving the wrong problem, and this rule removes the problem rather than
+ * tuning it.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, renderHook, act } from '@testing-library/react'
@@ -100,8 +101,9 @@ describe('useActivityAnnouncement — two announcements and no more (R66)', () =
   })
 
   it('does NOT announce each step as it happens', () => {
-    // The rule R66 exists for. A per-step region is a reader hearing nine sentences it cannot
-    // keep up with; the group's own summary, once, is the useful version.
+    // This is exactly what the rule exists to prevent: a per-step region is a reader hearing
+    // nine sentences it cannot keep up with; the group's own summary, once, is the useful
+    // version.
     const { result, rerender } = renderHook(
       ({ isRunning }) => useActivityAnnouncement({ isRunning, sealedSummary: null }),
       { initialProps: { isRunning: false } },

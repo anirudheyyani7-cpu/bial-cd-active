@@ -1,18 +1,17 @@
 """Microsoft Entra ID + session configuration.
 
 The backend runs the OIDC Authorization-Code + PKCE flow itself and mints its own
-cookie session (ADR-0007). Every Entra + session parameter flows through one
+cookie session. Every Entra + session parameter flows through one
 `AUTH__*` env block validated into `AuthConfig`, mirroring
 `services/storage/config.py`: `extra="forbid"` so a mistyped nested key fails at
 startup instead of silently defaulting, `SecretStr` on every credential
-(unwrapped only at the JOSE / OAuth boundary, per security.md), and required
-fields carry NO default so a missing tenant/secret fails at `Settings()`
-construction (fail-first-python.md).
+(unwrapped only at the JOSE / OAuth boundary), and required fields carry NO
+default so a missing tenant/secret fails at `Settings()` construction.
 
 The single tenant is hard-configured: `tenant_id` pins the tenant-specific
 discovery document and thus the exact issuer, which is what makes the
 outside-tenant rejection possible — never `common`/`organizations`, whose
-templated issuer defeats an exact `iss` match (R17).
+templated issuer defeats an exact `iss` match.
 """
 
 from __future__ import annotations
@@ -49,14 +48,13 @@ class AuthConfig(BaseModel):
     # The full external callback URL registered as the Entra reply URL. It is used
     # VERBATIM as the OAuth redirect_uri (never rebuilt via request.url_for) so it
     # byte-matches the registered reply URL through the /api-stripping edge — a
-    # forwarded-header fix corrects scheme/host but not a stripped path prefix
-    # (KD-8).
+    # forwarded-header fix corrects scheme/host but not a stripped path prefix.
     redirect_uri: str
 
     # Optional knobs — a default only where the value has a defined meaning.
     access_ttl_seconds: int = 900  # session JWT lifetime (~15m)
     refresh_ttl_seconds: int = 604800  # per-refresh-token lifetime (~7d)
-    absolute_session_seconds: int = 28800  # family hard cap (~8h) — AE3
+    absolute_session_seconds: int = 28800  # family hard cap (~8h)
     session_cookie_max_age: int = 600  # oauth_transient state cookie (~10m)
     # None -> derive Secure/prefix from Settings.is_production (the usual path);
     # an explicit bool overrides it (e.g. a non-prod https staging box).
@@ -87,5 +85,5 @@ class AuthConfig(BaseModel):
     @property
     def server_metadata_url(self) -> str:
         """Tenant-specific OIDC discovery document. Pins the concrete issuer for
-        the exact `iss` match (R17); Authlib fetches endpoints + JWKS from here."""
+        the exact `iss` match; Authlib fetches endpoints + JWKS from here."""
         return f"{_ENTRA_AUTHORITY}/{self.tenant_id}/v2.0/.well-known/openid-configuration"

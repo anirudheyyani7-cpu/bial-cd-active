@@ -1,9 +1,9 @@
-"""Foundry model wiring for Pydantic AI (R11, AE5).
+"""Foundry model wiring for Pydantic AI.
 
 The model is reachable ONLY through Azure AI Foundry — never the public Anthropic API. The
 sanctioned chain is `AsyncAnthropicFoundry(resource, api_key | entra token provider)` →
 `AnthropicProvider(anthropic_client=...)` → `AnthropicModel(deployment, provider=...)`. No
-custom Model subclass. `_assert_foundry_only` is the fail-closed AE5 guard: the built client's
+custom Model subclass. `_assert_foundry_only` is the fail-closed guard: the built client's
 base URL must be an `*.services.ai.azure.com` Foundry endpoint and must NOT be the public
 `api.anthropic.com` — so a mistake in wiring can never silently reach the public API.
 
@@ -28,17 +28,17 @@ _PUBLIC_ANTHROPIC_HOST = "api.anthropic.com"
 
 # Entra bearer-token scope for Foundry (managed identity). UNVERIFIED — the official docs
 # disagree between `ai.azure.com/.default` and `ai.cognitiveservices.com/.default`; confirm
-# against the resource's RBAC before go-live (candidate ADR-0026). API-key auth sidesteps this.
+# against the resource's RBAC before go-live. API-key auth sidesteps this.
 FOUNDRY_ENTRA_SCOPE = "https://ai.azure.com/.default"
 
 
 class FoundryOnlyError(RuntimeError):
-    """Raised when the model wiring would reach anything other than Azure Foundry (AE5),
+    """Raised when the model wiring would reach anything other than Azure Foundry,
     or when the Foundry config is internally inconsistent."""
 
 
 def _assert_foundry_only(base_url: str) -> None:
-    """Fail closed unless `base_url` is an Azure Foundry endpoint (AE5)."""
+    """Fail closed unless `base_url` is an Azure Foundry endpoint."""
     if _PUBLIC_ANTHROPIC_HOST in base_url or _FOUNDRY_HOST_SUFFIX not in base_url:
         raise FoundryOnlyError(
             "model access must go through Azure AI Foundry "

@@ -1,6 +1,6 @@
 /**
- * Project-first guards for the builder, re-expressed against the C3 build session (U5) and the
- * relay-then-card trigger (003-U4): a send is a CHAT turn, and a build starts only when the user
+ * Project-first guards for the builder, re-expressed against the build session and the
+ * relay-then-card trigger: a send is a CHAT turn, and a build starts only when the user
  * confirms the brief card the model replies with.
  *
  * Preserved invariants (each fails SILENTLY otherwise):
@@ -11,7 +11,7 @@
  *     description + the interview protocol — and therefore before any build the card can trigger.
  *  3. Navigating between two chats never leaks one chat's composer draft into the other.
  *  4. INERTNESS: the builder feeds the preview NO app credentials (`config`/`appKey`/`accessToken`)
- *     — the app gets its data credentials server-side at provision (C9), and provisionApp is no
+ *     — the app gets its data credentials server-side at provision, and provisionApp is no
  *     longer called from the build path at all.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -38,7 +38,7 @@ vi.mock('../../utils/builderHistory', () => ({
   loadBuilds: h.loadBuilds, getBuild: h.getBuild, deriveTitle: (t) => (t || '').slice(0, 40),
 }))
 // SPREAD THE ORIGINAL — `handleBuildIt` mints the new build chat's id through the shared
-// `uuidv7` (ADR-0006), and a factory naming only `listProjectConversations` leaves every other
+// `uuidv7`, and a factory naming only `listProjectConversations` leaves every other
 // export (including that one) undefined; Vitest now warns the moment a real caller reaches for
 // it, which every confirmed brief in this suite does.
 vi.mock('../../utils/conversationApi', async (importOriginal) => ({
@@ -52,7 +52,7 @@ vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 // Capture EVERY prop the preview is handed — the isolation assertion is about what it is fed.
 vi.mock('../../components/LivePreview', () => ({ default: (props) => { h.previewProps.push(props); return null } }))
 vi.mock('../../utils/attachmentStore', async (orig) => ({ ...(await orig()), buildUserParts: h.buildUserParts }))
-// `switchMode` is GONE from this list (U1/U19): the route it posted to no longer exists, and a
+// `switchMode` is GONE from this list: the route it posted to no longer exists, and a
 // chat's kind can't change after creation, so there is nothing left for a mock to intercept.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig()),
@@ -138,7 +138,7 @@ describe('BuilderPage — the seed turn is filed under a project', () => {
 })
 
 describe('BuilderPage — a refused first-message turn aborts cleanly (was "an append failure aborts the turn")', () => {
-  // R-18/U13 RETIRES THE SEPARATE APPEND THIS DESCRIBE BLOCK WAS NAMED FOR. There is no longer a
+  // THE MERGED CALL RETIRES THE SEPARATE APPEND THIS DESCRIBE BLOCK WAS NAMED FOR. There is no longer a
   // `createBuild` call whose failure can leave `startTurn` unreached — the row's creation and the
   // turn's own POST are the SAME call, so a refusal that used to stop the append before the relay
   // was ever asked now IS a refused `startTurn`. Every test below rejects `h.startTurn` instead of
@@ -161,10 +161,10 @@ describe('BuilderPage — a refused first-message turn aborts cleanly (was "an a
   it('ABORTS the seeded send when the attachment upload fails — never a text-only build (R3)', async () => {
     // This path used to swallow the failure and build "from your description only": the user
     // handed off a prompt + a spreadsheet from the project page, the upload failed, and a build
-    // ran that never saw the file. Silently ignoring an attachment is the exact bug R3 deletes,
-    // so the seed must abort exactly like the send path does.
+    // ran that never saw the file. Silently ignoring an attachment is exactly the bug this fix
+    // deletes, so the seed must abort exactly like the send path does.
     //
-    // UNCHANGED BY R-18: the upload happens BEFORE `startTurn` is ever reached (`buildUserParts`
+    // UNCHANGED BY THE MERGE: the upload happens BEFORE `startTurn` is ever reached (`buildUserParts`
     // throws inside `fireRelayTurn` ahead of the turn call entirely), so this scenario never
     // touched the create/append protocol either before or after the collapse.
     h.buildUserParts.mockRejectedValue(new Error('Attachment storage is full.'))
@@ -217,7 +217,7 @@ describe('BuilderPage — a refused first-message turn aborts cleanly (was "an a
 
 describe('BuilderPage — the way out of a flat chat URL', () => {
   it('the surface itself draws no back link — the toolbar row does', async () => {
-    // Plan 002's U2 moved it: the row above both columns carries the project, the chat's kind and
+    // A later redesign moved it: the row above both columns carries the project, the chat's kind and
     // the chat's title, so the surface no longer draws a header at all. Where the back control
     // goes, and that it routes through the unsaved-work guard, is `WorkspaceToolbar.test.tsx`'s.
     //
@@ -243,7 +243,7 @@ describe('BuilderPage — a refine turn', () => {
     await sendAndConfirm('make it blue')
 
     await waitFor(() => expect(h.buildFromPlan).toHaveBeenCalled())
-    // U7/R-18: a subsequent turn on an existing thread creates nothing — the row already exists,
+    // A subsequent turn on an existing thread creates nothing — the row already exists,
     // so `create` (the turn call's 4th argument) is omitted rather than passed. There is no
     // longer a separate `createBuild` call to assert absent; the ONE call this send makes is
     // `startTurn`, and this is the shape it takes when the thread is not empty.
@@ -258,7 +258,7 @@ describe('BuilderPage — the preview is fed NO app credentials (C9 server-side,
     renderHandoff()
     await confirmBrief()
     await waitFor(() => expect(h.buildFromPlan).toHaveBeenCalled())
-    // Provisioning is subsumed by C3 start — the old provisionApp export itself is
+    // Provisioning is subsumed by the build-session start — the old provisionApp export itself is
     // retired from appRegistryApi (owner surface gone; pinned by appRegistryApi.test.js).
     for (const props of h.previewProps) {
       expect(props.config).toBeUndefined()
@@ -290,7 +290,7 @@ describe('BuilderPage — the preview is handed R104\u2019s stop-clock (U4)', ()
   it('\u2605 and the callback it passes marks THIS project\u2019s app as seen', async () => {
     // Asserting the prop is a function only proves a wire exists; it does not prove the wire is
     // connected to anything, and \u2018connected to the wrong project id\u2019 is a silent corruption of
-    // the only R104 number there is. So: open the project for real through the observe module,
+    // the only number there is. So: open the project for real through the observe module,
     // then INVOKE the callback the mount actually handed the pane.
     const { markProjectOpened } = await import('../../utils/observe')
     markProjectOpened('p1', { hasApp: true })
@@ -398,7 +398,7 @@ describe('BuilderPage — the StrictMode load strand (U7)', () => {
     await waitFor(() => expect(h.startTurn).toHaveBeenCalled())
     await act(async () => { await Promise.resolve() })
     // A remounted effect must not re-send the handed-off prompt: a doubled seed bills the user for
-    // two relay turns and leaves the thread arguing with itself over two briefs. R-18/U13 folded
+    // two relay turns and leaves the thread arguing with itself over two briefs. The merge folded
     // "one create for the one seeded first turn" into this same call — `startTurn` firing once
     // IS the row being created once, so there is no second mock left to assert alongside it.
     expect(h.startTurn).toHaveBeenCalledTimes(1)
@@ -427,12 +427,12 @@ describe('BuilderPage — a send blocked by an in-flight reply explains itself',
     expect(await screen.findByText(/send unlocks when it is done/i)).toBeTruthy()
     expect(h.startTurn).toHaveBeenCalledTimes(1) // the blocked send never re-entered
     // The second message is still in the box — the user composed it while waiting, which is
-    // exactly what the mode-free contract invites them to do (KTD-1).
+    // exactly what the mode-free contract invites them to do.
     expect(screen.getByPlaceholderText(/ask for another change/i).value).toBe('second')
   })
 })
 
-// N1 (U3). The deterministic repro, at the page. Three sites chain into it and only one is the
+// The deterministic repro, at the page. Three sites chain into it and only one is the
 // fix: ProjectBuilder hands the draft off as router state; BuilderPage strips it with a raw
 // `window.history.replaceState`, which emits no popstate and so leaves react-router's in-memory
 // `location.state` intact; `useDropTransientQuery` then re-wrote that survivor back into history.

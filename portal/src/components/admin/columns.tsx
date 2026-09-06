@@ -215,7 +215,7 @@ export function createUserColumns({
               {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Reset usage
             </button>
             {/* Suspended wins over the super-admin guard: role is derived at read time
-                from the env allowlist (ADR-0005), so a suspended user who later lands on
+                from the env allowlist, so a suspended user who later lands on
                 that allowlist is reachable with no 403 bypass — checking isSuper first
                 would strand them behind "Protected" with no Reactivate, forever, even
                 though reactivate_user has no super-admin guard and would restore them. */}

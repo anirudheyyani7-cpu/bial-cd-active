@@ -1,5 +1,5 @@
 /**
- * The U10 stream reader's transport disciplines: carry-buffered reassembly of torn
+ * The stream reader's transport disciplines: carry-buffered reassembly of torn
  * frames, distinct outcomes (completed / truncated / stalled / aborted), and the
  * cross-repo keepalive⁄stall inequality pin.
  */
@@ -117,7 +117,7 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
   it('drops a tool\'s arguments and result even when a frame still carries them', () => {
     // THE FRAME ABOVE FEEDS THIS ONE ON PURPOSE: it is the same wire text, including a
     // `detail` object holding the tool's args and result. The server stopped sending that
-    // (U14 — a step is a label and a state, never the payload behind it), but a frame from an
+    // (a step is a label and a state, never the payload behind it), but a frame from an
     // older server, a replayed fixture, or a hand-crafted request can still contain it, and
     // the parse is the seam that decides whether it reaches a component. `toMatchObject`
     // above cannot catch a field arriving; only an explicit key check can.
@@ -352,8 +352,8 @@ describe('startTurn', () => {
     )
     expect(result.turnId).toBe('t9')
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
-    // F2: the edge rewrite is `^/api → /v1`, so the client base must be `/api/...` (un-prefixed).
-    // A `/api/v1/...` base doubled to `/v1/v1/...` → 404 for every turn call (the P0 this pins).
+    // The edge rewrite is `^/api → /v1`, so the client base must be `/api/...` (un-prefixed).
+    // A `/api/v1/...` base doubled to `/v1/v1/...` → 404 for every turn call.
     expect(url).toBe('/api/conversations/c1/turns')
     expect(JSON.parse(init.body as string)).toEqual({
       message: { text: 'hello', attachmentTexts: [], attachmentIds: [] },
@@ -361,7 +361,7 @@ describe('startTurn', () => {
   })
 
   it("binds a new chat's KIND into the create block on a first message", async () => {
-    // RELOCATED HERE (plan 001, unit 6) from the retired `createConversation` / `createBuild`
+    // RELOCATED HERE from the retired `createConversation` / `createBuild`
     // wrappers' own tests. Those made a `POST /conversations` round trip of their own and pinned
     // that the chat's kind reached the wire; the round trip is gone — the server writes the row
     // inside the turn's transaction, after every side-effect-free refusal — and its arguments
@@ -434,9 +434,9 @@ describe('startTurn', () => {
   })
 })
 
-// F2 REGRESSION GUARD. The edge/nginx rewrite is `^/api → /v1`. If ANY of the six turn-transport
+// REGRESSION GUARD. The edge/nginx rewrite is `^/api → /v1`. If ANY of the six turn-transport
 // call sites keeps a `/api/v1/...` base it doubles to `/v1/v1/...` → 404 for every turn / mode /
-// build / events call — the P0 that broke the whole unified-chat flow. Pin every call site to the
+// build / events call. Pin every call site to the
 // un-prefixed `/api/conversations/...` base so the doubling can never come back silently.
 describe('base-path contract (F2 regression guard) — every call hits /api/conversations, never /api/v1', () => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -489,7 +489,7 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
   })
 
   it('buildFromPlan surfaces the refusal CODE, not just a sentence', async () => {
-    // R98 / the one-slot rule reach the browser as four different remedies on three statuses.
+    // The one-slot rule reaches the browser as four different remedies on three statuses.
     // A bare `Error` collapses them into one string, and the string is wrong for three of them.
     const fetchFn = vi.fn(
       async () =>
@@ -522,10 +522,10 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
   })
 })
 
-// F1 REGRESSION GUARD (turn transport). These four MUTATING calls ride the signed double-submit
+// REGRESSION GUARD (turn transport). These four MUTATING calls ride the signed double-submit
 // X-CSRF-Token, and every one of their routes enforces RequireCsrf server-side — so a dropped header
-// would 403 every turn-start and every Build-it press in prod (the P0 class) while the base-path
-// guard above stays fully green. Since U1 the header comes from `authFetch` rather than a second copy in this
+// would 403 every turn-start and every Build-it press in prod while the base-path
+// guard above stays fully green. The header now comes from `authFetch` rather than a second copy in this
 // module; the assertion is unchanged because the observable contract is. The read path
 // (readTurnStream) is a safe GET and carries none.
 describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call rides X-CSRF-Token', () => {
@@ -577,7 +577,7 @@ describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call 
   })
 })
 
-// N11 REGRESSION GUARD (U1). Before U1 this module called raw `fetch` at all six sites and had no
+// REGRESSION GUARD. This module used to call raw `fetch` at all six sites and had no
 // 401 handling at all, so an expired JWT did not degrade the chat — it KILLED it: start, stop,
 // mode-switch, Build-it, plan-resolve and the SSE reader every one died where the rest of the app
 // quietly refreshed and retried. Routing them through `authFetch` is the whole fix, so pin it at
@@ -668,7 +668,7 @@ describe('session expiry recovery (N11) — every turn call refreshes once and r
   })
 
   it('the retried mutating call carries the POST-refresh CSRF token (the KTD-9 pairing)', async () => {
-    // U1 is two halves and they only work together: routing through authFetch without the
+    // This fix is two halves and they only work together: routing through authFetch without the
     // per-attempt CSRF read would trade every 401 for a 403. Pin the pairing from this side too —
     // api.test.js owns the wrapper-level proof.
     document.cookie = 'csrf=before-refresh'

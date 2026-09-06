@@ -1,4 +1,4 @@
-"""worker_passes — the platform's own pulse (U11, R20)
+"""worker_passes — the platform's own pulse
 
 Revision ID: 0027_worker_passes
 Revises: 0026_deployment_classification
@@ -33,7 +33,7 @@ down_revision: str | Sequence[str] | None = "0026_deployment_classification"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# The native worker_pass_outcome enum (ADR-0008), spelled in VALUES like every other enum here.
+# The native worker_pass_outcome enum, spelled in VALUES like every other enum here.
 # create_type=False so THIS migration owns the lifecycle: explicit .create() in upgrade, .drop()
 # in downgrade.
 worker_pass_outcome = postgresql.ENUM(

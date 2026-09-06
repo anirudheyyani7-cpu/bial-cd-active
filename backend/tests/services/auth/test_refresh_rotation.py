@@ -1,9 +1,8 @@
-"""Refresh-token crypto (U3) + DB-backed rotation / reuse-detection (U7).
+"""Refresh-token crypto + DB-backed rotation / reuse-detection.
 
 The pure primitives are exercised first; the `rotate_refresh_token` service — the
 atomic CAS + family reuse-detection + absolute-lifetime enforcement — is tested
-directly against the real schema (KD-5, ADR-0010: a realized service-layer test,
-not latent).
+directly against the real schema (a realized service-layer test, not latent).
 """
 
 from __future__ import annotations
@@ -93,7 +92,7 @@ def test_raw_token_is_not_recoverable_from_hash() -> None:
     assert len(digest) == 64
 
 
-# --- DB rotation / reuse / absolute lifetime (U7) -------------------------------
+# --- DB rotation / reuse / absolute lifetime -------------------------------
 
 
 async def test_happy_rotation_marks_old_used_and_keeps_family(db_session) -> None:
@@ -121,7 +120,7 @@ async def test_happy_rotation_marks_old_used_and_keeps_family(db_session) -> Non
 
 
 async def test_reuse_revokes_entire_family(db_session) -> None:
-    # AE2 — the security-critical path (execution note: reuse detection).
+    # The security-critical path (execution note: reuse detection).
     user = await UserFactory.create(db_session)
     raw = await issue_new_family(db_session, user.id)
     result = await rotate_refresh_token(db_session, hash_refresh_token(raw))
@@ -137,7 +136,7 @@ async def test_reuse_revokes_entire_family(db_session) -> None:
 
 
 async def test_absolute_lifetime_exceeded_denies(db_session) -> None:
-    # AE3 — structurally valid, unused token, but the family's 8h cap has passed.
+    # Structurally valid, unused token, but the family's 8h cap has passed.
     user = await UserFactory.create(db_session)
     raw = await _insert_token(db_session, user.id, absolute_delta=timedelta(hours=-1))
     with pytest.raises(AuthError):

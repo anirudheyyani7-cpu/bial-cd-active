@@ -114,7 +114,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
 
       const open = () => {
         // THROUGH THE SHARED `uuidv7`, never an inline `crypto.randomUUID()`. That mints a v4, and
-        // this id becomes the conversation's PRIMARY KEY, which ADR-0006 wants sortable.
+        // this id becomes the conversation's PRIMARY KEY, which needs to be sortable.
         //
         // THE KIND TRAVELS AS A QUERY PARAM, THE DRAFT AS ROUTER STATE, and the split is
         // deliberate. Router state dies on reload and never travels in a shared link, so a
@@ -248,8 +248,8 @@ function RailComposerBody({ projectId }: RailComposerProps) {
         // project, not a conversation. It is also the DRAFT's key, which is what makes a
         // half-written first message survive a trip to another screen and back.
         conversationId={projectId}
-        // THE HINT FOLLOWS THE KIND, from the catalogue — never a comparison here. R72 forbids
-        // branching on a chat's kind in this directory, and the words belong beside the other
+        // THE HINT FOLLOWS THE KIND, from the catalogue — never a comparison here. Branching on
+        // a chat's kind is forbidden in this directory, and the words belong beside the other
         // per-kind wording rather than being re-written at the one place that renders them.
         placeholder={picked.composerPlaceholder}
         onSubmit={startChat}

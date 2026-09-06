@@ -1,13 +1,10 @@
 /**
- * ONE ROW OF ACTIVITY (R35b, R36's rendering half).
- *
+ * ONE ROW OF ACTIVITY.
  * The row vocabulary is VERB + TARGET + STATE, and the row is allowed to read exactly two things:
  * the server's friendly label and the state. It could not leak a file path if it tried —
  * `convertMessage` never copies `detail`, `args` or `result` onto the part — but the guarantees
  * this file pins are the ones a redesign would quietly drop.
- *
  * ══ THE 11,558px BUG ══
- *
  * `sr-only` is `position: absolute` with no inset. Without a POSITIONED ANCESTOR the "failed" span
  * anchors to the document and lands wherever the page happens to be tall — measured at 11,558px
  * against an 836px viewport. That is why `relative` is on the row and why it is asserted here: it

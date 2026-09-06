@@ -4,7 +4,7 @@ Revision ID: 0016_user_suspended_at
 Revises: 0015_projects
 Create Date: 2026-07-09
 
-Adds the nullable `suspended_at` timestamp to `users` (R10–R13, KD-6): NULL means
+Adds the nullable `suspended_at` timestamp to `users`: NULL means
 active; a timestamp means a super-admin blocked the account platform-side at that
 instant. Nullable-with-no-default is the correct shape (every existing and new row
 starts active), so this is a plain additive column — trivially reversible.

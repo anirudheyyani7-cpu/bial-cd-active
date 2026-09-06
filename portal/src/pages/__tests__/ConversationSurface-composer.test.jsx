@@ -1,10 +1,10 @@
 /**
- * THE COMPOSER CONTRACT (U4). One gate, and its only term is turn state. Mode appears nowhere in
+ * THE COMPOSER CONTRACT. One gate, and its only term is turn state. Mode appears nowhere in
  * it — a mode is a tool-access level on the same conversation, and using it as a composer gate is
  * what produced the Write dead end. The gate withholds *sending*, not typing: the box and attach
  * stay live so the citizen can compose while they wait.
  *
- * Four defects live here. N10: the composer went dead mid-reply and stole focus. G1: the gate read
+ * Four defects live here. The composer went dead mid-reply and stole focus. G1: the gate read
  * "open" while the adopt round-trip was unresolved over a possibly-live build, and its fix has
  * FOUR arms — miss the no-anchor one and every ordinary chat bricks. G2: `generating` was global,
  * so a mid-stream switch gated the new chat on the old chat's turn. G3: a typed draft died on a
@@ -29,7 +29,7 @@ vi.mock('../../utils/builderHistory', () => ({
   loadBuilds: h.loadBuilds, getBuild: h.getBuild, deriveTitle: (t) => (t || '').slice(0, 40),
 }))
 // SPREAD THE ORIGINAL — `handleBuildIt` mints the new build chat's id through the shared
-// `uuidv7` (ADR-0006), and a factory naming only `listProjectConversations` leaves every other
+// `uuidv7`, and a factory naming only `listProjectConversations` leaves every other
 // export (including that one) undefined; Vitest now warns the moment a real caller reaches for
 // it, which every Build-it press in this suite does.
 vi.mock('../../utils/conversationApi', async (importOriginal) => ({
@@ -38,7 +38,7 @@ vi.mock('../../utils/conversationApi', async (importOriginal) => ({
 }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 vi.mock('../../utils/attachmentStore', async (orig) => ({ ...(await orig()), buildUserParts: h.buildUserParts }))
-// `switchMode` is GONE from this list (U1/U19): the route it posted to no longer exists, and a
+// `switchMode` is GONE from this list: the route it posted to no longer exists, and a
 // chat's kind can't change after creation, so there is nothing left for a mock to intercept.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig()),
@@ -118,8 +118,8 @@ describe('the gate withholds SENDING, not typing (N10)', () => {
     expect(sendButton().getAttribute('aria-disabled')).toBe('true')
     // AN INERTNESS GUARD, not the frozen-pill assertion it replaces (L8). This used to prove the
     // mode pill froze mid-run rather than let a switch retroactively mislabel work already in
-    // flight (KTD-4) — `ModeSwitcher` and the ask/plan/write axis it switched are BOTH gone
-    // (U1/U19: a chat's kind is fixed at creation and never changes), so there is no pill left to
+    // flight — `ModeSwitcher` and the ask/plan/write axis it switched are BOTH gone
+    // (a chat's kind is fixed at creation and never changes), so there is no pill left to
     // freeze. The claim that replaces it is that no such control is on the surface at all, mid-
     // reply or otherwise — and the liveness assertions above already prove the page rendered
     // rather than threw, so this absence means what it says.
@@ -308,7 +308,7 @@ describe('an in-flight turn belongs to ONE chat (G2)', () => {
     await waitForGateOpen()
     type('a question')
     fireEvent.keyDown(composer(), { key: 'Enter' })
-    // FOUR ARGS NOW, ALWAYS (R-18, U13): `startTurn(id, message, deps, create)` is the ONE call
+    // FOUR ARGS NOW, ALWAYS: `startTurn(id, message, deps, create)` is the ONE call
     // the send path makes, and both messages here are the FIRST in an empty transcript
     // (`messages: []`), so `create` rides along on every one of them as a real (non-`undefined`)
     // positional argument. `toHaveBeenCalledWith` compares argument COUNT as well as content, so
@@ -316,8 +316,8 @@ describe('an in-flight turn belongs to ONE chat (G2)', () => {
     // against every real call now, not just a differently-shaped one. What this test is actually
     // about (chat A's turn reaches the server, chat B's does too, and they are not conflated) does
     // not need the message or create shape spelled out again here — `expect.anything()` for the
-    // rest says "some call happened for this chat" without re-pinning R-18's payload a second time
-    // in a suite that is not about it.
+    // rest says "some call happened for this chat" without re-pinning that four-argument payload
+    // a second time in a suite that is not about it.
     await waitFor(() =>
       expect(h.startTurn).toHaveBeenCalledWith('chat-A', expect.anything(), expect.anything(), expect.anything()),
     )
@@ -442,7 +442,7 @@ describe('a typed draft survives (G3)', () => {
   })
 
   it('a FAILED send keeps it — the toast says try again, so the text has to still be there', async () => {
-    // R-18/U13: there is no separate create call left to fail. The row's parentage rides the
+    // There is no separate create call left to fail. The row's parentage rides the
     // turn's OWN request now, so a refused first message takes `startTurn`'s catch — the same
     // path every later message's refusal takes — and it is what this test rejects.
     h.getBuild.mockResolvedValue(null) // seq 0 → the FIRST message, which carries `create`
@@ -469,7 +469,7 @@ describe('a finished build offers no canned follow-ups (2026-07-30)', () => {
   // belongs. The regression this guards is a well-meant re-introduction: a suggestion that cannot
   // know what the app is has nothing to suggest.
   it('leaves the composer as the only way to ask for the next change', async () => {
-    // BUILD-IT IS A HANDOFF NOW (U5/U12), not a flip: the turn runs in a brand-new build chat the
+    // BUILD-IT IS A HANDOFF NOW, not a flip: the turn runs in a brand-new build chat the
     // offer creates, and only THAT chat's own hydration watches it — this page never subscribes to
     // a build from the chat Build-it was pressed in. Simulate arriving there the same way every
     // other sibling-chat guard in this file does: a chatId prop swap on the SAME instance.
@@ -511,7 +511,7 @@ describe('a finished build offers no canned follow-ups (2026-07-30)', () => {
     h.startTurn.mockClear()
     type('add a dark mode toggle')
     fireEvent.keyDown(composer(), { key: 'Enter' })
-    // FOUR ARGS ALWAYS (R-18, U13) — see the G2 suite above for the full reasoning. This send is
+    // FOUR ARGS ALWAYS — see the G2 suite above for the full reasoning. This send is
     // not this chat's first message (the reattached build turn already occupies seq 0), so `create`
     // is `undefined` rather than a parentage object here — but `undefined` is still passed as a
     // real 4th positional argument, so `toHaveBeenCalledWith` still needs a slot for it.
@@ -527,7 +527,7 @@ describe('a finished build offers no canned follow-ups (2026-07-30)', () => {
 })
 
 
-// N4 — the meter has to settle without a reload. `notifyUsageChanged` had exactly one caller,
+// The meter has to settle without a reload. `notifyUsageChanged` had exactly one caller,
 // in the retiring relay hook, so the turn transport never signalled: a user could spend their
 // whole daily budget watching a number that only ever moved on a page load. The signal now fires
 // from the ONE function every turn terminal routes through, which is what makes the failed and
@@ -573,7 +573,7 @@ describe('the usage meter settles at every turn terminal (N4)', () => {
 })
 
 
-// CC1–CC4 (U10) — opening one chat must never damage another chat's live build, and reloading
+// CC1–CC4 — opening one chat must never damage another chat's live build, and reloading
 // mid-build must not erase the story. All four live in this file's neighbourhood because they
 // share the adopt/reattach predicates the composer gate is built on.
 describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
@@ -651,7 +651,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     renderAt('build-X', d)
 
     await waitFor(() => expect(h.getStatus).toHaveBeenCalledWith('live-7'))
-    // ONE GROUP, NOT TWO — and this is the live/reload parity assertion (AE43), not a styling
+    // ONE GROUP, NOT TWO — and this is the live/reload parity assertion, not a styling
     // preference. The projection stores one MESSAGE per step while the live path puts every step
     // of a turn on a single streaming message, so without the surface merging a run of stored step
     // rows a build watched live would show one group of nine and the same build after a reload
@@ -673,7 +673,7 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     // build the reader never started. The turn narrative is scoped by the same per-chat predicate
     // as the gate (`generatingChatId === buildId`), which is what keeps the two from diverging.
     //
-    // BUILD-IT IS A HANDOFF NOW (U5/U12): pressing it in `chat-A` no longer makes `chat-A` itself
+    // BUILD-IT IS A HANDOFF NOW: pressing it in `chat-A` no longer makes `chat-A` itself
     // narrate the build — a brand-new chat does, and `chat-A`'s own hydration never watches it.
     // So "the OWNING chat" this guard is really about is the chat the handoff lands in, and "a
     // sibling" is any OTHER chat, `chat-A` (the plan chat that made the offer) included.
@@ -707,9 +707,9 @@ describe('cross-chat build scoping and reload fidelity (CC1–CC4)', () => {
     )
     await turn.frame(T_PREVIEW())
     await waitFor(() => expect(screen.getByTestId('stop-turn')).toBeTruthy())
-    // The owning chat's own Stop is real. `getAllBy` because R55's relocated control now sits on
-    // the composer beside the build card's own — deliberately, and only until U17 deletes the
-    // card. What this guard is about is the SIBLING, and that assertion below is unchanged.
+    // The owning chat's own Stop is real. `getAllBy` because the relocated Stop control now sits on
+    // the composer beside the build card's own — deliberately, and only until the build card is
+    // removed. What this guard is about is the SIBLING, and that assertion below is unchanged.
     expect(screen.getAllByRole('button', { name: /^Stop$/i }).length).toBeGreaterThan(0)
     expect(screen.getByTestId('stop-turn')).toBeTruthy()
 
@@ -792,7 +792,7 @@ describe('the send-failure catch splits on whether the turn was accepted (N8)', 
 
     await waitFor(() => expect(screen.getByText(/could not be sent/i)).toBeTruthy())
     // The server persisted NOTHING, so the optimistic user bubble rolls back too — the
-    // transcript must agree with the database (N8).
+    // transcript must agree with the database.
     //
     // SCOPED TO THE TRANSCRIPT, because the composer legitimately still holds the same words and
     // an unscoped `queryByText` matches the textarea too. That is not a detail of the assertion:
@@ -808,7 +808,7 @@ describe('the send-failure catch splits on whether the turn was accepted (N8)', 
     )
 
     // AND THE CITIZEN STILL HAS THEIR MESSAGE. This is the assertion the suite was missing, and
-    // without it a P0 shipped: `onSent` used to fire before `startTurn` was attempted, so the
+    // without it a critical bug shipped: `onSent` used to fire before `startTurn` was attempted, so the
     // composer's send promise had already resolved by the time the refusal arrived. It emptied
     // itself, the later `onAbort` rejected a settled promise and did nothing, and the text and any
     // staged files were gone — on the 429-over-the-daily-cap path above all others.
@@ -851,7 +851,7 @@ describe('a refused send leaves the citizen holding their message', () => {
   })
 
   it('keeps the text when startTurn refuses the SECOND message in a thread', async () => {
-    // THE PATH THE P0 ACTUALLY TOOK. The first message goes through `createBuild`, which at least
+    // THE PATH THE BUG ACTUALLY TOOK. The first message goes through `createBuild`, which at least
     // had a network call behind its premature release; every message after it released the
     // composer on nothing at all.
     h.getBuild.mockResolvedValue(continuing())

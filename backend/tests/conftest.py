@@ -64,7 +64,7 @@ def _salt_every_provisioned_app_database():
 
     `.env.test` configures a real `APP_DB__*` substrate, so any test that creates a project
     through the endpoint or starts a build session now creates a REAL database and role on
-    the shared cluster (ADR-0028). The `db_session` rollback cannot undo that — it happens on
+    the shared cluster. The `db_session` rollback cannot undo that — it happens on
     a separate AUTOCOMMIT engine — so without this the cluster accumulates orphans every run.
 
     The hook is `provision._claim`, the one statement every ensure runs before it touches the
@@ -165,8 +165,8 @@ async def client(app):
 # status; the tests pinning those statuses bind no fixture on purpose.
 @pytest.fixture
 async def fake_redis():
-    # Deterministic in-process Redis (KTD-8): `fakeredis[lua]` runs the compare-and-delete
-    # release script in-process, so the C5 lock/registry tests need no live server. We set
+    # Deterministic in-process Redis: `fakeredis[lua]` runs the compare-and-delete
+    # release script in-process, so the lock/registry tests need no live server. We set
     # the app-level singleton directly so `get_redis()` returns the fake, flushed per test.
     import fakeredis.aioredis
 
@@ -183,7 +183,7 @@ async def fake_redis():
 @pytest.fixture
 def fake_storage():
     # Dict-backed object store bound to the app-level singleton so `get_storage()` (called
-    # directly by the sandbox restore + the C4 snapshot) round-trips without Azurite.
+    # directly by the sandbox restore + the snapshot) round-trips without Azurite.
     from src.services.storage import accessor as _storage_accessor
     from tests.fakes import FakeStorage
 

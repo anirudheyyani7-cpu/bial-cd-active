@@ -53,8 +53,8 @@ describe('isConversationGone', () => {
 
 // Inert guard against any of the three retired copy builders silently returning, paired with a
 // liveness check (same shape as the sibling in `buildSystemPrompt.test.js`) so it cannot
-// false-green on a broken import. `describeAppFailure` went with the JSX-era single-file build
-// (U27); `describeSaveFailure` with the client append route; `describeModeSwitchFailure` with
+// false-green on a broken import. `describeAppFailure` went with the JSX-era single-file build;
+// `describeSaveFailure` with the client append route; `describeModeSwitchFailure` with
 // the composer's mode selector. The cast (not `any`) mirrors `approvalApi.test.ts`'s retirement
 // idiom: a namespace import types a removed export as a compile error on plain property access,
 // not as `undefined`.

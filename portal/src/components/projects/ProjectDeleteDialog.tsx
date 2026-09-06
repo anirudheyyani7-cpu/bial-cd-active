@@ -23,12 +23,12 @@
  *      meant it — and it taught people to copy-paste past the warning they were meant to be
  *      reading. The reason is a better gate for the same purpose AND it is meant to still be
  *      useful a month later: it is kept on a `deleted_projects` tombstone. NOTHING READS THAT
- *      TABLE YET — the admin read surface is tracked separately (#176) — so the helper text
+ *      TABLE YET — the admin read surface is tracked separately — so the helper text
  *      says only what is true today (kept with the record) rather than promising a reader
  *      that does not exist. Say the same true thing in both places: the docblock and the
  *      helper text must never claim more than the table actually supports.
  *
- *      Once #176 lands, this reverts to the stronger claim — someone writing a
+ *      Once the admin read surface lands, this reverts to the stronger claim — someone writing a
  *      private-feeling note deserves to know an administrator sees it — in both the
  *      helper text and here.
  *
@@ -213,7 +213,7 @@ export default function ProjectDeleteDialog({
                 and nothing reads `deleted_projects` — there is no route, no schema and no
                 screen. Every deletion collects a mandatory 5-50 word justification, so a
                 promise about who reads it is a promise to a user, not an internal TODO. The
-                read surface is tracked in #176; when it lands, the stronger sentence becomes
+                read surface is tracked separately; when it lands, the stronger sentence becomes
                 true again and this reverts. Until then the copy says what the platform
                 actually does, which is keep the reason with the record. */}
             <span className="text-[11px] text-neutral">

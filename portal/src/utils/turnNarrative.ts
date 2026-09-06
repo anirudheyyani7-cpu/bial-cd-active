@@ -1,8 +1,8 @@
 /**
- * Turn frames → the C7 envelope shape, plus what the surface asks ABOUT a turn.
+ * Turn frames → the progress-envelope shape, plus what the surface asks ABOUT a turn.
  *
  * A build is a Write turn now, so its narrative arrives as `step` / `diagnostic` / `quota` turn
- * frames instead of C7 progress envelopes. ADAPTING rather than rewriting is deliberate: the two
+ * frames instead of progress envelopes. ADAPTING rather than rewriting is deliberate: the two
  * transports must never tell different stories about what a build looks like, and one mapping is
  * how they agree by construction rather than by discipline.
  *
@@ -77,7 +77,7 @@ export function narrativeEnvelopes(narrative: TurnNarrative): FeedEnvelope[] {
       // Fail to `server` rather than drop: an unrecognized source still carries a sentence
       // the user needs to see, and a swallowed diagnostic is a silent build failure.
       source: (ERROR_SOURCES.has(diagnostic.source) ? diagnostic.source : 'server') as ErrorSource,
-      // EMPTY, and deliberately. The target `ErrorEvent` is the LEGACY C7 feed's shape, which
+      // EMPTY, and deliberately. The target `ErrorEvent` is the LEGACY feed's shape, which
       // still has these two fields because that transport still carries them; the turn stream
       // does not send them any more, so there is nothing to map. They are written explicitly
       // rather than omitted because the field list above is what makes a dropped field a
@@ -210,7 +210,7 @@ export function formatResetTime(isoUtc: string): string | null {
   return at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
-/** Dedup by `seq` (last-wins) and order by `seq` — C3 §4.2's replay property, kept. */
+/** Dedup by `seq` (last-wins) and order by `seq` — the replay property, kept. */
 function bySeq(envelopes: FeedEnvelope[]): FeedEnvelope[] {
   const latest = new Map<number, FeedEnvelope>()
   for (const env of envelopes) latest.set(env.seq, env)

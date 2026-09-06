@@ -1,6 +1,6 @@
 /**
  * What the app's dev server is compiling right now — the signal the preview pane covers its
- * frame with (R17/R18).
+ * frame with.
  *
  * FOUR values, and the fourth is the whole point. `unknown` means the platform has no idea:
  * the container has not connected to its dev server's HMR socket yet, the socket is down

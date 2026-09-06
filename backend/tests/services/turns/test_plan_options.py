@@ -1,12 +1,12 @@
-"""U5/U6/U8 — present_plan_options mechanics: the call DEFERS (the click is the result), the
+"""present_plan_options mechanics: the call DEFERS (the click is the result), the
 plan RIDES the argument (there is no other copy of it), resolutions are idempotent,
 newest-only, and derived identically by the projection, and there is no `build_failed`
 member left for a resolution to be.
 
-U4's inertness guards live here too: the prose heuristic that used to infer a plan from the
-model's TEXT — counting list items, scanning for a trailing `?` — is gone, and so is the
-forced retry and the fabricated card it fed. Nothing anywhere issues a second model request,
-or invents a card, as a consequence of what the model wrote.
+The inertness guards for the retired prose heuristic live here too: the heuristic that used
+to infer a plan from the model's TEXT — counting list items, scanning for a trailing `?` — is
+gone, and so is the forced retry and the fabricated card it fed. Nothing anywhere issues a
+second model request, or invents a card, as a consequence of what the model wrote.
 
 The platform's own voice on this path lives here too: a turn that produced no words produces no
 assistant message at all, and the one sentence the platform still authors when an offer is
@@ -72,7 +72,7 @@ _CTX = PromptContext(user_name="Ada", project_name="Visitors", project_descripti
 
 _PLAN_TEXT = "Here is the plan:\n1. Add a table\n2. Wire the form\n3. Ship it"
 
-# --- U4: the exact shapes that used to fire the retired prose heuristic ------------------
+# --- the exact shapes that used to fire the retired prose heuristic ----------------------
 #
 # `_looks_plan_shaped` counted list items and scanned the reply's tail for a trailing `?`.
 # Two-or-more list items with no `?` on the tail read as "a plan was written" and forced a
@@ -109,7 +109,7 @@ _CHOICE_QUESTION_TEXT = (
 
 @pytest.fixture(autouse=True)
 def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Every kind pins the project's LIVE container now (R18) — a Plan chat attaches a sandbox
+    # Every kind pins the project's LIVE container now — a Plan chat attaches a sandbox
     # exactly like Build does, so these engine-level tests need a configured deployment the
     # same way `test_write_turn.py` does, or every turn dies at the workspace pin before the
     # model — and the plan-options mechanics under test — ever run.
@@ -131,7 +131,7 @@ def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 async def _sandbox_dependencies(fake_redis, fake_storage) -> None:
-    """The R10 liveness lease (Redis) and the sandbox attach's storage reads both need a
+    """The liveness lease (Redis) and the sandbox attach's storage reads both need a
     backing fake now that a Plan turn also attaches a live container. Pulled in as an
     autouse wrapper around the shared `fake_redis`/`fake_storage` fixtures
     (`tests/conftest.py`) rather than added to every test signature."""
@@ -190,9 +190,9 @@ async def _run_turn(engine, db_session, session_factory, model, user, conv):
 
 
 def _call_options(plan: str = _PLAN_TEXT, call_id: str = "opt-1") -> DeltaToolCalls:
-    """A complete offer call, the plan riding the argument the way the real tool requires
-    (U5) — every fixture in this file that means to make a HONOURABLE offer uses this, never
-    the empty `json_args="{}"` the pre-U5 tool took."""
+    """A complete offer call, the plan riding the argument the way the real tool requires —
+    every fixture in this file that means to make a HONOURABLE offer uses this, never
+    the empty `json_args="{}"` the tool used to take."""
     return DeltaToolCalls(
         {
             0: DeltaToolCall(
@@ -204,13 +204,13 @@ def _call_options(plan: str = _PLAN_TEXT, call_id: str = "opt-1") -> DeltaToolCa
     )
 
 
-# --- U5: the plan rides the argument, and it is the only copy of it ----------------------
+# --- the plan rides the argument, and it is the only copy of it --------------------------
 
 
 async def test_the_plan_argument_is_the_happy_path_live_and_on_reload(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Covers AE7. The offer tool takes the plan as its own argument now — no separate prose
+    """The offer tool takes the plan as its own argument now — no separate prose
     message, no forced retry, no second model request of any kind. The live stream pushes
     that argument as ordinary text, then the card; the reload projection derives the SAME
     text from the SAME stored call, so live and reload can never drift."""
@@ -244,12 +244,13 @@ async def test_the_plan_argument_is_the_happy_path_live_and_on_reload(
     assert pending is not None and pending.tool_call_id == "opt-1"
     assert pending.synthesized is False
 
-    # U6 — the pending row carries the call's id and nothing else: no snapshot pin rides
+    # The pending row carries the call's id and nothing else: no snapshot pin rides
     # along with it any more.
     #
-    # ADDRESSED BY META KIND, NOT BY POSITION. `rows[-1]` used to be the turn's row; U20's
-    # durable terminal is appended after it, so an index here would now be reading the wrong
-    # row — and would keep silently reading the wrong row as later units add lifecycle records.
+    # ADDRESSED BY META KIND, NOT BY POSITION. `rows[-1]` used to be the turn's row; a
+    # durable terminal row is now appended after it, so an index here would now be reading the
+    # wrong row — and would keep silently reading the wrong row as later units add lifecycle
+    # records.
     rows = await load_rows(
         db_session, user_id=user.id, conversation_id=conv.id, include_hidden=True
     )
@@ -338,7 +339,7 @@ async def test_the_writing_up_status_leaves_the_screen_when_the_plan_arrives(
 async def test_an_offer_survives_unrelated_turns_and_still_names_its_own_plan(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Covers AE7. An offer made on turn three must still name turn three's plan after two
+    """An offer made on turn three must still name turn three's plan after two
     more exchanges that have nothing to do with it — the stored call is the one and only
     copy, so nothing later in the conversation can dilute or relabel it."""
     engine = _fresh_engine
@@ -379,7 +380,7 @@ async def test_an_offer_survives_unrelated_turns_and_still_names_its_own_plan(
 async def test_a_revised_plan_leaves_exactly_one_live_offer_naming_the_newer_plan(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Covers AE8. The agent revises and calls again: exactly one offer is live and it names
+    """The agent revises and calls again: exactly one offer is live and it names
     the newer plan. The older one reads as spent — a newer presentation supersedes it by
     construction, whether or not anyone ever clicked it — and its OWN plan is untouched:
     superseded, not overwritten."""
@@ -426,9 +427,9 @@ async def test_a_revised_plan_leaves_exactly_one_live_offer_naming_the_newer_pla
 async def test_a_run_cut_off_mid_argument_records_no_offer_and_no_partial_plan(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Covers AE32, and the closely related edge case: a run stopped after the started status
-    but before the argument completes leaves the status out of the reload too. `content_block_
-    start` puts the tool's NAME on the wire before any argument arrives (U5), so a stop that
+    """An edge case: a run stopped after the started status but before the argument completes
+    leaves the status out of the reload too. `content_block_
+    start` puts the tool's NAME on the wire before any argument arrives, so a stop that
     lands in that window must not leave a half-written plan anywhere — live, or durable.
 
     ★ AND THE STATUS ITSELF CANNOT OUTLIVE THE TURN, which is the half the absence checks below
@@ -484,7 +485,7 @@ async def test_a_run_cut_off_mid_argument_records_no_offer_and_no_partial_plan(
     # WRITE-BEFORE-DONE: a run that never completed persists no TURN row — no offer, no
     # partial plan. The reloaded transcript therefore carries neither a status nor an offer.
     #
-    # The one row that IS here is U20's durable terminal, and it belongs: this turn genuinely
+    # The one row that IS here is the turn's durable terminal, and it belongs: this turn genuinely
     # ended (stopped), and a reload that could not tell that would show a cut-off run as still
     # in flight forever. It is hidden, carries no payload, and says only how the turn ended.
     assert await find_pending(db_session, user_id=user.id, conversation_id=conv.id) is None
@@ -514,7 +515,7 @@ async def test_a_run_cut_off_mid_argument_records_no_offer_and_no_partial_plan(
 async def test_an_empty_plan_argument_records_no_offer_and_says_so_once(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Error path (U5/R28a). A whitespace-only argument is nothing to build from — the exact
+    """Error path. A whitespace-only argument is nothing to build from — the exact
     defect the retired heuristic used to manufacture, a Build-it button under a plan nobody
     wrote. The call comes off what is persisted; one platform-authored line explains why.
 
@@ -594,7 +595,7 @@ async def test_an_empty_plan_argument_records_no_offer_and_says_so_once(
 async def test_an_over_ceiling_plan_argument_records_no_offer_and_is_not_truncated(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Error path (U5/R44). An argument past the stored-message ceiling is REFUSED, never
+    """Error path. An argument past the stored-message ceiling is REFUSED, never
     trimmed: a plan cut mid-sentence is one the citizen would agree to sight-unseen. The
     refusal is explained by the same platform-authored line, on the same platform-owned row."""
     huge_plan = "x" * (MAX_MESSAGE_TEXT_CHARS + 1)
@@ -633,13 +634,13 @@ async def test_an_over_ceiling_plan_argument_records_no_offer_and_is_not_truncat
     ] == [MessageEntryKind.SYSTEM_EVENT]
 
 
-# --- U4: the prose heuristic, the forced retry and the fabricated card are all gone -------
+# --- the prose heuristic, the forced retry and the fabricated card are all gone ----------
 
 
 async def test_a_list_shaped_reply_with_no_tool_call_produces_no_offer(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Edge case (U4). Two-or-more list items and no trailing `?` is precisely the shape
+    """Edge case. Two-or-more list items and no trailing `?` is precisely the shape
     `_looks_plan_shaped` used to count as a plan. There is no reader left that counts list
     items, so the model simply not calling the tool ends the turn — no retry, no card."""
     calls = {"count": 0}
@@ -667,7 +668,7 @@ async def test_a_list_shaped_reply_with_no_tool_call_produces_no_offer(
 async def test_a_clarifying_question_turn_produces_no_offer(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Edge case (U4). A clarifying question is a legitimate planning turn on its own — never
+    """Edge case. A clarifying question is a legitimate planning turn on its own — never
     a trigger for a forced retry, with or without a `?` at the very end."""
     calls = {"count": 0}
 
@@ -721,7 +722,7 @@ async def test_the_turn_019fc05f_regression_shape_still_produces_no_offer(
 
 
 def test_the_prose_heuristic_the_forced_retry_and_the_synthesizer_no_longer_exist() -> None:
-    """★ INERTNESS GUARD (U4). Named individually rather than as a set: an implementer working
+    """★ INERTNESS GUARD. Named individually rather than as a set: an implementer working
     from a plan SUMMARY rather than the plan itself tends to delete three symbols and leave
     the fourth behind (or vice versa), and a coarser check (e.g. "the module still imports")
     would not catch that partial cleanup.
@@ -741,11 +742,11 @@ def test_the_prose_heuristic_the_forced_retry_and_the_synthesizer_no_longer_exis
     assert not hasattr(toolsets_module, "plan_options_only_toolset")
 
 
-# --- U6: the stale-plan pin is gone, at both ends of the wire -----------------------------
+# --- the stale-plan pin is gone, at both ends of the wire ---------------------------------
 
 
 def test_no_snapshot_head_rides_on_the_turn_state_or_the_pending_record() -> None:
-    """★ INERTNESS GUARD (U6). The pin's only writer sat inside the mode branch that no
+    """★ INERTNESS GUARD. The pin's only writer sat inside the mode branch that no
     longer exists; this guards that nothing reintroduces the field under any name, on either
     the in-memory turn state or the durable pending record.
 
@@ -758,11 +759,11 @@ def test_no_snapshot_head_rides_on_the_turn_state_or_the_pending_record() -> Non
     assert not hasattr(plan_options_module, "approved_plan_text")
 
 
-# --- U8: there is no third resolution value anywhere --------------------------------------
+# --- there is no third resolution value anywhere -------------------------------------------
 
 
 def test_no_resolution_value_exists_that_a_user_cannot_produce() -> None:
-    """★ INERTNESS GUARD (U8). `build_failed` had no production caller and no way for a user
+    """★ INERTNESS GUARD. `build_failed` had no production caller and no way for a user
     to reach it. This pins every place that value could still hide: the wire type the engine
     writes, the projection the client reads, and the endpoint response the client parses.
 
@@ -781,7 +782,7 @@ def test_no_resolution_value_exists_that_a_user_cannot_produce() -> None:
     assert not hasattr(plan_options_module, "record_build_failure")
 
 
-# --- resolution mechanics untouched by U4/U5/U6/U8 (kept from the prior suite) ------------
+# --- resolution mechanics, unaffected by the changes above (kept from the prior suite) ----
 
 
 async def test_refine_resolution_is_idempotent_and_feeds_the_next_run(
@@ -871,7 +872,7 @@ async def test_only_the_newest_pending_is_actionable(
 async def test_build_started_after_a_raced_refine_writes_no_second_wire_return(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    # The Build-it vs turn-start race (#2): a concurrent turn-start resolves the card as
+    # The Build-it vs turn-start race: a concurrent turn-start resolves the card as
     # "refine" (a real ToolReturnPart) while the build is starting. record_build_started must
     # then record the build as a system overlay — NOT a second ToolReturnPart — so the loaded
     # history carries exactly one return for the card and the conversation never wedges.
@@ -929,12 +930,12 @@ async def test_build_started_after_a_raced_refine_writes_no_second_wire_return(
 
 # --- nothing is written in the model's name -------------------------------------------------
 #
-# WHAT USED TO BE HERE, AND WHY IT IS NOT. While prose written beside a tool call was dropped at
-# render time, a turn that explained itself between two calls could reach its end with a screen
-# of finished steps and not one word — so the platform wrote a closing sentence of its own into
-# the transcript, as a `ModelResponse`, in the model's name, to cover it. The drop is gone. A
-# wordless turn now means the agent chose not to speak, which is legitimate, and the sentence
-# that existed to paper over a case that no longer arises went with it.
+# Previously, prose written beside a tool call was dropped at render time, so a turn that
+# explained itself between two calls could reach its end with a screen of finished steps and
+# not one word — so the platform wrote a closing sentence of its own into the transcript, as a
+# `ModelResponse`, in the model's name, to cover it. That drop is gone: a wordless turn now
+# means the agent chose not to speak, which is legitimate, and the sentence that existed to
+# paper over a case that no longer arises went with it.
 #
 # The one platform sentence still reachable on this path is the refused-offer line, and the two
 # refusal tests above pin where it now lives: its own visible `SYSTEM_EVENT` row, stamped with

@@ -144,7 +144,7 @@ describe('releaseUploadedAttachments', () => {
 })
 
 /**
- * THE PRODUCERS ARE GONE — inertness, not absence (R46, L8).
+ * THE PRODUCERS ARE GONE — inertness, not absence.
  *
  * `attachmentStore` used to MINT deck parts under a comment claiming the server converted them,
  * while the wire builder dropped them again a hundred lines away. Both went with the office

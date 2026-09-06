@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 
 // Cookie-model sign-in is a full-page hand-off to the FastAPI control-plane, which
-// runs the Entra OIDC Authorization-Code + PKCE flow. With no live tenant in CI
-// (KD-9), we assert the REDIRECT BOUNDARY: the page offers "Sign in with
+// runs the Entra OIDC Authorization-Code + PKCE flow. With no live tenant in CI,
+// we assert the REDIRECT BOUNDARY: the page offers "Sign in with
 // Microsoft" (and NO password field), and clicking it navigates the browser
 // toward /api/v1/auth/login. Start logged OUT (drop any storageState).
 test.use({ storageState: { cookies: [], origins: [] } })

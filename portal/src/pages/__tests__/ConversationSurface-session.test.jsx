@@ -1,5 +1,5 @@
 /**
- * U5→U13 core: Build-it starts a WRITE TURN. The atomic transition records the choice, flips the
+ * Build-it starts a WRITE TURN. The atomic transition records the choice, flips the
  * conversation to Write and starts the turn server-side; the page subscribes to that turn with the
  * very same `readTurnStream` an ordinary send uses, the bubble narrates its `workspace` / `step` /
  * `preview` / `quota` frames, the live preview frames the sandbox URL off the `preview` frame, and
@@ -10,8 +10,9 @@
  * busy workspace, 503 unconfigured), so `buildFromPlan` THROWS and the card re-arms with the
  * server's own message. There is no `build_failed` outcome left to return.
  *
- * The REAL useBuildSession hook + LivePreview run; only the C3 transport (client + EventSource,
- * still reachable through the legacy reattach path) and the U10 turn transport are mocks.
+ * The REAL useBuildSession hook + LivePreview run; only the build-session transport (client
+ * + EventSource,
+ * still reachable through the legacy reattach path) and the turn transport are mocks.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, cleanup, within } from '@testing-library/react'
@@ -58,7 +59,7 @@ vi.mock('../../utils/builderHistory', () => ({
   deriveTitle: (t) => (t || '').slice(0, 40),
 }))
 // SPREAD THE ORIGINAL — `handleBuildIt` mints the new build chat's id through the shared
-// `uuidv7` (ADR-0006), and a factory naming only `listProjectConversations` leaves every other
+// `uuidv7`, and a factory naming only `listProjectConversations` leaves every other
 // export (including that one) undefined; Vitest now warns the moment a real caller reaches for
 // it, which every Build-it press in this suite does.
 vi.mock('../../utils/conversationApi', async (importOriginal) => ({
@@ -79,7 +80,7 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
 }))
 vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 vi.mock('../../utils/attachmentStore', async (orig) => ({ ...(await orig()), buildUserParts: h.buildUserParts }))
-// `switchMode` is GONE from this list (U1/U19): the route it posted to no longer exists, and a
+// `switchMode` is GONE from this list: the route it posted to no longer exists, and a
 // chat's kind can't change after creation, so there is nothing left for a mock to intercept.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig()),
@@ -95,7 +96,7 @@ function deps() {
   return { fake, deps: { client: makeClient(h), eventSourceFactory: () => fake } }
 }
 
-// BUILD-IT IS A HANDOFF (U5/U12), not a flip: the atomic transition creates a SECOND, brand-new
+// BUILD-IT IS A HANDOFF, not a flip: the atomic transition creates a SECOND, brand-new
 // build chat seeded with the plan and starts the turn THERE, and the click navigates the browser
 // to it — the plan chat (`'build-X'`, this suite's default) is left exactly as it was. So the
 // build's conversation is THIS id, not `'build-X'`: every assertion about the SECOND
@@ -120,7 +121,7 @@ function primeHandoff(liveChatId = LIVE_CHAT_ID, turnId = BUILD_TURN_ID) {
 }
 
 /**
- * Get a build running the way a user does now (U5/U12 + U11): send a turn, wait for the plan
+ * Get a build running the way a user does now: send a turn, wait for the plan
  * card, click Build it. The atomic transition creates the live build chat and starts a WRITE TURN
  * on it, and the click navigates the browser there — so by the time this resolves, the routed
  * chat id has changed and the page is adopting the NEW chat, not the one Build-it was pressed in.
@@ -171,7 +172,7 @@ beforeEach(() => {
   // The scripted turn: every send streams a plan + the options card, so these suites reach
   // the session mechanics in one send + one click.
   primeTurn(h)
-  // The transition's OWN answer (U5/U12): `chatId` names the live build chat the handoff creates,
+  // The transition's OWN answer: `chatId` names the live build chat the handoff creates,
   // and that chat's `getBuild` carries the `activeTurn` its adopt effect reattaches to. Overridden
   // per-test wherever the plan/live chat pair isn't the default (a different originating chat, or
   // a turn id the test wants to assert on specifically, e.g. `already_started`'s `other-turn`).
@@ -186,10 +187,10 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     await sendPrompt()
 
     // The build starts through the ATOMIC TRANSITION — a SECOND, brand-new build chat, created,
-    // seeded with the plan, and started, server-side (U5/U12) — and the page NAVIGATES there and
-    // subscribes to the TURN the handoff returns. The C3 door stays shut: `getStatus` is never
-    // called, so there is no session to join at all. (A start wrapper reappearing on the client
-    // is caught by the member-set guard in `utils/__tests__/buildSessionApi.test.ts`.)
+    // seeded with the plan, and started, server-side — and the page NAVIGATES there and
+    // subscribes to the TURN the handoff returns. The build-session door stays shut:
+    // `getStatus` is never called, so there is no session to join at all. (A start wrapper
+    // reappearing on the client is caught by the member-set guard in `utils/__tests__/buildSessionApi.test.ts`.)
     // Third arg is the client-minted id of that new chat (a real `uuidv7()`, so only its shape is
     // pinned, not its value).
     expect(h.buildFromPlan).toHaveBeenCalledWith('build-X', PLAN_CARD_ID, expect.any(String))
@@ -256,7 +257,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     // survives the card's deletion.
     fireEvent.click(screen.getByTestId('stop-turn'))
     await waitFor(() => expect(h.stopTurn).toHaveBeenCalledWith(LIVE_CHAT_ID, BUILD_TURN_ID))
-    expect(h.stop).not.toHaveBeenCalled() // never the C3 session stop
+    expect(h.stop).not.toHaveBeenCalled() // never the build-session stop
 
     await turn.frame(T_BUILD_END({ status: 'stopped', reason: 'stopped_by_user' }))
     await turn.end()
@@ -286,8 +287,8 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     expect(screen.queryByText(/no longer running/i)).toBeNull()
   })
 
-  // ('Force-end → the kill switch confirms, then ends the session' is RETIRED with U5.) It drove
-  // `session.forceEnd`, the C3 kill switch that tears a build SESSION's sandbox down out of band —
+  // ('Force-end → the kill switch confirms, then ends the session' is RETIRED.) It drove
+  // `session.forceEnd`, the kill switch that tears a build SESSION's sandbox down out of band —
   // and the composer-initiated build path no longer has a session to tear down, nor a turn-level
   // equivalent of one. `stopTurn` is the whole interrupt vocabulary a build turn has, and the Stop
   // test above is what pins it. The kill switch still belongs to the legacy session surfaces
@@ -314,7 +315,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     const glyphs = () => within(within(screen.getByTestId('activity-group')).getByTestId('activity-glyphs'))
     await waitFor(() => expect(glyphs().getAllByText(/^failed$/i).length).toBe(1))
 
-    // U16's rule, unchanged and now enforced one layer earlier: the compiler's own title is built
+    // STILL TRUE, AND NOW ENFORCED ONE LAYER EARLIER: the compiler's own title is built
     // FOR THE MODEL and never reaches the screen. It is not merely unrendered — `convertPart`
     // never copies it into a part, so there is nothing in the DOM to leak.
     expect(screen.queryAllByText(/Type error in app\/page\.tsx/i)).toHaveLength(0)
@@ -374,7 +375,7 @@ describe('BuilderPage — the build-turn flow (ORIG-§3-d/f)', () => {
     expect(
       screen.getByRole('button', { name: /Send message — You can send again after/i }),
     ).toBeTruthy()
-    // …and the composer is NOT disabled by it (R45/R64): a citizen refused mid-thought keeps the
+    // …and the composer is NOT disabled by it: a citizen refused mid-thought keeps the
     // text they typed, and can select and copy it out.
     expect(screen.getByTestId('composer-input').hasAttribute('disabled')).toBe(false)
     // getAllBy — see the announcement note above.
@@ -438,7 +439,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     h.stop.mockClear()
     h.startTurn.mockClear()
 
-    // SENDING is what waits — not typing (KTD-1/KTD-2). The text box and attach stay live so the
+    // SENDING is what waits — not typing. The text box and attach stay live so the
     // citizen can compose their next message while they watch, and the note says why send is off.
     const textarea = screen.getByPlaceholderText(/ask for another change/i)
     expect(textarea.disabled).toBe(false)
@@ -464,7 +465,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
 
     // There is also no second Build-it to click while the build runs: the card that started it
     // is resolved. So the "build over a still-live session" hazard the stop-then-start dance
-    // existed for (finding #19) is now unreachable from this chat, not merely handled.
+    // existed for is now unreachable from this chat, not merely handled.
     expect(screen.queryByRole('button', { name: /^Build this plan$/ })).toBeNull()
   })
 
@@ -629,7 +630,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     // "building your app" about someone else's build — on a turn the server would accept. That is
     // why `generatingChatId` records WHICH chat is mid-turn rather than merely that one is, and
     // every other term of the gate has to be scoped the same way or it reintroduces the leak.
-    // BUILD-IT IS A HANDOFF (U5/U12): pressing it in `chat-A` creates a SECOND, brand-new build
+    // BUILD-IT IS A HANDOFF: pressing it in `chat-A` creates a SECOND, brand-new build
     // chat and navigates there — this render has no `<Routes>` for that real `navigate()` to
     // resolve against (a `chatId` PROP, matching `ConversationSurface-composer.test.jsx`'s `renderAt`
     // idiom), so arriving is simulated the same way every sibling-chat guard in this file already
@@ -694,7 +695,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works (
     // 409 from the server, whatever project it was asked for in; `buildFromPlan` throws it and the
     // card carries the sentence. What must NOT happen either way is A's build being stopped to
     // make room for B's.
-    // BUILD-IT IS A HANDOFF (U5/U12): pressing it in `chat-A` navigates to a SECOND, brand-new
+    // BUILD-IT IS A HANDOFF: pressing it in `chat-A` navigates to a SECOND, brand-new
     // build chat, which this route-less (`chatId`-prop) render simulates the same way every other
     // sibling-chat guard in this file does — a chatId prop swap on the SAME instance.
     const CHAT_A_LIVE = 'chat-A-live'
@@ -784,7 +785,7 @@ describe('BuilderPage — the "come back later" relaunch entry point (#43)', () 
   it('a fresh mount with a persisted outcome and no live session offers the way back; pressing it starts the app', async () => {
     // The journey is unchanged and is still the subject: reload a project whose build once ran,
     // find a way back to the app, press it, and watch the restored preview frame. What moved is
-    // the CONTROL — R3 says exactly one control starts the app, and the client settled on
+    // the CONTROL — exactly one control starts the app, and the client settled on
     // `Launch Application`: "preview" is the developer's word for the thing, and the person's
     // word is their app.
     //
@@ -796,7 +797,7 @@ describe('BuilderPage — the "come back later" relaunch entry point (#43)', () 
       appId: 'a1', previewUrl: PREVIEW_URL, status: 'ready', restoredFromFailedBuild: false, ready: true,
     })
     const { deps: sessionDeps } = deps()
-    // R5: the affordance needs the PROJECT's confirmed saved build — an outcome in the transcript
+    // The affordance needs the PROJECT's confirmed saved build — an outcome in the transcript
     // alone proves a build ran, not that a Save happened.
     renderBuilder({ deps: sessionDeps, hasSavedBuild: true })
 

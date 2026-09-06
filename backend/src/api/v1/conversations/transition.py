@@ -164,8 +164,8 @@ async def build_it(
         raise AppApiError(409, "A newer plan supersedes these options.")
 
     # THE PLAN COMES FROM THE OFFER'S OWN STORED CALL, never from the request body. That is what
-    # R44 asks for, and it is also what stops a stale second tab writing stale requirements into
-    # a permanent first message: the browser cannot post a plan at all.
+    # stops a stale second tab writing stale requirements into a permanent first message: the
+    # browser cannot post a plan at all.
     call = stored_call(rows, tool_call_id)
     plan = plan_from_call(call) if call is not None else None
     if plan is None:
@@ -221,7 +221,7 @@ async def build_it(
 
     if model is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
-    # R98, identically to the send route: no workspace service means nothing for the build to
+    # Identically to the send route: no workspace service means nothing for the build to
     # read or write, said before anything is created rather than inside the detached turn.
     if sandbox is None:
         raise AppApiError(
@@ -230,7 +230,7 @@ async def build_it(
             code=WORKSPACE_UNAVAILABLE_CODE,
         )
 
-    # R19's two refusals, in the same order and carrying the same codes the send route uses:
+    # The two refusals below, in the same order and carrying the same codes the send route uses:
     # one workspace per user, and it is not this press's to take if another of the user's own
     # chats holds it — or if unsaved work in a different project is in the way.
     active = manager.active_session_for(user.id)

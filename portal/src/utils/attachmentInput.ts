@@ -4,7 +4,7 @@
  * the server (media-type allowlist + magic-byte check); these checks are UX.
  */
 /**
- * THE LINE IS A RULE, NOT A LIST: what needs no conversion (R46).
+ * THE LINE IS A RULE, NOT A LIST: what needs no conversion.
  *
  * Images and PDFs upload as themselves. Plain text (CSV, TXT) rides INSIDE the message as a fenced
  * text block, which is why it shares this allowlist even though it is not a binary attachment.
@@ -16,9 +16,9 @@
  * layout was talking about something the model could not see. PowerPoint was gated off behind a
  * build-time flag and never reached anyone.
  *
- * THE SERVER'S EXTRACTION MACHINERY IS STILL THERE and is deliberately out of scope — no unit in
- * this plan touches `backend/`. That leaves a reachable-but-unreferenced upload path, which is
- * recorded as R46's unshipped server half rather than quietly claimed as removed.
+ * THE SERVER'S EXTRACTION MACHINERY IS STILL THERE and is deliberately out of scope — no work
+ * here touches `backend/`. That leaves a reachable-but-unreferenced upload path, which is
+ * recorded as an unshipped server-side half rather than quietly claimed as removed.
  */
 export const ALLOWED_MEDIA_TYPES = [
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',

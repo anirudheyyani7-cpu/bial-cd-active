@@ -1,5 +1,6 @@
-"""U13 — every keep-alive deadline has a NAMED writer and a stated precedence (R12–R15).
+"""Every keep-alive deadline has a NAMED writer and a stated precedence.
 
+WHY THIS EXISTS
 Before this, a sandbox stayed up because *something* renewed *something*, and no operator could
 say what. That is not a metaphor for the origin incident, it IS the origin incident: containers
 outlived every human who might have stopped them, and nobody could name the thing holding them
@@ -10,7 +11,7 @@ What this file pins:
 * the closed writer set, and that registration alone is not on it;
 * monotonic extension — a weaker writer arriving later cannot SHORTEN a stronger one's reprieve;
 * provenance recorded beside the deadline, so "what is holding this open?" has an answer;
-* the negative space R13 cares most about: an open tab, a framed preview and a held-open
+* the negative space that matters most: an open tab, a framed preview and a held-open
   connection extend NOTHING. Those are proved on the browser side
   (`portal/src/hooks/__tests__/useBuildSession.test.ts`), because the loop that made an open tab
   a writer lived there and the only honest way to prove it is gone is that it makes no calls.
@@ -82,7 +83,7 @@ async def _stay(redis: aioredis.Redis) -> tuple[datetime | None, str | None]:
 def test_the_writer_set_is_exactly_four() -> None:
     """A CLOSED SET is the requirement, not a side effect. Adding a way to keep a container alive
     should be a deliberate act with a review attached — the failure this unit exists to prevent
-    is a deadline nobody can attribute. U12/R100 adds the fourth member, `turn_ended_unchanged`,
+    is a deadline nobody can attribute. This adds the fourth member, `turn_ended_unchanged`,
     for a turn that held the workspace but wrote nothing to it — still a reviewed member of the
     closed set, not an anonymous extension."""
     assert {w.value for w in DeadlineWriter} == {
@@ -94,7 +95,7 @@ def test_the_writer_set_is_exactly_four() -> None:
 
 
 def test_a_turn_that_changed_nothing_buys_the_least_of_the_four() -> None:
-    """R100's whole point, stated as an ordering rather than a single number: the weakest
+    """Stated as an ordering rather than a single number: the weakest
     evidence — a turn that pinned the workspace and produced nothing — buys the shortest
     reprieve of any writer in the set, strictly less than either bounded-but-real-activity
     writer above it."""
@@ -216,10 +217,10 @@ async def test_no_writer_can_buy_more_than_its_own_ceiling(
     assert await locks.stay_of_execution_is_current(fake_redis, USER) is True
 
 
-# --- U12/R100: `_pardon_the_container` picks the writer from what the turn DID -----
+# --- `_pardon_the_container` picks the writer from what the turn DID ---------------
 # `_pardon_the_container` is the one place `finish_turn_sandbox` (an ordinary chat turn's end)
 # and `_do_finalize` (a completed build's end) hand a container its keep-alive stay. These
-# tests drive it directly — no HTTP layer, no database, no sandbox client beyond the fake C2
+# tests drive it directly — no HTTP layer, no database, no sandbox client beyond the fake
 # stub the sweep needs — because the fact under test is entirely a Redis-visible one: which
 # writer, and which deadline, `grant_stay_of_execution` ends up recording.
 
@@ -287,9 +288,9 @@ async def test_a_turn_that_wrote_nothing_against_a_fresh_container_grants_the_sh
 async def test_a_read_only_turn_inside_a_write_turns_stay_leaves_it_untouched(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """Edge case, and the one the monotonic guarantee exists for. A write turn ends and stamps
-    the long stay; a read-only turn ends moments later, INSIDE that stay. R100 must not mean a
-    weaker writer can shorten a stronger one's reprieve — `grant_stay_of_execution`'s own
+    """Edge case, and the one the monotonic guarantee exists for. A write turn ends and stamps the
+    long stay; a read-only turn ends moments later, INSIDE that stay. That guarantee must not mean
+    a weaker writer can shorten a stronger one's reprieve — `grant_stay_of_execution`'s own
     `max(existing, computed)` is what this pins, applied through the exact call
     `_pardon_the_container` makes rather than assumed."""
     user_id = uuid.uuid4()

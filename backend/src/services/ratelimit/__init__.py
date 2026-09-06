@@ -1,4 +1,4 @@
-"""In-process rate-limit substrate (R31). Public surface via explicit
+"""In-process rate-limit substrate. Public surface via explicit
 `from .x import Y as Y` re-exports."""
 
 from src.services.ratelimit.limiter import InProcessRateLimiter as InProcessRateLimiter

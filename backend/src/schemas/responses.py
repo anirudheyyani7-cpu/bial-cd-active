@@ -43,7 +43,7 @@ class ErrorDetail(BaseModel):
     """The inner object of the `AppApiError` envelope. `code` is present only when
     the raiser set one (e.g. `FILE_QUOTA_EXCEEDED`, `PARSE_TIMEOUT`); `detail` only
     when the raiser attached a structured payload the client must render rather than
-    merely branch on (the publish gate's waiting-for-review 409, R15b)."""
+    merely branch on (the publish gate's waiting-for-review 409)."""
 
     message: str
     code: str | None = None
@@ -70,7 +70,7 @@ class DetailBody(BaseModel):
 AUTH_401: tuple[int, type[BaseModel], str] = (401, DetailBody, "Not authenticated")
 
 # The single shared "403 Account suspended" spec — `current_user` refuses a suspended
-# account on EVERY authenticated route (deps.py, R11), the same bare-`HTTPException`
+# account on EVERY authenticated route (deps.py), the same bare-`HTTPException`
 # `{"detail"}` shape as the 401. Spread ONCE into the v1-router-level defaults
 # (api/v1/router.py); a route that declares its own 403 (admin's superadmin gate)
 # overrides the description, not the shape.

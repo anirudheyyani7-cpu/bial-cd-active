@@ -1,9 +1,9 @@
 /**
- * THE HALF `beforeunload` CANNOT COVER (Plan F, U8).
+ * THE HALF `beforeunload` CANNOT COVER.
  *
  * ═══ THE HONEST SCOPE, WHICH IS NARROWER THAN THE OBVIOUS FRAMING ═══
  *
- * There are already two guards. Plan A's hoisted `beforeunload` handler covers leaving the TAB, and
+ * There are already two guards. A hoisted `beforeunload` handler covers leaving the TAB, and
  * the reclaim dialog covers another project taking the workspace — it is already an in-place guard,
  * and it is server-driven. What is genuinely unguarded is an in-place navigation OUT of the
  * workspace — the navbar's links, the breadcrumb, opening a different project — while the app holds
@@ -17,7 +17,7 @@
  * not check" produces a prompt with nothing answerable behind it — which is how people learn to
  * dismiss prompts.
  *
- * An in-app dialog CAN carry a reason, so R62 changes the rule here and only here: it warns on
+ * An in-app dialog CAN carry a reason, so the rule changes here and only here: it warns on
  * `null` too, saying the platform could not check. But `null` has TWO causes and they are not the
  * same:
  *
@@ -59,7 +59,7 @@ export interface UnsavedWorkGuardOptions {
   /** The project a Save would write. `null` disables the save-then-leave arm, not the warning. */
   projectId: string | null
   /**
-   * WHOSE WORK IS AT RISK (plan 002, U11), or `null` when the caller cannot say.
+   * WHOSE WORK IS AT RISK, or `null` when the caller cannot say.
    *
    * "This app has changes that are not saved yet" is ambiguous the moment a citizen has more than
    * one project — and the two exits this dialog covers, the navbar and the back control, are
@@ -72,7 +72,7 @@ export interface UnsavedWorkGuardOptions {
 /** Is there anything a person could lose by leaving right now? */
 function worthWarningAbout(saveDirty: boolean | null, workspaceIsAlive: boolean): boolean {
   if (saveDirty === true) return true
-  // `null` while ALIVE is a check that ran and could not answer — R62 says the platform says so.
+  // `null` while ALIVE is a check that ran and could not answer, so the platform says so.
   // `null` while not alive is a check nobody asked, which is not the same claim at all.
   return saveDirty === null && workspaceIsAlive
 }
@@ -153,7 +153,7 @@ export function useUnsavedWorkGuard({
 interface DialogProps {
   /** Whose work is at risk, or `null` when the caller cannot say. */
   projectName: string | null
-  /** `true` = we know there are unsaved changes; `false` = we could not check and say so (R62). */
+  /** `true` = we know there are unsaved changes; `false` = we could not check and say so. */
   certain: boolean
   saving: boolean
   error: string | null
@@ -221,13 +221,13 @@ function UnsavedWorkDialog({
         </div>
 
         <p className="mt-3 text-sm leading-relaxed text-neutral">
-          {/* NAMED WHERE THE CALLER KNOWS IT (plan 002, U11). "This app" is ambiguous the moment
+          {/* NAMED WHERE THE CALLER KNOWS IT. "This app" is ambiguous the moment
               somebody has more than one project, and both exits this dialog covers are taken
               while thinking about a different one. Falls back to the old phrasing rather than
               rendering an empty pair of quotes. */}
           {certain
             ? `${subject} has changes that are not saved yet. Save them and they come back exactly as you left them; leave without saving and they go.`
-            : // R62: say that the platform could not tell, rather than reporting there is nothing
+            : // Say that the platform could not tell, rather than reporting there is nothing
               // to lose. A wrong reassurance is the one answer that costs somebody their work.
               `We could not tell whether ${subjectLower} has unsaved changes. Saving first is the safe option.`}
         </p>

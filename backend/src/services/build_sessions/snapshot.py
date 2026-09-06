@@ -1,4 +1,4 @@
-"""C4 snapshot write: commit the working tree → `git bundle` it → base64 it over the C1
+"""Snapshot write: commit the working tree → `git bundle` it → base64 it over the
 `/exec` endpoint → `put` to Blob.
 
 `git bundle create <file> HEAD` CARRIES COMPLETE HISTORY, not just the current tree — it names
@@ -202,7 +202,7 @@ async def write_snapshot(
     destination: Destination | None = None,
 ) -> str:
     """Snapshot the sandbox's current tree to Blob and return its HEAD sha.
-    Step 1 of the ordered end (C4) — the caller runs teardown + release AFTER this returns.
+    Step 1 of the ordered end — the caller runs teardown + release AFTER this returns.
 
     `destination` defaults to the user's SAVED bundle, which is what every caller of this
     function means. The platform's own autosave does not come through here: it goes through
@@ -366,7 +366,7 @@ async def _where_head_sits_relative_to(
 
 
 def _the_store_first() -> ObjectStorage:
-    """Resolve the store BEFORE doing any work. On a storage-disabled deployment (KTD-2) this
+    """Resolve the store BEFORE doing any work. On a storage-disabled deployment this
     raises here, so the turn does not commit, bundle and base64 a whole tree over `/exec` only to
     discover at the upload that there is nowhere to put it."""
     return get_storage()
@@ -390,7 +390,7 @@ async def _bundle_the_tree(sandbox_client: SandboxClient, handle: SandboxHandle)
     """Commit whatever is in the worktree, bundle it, and read it back out of the container."""
     bundle_name = f"{_BUNDLE_PREFIX}.{secrets.token_hex(8)}"
     run_command = sandbox_client.exec  # aliased to keep the call off the JS-oriented exec guard
-    # Every step's exit code is checked (a non-zero exit is a NORMAL ExecResult, C1): a failed
+    # Every step's exit code is checked (a non-zero exit is a NORMAL ExecResult): a failed
     # commit or bundle must abort HERE, never fall through to base64-ing whatever happens to be
     # on disk and uploading it as "latest".
     commit = await run_command(

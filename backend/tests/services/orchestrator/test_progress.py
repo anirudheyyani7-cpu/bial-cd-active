@@ -1,4 +1,4 @@
-"""The single seq source + redacted egress (U2, KD-5/KD-12)."""
+"""The single seq source + redacted egress."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ async def test_seq_is_strictly_increasing_gap_free() -> None:
 
 
 def test_emitter_has_no_terminal_helper_so_brain_cannot_emit_ended() -> None:
-    """R7's structural guarantee. SESSION-API emits the ONE `ended`, after its C4 snapshot, so
+    """A structural guarantee. SESSION-API emits the ONE `ended`, after its snapshot, so
     the frame can carry a true `snapshot_committed`. BRAIN is kept out of that business by
     construction — not by convention: there is simply no method to call. Re-adding one would
     let a BRAIN-side terminal race SESSION-API's and reintroduce `snapshot_committed=false`."""
@@ -91,7 +91,7 @@ async def test_raising_sink_is_swallowed_and_counter_still_advances() -> None:
     # Does not propagate…
     await emitter.step(name="s", label="l", state="started")
     await emitter.step(name="s2", label="l2", state="ok")
-    # …and the seq counter still advanced (a lost frame never rewinds the sequence, KD-12).
+    # …and the seq counter still advanced (a lost frame never rewinds the sequence).
     assert emitter.last_seq == 2
 
 
@@ -101,7 +101,7 @@ def test_step_state_is_constrained() -> None:
 
 
 async def test_preview_reconnecting_emits_a_valid_payloadless_envelope() -> None:
-    # F8/U5 — the dev-process-crash signal. No payload; carries only the monotonic seq, and it
+    # The dev-process-crash signal. No payload; carries only the monotonic seq, and it
     # round-trips through the discriminated union (extra="forbid" rejects any stray key).
     captured, emitter = _collecting_sink()
     await emitter.step(name="s", label="l", state="ok")

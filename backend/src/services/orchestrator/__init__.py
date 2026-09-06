@@ -1,13 +1,12 @@
-"""Track BRAIN — the Pydantic AI agentic build harness (contracts C2 / C6 / C7).
+"""BRAIN — the Pydantic AI agentic build harness.
 
 BRAIN owns this package and adds files ONLY here. It reaches everything else through frozen
-contracts imported read-only: the C2 `SandboxClient` ABC, the C7 progress envelope + `run_build`
+contracts imported read-only: the `SandboxClient` ABC, the progress envelope + `run_build`
 Protocol + `BuildResult` (rendered in `build_sessions/schemas.py`), the `gate.py` metering
 surface, and `agent/model.py`'s Foundry client. Budgets/knobs are in-module constants — the
-config surface is never touched (rule §5.9).
+config surface is never touched.
 
-Public surface via explicit `from .x import Y as Y` re-exports (`.claude/rules/modules.md` — never
-`__all__`).
+Public surface via explicit `from .x import Y as Y` re-exports — never `__all__`.
 """
 
 # The tool surface is no longer decorator-registered, so this is a plain re-export, not a

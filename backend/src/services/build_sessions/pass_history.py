@@ -92,7 +92,7 @@ async def reclamation_pass_freshness(db: AsyncSession) -> tuple[dt.datetime | No
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────
-# U5 — the copy the reaper takes before it reclaims (ADR-0029 §7).
+# the copy the reaper takes before it reclaims.
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
 #: The `task_name` a copy-before-reclaim row carries, and it is DELIBERATELY NOT
@@ -117,21 +117,21 @@ class CopyAttempt(enum.StrEnum):
     #: before reclaiming. The zero-candidate case, and it is recorded for the same reason a
     #: zero-candidate pass is: a quiet fleet and a dead process are otherwise one observation.
     NOTHING_TO_COPY = "nothing_to_copy"
-    #: ADR-0029 §7 kept: a fresh copy landed in the recovery slot, and the container may go.
+    #: A fresh copy landed in the recovery slot, and the container may go.
     COPIED = "copied"
     #: There was nothing to copy FROM. The container would not attach, or the record no longer
     #: names the container we are judging — in which case the tree we could reach belongs to
     #: somebody else's build and must never be bundled into this app's slot.
     UNREACHABLE = "unreachable"
-    #: U3's guard would not promote this tree over the copy on record: the lineage is broken or
-    #: unreadable. The bundle is preserved under `divert_key`, the existing copy is untouched,
+    #: The lineage guard would not promote this tree over the copy on record: the lineage is broken
+    #: or unreadable. The bundle is preserved under `divert_key`, the existing copy is untouched,
     #: and the container is spared — a refusal is never a licence to destroy.
     REFUSED = "refused"
     #: The bundle, the read-back or the upload itself raised. Nothing was established, so nothing
     #: is destroyed.
     FAILED = "failed"
     #: A copy landed, but it is THE FIRST ONE — there was nothing on record to compare it against,
-    #: so U3's lineage guard never ran. Fine at a turn boundary, where the container is alive and
+    #: so the lineage guard never ran. Fine at a turn boundary, where the container is alive and
     #: the tree is the citizen's; NOT a licence to destroy, because a reverted container has
     #: exactly this shape and the copy we just took would be the reverted tree.
     UNGUARDED = "unguarded"

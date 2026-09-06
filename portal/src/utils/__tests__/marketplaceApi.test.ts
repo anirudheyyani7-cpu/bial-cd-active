@@ -1,12 +1,12 @@
 /**
- * The marketplace client's REQUEST and PARSE contract (#145).
+ * The marketplace client's REQUEST and PARSE contract.
  *
  * Two things are worth pinning here that a component test cannot reach. First, the query
  * string: `q`, `page`, `limit` and `sort` have to arrive as the server's own param names or
  * the catalog silently ignores the search and returns page one of everything — a failure
  * that looks like "search found nothing" rather than "search never ran". Second, the
- * tolerant parse: a description or a builder display name may legitimately be absent (#145
- * does not generate descriptions), so those must come back as `null` rather than throwing
+ * tolerant parse: a description or a builder display name may legitimately be absent (the
+ * marketplace listing does not generate descriptions), so those must come back as `null` rather than throwing
  * away the whole page — and a row that is unusable outright drops itself rather than taking
  * the catalog down with it.
  */
@@ -85,7 +85,7 @@ describe('listMarketplace parse contract', () => {
   })
 
   it('reads a missing description and builder name as null, not as a broken page', async () => {
-    // Both are legitimately absent: #145 does not generate descriptions, and a user row may
+    // Both are legitimately absent: the marketplace listing does not generate descriptions, and a user row may
     // carry no display name. Dropping the whole page over either would hide live apps.
     const sparse = { ...ENTRY, description: undefined, builderDisplayName: undefined }
     const page = await listMarketplace(
@@ -121,8 +121,8 @@ describe('listMarketplace parse contract', () => {
 
     // The drop must not be SILENT. Dropping the row is the right trade, but it leaves
     // `total` and the rendered count disagreeing, and without a signal that is
-    // indistinguishable from a correct page. This was the one round-3 fix with no receipt
-    // — deleting the `console.warn` left the whole suite green (#147 round 3 review).
+    // indistinguishable from a correct page. Deleting the `console.warn` call used to leave
+    // the whole suite green with nothing to catch it — these next two assertions are the receipt.
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0][0]).toMatch(/dropped an unreadable catalog entry/)
     warn.mockRestore()

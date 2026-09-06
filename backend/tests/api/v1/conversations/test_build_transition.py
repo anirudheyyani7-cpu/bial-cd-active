@@ -1,4 +1,4 @@
-"""The Plan → Build handoff (U7/U8): a NEW chat, the plan verbatim, and nothing stored either way.
+"""The Plan → Build handoff: a NEW chat, the plan verbatim, and nothing stored either way.
 
 WHAT THESE PIN, and why each is here rather than being obvious:
 
@@ -9,7 +9,8 @@ WHAT THESE PIN, and why each is here rather than being obvious:
   flushed and not committed; the shared turn starter's first durable write commits it together
   with the first message; the answer to the offer is written last, after that. Two of the tests
   below exist only to hold that order in place, because both wrong versions of it look correct
-  in review and one of them is issue #72 with a new subject.
+  in review and one of them is a repeat of the bug that once left a permanent empty Build chat
+  behind, just with a new subject.
 * **No linkage, in either direction.** Idempotency comes from the client-minted conversation id
   colliding with itself, not from anything recorded against the plan — which is what lets the
   same offer be pressed again next week and produce a second, different Build chat.
@@ -250,7 +251,7 @@ async def _chats_with_id(db_session, chat_id: uuid.UUID) -> int:
 async def test_the_new_chat_opens_with_the_plan_and_nothing_else(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ AE9. The whole plan, visible, with nothing before or after it.
+    """★ The whole plan, visible, with nothing before or after it.
 
     Nothing before: no "execute the approved plan" prefix, which is what the retired seed
     carried. Nothing after: no planning history copied across. And VISIBLE, not hidden — the
@@ -285,7 +286,7 @@ async def test_the_new_chat_opens_with_the_plan_and_nothing_else(
 async def test_a_plan_past_the_browsers_cap_still_opens_a_chat_with_all_of_it(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ AE19. The server keeps its own, higher ceiling (R42a), and this is why it matters:
+    """★ The server keeps its own, higher ceiling, and this is why it matters:
     the handoff materialises a message the browser never typed, so a limit chosen for a text
     box would refuse a plan nobody could have shortened."""
     long_plan = "Your app will remember every visit. " * 900  # ~32k chars: past any typing cap
@@ -334,7 +335,7 @@ async def test_a_build_run_is_still_told_to_follow_the_code_over_the_plan(
 async def test_two_presses_of_the_same_id_settle_as_one_chat_and_one_turn(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ AE10/AE11. The double press, the retry, and the reload are ONE case, because they all
+    """★ The double press, the retry, and the reload are ONE case, because they all
     carry the id the browser minted for that press.
 
     The second call answers `already_started` with whatever turn is live, so a second tab
@@ -362,7 +363,7 @@ async def test_two_presses_of_the_same_id_settle_as_one_chat_and_one_turn(
 async def test_pressing_the_same_offer_again_later_builds_a_second_different_chat(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ AE12's second half. Nothing archives the offer and nothing records that it was
+    """★ Nothing archives the offer and nothing records that it was
     pressed, so next week's press — a NEW minted id — gets a new Build chat.
 
     That is the behaviour "no stored linkage" buys, stated as a feature rather than as an
@@ -397,7 +398,7 @@ async def test_pressing_the_same_offer_again_later_builds_a_second_different_cha
 async def test_nothing_written_anywhere_references_both_conversations(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ N3, asserted over every row on both sides rather than over the schema.
+    """★ No linkage, asserted over every row on both sides rather than over the schema.
 
     Including the tool answer's own content, which is the one place the guarantee could leak by
     accident: the natural thing to write into a `ToolReturnPart` is *what happened*, and "what
@@ -436,7 +437,7 @@ async def test_nothing_written_anywhere_references_both_conversations(
 async def test_the_plan_chat_is_otherwise_left_exactly_as_it_was(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ AE12's first half (R27). One write in the Plan chat — the answer — and no marker, no
+    """★ One write in the Plan chat — the answer — and no marker, no
     archive flag, no kind change, and no new visible item in its transcript."""
     user, plan_chat, headers = await _plan_chat_with_offer(
         client, db_session, set_chat_model, _fresh_engine
@@ -465,7 +466,7 @@ async def test_the_plan_chat_is_otherwise_left_exactly_as_it_was(
 async def test_a_failure_at_the_first_durable_write_leaves_no_build_chat(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage, monkeypatch
 ) -> None:
-    """★ R29, reached by a failure that CAN ACTUALLY HAPPEN.
+    """★ Reached by a failure that CAN ACTUALLY HAPPEN.
 
     The obvious two conditions cannot occur on a freshly minted id, and writing this test with
     either would green-pass against a missing rollback: `ConversationBusyError` comes from an
@@ -493,8 +494,8 @@ async def test_a_failure_at_the_first_durable_write_leaves_no_build_chat(
     # that rollback never happens and the flushed row would sit there looking committed. Doing
     # it explicitly is the stand-in — and it is a real discriminator rather than a formality,
     # because the failure this test exists to catch is the route COMMITTING the conversation
-    # row before starting the turn (issue #72's shape). A committed row survives this rollback;
-    # a flushed one does not.
+    # row before starting the turn — the same shape as the bug that once left a permanent empty
+    # Build chat behind. A committed row survives this rollback; a flushed one does not.
     #
     # Mutation-checked: put `await db.commit()` after the flush in `transition.build_it` and
     # this assertion goes red on its own.
@@ -509,8 +510,8 @@ async def test_a_failure_at_the_first_durable_write_leaves_no_build_chat(
 async def test_the_mirror_a_failed_handoff_leaves_the_offer_pressable(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage, monkeypatch
 ) -> None:
-    """★ U8's reason for existing, reached THROUGH THE ENDPOINT rather than by calling a
-    recorder.
+    """★ Why the retired re-arm mechanism is gone, reached THROUGH THE ENDPOINT rather than by
+    calling a recorder.
 
     The retired `build_failed` state existed to re-arm a card a failed press had burned. The
     press cannot burn one any more — the answer is the LAST write, after the turn has started —
@@ -548,7 +549,7 @@ async def test_a_failure_of_the_answer_write_still_leaves_a_complete_build_chat(
     A failure here leaves a Build chat that is correct and complete and a Plan chat with an
     unanswered call — which is recoverable twice over (the next send resolves the card, and the
     dangling-call repair stitches the history valid regardless). The alternative ordering leaves
-    a permanent empty Build chat, which is issue #72."""
+    a permanent empty Build chat."""
     user, plan_chat, headers = await _plan_chat_with_offer(
         client, db_session, set_chat_model, _fresh_engine
     )
@@ -638,7 +639,7 @@ async def test_a_pre_migration_offer_refuses_by_name_and_creates_nothing(
 async def test_a_plan_over_the_ceiling_refuses_by_name_and_truncates_nothing(
     client, db_session, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ R44. REFUSED, never trimmed — a plan cut mid-sentence is one the citizen agreed to and
+    """★ REFUSED, never trimmed — a plan cut mid-sentence is one the citizen agreed to and
     the build would never see the end of.
 
     Seeded directly rather than produced by a model, because the engine now refuses to record an
@@ -745,8 +746,8 @@ async def test_the_daily_cap_is_a_429_and_leaves_the_offer_pressable(
 async def test_a_workspace_busy_in_another_chat_is_a_coded_409(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """R19's first refusal, carrying the code that tells it apart from the other 409 on this
-    route — same status, different cause, different remedy."""
+    """The workspace-busy refusal, carrying the code that tells it apart from the other 409 on
+    this route — same status, different cause, different remedy."""
     user, plan_chat, headers = await _plan_chat_with_offer(
         client, db_session, set_chat_model, _fresh_engine
     )
@@ -774,7 +775,7 @@ async def test_a_workspace_busy_in_another_chat_is_a_coded_409(
 async def test_a_retry_after_the_build_attached_its_sandbox_is_still_answered_idempotently(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ AE10. THE RETRY THAT ARRIVES LATE, which is the ordinary one: a reload, or a resend
+    """★ THE RETRY THAT ARRIVES LATE, which is the ordinary one: a reload, or a resend
     after the first response was dropped.
 
     It is the same case as the fast double press, but it reaches the route in a different
@@ -819,7 +820,7 @@ async def test_a_retry_after_the_build_attached_its_sandbox_is_still_answered_id
 async def test_unsaved_work_in_another_project_refuses_the_handoff_with_its_own_code(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ R19's SECOND refusal, on this route rather than the send route.
+    """★ The unsaved-work refusal, on this route rather than the send route.
 
     The two are different questions with the same status: the first is "one of your own chats
     holds the workspace", this is "taking the workspace would destroy unsaved work in another
@@ -955,7 +956,7 @@ async def test_a_raced_refine_leaves_exactly_one_return_on_the_wire(
 
 
 def test_no_resolution_value_exists_that_a_user_cannot_produce() -> None:
-    """★ U8. `build_failed` is gone from every surface it appeared on, and the three are named
+    """★ `build_failed` is gone from every surface it appeared on, and the three are named
     individually because they are three independent declarations that had to agree."""
     import typing
 
@@ -1032,7 +1033,7 @@ async def test_a_stray_build_failed_overlay_reads_as_spent_not_as_live(db_sessio
 async def test_the_offer_renders_its_plan_above_the_card(
     client, db_session, set_chat_model, wire, _fresh_engine, fake_redis, fake_storage
 ) -> None:
-    """★ U5's reload half, asserted at the seam the handoff reads from.
+    """★ The reload half, asserted at the seam the handoff reads from.
 
     One stored copy — the call's own argument — renders as the plan and then the card, in that
     order. If this ever drifts from what the live stream pushed, the citizen agreed to one text

@@ -1,4 +1,4 @@
-"""U5 — the C4 snapshot write (no DB / Redis; fake storage + a scripted fake client)."""
+"""The snapshot write (no DB / Redis; fake storage + a scripted fake client)."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ async def test_write_snapshot_bundles_and_puts_to_blob(fake_storage: FakeStorage
 
     client.exec_handler = handler
     await write_snapshot(client, _handle(), APP_ID)
-    # The base64'd bundle round-trips to Blob at the C4 key (byte-stable).
+    # The base64'd bundle round-trips to Blob at the snapshot key (byte-stable).
     assert fake_storage.objects[snapshot_key(APP_ID)] == a_git_bundle()
     # The commit script survives a GIT-LESS workspace (the baked image has no .git): it inits
     # idempotently and guards the nothing-to-commit case (mirrors sandbox/scripts/snapshot.sh).
@@ -97,7 +97,7 @@ async def test_write_snapshot_raises_on_bundle_read_failure(fake_storage: FakeSt
     assert snapshot_key(APP_ID) not in fake_storage.objects
 
 
-# --- the container-state parse (#83 follow-up) ---------------------------------------
+# --- the container-state parse --------------------------------------------------------
 
 
 def test_porcelain_paths_survive_the_stripped_first_line() -> None:
@@ -132,8 +132,7 @@ def test_a_rename_reports_the_destination_not_the_source() -> None:
 def test_a_listing_at_the_cap_reads_as_truncated() -> None:
     """`porcelain_truncated` is the backstop for a tree too dirty to enumerate, and it shipped
     DEAD: the shell capped at `head -c 200` while the parse tested `>= 400`, so it could never
-    be True and the "unambiguous evidence of real work" its comment describes did not exist
-    (#83 review, finding 6).
+    be True and the "unambiguous evidence of real work" its comment describes did not exist.
 
     Both now derive from `PORCELAIN_CAP_BYTES`, so this fails if they ever drift apart again.
     `>=` rather than `>` is deliberate: output landing exactly on the cap is indistinguishable

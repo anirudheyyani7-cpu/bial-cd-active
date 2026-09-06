@@ -8,7 +8,7 @@
  * that rot when copied, which is why they were not. What changed is three derived values
  * that went, because the server now computes the one state they were guessing at.
  *
- * THE APPROVAL LIFECYCLE COMES THROUGH HERE TOO (U12), off the same status response. The
+ * THE APPROVAL LIFECYCLE COMES THROUGH HERE TOO, off the same status response. The
  * status card used to read `/apps/:id/status` itself, once, on mount — so a citizen who
  * pressed Publish and watched their app route into the queue sat there being told it was
  * still a draft. Hanging the lifecycle off this read is also the only way a surface with
@@ -110,7 +110,7 @@ export interface UsePublishState {
    *  which case the failure is already in `unsaved`. */
   saveAndPublish: () => Promise<DeployOutcome | null>
   dismissUnsaved: () => void
-  /** Pull the owner's own pending submission back out of the queue (P6). */
+  /** Pull the owner's own pending submission back out of the queue. */
   withdraw: () => Promise<void>
   withdrawing: boolean
   withdrawError: string | null
@@ -221,7 +221,7 @@ export function usePublishState(projectId: string): UsePublishState {
 
   const send = useCallback(
     async (answers: DataClassificationAnswers, saveFirst: boolean): Promise<DeployOutcome> => {
-      // TWO success shapes (U9). Routing is not an error and must not be thrown: the
+      // TWO success shapes. Routing is not an error and must not be thrown: the
       // modal would render it in red beside the button, and the citizen would read "your
       // app was sent for review" as a failure of the thing they just asked for.
       const outcome = await startDeploy(projectId, { answers, saveFirst })
@@ -241,8 +241,8 @@ export function usePublishState(projectId: string): UsePublishState {
   // EVERY OTHER ERROR REFRESHES BEFORE IT RETHROWS. A 409 here is usually the server
   // telling this surface something it did not know yet — most often `waiting_for_review`,
   // where another tab (or the other publish control, mounted on a different page) already
-  // routed a version while this one still showed the button enabled. R15b relies on the
-  // disabled waiting state to stop a second submit, but that state is only as fresh as the
+  // routed a version while this one still showed the button enabled. The disabled waiting
+  // state stops a second submit, but that state is only as fresh as the
   // last poll. Rethrowing alone left the modal open on state the server had already
   // contradicted, until the next tick happened to correct it.
   const onConfirm = useCallback(

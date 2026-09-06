@@ -75,7 +75,7 @@ test.describe('real Azure sandbox (opt-in, E2E_REAL_SANDBOX=1)', () => {
     // gate, and it is the stronger one anyway: it needs a real `preview_ready` envelope.
 
     // Deliberately NOT asserting on the "Building your app" status line here (it was here once,
-    // dropped 2026-07-30). Its own justification claimed it proved the C7 SSE feed was live, but
+    // dropped 2026-07-30). Its own justification claimed it proved the SSE feed was live, but
     // that status line is driven by `session.status` from the POST /v1/build-sessions response
     // body itself — set client-side before any SSE frame necessarily arrives — so it never
     // actually proved that. It also flaked in real runs (a real 201 came back server-side with no
@@ -109,14 +109,14 @@ test.describe('real Azure sandbox (opt-in, E2E_REAL_SANDBOX=1)', () => {
     await expect(frame.locator('body')).toBeVisible({ timeout: 60_000 })
     await expect(frame.locator('html')).not.toBeEmpty()
 
-    // agc129's #6 (P1, LivePreview.test.jsx:229): the jsdom device-toggle specs can only assert
+    // The jsdom device-toggle specs can only assert
     // that the wrapper's inline `style.width` got SET — jsdom has no layout engine, so they
     // cannot see whether the framed document's own media queries actually evaluate against that
     // width. This is the other half of that claim, proven for real: a genuinely cross-origin
     // document, in a genuinely narrower browser window, actually reflowing to the requested
     // device width — not the literal the component wrote, but what the framed app itself
     // observes. 1024x768 is the specific width the pre-fix code silently rendered 728px at
-    // instead of 834px (agc129's review, LivePreview.jsx:238) — the exact case that would have
+    // instead of 834px — the exact case that would have
     // caught the bug before it shipped. Scoped tightly to just these two assertions and restored
     // immediately after: the stop/relaunch section below doesn't touch the device-width card (the
     // ended-state card is a fixed max-w-xs, not device-width-driven, and Stop lives in the
@@ -145,7 +145,7 @@ test.describe('real Azure sandbox (opt-in, E2E_REAL_SANDBOX=1)', () => {
     await expect(mobileButton).toHaveAttribute('aria-pressed', 'true')
     await expect.poll(() => root.evaluate(() => window.innerWidth), { timeout: 5_000 }).toBe(390)
 
-    // agc129's #6 is proven at this exact point, independent of whatever the stop/relaunch tail
+    // This device-width claim is proven at this exact point, independent of whatever the stop/relaunch tail
     // below does. Logged explicitly so a later failure in that tail (both its timeouts are
     // unmeasured) doesn't read as "the run failed" when what actually matters already passed.
     console.log(
@@ -156,7 +156,7 @@ test.describe('real Azure sandbox (opt-in, E2E_REAL_SANDBOX=1)', () => {
     // stop/relaunch assertions below — they were written and verified against that width.
     await page.setViewportSize({ width: 1280, height: 720 })
 
-    // The compact ended-state card (#42 F3) against the real backend: stop the real session and
+    // The compact ended-state card against the real backend: stop the real session and
     // confirm the terminal card renders small, not the old full-pane dead state.
     await page.getByRole('button', { name: /^stop$/i }).click()
     const endedCard = page.getByTestId('preview-ended-card')
@@ -164,7 +164,7 @@ test.describe('real Azure sandbox (opt-in, E2E_REAL_SANDBOX=1)', () => {
 
     // STILL UNCOVERED IN A BROWSER: that pressing the one start control after a stop genuinely
     // restores a live preview from the real snapshot. The card's own Relaunch button was deleted
-    // with `RelaunchAffordance` (LivePreview.tsx) — R3 leaves exactly one control that starts an
+    // with `RelaunchAffordance` (LivePreview.tsx), leaving exactly one control that starts an
     // app, `StartAppControl`, and it renders from `AppPane`, not inside this card. Repointing at
     // it blind would swap a locator that is obviously dead for one that only looks right, so the
     // claim is named here and left for a run that can actually watch the container come back.

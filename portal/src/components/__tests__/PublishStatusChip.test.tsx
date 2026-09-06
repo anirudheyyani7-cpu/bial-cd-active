@@ -6,7 +6,7 @@
  * retired controls (the Publish card, the review card and the toolbar button; named
  * descriptively because a retirement guard walks this tree for their symbols) pinned
  * across 48 cases, walked and re-established here rather than deleted with their suites.
- * A swap drops guarantees in both directions (L5), and the old suites were the checklist
+ * A swap drops guarantees in both directions, and the old suites were the checklist
  * someone would otherwise have had to write from scratch.
  *
  * Two of those 48 are deliberately NOT carried, each with a verdict rather than a shrug:
@@ -14,11 +14,10 @@
  *     indistinguishable from a broken page, and this is now the only publishing surface
  *     the citizen has. It becomes the ordinary read-failure chip with a re-read.
  *   · the canvas's "YOUR LATEST" / saved-version rows. NO LONGER TRUE, and no longer this
- *     component's job either: plan 002's U4 made the server return the head it already
- *     read, and the boards give those three provenance rows to the rail's APP STATUS
- *     PANEL — the fuller of the two surfaces — where `AppStatusPanel.test.tsx` pins them.
- *     What this file still owns is the chip: its label, its COLOUR (new in U4), its
- *     sentence and its one action.
+ *     component's job either: the server now returns the head it already read, and the
+ *     boards give those three provenance rows to the rail's APP STATUS PANEL — the fuller
+ *     of the two surfaces — where `AppStatusPanel.test.tsx` pins them. What this file still
+ *     owns is the chip: its label, its colour, its sentence and its one action.
  *
  * The hook is mocked at the module boundary; its own behaviour is covered by
  * `usePublishState.reconciliation.test.tsx`. The questionnaire is stubbed for the same
@@ -158,7 +157,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 /**
- * THE COLOUR IS THE SIGNAL, AND IT WAS ENTIRELY MISSING (plan 002, U4).
+ * THE COLOUR IS THE SIGNAL, AND IT WAS ENTIRELY MISSING.
  *
  * Every one of the thirteen states rendered the same neutral grey `rounded-md` chip: the word
  * changed and nothing else did, so "Draft" was chromatically indistinguishable from "Changes
@@ -216,7 +215,7 @@ describe('the chip is coloured by its state, with a leading dot', () => {
       const key = `${family}|${presentationFor(state).label}`
       const clash = seen.get(key)
       // The two `Approved` states DO share both, deliberately — they are the same state to a
-      // citizen and the difference is on the button (R38). Nothing else may.
+      // citizen and the difference is on the button. Nothing else may.
       if (clash) expect([clash, state].sort()).toEqual(['approved_needs_review_again', 'approved_ready_to_publish'])
       seen.set(key, state)
     }
@@ -234,7 +233,7 @@ describe('the chip is coloured by its state, with a leading dot', () => {
   })
 })
 
-// ── U2 — the chip's own words ───────────────────────────────────────────────────────
+// ── the chip's own words ───────────────────────────────────────────────────────────
 
 describe('the chip names the state, and the closed chip is a complete answer', () => {
   it('gives every value its own words, and the two approved values share one on purpose', () => {
@@ -245,8 +244,8 @@ describe('the chip names the state, and the closed chip is a complete answer', (
       cleanup()
     }
 
-    // R-1.8: the approved pair is the ONE deliberate sharing — both are "their app is
-    // approved" to a citizen, and R38 puts the difference on the button, not the label.
+    // The approved pair is the ONE deliberate sharing — both are "their app is
+    // approved" to a citizen, and the difference is put on the button, not the label.
     // Every other pair is distinct, which is what makes the closed chip complete.
     const spoken = LABELS.map(([, label]) => label)
     const shared = spoken.filter((l, i) => spoken.indexOf(l) !== i)
@@ -348,7 +347,7 @@ describe('the chip names the state, and the closed chip is a complete answer', (
   })
 })
 
-// ── U3 — one sentence, the version row, at most one action ──────────────────────────
+// ── one sentence, the version row, at most one action ────────────────────────────────
 
 describe('the popover explains the state and offers at most one thing to do', () => {
   it('covers AE23 — switched off says an administrator did it, and offers nothing', async () => {
@@ -370,7 +369,7 @@ describe('the popover explains the state and offers at most one thing to do', ()
     // Conditional on purpose — a zero-score declaration publishes unattended under ladder
     // rule 7, so promising a review outright would be untrue for the common case.
     expect(pop.textContent).toContain('If it handles anything sensitive')
-    // AND THE PRIVACY CLAIM IS GONE (plan 002, U4). The sentence opened "Nobody else can see
+    // AND THE PRIVACY CLAIM IS GONE. The sentence opened "Nobody else can see
     // this yet", which describes who can REACH the app — the same claim the board's own notes
     // record retiring one word earlier, as "a claim nobody asked the chip to make".
     expect(pop.textContent).not.toMatch(/nobody else can see/i)
@@ -472,7 +471,7 @@ describe('the popover explains the state and offers at most one thing to do', ()
     const text = pop.textContent ?? ''
 
     expect(screen.getByTestId('publish-action').textContent).toBe('Publish')
-    // Both phrasings the retired control used, and which this plan exists to stop making.
+    // Both phrasings the retired control used, and neither may come back.
     expect(text).not.toMatch(/publish it yourself/i)
     expect(text).not.toMatch(/sent for approval once more/i)
     expect(screen.getByTestId('publish-version').textContent).toContain('Approved version')
@@ -695,7 +694,7 @@ describe('the popover explains the state and offers at most one thing to do', ()
   })
 })
 
-// ── U5 — what a press attempts, and what happened ──────────────────────────────────
+// ── what a press attempts, and what happened ─────────────────────────────────────────
 
 describe('one press, one request, and the server says which success it was', () => {
   it('opens the questionnaire and hands it the note when there is one', async () => {
@@ -799,13 +798,13 @@ describe('one press, one request, and the server says which success it was', () 
 
     expect(saveAndPublish).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('data-classification-modal')).toBeNull()
-    // While the question stands, the ordinary action is not also on offer — R37 allows one.
+    // While the question stands, the ordinary action is not also on offer.
     expect(screen.queryByTestId('publish-action')).toBeNull()
   })
 
   it('marks an in-flight action unavailable with a reason, and never hard-disables it', async () => {
-    // R64 / D1 / KTD-2: disabling a control that has focus blurs it to `document.body`,
-    // which is how a keyboard user loses their place mid-flight.
+    // Disabling a control that has focus blurs it to `document.body`, which is how a
+    // keyboard user loses their place mid-flight.
     wire(view('draft'), { unsaved: 'You have changes that are not saved yet.', saving: true })
     mount()
     await screen.findByTestId('publish-popover')
@@ -844,8 +843,8 @@ describe('a failed read has one honest presentation, and a storage blip is not o
 
   it('renders a server-side storage failure as an ordinary state with its own action', async () => {
     // The server degrades a storage error on the drift read to `live_drift_unknown` and
-    // answers 200 (a named departure from ASM21, made because this is the only publishing
-    // surface there is). So it must NOT reach the unavailable presentation.
+    // answers 200, deliberately, because this is the only publishing surface there is.
+    // So it must NOT reach the unavailable presentation.
     wire(view('live_drift_unknown', { url: 'https://x.example/' }))
     mount()
 
@@ -858,7 +857,7 @@ describe('a failed read has one honest presentation, and a storage blip is not o
   })
 })
 
-// ── Taking a submission back (P6) — the four cases the retired control pinned ───────
+// ── Taking a submission back — the four cases the retired control pinned ────────────
 
 describe('taking a version back out of the queue', () => {
   const IN_REVIEW = view('in_review', {
@@ -902,9 +901,9 @@ describe('taking a version back out of the queue', () => {
   })
 
   it('marks the confirm unavailable while the withdrawal is in flight', async () => {
-    // R64 / D1 / KTD-2 on the one button the chip itself fires a request from. Driven in
-    // the order it actually happens — confirm first, THEN in flight — because the request
-    // cannot start before the confirm exists.
+    // The same focus-safe disabling applies to the one button the chip itself fires a
+    // request from. Driven in the order it actually happens — confirm first, THEN in
+    // flight — because the request cannot start before the confirm exists.
     wire(IN_REVIEW, { withdrawing: false })
     const { rerender } = render(<PublishStatusChip projectId="p1" />)
     await openChip()

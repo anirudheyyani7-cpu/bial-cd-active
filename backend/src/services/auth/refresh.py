@@ -1,13 +1,13 @@
-"""Refresh tokens — opaque generation + hash-at-rest (crypto), and (U5/U7) the
+"""Refresh tokens — opaque generation + hash-at-rest (crypto), and the
 DB-backed family issuance + atomic rotation with reuse detection.
 
-This module holds the pure crypto primitives now; `issue_new_family` (U5) and
-`rotate_refresh_token` (U7) — the single compare-and-swap that closes the
-rotation race the POC deferred to the backend (KD-5) — land alongside the
+This module holds the pure crypto primitives now; `issue_new_family` and
+`rotate_refresh_token` — the single compare-and-swap that closes the
+rotation race the POC deferred to the backend — land alongside the
 endpoints that use them.
 
 A refresh token is a 256-bit random secret handed to exactly one client, NOT a
-password: only its SHA-256 hash is stored (R7), and a fast unsalted hash is
+password: only its SHA-256 hash is stored, and a fast unsalted hash is
 correct — lookup is by exact hash match and there is nothing to brute-force that
 guessing the 256-bit token wouldn't already break.
 """
@@ -30,7 +30,7 @@ from src.db.models.user import User
 from src.services.auth.errors import REASON_INVALID_REFRESH, REASON_SESSION_EXPIRED, AuthError
 
 # 32 bytes -> ~43 URL-safe chars: high-entropy, cookie-safe, never guessable or
-# sequential (ADR-0006).
+# sequential.
 _TOKEN_BYTES = 32
 
 
@@ -59,7 +59,7 @@ async def issue_new_family(db: AsyncSession, user_id: uuid.UUID) -> str:
     """Mint the FIRST refresh token of a brand-new family (login).
 
     Sets `absolute_expires_at = now + absolute_session_seconds` — the family-wide
-    hard cap that every rotation inherits and that enforces the ~8h re-auth (AE3).
+    hard cap that every rotation inherits and that enforces the ~8h re-auth.
     Only the hash is persisted; the raw token is returned to the caller to place in
     the (path-scoped, HttpOnly) refresh cookie."""
     raw = generate_refresh_token()
@@ -78,17 +78,17 @@ async def issue_new_family(db: AsyncSession, user_id: uuid.UUID) -> str:
 
 
 async def _revoke_family(db: AsyncSession, family_id: uuid.UUID) -> None:
-    # One indexed sweep kills every token in the family (KD-5).
+    # One indexed sweep kills every token in the family.
     await db.execute(
         sa.update(RefreshToken).where(RefreshToken.family_id == family_id).values(revoked=True)
     )
 
 
 async def revoke_all_sessions(db: AsyncSession, user_id: uuid.UUID) -> None:
-    """Instantly kill EVERY live credential for a user (KD-6): bump `token_version`
+    """Instantly kill EVERY live credential for a user: bump `token_version`
     (which invalidates all session JWTs and outstanding runner tokens — both carry
     it) and revoke every active refresh token across all families. Shared by logout
-    and admin deactivation (U10). Idempotent: the bump is monotonic and the revoke
+    and admin deactivation. Idempotent: the bump is monotonic and the revoke
     is a no-op once revoked. Does NOT commit — the caller owns the transaction."""
     await db.execute(
         sa.update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
@@ -102,15 +102,15 @@ async def revoke_all_sessions(db: AsyncSession, user_id: uuid.UUID) -> None:
 
 async def rotate_refresh_token(db: AsyncSession, presented_hash: str) -> RotationResult:
     """Atomically rotate a refresh token, detecting reuse and enforcing the
-    absolute lifetime (KD-5). Returns a `RotationResult` on success; raises
+    absolute lifetime. Returns a `RotationResult` on success; raises
     `AuthError` (fail closed) on not-found / revoked / expired / reuse — after
     revoking the whole family on reuse, which the caller must commit.
 
     The single compare-and-swap `SET used_at = now() WHERE id = :id AND used_at IS
     NULL` is the ONLY reuse detector: a replay of an already-rotated token (whether
     a sequential attacker replay or a concurrent race) claims 0 rows and triggers a
-    family revoke (AE2). This closes the read-then-write race the POC deferred to
-    the backend (institutional learning, 2026-06-18)."""
+    family revoke. This closes the read-then-write race the POC deferred to
+    the backend."""
     row = await db.scalar(select(RefreshToken).where(RefreshToken.token_hash == presented_hash))
     if row is None:
         raise AuthError("refresh token not recognized", reason=REASON_INVALID_REFRESH)
@@ -120,7 +120,7 @@ async def rotate_refresh_token(db: AsyncSession, presented_hash: str) -> Rotatio
         # The family was already killed (a prior reuse or a logout).
         raise AuthError("refresh family revoked", reason=REASON_INVALID_REFRESH)
     if now >= row.absolute_expires_at:
-        # AE3 — the ~8h family cap. No rotation past it; a fresh Entra sign-in is
+        # The ~8h family cap. No rotation past it; a fresh Entra sign-in is
         # required. (Constant across rotations, so every sibling is denied too.)
         raise AuthError("session absolute lifetime exceeded", reason=REASON_SESSION_EXPIRED)
     if now >= row.expires_at:
@@ -133,7 +133,7 @@ async def rotate_refresh_token(db: AsyncSession, presented_hash: str) -> Rotatio
         .returning(RefreshToken.id)
     )
     if (await db.execute(claim)).first() is None:
-        # 0 rows -> the token was already consumed: reuse (AE2). Kill the family.
+        # 0 rows -> the token was already consumed: reuse. Kill the family.
         await _revoke_family(db, row.family_id)
         raise AuthError("refresh reuse detected", reason=REASON_INVALID_REFRESH)
 

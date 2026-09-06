@@ -1,11 +1,11 @@
 /**
- * The composer's own refusal sentence, reconciled against the allowlist it describes (R48, R56).
+ * The composer's own refusal sentence, reconciled against the allowlist it describes.
  *
  * The sentence a citizen actually meets when the picker says no —
  * `validateAttachmentFiles`'s "…isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF,
  * a Word (.docx) or Excel (.xlsx) file, or a text file (CSV, TXT)." — is a PROMISE about a file
  * picker, and no test reads it. It goes false the moment `ALLOWED_MEDIA_TYPES` narrows, which is
- * exactly the drift #157 B2 shipped once already, in this same area, in the other direction.
+ * exactly the drift shipped once already, in this same area, in the other direction.
  *
  * TWO DIRECTIONS, like the Help FAQ's block: a format the picker accepts must be NAMED, and a
  * format it refuses must NOT be. A one-way test is what let ".pptx" survive in the copy after the
@@ -29,7 +29,7 @@ import { validateAttachmentFiles, ALLOWED_MEDIA_TYPES } from '../attachmentInput
 /**
  * The formats this sentence is ABOUT, as literal media types.
  *
- * They were imported constants until Plan D's narrowing deleted three of them — which is the
+ * They were imported constants until a later narrowing deleted three of them — which is the
  * gate working: the test could not compile against an allowlist that no longer names them. They
  * are literals now precisely SO the reconciliation survives the next narrowing: a format that
  * stops being exported must still be checked for ABSENCE from the copy, and an inventory built
@@ -83,7 +83,8 @@ describe('the composer refusal sentence agrees with the real allowlist', () => {
   })
 
   it('never advises a citizen to bring back a format the picker would also refuse', () => {
-    // R56 as behaviour rather than as a constant: advice is only honest while it leads somewhere.
+    // The refusal sentence as behaviour rather than as a constant: advice is only honest while it
+    // leads somewhere.
     // The two legacy messages used to say "save as .docx" and "save as .pptx"; both stopped being
     // followable when those formats were refused too, so both are gone and there is one refusal
     // that names what IS accepted. Driving the validator is what proves that, rather than trusting

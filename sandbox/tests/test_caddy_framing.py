@@ -1,4 +1,4 @@
-"""C8 preview-transport framing — asserted against the REAL image Caddy (integration lane).
+"""preview-transport framing — asserted against the REAL image Caddy (integration lane).
 
 The walking skeleton proved framing against an *emulated* Caddy (`scripts/skeleton/frame-proof/
 servers.mjs`); this pins the SHIPPED Caddyfile of the real pre-baked image. Byte-exact header
@@ -6,7 +6,6 @@ assertions + a wildcard guard + the fail-closed default (backend `test_csp.py` d
 
 Key verified fact: Caddy emits the `handle`-block CSP header **even on the 502** it returns when
 `next dev` is not started — so these header assertions need no running dev server (fast + robust).
-Requirements R5, R6.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ PORTAL_ORIGIN = "https://portal.example"
 
 @pytest.fixture(scope="module")
 def framed(sandbox_image: str) -> Iterator[Sandbox]:
-    """A container whose C8 portal origin IS set (the normal provision case)."""
+    """A container whose portal origin IS set (the normal provision case)."""
     sbx = run_sandbox({"BIAL_PORTAL_ORIGIN": PORTAL_ORIGIN}, image=sandbox_image)
     try:
         yield sbx
@@ -33,7 +32,7 @@ def framed(sandbox_image: str) -> Iterator[Sandbox]:
 
 @pytest.fixture(scope="module")
 def unframed(sandbox_image: str) -> Iterator[Sandbox]:
-    """A container whose C8 portal origin is UNSET → the header must fail closed."""
+    """A container whose portal origin is UNSET → the header must fail closed."""
     sbx = run_sandbox({}, image=sandbox_image)
     try:
         yield sbx
@@ -45,7 +44,7 @@ def _csp(resp) -> str:
     return resp.headers["content-security-policy"]
 
 
-# --- R5: the next dev block frames ONLY the portal origin, with no XFO -------------------------
+# --- the next dev block frames ONLY the portal origin, with no XFO -------------------------
 def test_next_dev_block_frame_ancestors_is_portal_origin(framed: Sandbox) -> None:
     # HEAD / hits the `handle` (next dev) block; the CSP rides even the 502 (next dev not started).
     resp = framed.raw_head("/")
@@ -59,7 +58,7 @@ def test_next_dev_block_has_no_wildcard(framed: Sandbox) -> None:
     assert "*" not in _csp(framed.raw_head("/"))
 
 
-# --- R5 fail-closed: an unset portal origin yields an EMPTY ancestor list ----------------------
+# --- fail-closed: an unset portal origin yields an EMPTY ancestor list ----------------------
 def test_next_dev_block_fails_closed_when_origin_unset(unframed: Sandbox) -> None:
     csp = _csp(unframed.raw_head("/"))
     # Empty ancestor-list = no origin may frame. `{$BIAL_PORTAL_ORIGIN}` expands to "" → just the
@@ -68,7 +67,7 @@ def test_next_dev_block_fails_closed_when_origin_unset(unframed: Sandbox) -> Non
     assert "*" not in csp
 
 
-# --- R5: the /_sup block is fenced with frame-ancestors 'none' + health is open ---------------
+# --- the /_sup block is fenced with frame-ancestors 'none' + health is open ---------------
 def test_sup_block_is_fenced_frame_ancestors_none(framed: Sandbox) -> None:
     # The supervisor holds the token; its block must NEVER be framable, whatever the portal origin.
     resp = framed.raw_head("/_sup/health")
@@ -76,13 +75,13 @@ def test_sup_block_is_fenced_frame_ancestors_none(framed: Sandbox) -> None:
 
 
 def test_sup_health_is_open_and_ok(framed: Sandbox) -> None:
-    # C1: GET /health is unauthenticated and returns {"ok": true} through the Caddy ingress.
+    # GET /health is unauthenticated and returns {"ok": true} through the Caddy ingress.
     resp = framed.health()
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
 
-# --- R6: the image builds + the entrypoint brings up caddy + uvicorn; no-token fails fast ------
+# --- the image builds + the entrypoint brings up caddy + uvicorn; no-token fails fast ------
 def test_entrypoint_starts_caddy_and_supervisor(framed: Sandbox) -> None:
     # The `framed` fixture only yields after `wait_health` succeeded → both processes are up:
     # Caddy answered `/` (with the CSP header) and the supervisor answered `/_sup/health`.
@@ -91,9 +90,10 @@ def test_entrypoint_starts_caddy_and_supervisor(framed: Sandbox) -> None:
 
 
 def test_missing_supervisor_token_fails_fast(sandbox_image: str) -> None:
-    # Fail-first (R6): with no SUPERVISOR_TOKEN the supervisor raises `KeyError` at MODULE import
-    # (app.py line 38) — so the entrypoint's `exec uvicorn` dies as PID 1 and the container never
-    # boots half-configured. Probed via a direct import (no caddy/server) → deterministic.
+    # Fail-first: with no SUPERVISOR_TOKEN the supervisor raises `KeyError` at MODULE import
+    # (app.py's module-level `TOKEN = os.environ["SUPERVISOR_TOKEN"]`) — so the entrypoint's
+    # `exec uvicorn` dies as PID 1 and the container never boots half-configured. Probed via a
+    # direct import (no caddy/server) → deterministic.
     rc, out = import_supervisor(sandbox_image, token=None)
     assert rc not in (0, None), f"expected a non-zero exit, got {rc}; output:\n{out}"
     assert "SUPERVISOR_TOKEN" in out and "KeyError" in out

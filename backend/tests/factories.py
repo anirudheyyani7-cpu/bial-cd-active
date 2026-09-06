@@ -1,10 +1,10 @@
-"""Test data factories — never real user data (testing.md).
+"""Test data factories — never real user data.
 
 `build()` constructs an unpersisted instance; `create()` adds + flushes it against
 the provided session and refreshes it so server defaults (UUIDv7 id, token_version)
 are populated.
 
-Since projects landed (R2/KD-4), every app and conversation needs a NOT NULL
+Since projects landed, every app and conversation needs a NOT NULL
 `project_id`. `AppRegistryFactory.create` / `ConversationFactory.create` lazily
 mint a fresh owning project when `project_id` isn't supplied, so existing call
 sites keep working; pass an explicit `project_id=` to place children under the
@@ -80,9 +80,9 @@ class AppRegistryFactory:
 
     @classmethod
     async def create(cls, db: AsyncSession, **overrides: Any) -> AppRegistry:
-        # One app per project (KD-4): mint a fresh owning project unless the caller
+        # One app per project: mint a fresh owning project unless the caller
         # placed the app in an explicit one (uq_app_registry_project forbids two apps
-        # in the same project). The project is owned by the app's user (ADR-0004).
+        # in the same project). The project is owned by the app's user.
         if "project_id" not in overrides:
             owner = overrides["user_id"]  # ownership boundary is always supplied
             project = await ProjectFactory.create(db, owner)
@@ -114,7 +114,7 @@ class ConversationFactory:
 
     @classmethod
     async def create(cls, db: AsyncSession, user_id: uuid.UUID, **overrides: Any) -> Conversation:
-        # Every conversation is a session under a project (R2/KD-4); mint a fresh owning
+        # Every conversation is a session under a project; mint a fresh owning
         # project unless the caller supplied one (pass project_id= to co-locate sessions).
         if "project_id" not in overrides:
             project = await ProjectFactory.create(db, user_id)
@@ -127,7 +127,7 @@ class ConversationFactory:
 
 
 class MessageFactory:
-    """Builds a NATIVE-batch message row under a conversation (U4 shape). `user_id` +
+    """Builds a NATIVE-batch message row under a conversation. `user_id` +
     `conversation_id` required. The default payload is one plain user turn; pass `payload=`
     (already-dumped JSON) or use `src.services.messages.store.dump_for_row` for richer
     batches."""

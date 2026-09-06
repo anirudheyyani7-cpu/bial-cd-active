@@ -1,5 +1,5 @@
 /**
- * LivePreview — four states, not one boolean (R16, R17, R18 / C3 §8.3).
+ * LivePreview — four states, not one boolean.
  *
  * The pane used to take `previewReclaimed: boolean`, fed from `!alive`, which meant a Redis
  * blip, a sleeping workspace, a sibling project holding the one-per-user slot and a project
@@ -261,7 +261,7 @@ describe('LivePreview — a reclaimed container is never an error (R17)', () => 
 
 describe('LivePreview — the restore offer is driven by `restorable` (R18)', () => {
   it('INERTNESS GUARD: the four start buttons are gone, and the explanation is not', async () => {
-    // AE10 used to be asserted here by pressing "Bring it back". That control moved — R3 says
+    // This used to be asserted here by pressing "Bring it back". That control moved — the rule is
     // exactly ONE control starts the app, and four scattered through this file's placeholder arms
     // is the same requirement satisfied five times over, in a vocabulary the client replaced
     // ("preview" is the developer's word; the person's word is their app).
@@ -346,11 +346,11 @@ describe('LivePreview — one persistent status region announces every state', (
   })
 
   it('routes a RESTORE through the labelled wait, announced — not through a terminal card', async () => {
-    // AE9's "behind a labelled wait, and at no point is an error shown", RE-POINTED. The wait it
+    // "Behind a labelled wait, and at no point is an error shown," RE-POINTED. The wait it
     // used to drive was `showRestoring`, keyed off a `relaunching` prop nothing could set — the
     // pane accepted `onRelaunch` and never read it, so no restore could ever have raised it. The
     // restore a citizen can actually run comes back as a `previewUrl`, and the wait that labels it
-    // is the frame's own load gate. AE9's claim is the same; the wait it is asserted against is
+    // is the frame's own load gate. The claim is the same; the wait it is asserted against is
     // the one a restore reaches.
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" hasSavedBuild />)
 
@@ -392,12 +392,12 @@ describe('LivePreview — one persistent status region announces every state', (
 })
 
 
-// U4/R7 — the retraction, on the surface the citizen is actually looking at.
+// The retraction, on the surface the citizen is actually looking at.
 describe('a workspace found reverted while the tab sat idle', () => {
   // ★ IT OUTRANKS EVERY OTHER COVER SENTENCE, running turn or not. It is the only one that is a
   // fact about the WORKSPACE rather than about a compile; the others all describe an app that is
   // still there. "Getting your app ready" over a workspace that has been wiped is the exact
-  // false-progress claim this plan exists to remove.
+  // false-progress claim this pane must never make.
   //
   // Mutation check: move `workspaceLost` below `turnRunning` in the cover's ternary and the
   // during-a-turn case goes red.
@@ -468,8 +468,8 @@ describe('LivePreview — what Plan F removed, and what it deliberately did not'
     expect(source).toMatch(/e\.source/)          // the inbound-message gate, on origin AND source
     expect(source).toMatch(/sandbox=/)           // the sandbox token list
     expect(source).toMatch(/const frameKey =/)   // the frame's identity
-    // The device WIDTHS are still read here; the TABLE moved out with the control that picks them
-    // (plan 002, U2), so this asserts the import rather than the literal — two copies of it is the
+    // The device WIDTHS are still read here; the TABLE moved out with the control that picks them,
+    // so this asserts the import rather than the literal — two copies of it is the
     // drift this guard exists to prevent, not one copy in a new file.
     //
     // IT POINTS AT THE LEAF, not at the toolbar that draws the switcher. Importing the table from

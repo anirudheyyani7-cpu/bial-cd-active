@@ -1,4 +1,5 @@
-"""POST /v1/admin/apps/backfill-sandbox-tags — C10 identity for containers that predate it (U8).
+"""POST /v1/admin/apps/backfill-sandbox-tags — a durable identity tag for containers that predate
+it.
 
 Covers the half of the fleet that was never stamped at create; the destroy flag stays off until
 this reports zero untagged sandboxes, which makes running it a release prerequisite.
@@ -280,7 +281,7 @@ async def test_the_unowned_population_is_still_reported_on_the_second_pass(
     what "the fleet is clean, flip the destroy flag" looks like, and it reads identically for a
     fully-identified fleet and for one made entirely of containers nobody has adjudicated. The
     consequence is safe (they are escalate-only, nothing destroys them) but the operator has lost
-    the count C10 §3 says matters most, at the moment they are deciding.
+    the count that matters most, at the moment they are deciding.
 
     Mutation-check: count `unowned` only where this pass stamped it, and this goes red on the
     second pass while every other assertion in the file stays green."""
@@ -362,8 +363,8 @@ async def test_one_refused_patch_does_not_abort_the_pass(client, app, db_session
 
 async def test_the_audit_row_carries_counts_but_no_names(client, app, db_session) -> None:
     """A sandbox name embeds 28 hex characters of its app's uuid, so a name list in the audit
-    trail is a durable inventory of who was running what (`.claude/rules/security.md`). Unlike
-    `reconcile-sandboxes` there is no operator action left to take on the names, so they do not
+    trail is a durable inventory of who was running what. Unlike `reconcile-sandboxes` there
+    is no operator action left to take on the names, so they do not
     travel in the response either — failures go to the logs."""
     admin = await _admin(db_session)
     ghost = app_name_for(uuid.uuid7())

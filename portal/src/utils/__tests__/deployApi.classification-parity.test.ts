@@ -36,9 +36,8 @@ describe('the classification policy matches the backend field-for-field', () => 
   })
 
   it('uses the same auto-publish threshold', () => {
-    // The number that decides whether a declaration needs a human at all (issue #115) and,
-    // since #117, whether it is obliged to explain itself. Two copies of that is the one
-    // most worth pinning.
+    // The number that decides whether a declaration needs a human at all, and whether it is
+    // obliged to explain itself. Two copies of that is the one most worth pinning.
     expect(AUTO_DEPLOY_MAX_SCORE).toBe(policy.autoDeployMaxScore)
   })
 

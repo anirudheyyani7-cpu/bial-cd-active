@@ -1,4 +1,4 @@
-"""THE MODE SWITCH IS GONE — this file is its inertness guard (R14/R15/R17).
+"""THE MODE SWITCH IS GONE — this file is its inertness guard.
 
 WHAT USED TO BE HERE. `POST /v1/conversations/{id}/mode`: a route that changed what a
 conversation WAS, atomically with a hidden `[mode changed: …]` marker row so the model could
@@ -10,11 +10,10 @@ WHY IT WENT. A chat is one thing or the other from the moment it is created. The
 second concept to switch between, so there is no boundary for a marker to name and nothing for
 the route to do. What replaces it is a choice made once, on `POST /conversations`.
 
-WHY THIS FILE STAYS. Deleting the suite deletes the evidence. The repo's convention
-(`docs/solutions/conventions/cleanly-removing-dead-ui-controls-2026-06-23.md`) is that the last
-link of a removal trace is a guard: the route answers 404 rather than 405 or 500, nothing in
-the codebase can write a marker row, and the kind a chat was created with is the kind it still
-has after anyone tries.
+WHY THIS FILE STAYS. Deleting the suite deletes the evidence. The repo's convention is that the
+last link of a removal trace is a guard: the route answers 404 rather than 405 or 500, nothing in
+the codebase can write a marker row, and the kind a chat was created with is the kind it still has
+after anyone tries.
 """
 
 from __future__ import annotations

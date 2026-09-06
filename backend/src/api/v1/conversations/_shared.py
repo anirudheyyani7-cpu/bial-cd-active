@@ -40,7 +40,7 @@ from src.services.storage import ObjectStorage, StorageUnconfiguredError, get_st
 # traffic, and the real cost gate is the daily token limit, not a byte ceiling.
 #
 # THIS NUMBER SITS FAR ABOVE THE BROWSER'S OWN CAP ON PURPOSE, AND THEY ARE NOT TWO SPELLINGS
-# OF ONE RULE (R42a). The composer caps what a person can TYPE, which is a courtesy — it stops
+# OF ONE RULE. The composer caps what a person can TYPE, which is a courtesy — it stops
 # someone pasting a novel and waiting to find out it was too much. This is the platform's own
 # SAFETY limit on what may be stored, and the server keeps its own precisely so it does not
 # inherit a number chosen for a text box: the handoff materialises a plan the browser never
@@ -56,7 +56,7 @@ MAX_MESSAGE_TEXT_CHARS = 64_000
 MAX_ATTACHMENT_TEXT_CHARS = 600_000
 MAX_ATTACHMENT_BLOCKS = 8
 
-# An attachment id is a `secrets.token_urlsafe` value (ADR-0006) — never a path or a raw UUID.
+# An attachment id is a `secrets.token_urlsafe` value — never a path or a raw UUID.
 ATTACHMENT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 # --- the build-in-flight refusal ------------------------------------------------------------
@@ -120,7 +120,7 @@ StorageDep = Annotated[ObjectStorage | None, Depends(chat_storage)]
 
 
 class TurnMessage(CamelModel):
-    """The new message — the ONLY content the browser sends (R9).
+    """The new message — the ONLY content the browser sends.
 
     `attachment_texts` are complete, client-built `<attachment …>…</attachment>` fence blocks:
     inline text files (whose bytes are never uploaded) and office extractions (whose bytes are

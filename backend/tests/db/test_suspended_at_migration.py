@@ -1,10 +1,10 @@
-"""`users.suspended_at` round-trips against the REAL migrated schema (U10a).
+"""`users.suspended_at` round-trips against the REAL migrated schema.
 
 The test DB carries the column from `alembic upgrade head` (revision
 0016_user_suspended_at), so these exercise the actual DDL — nullable timestamptz,
 no default — inside the rolled-back per-test transaction. The upgrade/downgrade
-round-trip itself is verified out-of-band via `alembic upgrade head` / `downgrade`
-(U10a Verification); `tests/test_alembic_single_head.py` guards the head count.
+round-trip itself is verified out-of-band via `alembic upgrade head` / `downgrade`;
+`tests/test_alembic_single_head.py` guards the head count.
 Here we prove the shape and that the chain still ends at exactly this revision.
 """
 
@@ -57,7 +57,7 @@ def test_chain_ends_at_a_single_linear_head() -> None:
     # SAY THIS OUT LOUD IN THE PULL REQUEST when it moves: CI runs the static gates and the
     # single-head COUNT (`tests/test_alembic_single_head.py`) and deliberately does not run
     # pytest, so this name-pinned assertion goes red locally while CI stays green. That is the
-    # change's own failure, not a pre-existing one — the exact write-off that blocked PR #120.
+    # change's own failure, not a pre-existing one.
     # Pinning
     # the exact head — rather than just the COUNT, which `test_alembic_single_head.py`
     # already guards — is what makes a rebase that silently re-parents a revision fail here

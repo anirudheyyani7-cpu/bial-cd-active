@@ -1,4 +1,4 @@
-"""The server-written build outcome (003-U5), native-store edition (U4).
+"""The server-written build outcome, native-store edition.
 
 The SERVER records a finished build in its thread, because the portal is not reliably there to do
 it: builds take minutes, users close tabs, and a session is evicted `_ENDED_RETENTION_SECONDS`
@@ -120,7 +120,7 @@ async def test_failed_build_says_why(db_session) -> None:
 
 
 async def test_quota_end_reads_as_a_limit_not_a_failure(db_session) -> None:
-    """A quota breach ends GRACEFULLY (C7 §8) — telling the user their app "failed" would be
+    """A quota breach ends GRACEFULLY — telling the user their app "failed" would be
     both wrong and alarming."""
     user, conv = await _thread(db_session)
 
@@ -187,7 +187,7 @@ async def test_a_second_build_gets_its_own_outcome(db_session) -> None:
 
 
 async def test_a_foreign_conversation_is_never_written_to(db_session) -> None:
-    """Owner-scoped (ADR-0004): a build must not be able to write into someone else's thread."""
+    """Owner-scoped: a build must not be able to write into someone else's thread."""
     _, conv = await _thread(db_session)
     intruder = await UserFactory.create(db_session)
 
@@ -260,7 +260,7 @@ def test_a_failure_still_leads_with_the_failure() -> None:
 # --- the meta shape this writer OWNS ------------------------------------------
 #
 # This module is the only producer of the build-outcome record, and these pins are really about
-# its READERS: the projection (U6) and `attachments.py::_boundary`.
+# its READERS: the projection and `attachments.py::_boundary`.
 
 
 def test_meta_carries_the_structured_record() -> None:

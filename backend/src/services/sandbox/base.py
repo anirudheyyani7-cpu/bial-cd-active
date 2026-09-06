@@ -1,15 +1,15 @@
-"""The frozen sandbox-client surface (contract C2): the `SandboxClient` ABC, the
+"""The frozen sandbox-client surface: the `SandboxClient` ABC, the
 `SandboxHandle` value type, the typed `FileOp` request union + result value types,
-and the typed exceptions. This is the control-plane-side wrapper over the C1
-supervisor HTTP API.
+and the typed exceptions. This is the control-plane-side wrapper over the supervisor's
+HTTP API (`sandbox/supervisor/app.py`).
 
-Mirrors the `ObjectStorage` port (ADR-0009): an `abc.ABC`, NOT a `Protocol`, so
+Mirrors the `ObjectStorage` port: an `abc.ABC`, NOT a `Protocol`, so
 nominal subtyping makes an IDE jump land on the concrete backend and an incomplete
 implementation fails at instantiation with a runtime `TypeError`.
 
 No vendor type crosses this port. Every supervisor call the client makes goes to
 `https://{handle.fqdn}/_sup/<endpoint>` with `Authorization: Bearer {handle.token}` (Caddy
-strips `/_sup`, so the supervisor sees the C1 paths).
+strips `/_sup`, so the supervisor sees its own bare paths).
 
 TWO ADDRESSES, AND THEY ARE NOT INTERCHANGEABLE. A generated app is served to a person through
 the platform's router, on one public hostname with the app's key in the path
@@ -42,9 +42,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SandboxError(Exception):
-    """Base for any sandbox-client failure (a C1 timeout/4xx, an ACA error, an
+    """Base for any sandbox-client failure (a supervisor timeout/4xx, an ACA error, an
     unreachable supervisor). A non-zero `ExecResult.exit` is NOT one of these — it
-    is a normal return (C1)."""
+    is a normal return."""
 
 
 class SandboxNotReadyError(SandboxError):
@@ -53,7 +53,7 @@ class SandboxNotReadyError(SandboxError):
 
 
 class SandboxGoneError(SandboxError):
-    """The C5 registry lists the sandbox as active but the container is unreachable
+    """The Redis registry lists the sandbox as active but the container is unreachable
     / torn down (ACA revision gone, dead FQDN). Signals the caller to RESTORE (or
     provision) rather than retry. Terminal for that handle."""
 
@@ -85,9 +85,9 @@ def base_path_for(app_name: str) -> str:
     return f"/a/{app_name}"
 
 
-# --- ARM identity tags (contract C10, ADR-0029 §2) ---------------------------
+# --- ARM identity tags -------------------------------------------------------
 #
-# A container must be judgeable WITHOUT REDIS (R1). A container whose registry record is gone is
+# A container must be judgeable WITHOUT REDIS. A container whose registry record is gone is
 # anonymous: unreachable by the product, invisible to every automatic path, and billing at
 # ~$0.108/hr forever. So identity lives on the ARM resource, written into the creation envelope so
 # it exists from the first moment.
@@ -104,10 +104,10 @@ TAG_KIND: Final = "bial-kind"
 rather than a record. Reclamation acts on `KIND_BUILD_SANDBOX` and nothing else."""
 
 TAG_USER_ID: Final = "bial-user-id"
-"""The owning user's UUID, in plaintext. R1 requires judging a container without the store, which
-rules out an opaque reference needing a database lookup; a UUID is an identifier, not a secret
-(ADR-0006), and the resource group is internal-only. Signed off as ADR-0029 accepted risk (b) — it
-does surface in cost exports."""
+"""The owning user's UUID, in plaintext. A container must be judgeable without the coordination
+store, which rules out an opaque reference that would need a database lookup; a UUID is an
+identifier, not a secret, and the resource group is internal-only. This is a deliberately
+accepted trade-off — it does surface in cost exports."""
 
 TAG_APP_ID: Final = "bial-app-id"
 """The app UUID this container serves. Note the name is NOT a substitute: `app_name_for` keeps only
@@ -115,11 +115,11 @@ TAG_APP_ID: Final = "bial-app-id"
 back-reference the resource carries."""
 
 TAG_CONTROL_PLANE: Final = "bial-control-plane"
-"""Which control plane created it — the environment segment, the tag half of R22. A dev control
+"""Which control plane created it — the environment segment. A dev control
 plane pointed at the wrong subscription must not be able to judge a production container."""
 
 TAG_CREATED_AT: Final = "bial-created-at"
-"""OUR creation timestamp (ISO-8601), never Azure's `systemData.createdAt` (R2).
+"""OUR creation timestamp (ISO-8601), never Azure's `systemData.createdAt`.
 
 Azure's behaviour on recreate-under-an-existing-name is undocumented, with no normative statement
 either way — and a container that retained an original timestamp across a recreate would read as
@@ -133,8 +133,8 @@ TAG_BACKFILLED_AT: Final = "bial-backfilled-at"
 and err toward waiting."""
 
 TAG_RECLAIM_STAGED_AT: Final = "bial-reclaim-staged-at"
-"""The two-pass staging marker (ADR-0029 §5). RESERVED — pinned here so U15 inherits the spelling
-instead of re-opening it; nothing writes it yet.
+"""The two-pass staging marker. RESERVED — pinned here so the code that eventually writes it
+inherits the spelling instead of re-opening it; nothing writes it yet.
 
 Deliberately NOT named or parseable as `ending`: the attach path refuses an `ending` sandbox BEFORE
 it probes, and a container merely staged for a second look is still fully attachable. A citizen
@@ -198,7 +198,7 @@ def _timestamp_or_none(raw: str | None) -> dt.datetime | None:
 @dataclass(frozen=True)
 class SandboxIdentity:
     """What a container app's ARM tags say about itself — the whole of what a reclamation pass gets
-    to judge it on when Redis is gone (C10 §1)."""
+    to judge it on when Redis is gone."""
 
     kind: str | None
     user_id: uuid.UUID | None
@@ -216,8 +216,7 @@ class SandboxIdentity:
 
     @property
     def escalate_only(self) -> bool:
-        """No owner, no app, no age, or NOT OURS TO JUDGE ⇒ REPORT IT, NEVER DESTROY IT
-        (ADR-0029 §3, tier four).
+        """No owner, no app, no age, or NOT OURS TO JUDGE ⇒ REPORT IT, NEVER DESTROY IT.
 
         This is the escalate-never-destroy invariant in one predicate, and it is the reason the
         backfill refuses to guess an owner from a lossy name. A container the platform cannot prove
@@ -225,7 +224,7 @@ class SandboxIdentity:
         better than the alternative, which is deleting somebody's unsaved work on a near-miss name
         match.
 
-        THE CONTROL-PLANE CLAUSE IS R22, AND IT BELONGS HERE RATHER THAN IN THE CLASSIFIER. A
+        THE CONTROL-PLANE CLAUSE BELONGS HERE RATHER THAN IN THE CLASSIFIER. A
         container stamped by a different control plane is not this one's to reason about: a dev
         deployment pointed at a resource group that also holds production-stamped sandboxes can
         read them, and must not be able to sentence them. Leaving that check to whoever consumes
@@ -270,7 +269,7 @@ def identity_from_tags(tags: Mapping[str, str] | None) -> SandboxIdentity:
 @dataclass(frozen=True)
 class FleetMember:
     """One container app as a reclamation pass sees it — the whole of what Azure is allowed to
-    tell us about a sandbox (C10 §2, R3).
+    tell us about a sandbox.
 
     THE PROJECTION IS THE SECURITY BOUNDARY, not a convenience. ARM's list endpoint returns
     `properties.template.containers[].env` in **plaintext** for every app in the group —
@@ -285,11 +284,12 @@ class FleetMember:
     shape is precisely the orphan population.
 
     `arm_created_at` is Azure's `systemData.createdAt`, and it is **evidence for a human, never an
-    age for the tier clock**. R2 exists to distrust it — its behaviour when a name is recreated is
-    undocumented, so a container that looks nineteen days old may not be. The clock runs off the
-    self-stamped `bial-created-at` tag (`identity.created_at`). This field earns its place on the
-    escalation path only, where "this unowned container has existed since March" is exactly what
-    the person adjudicating it wants to know and nothing is destroyed on the strength of it."""
+    age for the tier clock** — the platform deliberately distrusts it for that purpose. Azure's
+    behaviour when a name is recreated is undocumented, so a container that looks nineteen days
+    old may not be. The clock runs off the self-stamped `bial-created-at` tag
+    (`identity.created_at`). This field earns its place on the escalation path only, where "this
+    unowned container has existed since March" is exactly what the person adjudicating it wants
+    to know and nothing is destroyed on the strength of it."""
 
     name: str
     tags: Mapping[str, str]
@@ -304,7 +304,7 @@ class FleetMember:
 
 
 def control_plane_segment() -> str:
-    """This process's environment segment — the `TAG_CONTROL_PLANE` value (R22).
+    """This process's environment segment — the `TAG_CONTROL_PLANE` value.
 
     Delegated to `src.core.runtime_env`, a leaf with no module-scope imports: `src.config` reaches
     `src.settings.api`, which reaches the sandbox config, so asking it directly at module
@@ -323,7 +323,7 @@ def _now_iso() -> str:
 
 
 def sandbox_tags(*, user_id: uuid.UUID, app_id: uuid.UUID) -> dict[str, str]:
-    """The full C10 identity for a build sandbox, stamped at create.
+    """The full ARM-tag identity for a build sandbox, stamped at create.
 
     Every field the escalate-never-destroy rule needs is here, which is the whole point: a
     container created through this function is judgeable from ARM alone, with Redis down, by an
@@ -367,7 +367,7 @@ def published_app_tags(*, app_id: uuid.UUID) -> dict[str, str]:
 @dataclass(frozen=True)
 class SandboxHandle:
     """The frozen 5-field handle returned by every provision/attach/restore call and
-    passed back into every operation (C2).
+    passed back into every operation.
 
     `app_root_url` below is a DERIVED property, not a sixth field — the handle's shape is
     unchanged and every `dataclasses.replace` call site keeps working."""
@@ -379,19 +379,20 @@ class SandboxHandle:
     has no public DNS at all, so it is a private address despite ACA calling it public."""
     token: str
     """The per-session supervisor bearer token, sent as `Authorization: Bearer
-    {token}` to `/_sup/*`. Held IN-PROCESS only; NEVER persisted raw — the C5
+    {token}` to `/_sup/*`. Held IN-PROCESS only; NEVER persisted raw — the Redis
     registry stores a `token_ref` (a reference), not this value."""
     app_name: str
-    """The app/container identifier (one-app-per-project); == C5 registry `app_name`."""
+    """The app/container identifier (one-app-per-project); == the registry's `app_name`."""
     preview_url: str
     """THE PUBLIC ADDRESS — `https://<apps-host>/a/<app_name>/`, the browsable preview the portal
-    frames cross-origin (C8). Never carries the bearer token.
+    frames cross-origin. Never carries the bearer token.
 
     Use `app_root_url` for anything the CONTROL PLANE does — a probe pointed here would leave
     the VNet and traverse the public gateway."""
     ready: bool
-    """Dev-server readiness snapshot (mirrors C1 `/dev/status.ready` — A REQUEST TO THE APP
-    ROOT ACTUALLY SUCCEEDED) at handle construction; refreshed by `wait_ready` / `dev_status`.
+    """Dev-server readiness snapshot (mirrors the supervisor's `/dev/status.ready` — A
+    REQUEST TO THE APP ROOT ACTUALLY SUCCEEDED) at handle construction; refreshed by
+    `wait_ready` / `dev_status`.
 
     It used to mean "stdout marker seen AND the supervisor's own child is alive", which was
     wrong in both directions: `next dev` prints that marker once it is LISTENING, before the
@@ -415,8 +416,8 @@ class SandboxHandle:
 
 @dataclass(frozen=True)
 class ExecResult:
-    """Mirrors C1 `POST /exec`. A non-zero `exit` is a NORMAL return, never an
-    exception — self-heal reads `exit`/`stderr` off a 200 (C1)."""
+    """Mirrors the supervisor's `POST /exec`. A non-zero `exit` is a NORMAL return, never an
+    exception — self-heal reads `exit`/`stderr` off a 200."""
 
     stdout: str
     stderr: str
@@ -425,7 +426,7 @@ class ExecResult:
 
 @dataclass(frozen=True)
 class DevStatus:
-    """Mirrors C1 `GET /dev/status`. `port` is always 3000 (the `next dev` port).
+    """Mirrors the supervisor's `GET /dev/status`. `port` is always 3000 (the `next dev` port).
     `exit_code` is the dead child's post-mortem (None while alive, never started, or when
     talking to a pre-exit_code supervisor image) — 137 is the OOM-killer's signature."""
 
@@ -437,15 +438,15 @@ class DevStatus:
 
 @dataclass(frozen=True)
 class DevLogs:
-    """Mirrors C1 `GET /dev/logs`. `next_cursor` is the C1 wire field `next` (renamed
-    only to avoid shadowing the builtin); pass it back as `since` for only-new lines."""
+    """Mirrors the supervisor's `GET /dev/logs`. `next_cursor` is its wire field `next`
+    (renamed only to avoid shadowing the builtin); pass it back as `since` for only-new lines."""
 
     lines: list[str]
     next_cursor: int
 
 
 class CompileState(enum.StrEnum):
-    """What the app's dev server is doing right now, derived from its HMR socket (R17/R18).
+    """What the app's dev server is doing right now, derived from its HMR socket.
 
     FOUR values, not three, and the fourth is the point. `UNKNOWN` means the platform has no
     idea: the supervisor has not connected to the socket yet, it is down between reconnects,
@@ -462,7 +463,7 @@ class CompileState(enum.StrEnum):
 
 @dataclass(frozen=True)
 class CompileReport:
-    """Mirrors C1 `GET /dev/compile`.
+    """Mirrors the supervisor's `GET /dev/compile`.
 
     `errors` is the de-coloured, secret-redacted compile output, bounded in the container.
     NOTHING READS IT YET, and the docstring says so rather than describing an intention: the
@@ -520,13 +521,13 @@ choose. Two thousand characters is enough to hold a Next document's `<head>` and
 its body — which is what a person answering "what was it actually serving?" reads — and far too
 little to be worth streaming at.
 
-Sized against its consumer, not against HTML: this is the raw evidence stored beside U6's derived
-verdict."""
+Sized against its consumer, not against HTML: this is the raw evidence stored beside the
+derived health verdict."""
 
 
 @dataclass(frozen=True)
 class ServedPage:
-    """What the app's OWN root answered, head only (R9, U6).
+    """What the app's OWN root answered, head only.
 
     "Its own root" is `/a/<app-name>`, not the container root. Once an app runs under a base
     path the container root belongs to no route, so a probe left at `/` reads the framework's
@@ -548,19 +549,19 @@ class ServedPage:
 
 @dataclass(frozen=True)
 class FileResult:
-    """Mirrors the C1 `POST /files` per-action response. `detail` carries the
+    """Mirrors the supervisor's `POST /files` per-action response. `detail` carries the
     action-specific body (`content` for view, `replacements` for str_replace, …)."""
 
     ok: bool
     detail: dict[str, object]
 
 
-# --- FileOp: the typed C1 /files request (discriminated on `action`) ---------
+# --- FileOp: the typed /files request (discriminated on `action`) ------------
 #
-# A discriminated union over view | str_replace | create | insert carrying the C1
-# fields. Each variant declares only its own required fields (fail-first — a
-# str_replace with no `old_str` cannot be constructed), unlike C1's flat all-optional
-# `FilesBody`; the client serializes the variant back to the C1 wire shape.
+# A discriminated union over view | str_replace | create | insert carrying the
+# supervisor's fields. Each variant declares only its own required fields (fail-first — a
+# str_replace with no `old_str` cannot be constructed), unlike the supervisor's flat
+# all-optional `FilesBody`; the client serializes the variant back to that wire shape.
 
 
 class _FileOpBase(BaseModel):
@@ -594,19 +595,19 @@ FileOp = Annotated[
     FileView | FileStrReplace | FileCreate | FileInsert,
     Field(discriminator="action"),
 ]
-"""The typed C1 `/files` request. `files()` takes one `FileOp` and returns one
-`FileResult`; validation discriminates on `action` (C1 / C2)."""
+"""The typed `/files` request. `files()` takes one `FileOp` and returns one
+`FileResult`; validation discriminates on `action`."""
 
 
 # --- the frozen client ABC ---------------------------------------------------
 
 
 class SandboxClient(abc.ABC):
-    """The complete async sandbox-client surface (C2). Documented poll/timeout/retry
+    """The complete async sandbox-client surface. Documented poll/timeout/retry
     defaults are the frozen semantics a mock must honor where observable.
 
-    The one-per-user + rehydrate rule is a caller invariant (SESSION-API resolves it
-    against the C5 registry + lock before any work): a returning user ATTACHES or
+    The one-per-user + rehydrate rule is a caller invariant: the caller must resolve it
+    against the Redis registry + lock before any work — a returning user ATTACHES or
     RESTORES — re-provisioning a user who already holds a live sandbox is a contract
     violation (double allocation)."""
 
@@ -615,9 +616,10 @@ class SandboxClient(abc.ABC):
         self, user_id: str, app_name: str, *, app_env: dict[str, str]
     ) -> SandboxHandle:
         """Provision a BRAND-NEW container for `user_id`. `app_env` is the app's injected
-        environment, every name in it chosen to survive the C1 child-env scrub allowlist (D5);
+        environment, every name in it chosen to survive the supervisor's child-env scrub
+        allowlist;
         what belongs in it is `manager._resolve_sandbox`'s to decide.
-        Returns a handle with `ready=False`. The caller MUST already hold the C5
+        Returns a handle with `ready=False`. The caller MUST already hold the Redis
         one-per-user lock. Transient provisioning errors retried with capped
         exponential backoff."""
         ...
@@ -627,7 +629,7 @@ class SandboxClient(abc.ABC):
         self, handle: SandboxHandle, *, timeout_s: float = 120.0
     ) -> SandboxHandle:
         """Poll `GET /_sup/dev/status` until `ready` (a request to the app root actually
-        succeeded, C1) or `timeout_s`. Poll cadence: start ~0.5s, exponential backoff capped
+        succeeded) or `timeout_s`. Poll cadence: start ~0.5s, exponential backoff capped
         at ~5s. On timeout raises `SandboxNotReadyError`. Returns a handle with `ready=True`.
 
         Returning therefore means a page HAS been served — but not that THIS route is
@@ -638,7 +640,7 @@ class SandboxClient(abc.ABC):
     @abc.abstractmethod
     async def attach_existing(self, user_id: str) -> SandboxHandle:
         """IDEMPOTENT reconnect to the user's already-running sandbox (FQDN +
-        `token_ref`→token from the C5 registry) WITHOUT re-provisioning. If the
+        `token_ref`→token from the Redis registry) WITHOUT re-provisioning. If the
         registry lists the user but the container is unreachable raises
         `SandboxGoneError` (the caller should restore)."""
         ...
@@ -653,8 +655,8 @@ class SandboxClient(abc.ABC):
         source_key: str | None = None,
     ) -> SandboxHandle:
         """Provision a FRESH container and restore a git-bundle onto its local disk (git ops
-        over `/_sup/exec`), then RE-INJECT the C9 app-data credential from `app_env`. Returns a
-        handle (`ready=False` until `wait_ready` / `dev_start`). See C4 for the pull ordering.
+        over `/_sup/exec`), then RE-INJECT the app-data credential from `app_env`. Returns a
+        handle (`ready=False` until `wait_ready` / `dev_start`).
 
         `source_key` names WHICH bundle to restore, defaulting to the app's saved snapshot.
         It exists so a recovery can pull the crash-recovery copy instead — the only reason that
@@ -673,12 +675,12 @@ class SandboxClient(abc.ABC):
     ) -> ExecResult:
         """Run `cmd` (a list, no shell) under `cwd` (workspace-relative) via
         `POST /_sup/exec`. A non-zero `exit` is a NORMAL `ExecResult`, not an
-        exception; a C1 timeout (504) surfaces as `SandboxError`."""
+        exception; a supervisor timeout (504) surfaces as `SandboxError`."""
         ...
 
     @abc.abstractmethod
     async def files(self, handle: SandboxHandle, op: FileOp) -> FileResult:
-        """One `FileOp` → one `FileResult` via `POST /_sup/files`. C1's 422
+        """One `FileOp` → one `FileResult` via `POST /_sup/files`. The supervisor's 422
         (str_replace 0/N matches) and 400 (missing sub-field / escape / unknown
         action) surface as `SandboxError`."""
         ...
@@ -688,7 +690,7 @@ class SandboxClient(abc.ABC):
         self, handle: SandboxHandle, *, cmd: list[str] | None = None, cwd: str | None = None
     ) -> int:
         """Start `next dev` (default `["npm", "run", "dev"]`) via `POST /_sup/dev/start`;
-        returns the pid. IDEMPOTENT: C1's 409 "already running" is treated as success
+        returns the pid. IDEMPOTENT: the supervisor's 409 "already running" is treated as success
         (returns the existing pid via a status probe) rather than raising."""
         ...
 
@@ -708,17 +710,17 @@ class SandboxClient(abc.ABC):
     @abc.abstractmethod
     async def teardown(self, handle: SandboxHandle) -> None:
         """IDEMPOTENT teardown of the container (delete revision/container). Safe to
-        call when already gone (no-op) — required by the C4 snapshot-then-teardown
-        and C5 reaper ordering."""
+        call when already gone (no-op) — required by the snapshot-then-teardown
+        and reaper ordering."""
         ...
 
     # --- outside the frozen set: a courtesy, not a contract ------------------
 
     async def compile_state(self, handle: SandboxHandle) -> CompileReport:
-        """What the app's dev server is compiling right now — C1 `GET /dev/compile` (R17/R18).
+        """What the app's dev server is compiling right now — the supervisor's `GET /dev/compile`.
 
         DELIBERATELY NOT abstract, for the same reason as `someone_has_to_go_first` below:
-        `test_abstractmethod_set_equals_the_c2_contract` pins the C2 set so the contract
+        `test_abstractmethod_set_equals_the_c2_contract` pins the abstract set so the contract
         cannot drift, and adding a member to that frozen set is a cross-track break. Follow
         the precedent — a new capability arrives non-abstract with a safe default — rather
         than amending `_C2_METHODS`.
@@ -729,15 +731,15 @@ class SandboxClient(abc.ABC):
         return CompileReport(state=CompileState.UNKNOWN, reason="no_sandbox_client")
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
-        """The app's public root, status plus a bounded head of what it answered (U6, R9).
+        """The app's public root, status plus a bounded head of what it answered.
 
         DELIBERATELY NOT ABSTRACT, and for the same reason as `someone_has_to_go_first` below
         rather than for convenience: every abstract method on this class mirrors one supervisor
-        endpoint, and `test_abstractmethod_set_equals_the_c2_contract` pins that set so the C2
+        endpoint, and `test_abstractmethod_set_equals_the_c2_contract` pins that set so the
         surface cannot drift. This is not a supervisor call — it is an ordinary GET at the app's
         own root through the same Caddy the citizen's iframe uses.
 
-        WHY NOT `someone_has_to_go_first`. That method is contractually non-load-bearing (R6) —
+        WHY NOT `someone_has_to_go_first`. That method is contractually non-load-bearing —
         it gates nothing, and its docstring says no caller may make a preview conditional on what
         it returns. The health verdict is precisely a caller making a decision on the answer, so
         reusing it would quietly convert a promise into a lie. It also stops at the headers, and
@@ -748,17 +750,17 @@ class SandboxClient(abc.ABC):
         return None
 
     async def someone_has_to_go_first(self, handle: SandboxHandle) -> int | None:
-        """Pay the app's first route compile so the citizen's browser does not (U3, R3).
+        """Pay the app's first route compile so the citizen's browser does not.
 
         DELIBERATELY NOT abstract, and the reason is a real distinction rather than
         convenience: every method above mirrors one supervisor endpoint, and
-        `test_abstractmethod_set_equals_the_c2_contract` pins that set so the C2 surface
+        `test_abstractmethod_set_equals_the_c2_contract` pins that set so the surface
         cannot drift. This is not a supervisor call at all — it is an ordinary GET at the
         app's public root, through the same Caddy the citizen's iframe uses. Adding it to
         the frozen set would claim the supervisor grew an endpoint it did not.
 
         The default declines. A client that fronts no real container has no first route to
-        compile, and `None` says exactly that. Non-load-bearing by construction (R6): an
+        compile, and `None` says exactly that. Non-load-bearing by construction: an
         implementation that overrides it must still never let the call raise, and no caller
         may make a preview frame conditional on what it returns."""
         return None

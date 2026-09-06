@@ -1,4 +1,4 @@
-"""U13 / R91 — a build turn is bounded by what it SPENDS, not only by requests and seconds.
+"""A build turn is bounded by what it SPENDS, not only by requests and seconds.
 
 THE THIRD BOUND ON ONE LOOP. `MODEL_TURN_CEILING` counts requests and
 `RUN_WALL_CLOCK_DEADLINE_S` counts seconds, and a build can sit comfortably inside both while
@@ -28,8 +28,8 @@ from src.services.turns.copy import KEPT_A_COPY, SPENT_ENOUGH_TEXT
 
 
 def test_the_bound_is_a_number_the_platform_holds() -> None:
-    """★ R91's shape, asserted as a shape. The bound is a module constant beside the other two
-    ceilings — a property of how this loop is built, not a per-deployment knob, and not
+    """★ The bound's shape, asserted as a shape. The bound is a module constant beside the other
+    two ceilings — a property of how this loop is built, not a per-deployment knob, and not
     something the agent is asked to observe.
 
     THE THREE COEXIST. A reader arriving at any one of them has to find the other two, because
@@ -79,7 +79,7 @@ def test_the_ending_carries_the_conditional_reassurance_rather_than_asserting_it
 
 # --- three bounds, one ending ---------------------------------------------------------------
 #
-# THE UNIFICATION IS THE REQUIREMENT, not a tidy-up. R91 asks that an exhausted bound end where
+# THE UNIFICATION IS THE REQUIREMENT, not a tidy-up. It asks that an exhausted bound end where
 # the app works AND say what remains, and it says it of the bound in general. Before this, only
 # the spend arm secured anything: the other two told the citizen "your changes are still in the
 # workspace — click Save to keep them" and then ended the turn having copied nothing, which is
@@ -119,7 +119,7 @@ def _bounded_raises() -> dict[str, ast.Raise]:
 
 
 def test_all_three_internal_bounds_end_through_the_one_securing_function() -> None:
-    """★ R91's "three bounds, one ending", asserted structurally rather than by reading copy.
+    """★ The "three bounds, one ending" rule, asserted structurally rather than by reading copy.
 
     Each of the three ceilings that can end a run must hand its message to
     `_bounded_run_ending`, which is the only thing on this path that secures the citizen's tree
@@ -160,11 +160,12 @@ def test_the_click_save_sentence_survives_only_where_it_is_still_true() -> None:
     still carried it, on the paths where a container is most likely to be wedged.
 
     ONE SITE KEEPS IT, AND KEEPS IT HONESTLY. The self-heal budget arm
-    (`self_heal_budget_exhausted`) is a FOURTH bound that R91 does not name — it ends a repair
-    loop, not a run — and it secures nothing on purpose: KTD-5e says there is no autosave, so
-    on that path the changes really do sit in the workspace until the citizen clicks Save. The
-    sentence is accurate there. Unifying it would mean deciding something R91 never decided,
-    and would quietly add a container round trip to a path that never had one.
+    (`self_heal_budget_exhausted`) is a FOURTH bound outside the three-bounds-one-ending rule — it
+    ends a repair loop, not a run — and it secures nothing on purpose: there is no autosave, so on
+    that path the changes really do sit in the workspace until the citizen clicks Save. The
+    sentence is accurate there. Unifying it would mean deciding something the
+    three-bounds-one-ending rule never decided, and would quietly add a container round trip to a
+    path that never had one.
 
     So this is an ALLOWLIST, not an absence: the phrase may appear in exactly one ending, and a
     fifth copy — the way this comes back — fails naming its line. Whether that fourth arm should
@@ -217,9 +218,9 @@ def test_the_click_save_sentence_survives_only_where_it_is_still_true() -> None:
 
 
 def test_which_bound_fired_stays_in_the_record_while_the_citizen_reads_one_sentence() -> None:
-    """R91 asks for one ending, not for the platform forgetting which ceiling fired. The three
-    reasons stay distinct in `end_reason` — that is where the person who can act on it looks —
-    while nothing distinguishes them in front of the citizen, whose next move is the same
+    """The requirement asks for one ending, not for the platform forgetting which ceiling fired.
+    The three reasons stay distinct in `end_reason` — that is where the person who can act on it
+    looks — while nothing distinguishes them in front of the citizen, whose next move is the same
     message either way."""
     raises = _bounded_raises()
     assert len(set(raises)) == 3, "the three bounds collapsed into one record value"
@@ -233,7 +234,7 @@ def test_which_bound_fired_stays_in_the_record_while_the_citizen_reads_one_sente
 
 
 def test_the_bound_does_not_price_a_cache_read_like_fresh_input() -> None:
-    """★★ THE 2026-07-30 INCIDENT, PREVENTED ON THE SECOND CEILING TOO.
+    """★★ THE INCIDENT, PREVENTED ON THE SECOND CEILING TOO.
 
     Under pydantic-ai `input_tokens` is the grand-total prompt size and the cache buckets are
     ALREADY INSIDE it — a request with 10 fresh tokens and a 90k cache read reports
@@ -267,7 +268,7 @@ def test_the_bound_does_not_price_a_cache_read_like_fresh_input() -> None:
 
 
 def test_the_platform_s_thinking_is_not_charged_to_the_citizen() -> None:
-    """★ THE OWNER'S RULING (2026-09-02): the meter shows what the citizen spent on their app,
+    """★ THE OWNER'S RULING: the meter shows what the citizen spent on their app,
     not what the platform spent thinking about it.
 
     Reasoning is a choice this platform made on their behalf. They did not ask for it, they

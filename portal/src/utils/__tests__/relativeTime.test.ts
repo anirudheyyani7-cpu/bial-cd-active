@@ -1,9 +1,9 @@
 /**
  * `relativeTime` — the boundaries, which nothing pinned.
  *
- * It had tests when it lived in `chatHistory`; they went with the re-export #175 retired, and
- * the function kept rendering the projects list's "Details updated" column untested
- * (round-4 review). Each case below sits ON a threshold rather than safely inside one, since
+ * It had tests when it lived in `chatHistory`; they went away when that re-export was
+ * retired, and the function kept rendering the projects list's "Details updated" column
+ * untested. Each case below sits ON a threshold rather than safely inside one, since
  * a `<` that should be `<=` only ever shows up at the edge.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'

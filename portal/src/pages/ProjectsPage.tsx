@@ -1,7 +1,7 @@
 /**
  * `/projects` — the landing screen. Three numbers, then the citizen's tools.
  *
- * #158 replaced the card grid with TWO views, list default and grid second, numbered
+ * The card grid was replaced with TWO views, list default and grid second, numbered
  * pagination in both, and a summary strip above them.
  *
  * PAGINATION IS OFFSET NOW, and that is a deliberate exception the server documents at
@@ -16,10 +16,10 @@
  * input, which runs 300ms ahead of the data and would flash "you have no projects" at
  * someone who has plenty.
  *
- * THE SKELETON TAKES THE SHAPE OF THE VIEW YOU ARE IN (§11). A card skeleton under a list
+ * THE SKELETON TAKES THE SHAPE OF THE VIEW YOU ARE IN. A card skeleton under a list
  * view flashes the wrong layout for one frame, which reads as a bug.
  *
- * A PAGE-2 FAILURE MUST NOT CLEAR THE ROWS ALREADY ON SCREEN (§11). The error is said
+ * A PAGE-2 FAILURE MUST NOT CLEAR THE ROWS ALREADY ON SCREEN. The error is said
  * underneath them instead.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -64,7 +64,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 type View = 'list' | 'grid'
 type Density = 'S' | 'M' | 'L'
 
-/** Remembered per person so the choice survives a reload (§ "persists across reloads").
+/** Remembered per person so the choice survives a reload.
  *  Reads are wrapped because a private window or blocked site data throws on access. */
 const VIEW_KEY = 'bial.projects.view'
 const DENSITY_KEY = 'bial.projects.density'
@@ -147,7 +147,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // WHERE FOCUS GOES WHEN A DELETE CONFIRMATION CLOSES. Its own trigger — the row's Delete
   // button — is gone by then: the optimistic removal takes the row out immediately, well
   // before the request settles, so Radix's default restore-to-trigger finds a detached node
-  // and silently no-ops (round-4 finding 2). `tabIndex={-1}` on the heading below makes it a
+  // and silently no-ops. `tabIndex={-1}` on the heading below makes it a
   // programmatic focus target without adding it to the tab order.
   const headingRef = useRef<HTMLHeadingElement>(null)
 
@@ -176,7 +176,7 @@ export default function ProjectsPage(): React.JSX.Element {
       .catch((caught: unknown) => {
         if (requestId.current !== id) return
         // The rows already on screen are LEFT INTACT. A later page failing must not blank
-        // the list the reader is using; the message goes underneath them instead (§11).
+        // the list the reader is using; the message goes underneath them instead.
         setError(caught instanceof Error ? caught : new Error('Could not load your projects.'))
         setAppliedQuery(debouncedQ)
       })
@@ -267,8 +267,8 @@ export default function ProjectsPage(): React.JSX.Element {
         next.delete(project.id)
         return next
       })
-      // CLOSING THE DIALOG IS DEFERRED TO HERE, not the top of this function (round-4
-      // finding 9). It used to close synchronously before the request even started —
+      // CLOSING THE DIALOG IS DEFERRED TO HERE, not the top of this function. It used to
+      // close synchronously before the request even started —
       // batched into the SAME commit as the optimistic row removal — so the dialog's own
       // `busy` state (the spinner, Cancel disabling) was set and then immediately unmounted
       // in the same render, never actually observable. The backend does real work before
@@ -280,7 +280,7 @@ export default function ProjectsPage(): React.JSX.Element {
       // FOCUS EXPLICITLY, rather than let Radix try. The row (and its Delete button, the
       // trigger Radix captured at open time) left the DOM the moment the optimistic removal
       // ran, above — long before this `finally` runs — so `onCloseAutoFocus`'s default
-      // restore would find a detached node and silently do nothing (round-4 finding 2). The
+      // restore would find a detached node and silently do nothing. The
       // heading is the nearest stable, always-mounted landmark.
       headingRef.current?.focus()
     }
@@ -326,8 +326,8 @@ export default function ProjectsPage(): React.JSX.Element {
     return Array.from({ length: span }, (_, i) => first + i)
   }, [page, totalPages])
 
-  // DERIVED FROM WHAT THE ROWS ANSWER, never from what was requested. §11 requires a failed
-  // page to leave the rows already on screen intact — which it does — but the footer then
+  // DERIVED FROM WHAT THE ROWS ANSWER, never from what was requested. A failed page leaves
+  // the rows already on screen intact — which it does — but the footer then
   // narrated the page that FAILED over the rows that succeeded: 12 projects, page 2 refused,
   // and the caption read `Showing 9–16 of 12`, a range past its own total, above rows 1-8.
   const firstOnPage = useMemo(
@@ -346,7 +346,7 @@ export default function ProjectsPage(): React.JSX.Element {
           Each project is one tool — its app, its description, and its chats.
         </p>
 
-        {/* Three numbers. Nothing else — no charts (§1). */}
+        {/* Three numbers. Nothing else — no charts. */}
         {countsFailedCold ? (
           <div className="flex items-center justify-between gap-3 bg-white border border-danger/30 rounded-2xl px-5 py-4 mt-5 mb-6">
             <p className="text-xs text-danger">Couldn’t load your counts.</p>
@@ -380,9 +380,9 @@ export default function ProjectsPage(): React.JSX.Element {
         </div>
         )}
 
-        {/* ONE controls row: search, density (grid only), view, New project (§3). The
-            New project button lives HERE and nowhere else — it used to sit in the page
-            header, and leaving both would ship two of them. */}
+        {/* ONE controls row: search, density (grid only), view, New project. The
+            New project button lives HERE and nowhere else — adding it to the page
+            header too would ship two of them. */}
         <div className="flex items-center gap-3 flex-wrap mb-4">
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
@@ -487,7 +487,7 @@ export default function ProjectsPage(): React.JSX.Element {
             <p className="text-sm font-semibold text-tertiary">Nothing here yet</p>
             <p className="text-xs text-neutral mt-1 mb-4">Create a project and describe what you need inside it.</p>
             {/* The SAME dialog the controls row opens — there is exactly one way to make a
-                project (§11). No composer, no chat-kind toggle, no second path. */}
+                project. No composer, no chat-kind toggle, no second path. */}
             <button
               onClick={() => setShowCreate(true)}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-primary text-white rounded-lg hover:bg-primary/90 transition"
@@ -520,13 +520,14 @@ export default function ProjectsPage(): React.JSX.Element {
           <>
             {view === 'list' ? (
               <div className="bg-white border border-bial-border rounded-2xl overflow-hidden">
-                {/* The column header the default list was missing (§4). */}
+                {/* The column header the default list was missing. */}
                 <div className="flex items-center gap-4 px-4 py-2.5 bg-bial-bg/60 border-b border-bial-border text-[10px] font-bold uppercase tracking-wider text-neutral">
                   <span className="flex-1">Application</span>
                   {/* "Details updated", NOT "Last updated": `updatedAt` moves only when the
                       project ROW is written — a rename or a description edit — and never
                       when the app is built, previewed, published or deployed. Naming it for
-                      what it tracks is the honest half of §10's Trap 1. */}
+                      what it tracks is what stops the column reading as "when the app
+                      last changed". */}
                   <span className="hidden sm:block w-28 text-right">Details updated</span>
                   <span className="w-[104px] text-right">Status</span>
                   <span className="w-7" aria-hidden />
@@ -554,14 +555,14 @@ export default function ProjectsPage(): React.JSX.Element {
             )}
 
             {/* A later page failing keeps the rows above. Say it underneath them — a control
-                that quietly does nothing reads as a frozen button (§11).
-                
-                ROUND-4 FINDING 11: this used to BE that frozen button — static text, no
-                control at all. Clicking the same page number again is a React no-op (the
-                state value is unchanged, so the fetch effect's deps do not change and
-                nothing re-runs); `reloadNonce` is the one thing in this effect's deps that
-                is guaranteed to change on every bump, regardless of which page failed, so
-                it is what a real retry has to touch. */}
+                that quietly does nothing reads as a frozen button.
+
+                This used to BE that frozen button — static text, no control at all. Clicking
+                the same page number again is a React no-op (the state value is unchanged,
+                so the fetch effect's deps do not change and nothing re-runs); `reloadNonce`
+                is the one thing in this effect's deps that is guaranteed to change on every
+                bump, regardless of which page failed, so it is what a real retry has to
+                touch. */}
             {error !== null && (
               <p role="alert" className="text-xs text-danger text-center mt-4">
                 Couldn’t load more projects.{' '}
@@ -612,9 +613,9 @@ export default function ProjectsPage(): React.JSX.Element {
                     landing page and got worse with six. */}
                 <Pagination className="mx-0 w-auto" aria-label="Projects pagination">
                   <PaginationContent className="flex-wrap justify-end">
-                    {/* §2 spells the control set literally — « ‹ 1 2 › » — and the board draws
-                        four icon buttons around the numbers. Jump-to-first/last were missing;
-                        at six pages the difference is four clicks or one. */}
+                    {/* The control set is spelled literally — « ‹ 1 2 › » — with four icon
+                        buttons around the numbers. Jump-to-first/last were missing; at six
+                        pages the difference is four clicks or one. */}
                     <PaginationItem>
                       <PaginationLink
                         aria-label="First page"
@@ -675,7 +676,7 @@ export default function ProjectsPage(): React.JSX.Element {
         />
       )}
 
-      {/* U15: this channel only ever carries a failure (a successful delete is silent — the
+      {/* This channel only ever carries a failure (a successful delete is silent — the
           row is just gone), so it is deliberately NOT wired to a dismiss timer the way
           Navbar's and AdminPage's toasts once were. A confirmation may fade on its own;
           something that went wrong waits for the reader to dismiss it, and the reader is the

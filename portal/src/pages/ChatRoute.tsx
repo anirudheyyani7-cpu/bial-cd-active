@@ -101,19 +101,21 @@ export default function ChatRoute() {
     // its state, aborted on unmount. Only a cold open shows the spinner.
     setResolution((prev) => (prev.status === 'ready' ? prev : { status: 'loading' }))
 
-    // THE TITLE IS ALREADY STORED AND ALREADY RETURNED — it was simply never read back (plan 002,
-    // U2, ASM5). It is set when the row is created, derived from the chat's first message, so a
+    // THE TITLE IS ALREADY STORED AND ALREADY RETURNED — it was simply never read back.
+    // It is set when the row is created, derived from the chat's first message, so a
     // freshly minted chat legitimately has none until that message lands. `null` is that case and
     // the row names the kind instead; it is never an error and never a spinner.
     const ready = (kind: ChatKind, projectId: string | null, title: string | null = null): void => {
-      // R105's numerator, marked at THE one seam every arm passes through — freshly-minted,
-      // server-resolved, query fallback and load failure alike — rather than on the three
-      // handlers that navigate here. Those live in two components that other work is mid-rewrite
-      // of, and three chances to drop one is three too many for a counter whose whole purpose is
-      // a before/after comparison across those same rewrites. This seam also knows the
-      // SERVER-AUTHORITATIVE project id, and it fires exactly once per chat open, deep links
-      // included — which is precisely the case `markChatOpened` refuses, because a project this
-      // load never opened has no denominator to be the numerator of.
+      // The chat-open count that feeds the project-to-chat drop-off ratio tracked for
+      // observability (`1 − project_opened_chat / project_opened`), marked at THE one seam
+      // every arm passes through — freshly-minted, server-resolved, query fallback and load
+      // failure alike — rather than on the three handlers that navigate here. Those live in two
+      // components that other work is mid-rewrite of, and three chances to drop one is three too
+      // many for a counter whose whole purpose is a before/after comparison across those same
+      // rewrites. This seam also knows the SERVER-AUTHORITATIVE project id, and it fires exactly
+      // once per chat open, deep links included — which is precisely the case `markChatOpened`
+      // refuses, because a project this load never opened has no denominator to be the
+      // numerator of.
       markChatOpened(projectId)
       // AND REMEMBERED FOR THE NEXT LOAD WINDOW, at the same one seam and for the same reason it
       // is the right seam: every arm passes through here knowing the chat's project, and this is
@@ -192,7 +194,7 @@ export default function ChatRoute() {
       ? resolution.projectId
       : (queryRef.current.projectId ?? remembered)
 
-  // WHAT THE TOOLBAR ROW NAMES (plan 002, U2). Published from the ROUTE rather than from the
+  // WHAT THE TOOLBAR ROW NAMES. Published from the ROUTE rather than from the
   // surface below it, because this component is mounted for the whole life of the address —
   // including the loading branch, where neither the conversation nor the project has resolved and
   // the row still has to render at full height with a working back control.
@@ -275,16 +277,16 @@ export default function ChatRoute() {
         kind: resolution.kind,
         projectId: resolution.projectId,
         projectName: resolved?.name ?? null,
-        // Finding #1: the builder's Relaunch affordance derives from PROJECT-level state, so a
+        // The builder's Relaunch affordance derives from PROJECT-level state, so a
         // fresh conversation in a project with a saved build can still restore its preview.
         //
-        // N7: what travels is whether a Relaunch would actually FIND something — not `appId`.
+        // What travels is whether a Relaunch would actually FIND something — not `appId`.
         // The app row is minted by provision, before anything is built, so keying the claim on
         // its existence advertised a saved build for every project whose first build failed.
         // `null` while the project is still resolving is the same "cannot say" the server sends,
         // and it withholds the claim rather than guessing.
         //
-        // R18: the server now answers this from the recovery copy OR the saved bundle (the pair a
+        // The server now answers this from the recovery copy OR the saved bundle (the pair a
         // restore actually consults), so the builder who never pressed Save is offered their work
         // back. This is the COLD-LOAD value; once the preview poll lands, the surface prefers its
         // `restorable`, which is the same predicate asked more recently.

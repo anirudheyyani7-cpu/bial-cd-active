@@ -1,19 +1,14 @@
-"""Raw exec/dev output → the frozen `BuildError{source, title, cleaned_stack}` (KD-5 / KD-8).
+"""Raw exec/dev output → the frozen `BuildError{source, title, cleaned_stack}`.
 
-`declutter` turns a raw `tsc` blob or dev-server stderr tail into the structured, self-heal-
-relevant error the repair prompt (and the C7 `error` envelope) carries. It **redacts first**:
-the diagnostic egresses TWICE — into the portal envelope AND into the next run's model prompt —
-and the running app can `console.log(process.env)`, so any credential-shaped substring must be
-masked before anything else touches the text.
-
-`redact_secrets` is the single redactor, reused by `progress.py` for the raw `log` egress path
-(C7 §3.2 relays stdout/stderr straight to the portal). Treat all sandbox output as untrusted and
-parse defensively ([[sandbox-supervisor-child-env-scrub-allowlist]]).
-
-The redactor ITSELF now lives in `src/core/redaction.py` (U4 moved it so the native message
-store's persistence seam can reuse it without importing the orchestrator); this module re-exports
-it so every historical `from src.services.orchestrator.errors import redact_secrets` call site
-keeps working. One implementation, two import paths — never a fork.
+`declutter` turns a raw `tsc` blob or dev-server stderr tail into the structured error the repair
+prompt and the progress envelope carry. It **redacts first**: the diagnostic egresses twice, to the
+portal and the next run's prompt, and the app can `console.log(process.env)`, so every
+credential-shaped substring MUST be masked before anything else touches it. `redact_secrets` is
+that single masker, reused by `progress.py`'s raw `log` path; treat all sandbox output as
+untrusted and parse defensively. It lives in
+`src/core/redaction.py` so the message store's persistence seam can reuse it without importing
+the orchestrator, and this module re-exports it: one implementation, two import paths, never a
+fork.
 """
 
 from __future__ import annotations
@@ -30,7 +25,7 @@ from src.services.orchestrator.constants import CLEANED_STACK_MAX_CHARS, REDACT_
 _TITLE_MAX_CHARS = 200
 _TRUNCATION_MARKER = "\n[... diagnostic truncated ...]"
 _FALLBACK_TITLE = "The build reported an error with no readable diagnostic."
-# Absolute sandbox paths → workspace-relative. The app lives at /workspace/app (KD-6).
+# Absolute sandbox paths → workspace-relative. The app lives at /workspace/app.
 _WORKSPACE_ROOTS = ("/workspace/app/", "/workspace/")
 
 # `next build` opens with a banner and progress spinners, so its FIRST line is reliably
@@ -210,7 +205,7 @@ def from_next_build(raw: str) -> BuildError:
     return declutter(raw, ErrorSource.NEXT_BUILD)
 
 
-# --- the CLIENT arm (U13 / R17 runtime half) ---------------------------------
+# --- the CLIENT arm -----------------------------------------------------------
 #
 # The one source whose text is authored by code we did not write and cannot inspect, and the one
 # whose `BuildError` is deliberately LOPSIDED: everything the report contains rides on the
@@ -279,14 +274,14 @@ def _frame_as_data(text: str) -> str:
 
 
 def from_client(raw: str) -> BuildError:
-    """A browser-side crash report → `BuildError(source=client)` (U13 / R17).
+    """A browser-side crash report → `BuildError(source=client)`.
 
     The `client` arm `ErrorSource` has reserved since the taxonomy was written, and the only one
     that splits its audience. `BuildError` is dual-purpose — a portal envelope AND the next run's
     repair prompt — and those two readers need opposite things from a report whose text the
     generated app wrote:
 
-    * `title` / `cleaned_stack` are what EGRESS (the C7 `error` envelope, the turn stream's
+    * `title` / `cleaned_stack` are what EGRESS (the `error` progress envelope, the turn stream's
       `diagnostic` frame). They get the platform's own sentence and an empty stack, so no part of
       the report is ever rendered to anybody.
     * `agent_only_detail` is what the model reads, and it never leaves this process — the field
@@ -307,7 +302,7 @@ def from_client(raw: str) -> BuildError:
     )
 
 
-# --- the USER-facing half of the split (U16 / R20, R21) ----------------------
+# --- the USER-facing half of the split -----------------------------------------
 #
 # A `BuildError` has always had two readers with opposite needs, and until now only one of them
 # was served. `title` and `cleaned_stack` are built FOR THE MODEL — `title` is designed to be the

@@ -1,4 +1,4 @@
-"""a kind dimension on token_usage — review spend is metered, never billed (U15)
+"""a kind dimension on token_usage — review spend is metered, never billed
 
 Revision ID: 0031_token_usage_kind
 Revises: 0030_approval_route_declaration
@@ -9,9 +9,9 @@ was FOR. The pre-publish classification review needs its spend recorded against 
 citizen (attribution — knowing who generates review cost is the point of recording
 it) without counting toward the budget their own builds are measured against (a
 heavy build day must never make an app unpublishable, and opening the publish
-dialog must never silently spend build time — ASM14). One column carries both:
+dialog must never silently spend build time). One column carries both:
 
-  * `kind` — a native enum (`build` | `review`, ADR-0008), NOT NULL, defaulting to
+  * `kind` — a native enum (`build` | `review`), NOT NULL, defaulting to
     `build` because that is the DEFINED meaning of an unspecified kind: every
     writer that predates the dimension was a build writer.
   * the uniqueness moves from `(user_id, usage_date)` to `(user_id, usage_date,
@@ -34,7 +34,7 @@ retroactively exactly what this migration exists to prevent — bill the citizen
 reviews. Attribution records the old schema cannot represent are dropped with the
 schema that cannot represent them.
 
-Hand-finalized (ADR-0013).
+Hand-finalized.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ down_revision: str | None = "0030_approval_route_declaration"
 branch_labels: str | None = None
 depends_on: str | None = None
 
-# The native token_usage_kind enum (ADR-0008). create_type=False so THIS migration owns
+# The native token_usage_kind enum. create_type=False so THIS migration owns
 # the lifecycle: explicit .create() in upgrade, .drop() in downgrade.
 token_usage_kind = postgresql.ENUM(
     "build",
@@ -58,7 +58,7 @@ token_usage_kind = postgresql.ENUM(
     create_type=False,
 )
 
-# The U15 backfill, as ONE statement so the test suite can exercise EXACTLY what runs
+# The backfill, as ONE statement so the test suite can exercise EXACTLY what runs
 # here (the shape tests run against the fresh-upgrade DDL; a full downgrade/upgrade
 # round-trip stays in the destructive lane). `kind IS NULL` targets precisely the rows
 # that predate the dimension — the column is added nullable, backfilled, then pinned

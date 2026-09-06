@@ -133,7 +133,7 @@ describe('getDeployment parses the APPROVAL state riding on the same response', 
 
   it('answers an unknown approval LINEAGE with null — never with self-publish', async () => {
     // An unrecognised lineage must not be READ as self_publish, because that is the one
-    // value authorising the citizen to publish an approved version themselves (P5). Null
+    // value authorising the citizen to publish an approved version themselves. Null
     // is the conservative answer: every consumer branches on `=== 'self_publish'`, so
     // "no claim" withholds the affordance rather than granting it.
     //
@@ -193,7 +193,7 @@ describe('getDeployment parses the APPROVAL state riding on the same response', 
 })
 
 /**
- * THE ONE FIELD THE PUBLISH SURFACE BRANCHES ON (R38). Every case here is about the
+ * THE ONE FIELD THE PUBLISH SURFACE BRANCHES ON. Every case here is about the
  * boundary refusing to invent a state: the surface IS this field, so there is no
  * conservative reading of an unrecognised value that is not itself a claim.
  */
@@ -298,7 +298,7 @@ describe('startDeploy has two success shapes, discriminated by outcome', () => {
   })
 
   it('parses the 200 ROUTED shape, which carries no deploymentId at all', async () => {
-    // The pre-U9 parser required `deploymentId` and would have thrown "we could not read"
+    // The previous parser required `deploymentId` and would have thrown "we could not read"
     // on the routed body — turning the outcome the citizen asked for into a parse error.
     // Mutation receipt: delete the `outcome === 'routed_for_review'` branch in
     // `toDeployOutcome` and this goes red on a thrown ApiError.

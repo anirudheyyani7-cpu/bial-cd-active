@@ -1,4 +1,4 @@
-"""Pydantic AI chat agent + Foundry model wiring (R10–R12). Public surface via explicit
+"""Pydantic AI chat agent + Foundry model wiring. Public surface via explicit
 re-exports."""
 
 from src.services.agent.agent import ChatDeps as ChatDeps

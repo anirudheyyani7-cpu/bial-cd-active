@@ -1,33 +1,27 @@
-"""Journey: build -> submit -> approve (one app per project, KD-4; re-shaped by U8).
+"""Journey: build -> submit -> approve (one app per project).
 
-(The old runner render/serve stage was retired with the open-sandbox pivot — a deployed
-app is served from the sandbox's own Caddy, not this control plane. The filename keeps
-its historical name.)
+WHY THIS EXISTS
+The filename is historical: the old runner render/serve stage was retired with the open-sandbox
+pivot — a deployed app is served from the sandbox's own Caddy, not this control plane.
 
-U8 re-shaped the pipeline's entry and exit. The citizen submit ROUTE is retired
-(ASM18) — the queue's one entrant is the submit service the publish gate calls, so
-stage (b) drives `services/approvals/submit` directly, exactly as the gate (U9) does:
-self-publish lineage, declaration attached. And the manual-runbook handoff at the tail
-is GONE for this lineage — mark-deployed refuses a self-published app (R17a), because
-the citizen publishes the approved version themselves through the deploy pipeline. The
-old mark-deployed leg is flipped into that refusal guard.
+The submit ROUTE is retired: the submit service is the queue's one entrant, called
+directly by the publish gate exactly as stage (b) below does — self-publish lineage,
+declaration attached. The manual-runbook handoff is gone for this lineage too:
+mark-deployed refuses a self-published app, because the citizen publishes the approved
+version themselves through the deploy pipeline.
 
 The builder provisions the project's ONE app, then addresses it flat by the RETURNED
-appId — `/v1/apps/{appId}/*` — never by the builder conversation id. The app has its own
-fresh UUIDv7 id (KD-4 retired the old `appId == conversationId` identity); the acting
-builder conversation is recorded as the app's head/last-builder pointer, and the parent
-project is resolved via `project_id` for the breadcrumb. The rebuilt frontends address by
-the returned id (see `_CONTRACTS.md` Journey 1).
+appId — `/v1/apps/{appId}/*` — never by the builder conversation id, which the app's own
+fresh UUIDv7 id retires as an identity. The acting builder conversation is recorded as
+the app's head/last-builder pointer; the parent project resolves via `project_id` for
+the breadcrumb (see `_CONTRACTS.md` Journey 1).
 
-Two isolated concerns, one file:
-
-  * `test_provisioned_app_is_addressable_at_its_returned_id` — the flat id-addressing
-    contract: provision returns the app's own id, `/apps/{appId}/status` resolves it, and
-    the acting conversation is the head pointer.
-
-  * `test_build_submit_approve_pipeline` — the backend pipeline: provision -> submit
-    service (forks the immutable submission copy, APPROVAL R1) -> admin approve pinning
-    exactly the reviewed submission (D5) -> the runbook lever refused (R17a).
+Two isolated concerns, one file: `test_provisioned_app_is_addressable_at_its_returned_id`
+covers the flat id-addressing contract (provision returns the app's own id,
+`/apps/{appId}/status` resolves it, the acting conversation is the head pointer);
+`test_build_submit_approve_pipeline` covers the backend pipeline (provision -> submit,
+forking the immutable submission copy -> admin approve pinning exactly the reviewed
+submission -> the runbook lever refused).
 """
 
 from __future__ import annotations
@@ -66,9 +60,9 @@ async def _auth_user(db: AsyncSession, **overrides: object):
 
 
 async def test_provisioned_app_is_addressable_at_its_returned_id(client, db_session) -> None:
-    """CONTRACT (KD-4): the mint returns the app's own id and the app is addressable at
+    """CONTRACT: the mint returns the app's own id and the app is addressable at
     `/apps/{appId}/*`. The row is minted by `resolve_app_for_project` (the build session's
-    path) — since U6 there is no client-callable provision endpoint."""
+    path) — there is no client-callable provision endpoint."""
     owner, headers = await _auth_user(db_session, email="owner@rvaiglobal.com")
     conv = await ConversationFactory.create(
         db_session, owner.id, kind=ChatKind.BUILD, title="My builder app"
@@ -76,7 +70,7 @@ async def test_provisioned_app_is_addressable_at_its_returned_id(client, db_sess
 
     app_id = str(await resolve_app_for_project(db_session, owner.id, conv.project_id))
     await db_session.commit()
-    # The app has its OWN fresh id — one app per project, NOT the conversation id (KD-4).
+    # The app has its OWN fresh id — one app per project, NOT the conversation id.
     assert app_id != str(conv.id)
 
     # It is addressable flat by that returned id — GET /v1/apps/{appId}/status is 200 draft.
@@ -97,8 +91,8 @@ async def test_build_submit_approve_pipeline(client, app, db_session) -> None:
     """BACKEND PIPELINE: mint -> submit service -> approve, addressed by the minted
     appId (the app's own uuid7 PK). The submit service forks an immutable copy of the
     build-session snapshot; approve pins EXACTLY the reviewed submission; and the
-    manual-runbook lever REFUSES this lineage (R17a) — the citizen self-publishes the
-    approved version through the deploy pipeline (U9), no operator handoff."""
+    manual-runbook lever REFUSES this lineage — the citizen self-publishes the
+    approved version through the deploy pipeline, no operator handoff."""
     store = FakeStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
     # Both storage seams to ONE store: routes that document a 503 take the None-tolerant
@@ -116,7 +110,7 @@ async def test_build_submit_approve_pipeline(client, app, db_session) -> None:
 
     # (b) the build session finalized a snapshot bundle (SESSION-API's job — seeded
     # here), and the publish flow routes the app into the queue through the ONE
-    # remaining writer (U8): draft -> pending + the immutable copy (R1), lineage and
+    # remaining writer: draft -> pending + the immutable copy, lineage and
     # declaration attached.
     store.objects[snapshot_key(uuid.UUID(app_id))] = _BUNDLE
     app_row = await db_session.get(AppRegistry, uuid.UUID(app_id))
@@ -140,7 +134,7 @@ async def test_build_submit_approve_pipeline(client, app, db_session) -> None:
     assert status_read.json()["submissionId"] == submission_id
 
     # (c) a super-admin (email allowlist: admin@bial.com) approves THE reviewed
-    # submission — the D5 guard pins exactly what was reviewed.
+    # submission — the guard pins exactly what was reviewed.
     _, admin_headers = await _auth_user(db_session, email="admin@bial.com")
     approved = await client.post(
         f"/v1/admin/apps/{app_id}/approve",
@@ -150,7 +144,7 @@ async def test_build_submit_approve_pipeline(client, app, db_session) -> None:
     assert approved.status_code == 200
     assert approved.json() == {"appId": app_id, "status": "approved"}
 
-    # (d) FLIPPED (U8/R17a): the runbook handoff gets no new entrants — recording a
+    # (d) FLIPPED: the runbook handoff gets no new entrants — recording a
     # runbook deployment nobody performed, on an app whose owner publishes it
     # themselves, is refused and stamps nothing.
     deployed = await client.post(f"/v1/admin/apps/{app_id}/mark-deployed", headers=admin_headers)

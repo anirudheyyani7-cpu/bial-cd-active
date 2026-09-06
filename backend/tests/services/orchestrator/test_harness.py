@@ -1,8 +1,8 @@
-"""End-to-end `run_build` journeys over the fake (U9, KD-1..KD-13).
+"""End-to-end `run_build` journeys over the fake.
 
 The full multi-run loop: happy path, self-heal re-seed, escalation, quota mid-loop — asserting the
 envelope stream shape, seq monotonicity, and the returned `BuildResult`. BRAIN emits NO terminal
-`ended` (R7): completion travels on the verdict, and SESSION-API renders the frame post-snapshot.
+`ended`: completion travels on the verdict, and SESSION-API renders the frame post-snapshot.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ def _assert_seq_gap_free(events: list[ProgressEnvelope]) -> None:
 
 
 def _assert_no_terminal(events: list[ProgressEnvelope]) -> None:
-    """BRAIN never emits `ended` on ANY path (R7) — the terminal frame is SESSION-API's, emitted
-    after its C4 snapshot so it can carry a true `snapshot_committed`."""
+    """BRAIN never emits `ended` on ANY path — the terminal frame is SESSION-API's, emitted
+    after its snapshot so it can carry a true `snapshot_committed`."""
     assert not [e for e in events if e.type == "ended"]
 
 
@@ -147,7 +147,7 @@ async def test_wall_clock_deadline_escalates_like_the_turn_ceiling(
     escalations = [e for e in sink.events if e.type == "escalation"]
     assert len(escalations) == 1 and escalations[0].reason == "wall_clock_deadline_exceeded"
     assert result.reason == "build_failed"
-    assert fake.teardown_calls == 0  # BRAIN never tears down (KD-11)
+    assert fake.teardown_calls == 0  # BRAIN never tears down
 
 
 async def test_attach_not_ready_twice_then_ready_still_builds(
@@ -265,7 +265,7 @@ async def test_model_steps_are_clamped_with_output_and_temperature(
 async def test_model_steps_carry_anthropic_cache_breakpoints(
     db_session, billing_factory, sink
 ) -> None:
-    # R1: the loop re-sends the system prompt + tool definitions verbatim on EVERY step, so all
+    # The loop re-sends the system prompt + tool definitions verbatim on EVERY step, so all
     # three breakpoints must reach the model call — asserting the wiring, not just the constant.
     settings = await _capture_model_settings(db_session, billing_factory, sink)
 
@@ -303,7 +303,7 @@ async def test_metering_sum_matches_scripted_usage(db_session, billing_factory) 
     fake = FakeSandbox()
     fake.dev_ready = True
     sink = CollectingSink()
-    # A NON-TERMINAL first step: a passing `declare_done` ends the run outright (U18/R30), so a
+    # A NON-TERMINAL first step: a passing `declare_done` ends the run outright, so a
     # script that led with it would only ever buy ONE model step and this sum would measure one
     # usage rather than the folding of two.
     model = scripted_model(
@@ -333,7 +333,7 @@ async def test_metering_sum_matches_scripted_usage(db_session, billing_factory) 
 async def test_a_green_declare_done_ends_the_legacy_harness_run_too(
     db_session, billing_factory, sink
 ) -> None:
-    """★ U18/R30 ON THE OTHER CONSUMER OF THE SAME TOOL.
+    """★ THE OTHER CONSUMER OF THE SAME TOOL.
 
     `declare_done` is ONE tool body serving two harnesses, and its return text now tells the model
     "this turn ends here and nothing further is asked of you" on a passing check. The Write engine
@@ -371,12 +371,12 @@ async def test_a_green_declare_done_ends_the_legacy_harness_run_too(
 
 
 async def test_multimodal_prompt_reaches_the_model(db_session, billing_factory, sink) -> None:
-    """R3 — the whole point of the unit: what SESSION-API materialized actually arrives at the
+    """The whole point of the unit: what SESSION-API materialized actually arrives at the
     model. Captures the first request's parts off a `FunctionModel` and asserts the instruction
     text, the fenced office markdown, and the image BYTES are all there.
 
-    Before R3 this content never left the database: the build ran on `prompt` alone and the user's
-    spreadsheet was silently ignored.
+    This content used to never leave the database — the build ran on `prompt` alone and the
+    user's spreadsheet was silently ignored.
     """
     user = await UserFactory.create(db_session)
     fake = FakeSandbox()
@@ -432,7 +432,7 @@ async def test_multimodal_prompt_reaches_the_model(db_session, billing_factory, 
 async def test_text_only_prompt_still_reaches_the_model_as_a_bare_string(
     db_session, billing_factory, sink
 ) -> None:
-    """Back-compat: no attachments → the pre-R3 shape (a plain string), not a 1-element list."""
+    """Back-compat: no attachments → the original shape (a plain string), not a 1-element list."""
     user = await UserFactory.create(db_session)
     fake = FakeSandbox()
     fake.dev_ready = True
@@ -466,7 +466,7 @@ class _WarmOrderSandbox(FakeSandbox):
     It IS the fake, deliberately — an earlier cut took an `inner: FakeSandbox` and copied two
     attributes off it, which silently discarded any `queue_commands` / `push_dev_logs` /
     `compile_error_appears_on_first_request` programming the caller had done. Two fakes where
-    only one is driven is the green-for-the-wrong-reason trap `.claude/rules/testing.md` names."""
+    only one is driven is the green-for-the-wrong-reason trap."""
 
     def __init__(self, sink: CollectingSink) -> None:
         super().__init__()
@@ -479,7 +479,7 @@ class _WarmOrderSandbox(FakeSandbox):
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         # BOTH doors are recorded, because both are requests at the app root and the unit is
-        # about which of them happened before the frame. U6 moved the verify-side request from
+        # about which of them happened before the frame. The verify-side request moved from
         # `someone_has_to_go_first` to this one; recording only the first would have left this
         # test asserting a single warm and quietly stopped covering the second.
         self._record()
@@ -493,11 +493,11 @@ class _WarmOrderSandbox(FakeSandbox):
 async def test_the_legacy_build_warms_the_route_before_it_frames_the_preview(
     db_session, billing_factory, sink
 ) -> None:
-    """★ U3 (R3) on the legacy path. Four sites here can emit `preview_ready` — the warm-resume,
-    verify's fallback, and the watcher's two arms — and a warm request wired into three of them
-    is a preview that still mounts onto an uncompiled route on the fourth. `_frame_the_preview`
-    is the single door; this asserts the ordering it exists to guarantee, not merely that both
-    calls happened."""
+    """★ Warm-before-frame ordering on the legacy path. Four sites here can emit `preview_ready`
+    — the warm-resume, verify's fallback, and the watcher's two arms — and a warm request wired
+    into three of them is a preview that still mounts onto an uncompiled route on the fourth.
+    `_frame_the_preview` is the single door; this asserts the ordering it exists to guarantee,
+    not merely that both calls happened."""
     user = await UserFactory.create(db_session)
     fake = _WarmOrderSandbox(sink)
     fake.dev_ready = True
@@ -517,8 +517,9 @@ async def test_the_legacy_build_warms_the_route_before_it_frames_the_preview(
     assert fake.frames_when_warmed[0] == 0, (
         "the first route was compiled before the citizen's iframe was told to mount"
     )
-    # A build requests the root TWICE and both are deliberate: U3 pays the compile before the
-    # frame, and `verify` asks again (through U6's serving probe) so a Next-only compile error
-    # lands in the log window `detect_server_crash` reads — and so the health verdict has a status
-    # of its own to decide on. The one that matters for R3 is the one before the frame.
+    # A build requests the root TWICE and both are deliberate: the warm-resume request pays the
+    # compile before the frame, and `verify` asks again (through its own serving probe) so a
+    # Next-only compile error lands in the log window `detect_server_crash` reads — and so the
+    # health verdict has a status of its own to decide on. The one that matters for
+    # warm-before-frame ordering is the one before the frame.
     assert fake.frames_when_warmed == [0, 1]

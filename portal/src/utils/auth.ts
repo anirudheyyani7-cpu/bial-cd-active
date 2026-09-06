@@ -27,7 +27,7 @@
  */
 
 // Relative path: the vite dev proxy (and the production edge) route /api/v1/auth/*
-// to the FastAPI control-plane, stripping the /api prefix (KD-8).
+// to the FastAPI control-plane, stripping the /api prefix.
 const AUTH_API = '/api/v1/auth'
 
 /** Mirrors the backend's `ProfileLimits` (`backend/src/api/v1/auth/schemas.py`) —
@@ -39,7 +39,7 @@ export interface ProfileLimits {
 }
 
 /** Mirrors the backend's `ChatKindInfo` (`backend/src/api/v1/auth/schemas.py`) — one entry
- * in the U16/R73 catalogue of what a chat kind IS: its wire value, its display name, and the
+ * in the catalogue of what a chat kind IS: its wire value, its display name, and the
  * one line a citizen reads about what it does. `utils/chatKind.ts` is the only module that
  * reads this array; nothing else should hold a literal chat-kind name or description. */
 export interface ChatKindInfo {
@@ -176,8 +176,8 @@ export function isAuthenticated(): boolean {
 // --- CSRF (non-HttpOnly cookie -> X-CSRF-Token header) -----------------------
 
 // Exported so the first business-route client that enforces double-submit CSRF —
-// the C3 build-session control API (`buildSessionApi.ts`) — reuses this exact
-// cookie read instead of re-implementing it (ADR-0007; ORIG-§5 reuse-don't-reimplement).
+// the build-session control API (`buildSessionApi.ts`) — reuses this exact
+// cookie read instead of re-implementing it.
 // Additive: `auth.js`'s own `doRefresh`/`logout` still call it unchanged.
 export function getCsrfToken(): string | null {
   try {
@@ -254,7 +254,7 @@ let inflight: Promise<true | null> | null = null
  * Silently refresh the cookie session via POST /auth/refresh. The Web-Locks
  * single-flight is REQUIRED (not an optimization): cookies are shared across
  * tabs, so two tabs racing the same refresh cookie would trip the server's
- * reuse-detection and force a full re-auth (KD-5/U8). Returns truthy on success,
+ * reuse-detection and force a full re-auth. Returns truthy on success,
  * null on failure — NOT a bearer token (the new session is in cookies). The name
  * is retained for the legacy call sites that still invoke it.
  */
@@ -326,7 +326,7 @@ export async function logout(): Promise<boolean> {
 // docblock below, which states the reason that actually still holds.
 
 /**
- * No bearer token exists in the cookie model — always null (KD-10 shim). The
+ * No bearer token exists in the cookie model — always null. The
  * declared return type is widened to `string | null` on purpose: this is the
  * default of `authFetch`'s injectable `getToken` seam, and a bare `null` literal
  * narrows every TypeScript caller's dep bag to `() => null`.

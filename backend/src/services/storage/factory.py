@@ -1,4 +1,4 @@
-"""The concrete-typing factory (ADR-0009) for the Azure Blob backend.
+"""The concrete-typing factory for the Azure Blob backend.
 
 `create_storage(config)` resolves an `AzureStorageConfig` to the *concrete*
 `AzureBlobStorage` — F12/hover in the IDE land on the class — under all three

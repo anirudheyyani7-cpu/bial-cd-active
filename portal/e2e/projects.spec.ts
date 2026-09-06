@@ -7,7 +7,7 @@ import { test, expect, type Page } from '@playwright/test'
  * counted and named against real rows, and that `/apps/{appId}` genuinely leaves the SPA rather
  * than matching a client route.
  *
- * Only `/auth/me` is mocked (no live Entra tenant in CI, KD-9); everything else is driven.
+ * Only `/auth/me` is mocked (no live Entra tenant in CI); everything else is driven.
  * Run through the portal on :5173, never the backend on :8000 — the refresh cookie is
  * Path-scoped to /api/v1/auth/refresh and will not be sent otherwise.
  */
@@ -87,7 +87,7 @@ test.describe('project-first journey', () => {
 })
 
 /**
- * Two findings from agc129's review of #86 (the description editor pop-up) that are
+ * Two findings from a prior review of the description editor pop-up that are
  * structurally invisible to Vitest, so they need a real browser:
  *
  *  - jsdom never blurs a disabled element, so the busy-state focus collapse that broke

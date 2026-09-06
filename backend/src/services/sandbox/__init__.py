@@ -1,12 +1,11 @@
-"""Sandbox runtime service (contracts C2 / C4).
+"""Sandbox runtime service — the client surface plus its snapshot/restore ordering.
 
-`SandboxConfig` (the typed config, U5) plus the frozen C2 surface (U7): the
+`SandboxConfig` (the typed config) plus the frozen client surface: the
 `SandboxClient` ABC, the `SandboxHandle` value type, the typed `FileOp` request
 union + result value types (`ExecResult` / `DevStatus` / `DevLogs` / `FileResult`),
-and the typed exceptions. SESSION-API implements the ABC (Wave 1); BRAIN imports it
+and the typed exceptions. SESSION-API implements the ABC; BRAIN imports it
 read-only. Public surface is re-exported explicitly (`X as X`) so ty / mypy
---strict / pyright read it as an intentional re-export — never an `__all__` list
-(`.claude/rules/modules.md`).
+--strict / pyright read it as an intentional re-export — never an `__all__` list.
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ from tests.subprocess_env import child_env
 
 # A minimal valid AUTH__* block. `auth` is a required sub-model now, so every
 # Settings constructed here needs one (a partial block fails its inner required
-# fields — fail-first-python.md). session_secret is >= 32 chars (the validator).
+# fields). session_secret is >= 32 chars (the validator).
 _AUTH: dict[str, object] = {
     "tenant_id": "11111111-1111-1111-1111-111111111111",
     "client_id": "22222222-2222-2222-2222-222222222222",
@@ -35,7 +35,7 @@ _BASE_ENV: dict[str, object] = {
     "auth": _AUTH,
     # superadmin_emails is required (no default) — every Settings built here needs it.
     "superadmin_emails": ["admin@bial.com"],
-    # So is the at-limit support contact (U24), for the same reason.
+    # So is the at-limit support contact, for the same reason.
     "SUPPORT_CONTACT_EMAIL": "help@bial.com",
 }
 
@@ -69,7 +69,7 @@ _SANDBOX: dict[str, object] = {
     "image_ref": "bialgenaicr01.azurecr.io/citizen-dev-sandbox:latest",
 }
 
-# Minimal valid APP_DB__* block (per-project databases, ADR-0028) — the fourth
+# Minimal valid APP_DB__* block (per-project databases) — the fourth
 # optional-integration prod gate. Both inner fields are required, no-default: the
 # maintenance DSN points at a NEUTRAL maintenance database, and the key is a real
 # urlsafe-base64 32-byte Fernet key (Fernet validates it at construction, so a made-up
@@ -117,7 +117,7 @@ def test_is_production_true_in_production() -> None:
 
 
 def test_production_requires_object_store() -> None:
-    # Prod gate (fail-first-python.md): storage is optional in dev/test but the
+    # Prod gate: storage is optional in dev/test but the
     # single sanctioned optional-integration prod gate requires it in production.
     # redis/sandbox are supplied so the STORAGE gate is the one that fires.
     with pytest.raises(ValidationError):
@@ -139,8 +139,8 @@ def test_production_requires_sandbox() -> None:
 
 
 def test_production_requires_app_db() -> None:
-    # Per-project databases ARE the generated apps' isolation boundary in production
-    # (ADR-0028): booting prod without a maintenance credential would create projects
+    # Per-project databases ARE the generated apps' isolation boundary in production:
+    # booting prod without a maintenance credential would create projects
     # that silently never get a database. Same optional-with-prod-gate shape as the
     # three above; the others are supplied so the APP_DB gate is the one that fires.
     with pytest.raises(ValidationError, match="per-project databases must be configured"):
@@ -200,7 +200,7 @@ def test_app_db_gate_message_never_leaks_the_maintenance_dsn() -> None:
 
 
 def test_redis_and_sandbox_optional_in_development() -> None:
-    # The whole point of D2: dev/test boot with NO REDIS__*/SANDBOX__* env — the
+    # The whole point of this: dev/test boot with NO REDIS__*/SANDBOX__* env — the
     # existing auth/chat/runner suite must not need new configuration.
     s = _settings()
     assert s.redis is None
@@ -217,15 +217,14 @@ def test_production_boots_with_redis_and_sandbox() -> None:
 def test_the_sweep_ships_on_and_the_new_reclamation_ships_off() -> None:
     """A PORT MUST NOT CHANGE BEHAVIOUR, and the defaults are where that is decided.
 
-    `sweep_all` predates ADR-0029 entirely: it ran as an unflagged `while True` in the API
-    lifespan, wherever a sandbox was configured. Moving it onto the scheduler was supposed to
-    change WHERE it runs; gating it on `reclaim_enabled` — which ships off, deliberately, in
-    every environment — changed WHETHER it runs, so upgrading to this release would silently
-    stop all reaping while every check read green. The one loud symptom would have been the
-    Azure bill.
+    `sweep_all` predates the fleet-reclamation redesign: it ran as an unflagged `while True` in
+    the API lifespan wherever a sandbox was configured. That redesign changed WHERE it runs (the
+    scheduler) and separately gated it on `reclaim_enabled` — off everywhere by default — which
+    changed WHETHER it runs; upgrading with reaping silently stopped would leave every check
+    green, with the Azure bill as the only symptom.
 
-    Mutation-check: flip `sweep_enabled` to default `False`, or point `sandbox_reap` back at
-    `reclaim_enabled`, and this goes red."""
+    Mutation-check: flip `sweep_enabled` to `False`, or point `sandbox_reap` at
+    `reclaim_enabled`."""
     s = _prod_settings()
     assert s.sandbox is not None
     assert s.sandbox.sweep_enabled is True, "the pre-existing sweep must survive the upgrade"
@@ -289,7 +288,7 @@ def test_redis_url_is_masked() -> None:
     assert "cache.example.redis.cache.windows.net" not in repr(s.redis)
 
 
-# --- Redis TLS production gate (KD-4) ----------------------------------------
+# --- Redis TLS production gate ----------------------------------------
 
 
 def test_plaintext_redis_is_fine_outside_production() -> None:
@@ -357,7 +356,7 @@ def test_unknown_key_forbidden() -> None:
         _settings(TOTALLY_BOGUS="x")
 
 
-# --- Daily token limit (R13/R30) ---------------------------------------------
+# --- Daily token limit -------------------------------------------------------
 
 
 def test_daily_token_limit_default() -> None:
@@ -371,7 +370,7 @@ def test_daily_token_limit_rejects_nonpositive() -> None:
         _settings(DAILY_TOKEN_LIMIT=0)
 
 
-# --- Entra ID auth config (R21) ----------------------------------------------
+# --- Entra ID auth config -----------------------------------------------------
 
 
 def test_auth_is_required() -> None:
@@ -450,7 +449,7 @@ def test_auth_server_metadata_url_derived_from_tenant() -> None:
     )
 
 
-# --- Super-admin allowlist (R7) ----------------------------------------------
+# --- Super-admin allowlist ----------------------------------------------------
 
 
 def test_superadmin_emails_required() -> None:
@@ -485,7 +484,7 @@ def test_superadmin_emails_reject_empty_allowlist(blank: object) -> None:
         _settings(superadmin_emails=blank)
 
 
-# --- FRONTEND_URL production gate (feeds the sandbox frame-ancestors CSP, C8) --
+# --- FRONTEND_URL production gate (feeds the sandbox frame-ancestors CSP) ----
 
 
 def test_frontend_url_localhost_default_rejected_in_production() -> None:
@@ -591,7 +590,7 @@ def test_foundry_secret_masked() -> None:
     assert "super-secret-key" not in repr(s.foundry)
 
 
-# --- Postgres auth mode (Azure Entra vs password; ADR-0027) ------------------
+# --- Postgres auth mode (Azure Entra vs password) ----------------------------
 
 
 def test_db_auth_mode_defaults_to_password() -> None:
@@ -619,7 +618,7 @@ def test_db_entra_client_id_accepts_value() -> None:
     assert _settings(DB_ENTRA_CLIENT_ID=mi).DB_ENTRA_CLIENT_ID == mi
 
 
-# --- Sample env files (R4: an operator with only the samples can boot) --------
+# --- Sample env files (an operator with only the samples can boot) -----------
 
 # `backend/` — tests/ lives directly under it.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -648,7 +647,7 @@ def _boot_from(sample: str, probe: str) -> subprocess.CompletedProcess[str]:
 
 @pytest.mark.parametrize("sample", _SAMPLE_ENV_FILES)
 def test_sample_env_file_boots_a_valid_settings(sample: str) -> None:
-    # R4: a fresh checkout with ONLY the checked-in templates must boot. A missing
+    # A fresh checkout with ONLY the checked-in templates must boot. A missing
     # required key, a REDIS__* line naming a knob RedisConfig does not declare
     # (extra="forbid"), or any other drift fails this at import time.
     done = _boot_from(sample, "settings.ENVIRONMENT")
@@ -659,7 +658,7 @@ def test_sample_env_file_boots_a_valid_settings(sample: str) -> None:
 def test_dev_sample_env_file_configures_redis() -> None:
     # .env.example must ship a LIVE REDIS__URL: unset boots the API but leaves every
     # build-session call raising RedisNotConfiguredError — the "operator followed the
-    # sample and the build path is silently dead" outcome R4 kills.
+    # sample and the build path is silently dead" outcome this test guards against.
     # (.env.test.example deliberately keeps it commented: the unset path is the
     # baseline tests/test_lifespan.py asserts, so the two samples differ on purpose.)
     done = _boot_from(".env.example", "settings.redis and settings.redis.url.get_secret_value()")

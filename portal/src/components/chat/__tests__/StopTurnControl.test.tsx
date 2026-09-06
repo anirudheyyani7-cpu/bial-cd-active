@@ -1,5 +1,5 @@
 /**
- * R55 — the relocated stop control.
+ * The relocated stop control.
  *
  * The pairing rule this file follows throughout: EVERY ABSENCE ASSERTION IS PAIRED WITH A
  * LIVENESS ASSERTION. `queryByTestId(...)` returning null also passes when the component threw,
@@ -110,8 +110,8 @@ describe('StopTurnControl', () => {
   })
 
   it('keeps its accessible name as Stop while the request is in flight', async () => {
-    // Renaming a control mid-interaction is the defect U15 avoids on the copy button. The glyph
-    // and the title carry the in-flight state; the word does not move.
+    // Renaming a control mid-interaction is the defect avoided on the copy button, the same way
+    // here: the glyph and the title carry the in-flight state; the word does not move.
     let release: () => void = () => {}
     setup({
       onStopTurn: vi.fn(
@@ -134,7 +134,7 @@ describe('StopTurnControl', () => {
 
   it('reports a failed stop and returns to a pressable state', async () => {
     // A citizen must not be left holding a dead button. Both halves are asserted: the sentence
-    // exists (U9 routes it to the assertive slot), and the control works again afterwards.
+    // exists (routed to the assertive slot), and the control works again afterwards.
     const onStopTurn = vi
       .fn<(c: string, t: string) => Promise<void>>()
       .mockRejectedValueOnce(new Error('network'))

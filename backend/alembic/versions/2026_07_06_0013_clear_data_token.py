@@ -4,10 +4,10 @@ Revision ID: 0013_clear_data_token
 Revises: 0012_app_files
 Create Date: 2026-07-06
 
-The durable single-use clear-data confirm token (Plan B U8, R29) — replaces Express's
+The durable single-use clear-data confirm token — replaces Express's
 in-memory per-instance Map so the destructive-op gate survives a stateless/multi-worker
 backend. App-bound (FK app_registry.id, CASCADE), TTL + single-use redeemed atomically.
-Chains off 0012_app_files (Plan B's linear sub-chain). Hand-finalized (ADR-0013).
+Chains off 0012_app_files. Hand-finalized.
 """
 
 from __future__ import annotations

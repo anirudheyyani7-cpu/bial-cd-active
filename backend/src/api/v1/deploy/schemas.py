@@ -30,15 +30,15 @@ class DataClassificationAnswers(CamelModel):
     has to represent. Making them required rather than defaulting to False also means a
     caller cannot under-declare by omission, which a default would have made invisible.
 
-    NO REVIEW FIELD, BY CONSTRUCTION (R12). The platform's own review of the saved code
+    NO REVIEW FIELD, BY CONSTRUCTION. The platform's own review of the saved code
     is read from the store inside the publish request, keyed by app and version; a
     browser-supplied copy is not a field this schema has, and `CamelModel`'s pydantic
     default (`extra="ignore"`) drops any unknown key a caller smuggles in — so no shape
     of request body can put words in the review's mouth.
 
-    THE NOTES GATE MOVED OUT OF THIS SCHEMA in U9, deliberately. It used to be a
+    THE NOTES GATE MOVED OUT OF THIS SCHEMA, deliberately. It used to be a
     `model_validator` here, keyed on the citizen's own answers — but the explanation is
-    obliged exactly when the MERGED answer set routes (ASM22/R10), and the merge reads
+    obliged exactly when the MERGED answer set routes, and the merge reads
     the stored review, which a request schema cannot see. Worse, keeping it here would
     422 the one publish that must succeed without it: an approved app (ladder rule 3)
     ships a weighted-Yes declaration and needs no fresh explanation — the one on file
@@ -91,7 +91,7 @@ class DeployStartedResponse(CamelModel):
     """The 202 body. Carries the id to poll — the deploy itself has barely begun.
 
     `outcome` is the discriminator against `DeployRoutedResponse` (one POST, two
-    success shapes since U9): a client switches on it rather than sniffing which keys
+    success shapes): a client switches on it rather than sniffing which keys
     happen to be present. Additive for existing clients, which read `status`."""
 
     outcome: Literal["started"] = "started"
@@ -105,7 +105,7 @@ class DeployRoutedResponse(CamelModel):
     of deploying (ladder rules 4-6: no current review, a standing rejection, or a
     weighted Yes on the merged answers).
 
-    An OUTCOME, not a failure — U12 renders it as an informational state (the app is
+    An OUTCOME, not a failure — this renders as an informational state (the app is
     waiting in the queue, pinned to `commit_sha`) and must never paint the red failure
     badge over it: the platform did exactly what it said it would. Wire shape
     (camelCase): `{"outcome": "routed_for_review", "appId", "submissionId",
@@ -122,7 +122,7 @@ class DeployRoutedResponse(CamelModel):
 
 
 class UnpublishResponse(CamelModel):
-    """The admin kill-switch's response (#113) — the deployment that was taken down (or
+    """The admin kill-switch's response — the deployment that was taken down (or
     already was, on an idempotent repeat) and when."""
 
     app_id: str
@@ -131,7 +131,7 @@ class UnpublishResponse(CamelModel):
 
 
 class ApprovalState(CamelModel):
-    """The app's APPROVAL lifecycle, carried on the deploy status response (U12).
+    """The app's APPROVAL lifecycle, carried on the deploy status response.
 
     WHY IT RIDES HERE AND NOT ON A SECOND CALL. The citizen has two publish surfaces —
     the project-page card and the builder toolbar button — and the toolbar one is
@@ -143,9 +143,9 @@ class ApprovalState(CamelModel):
     story.
 
     `submitted_sha`/`submitted_at` describe the submission currently in the QUEUE (the
-    R15b waiting state); `approved_commit_sha` + `approval_route` are what rule 3 of
+    waiting state); `approved_commit_sha` + `approval_route` are what rule 3 of
     the publish gate consumes — a `runbook` approval authorises the manual go-live
-    runbook and never self-publishing (P5), so a client that renders "you may publish
+    runbook and never self-publishing, so a client that renders "you may publish
     this" must read the lineage as well as the pin."""
 
     status: AppStatus
@@ -153,8 +153,8 @@ class ApprovalState(CamelModel):
     # never-submitted draft has no lineage (see `ApprovalRoute`'s NULL semantics).
     approved_commit_sha: str | None = None
     # WHEN the administrator approved, beside WHICH commit they approved. The pin alone
-    # cannot be rendered to a citizen — Plan G's chip names the date first and mutes the
-    # build code beside it, because a date is the thing a person recognises. Costs
+    # cannot be rendered to a citizen — the status chip names the date first and mutes
+    # the build code beside it, because a date is the thing a person recognises. Costs
     # nothing: `approved_at` is a column on the registry row this response already
     # selects in full, so surfacing it adds no query and no I/O. NULL means never
     # approved, exactly as `approved_commit_sha` does — the two are written together in
@@ -179,13 +179,13 @@ class ApprovalState(CamelModel):
 
 
 class PublishState(StrEnum):
-    """THE single publish state Plan G's chip renders (U15, R38/R39) — thirteen values,
+    """THE single publish state the status chip renders — thirteen values,
     authored here and nowhere else, so no client recombines `status` + `unpublished_at`
     + `failure_code` + the approval route + the pin to guess at a state the server
     already knows. An **API** StrEnum like `PreviewLifeState`
     (`build_sessions/schemas.py`): nothing persists it, and the wire value equals the
-    member's own string. G's narrowing throws on a value it does not recognise, so this
-    list is the one place a thirteenth (or fourteenth) member gets added.
+    member's own string. The chip's narrowing throws on a value it does not recognise,
+    so this list is the one place a thirteenth (or fourteenth) member gets added.
 
     UNKNOWN IS NEVER SPELLED "UP TO DATE" — `LIVE_DRIFT_UNKNOWN` exists for exactly the
     case where a storage HEAD could not answer or a bundle predates the metadata stamp,
@@ -237,12 +237,12 @@ _ROUTED_FAILURE_CODES: frozenset[str] = frozenset({FAIL_ROUTED_FOR_REVIEW})
 def compute_publish_state(
     app: AppRegistry, deployment: Deployment | None, saved_head: str | None
 ) -> PublishState:
-    """THE pure mapping (U15's technical design): three plain values in, one
+    """THE pure mapping: three plain values in, one
     `PublishState` out — no I/O, no storage handle, so it cannot acquire a hidden input
     later. The single object-store metadata HEAD this depends on is read by the CALLER
-    (`latest_deployment`, exactly where the two shipped readers at
-    `classification/router.py:159-175` and this module's own `_shipping_head` already
-    read it), and a storage failure is turned into `saved_head=None` there — this
+    (`latest_deployment`, exactly where the two shipped readers — the deploy router's
+    `_shipping_head` and `classification/router.py`'s `_saved_version` — already read it),
+    and a storage failure is turned into `saved_head=None` there — this
     function never learns why the value is absent, only that it is.
 
     ADDS NO POLICY AND REMOVES NONE: the seven-rule publish ladder (`deploy_project`)
@@ -251,7 +251,7 @@ def compute_publish_state(
     of the thirteen `PublishState` values.
 
     ORDER IS THE POLICY HERE. `DISABLED` and `PENDING` win outright, "whatever its
-    deployment row says" (AE23) — an administrator's lockout or a citizen's pending
+    deployment row says" — an administrator's lockout or a citizen's pending
     submission is the most current, most actionable fact about the app, and must not be
     masked by an OLDER deployment row still sitting in the append-only `deployments`
     table (a routed-then-withdrawn app, or one disabled while still technically live).
@@ -297,13 +297,13 @@ def compute_publish_state(
     # `DeploymentStatus.SUCCEEDED` — the only member left.
     if deployment.unpublished_at is not None:
         return PublishState.TAKEN_OFFLINE
-    # THE DRIFT COMPARISON (R39): against the commit that actually WENT LIVE, never
+    # THE DRIFT COMPARISON: against the commit that actually WENT LIVE, never
     # `approved_commit_sha` — that pin is NULL for every app published unattended under
     # ladder rule 7, so comparing against it would read every one of those apps as
     # unknown. `saved_head` is the primary signal; `source_commit_sha` (the last
     # SUBMITTED commit, moved only by submit/withdraw, never by a Save) is the
     # secondary one that still fires `live_newer_work` even when the saved head could
-    # not be read at all (AE24: four saves and no new submission is exactly the case a
+    # not be read at all (four saves and no new submission is exactly the case a
     # submitted-commit check alone reads as unknown).
     if saved_head is not None:
         return (
@@ -322,9 +322,9 @@ class DeploymentResponse(CamelModel):
     Empty rather than a 404: "this app has never been deployed" is a normal state a client
     renders as a Deploy button, not an error.
 
-    `publish_state` (U15) is the one field a client should actually branch on — see
-    `PublishState`. Every other field here still rides along for Plan G's own rendering
-    (the URL, the timestamps, the raw approval block), but none of them needs to be
+    `publish_state` is the one field a client should actually branch on — see
+    `PublishState`. Every other field here still rides along for the status chip's own
+    rendering (the URL, the timestamps, the raw approval block), but none of them needs to be
     recombined to name a state; that work is already done."""
 
     deployment_id: str | None = None
@@ -338,19 +338,19 @@ class DeploymentResponse(CamelModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     # WHETHER IT IS STILL LIVE — the second axis, and the only thing that separates "this
-    # deploy succeeded and is serving traffic" from "an administrator took it down" (#113).
+    # deploy succeeded and is serving traffic" from "an administrator took it down".
     # `status` cannot express the difference: an unpublished deployment stays `succeeded`,
     # because that is still how the attempt ended. A client rendering a live-app link MUST
     # test this as well, or it shows a citizen a URL that 404s with nothing to explain why.
     unpublished_at: datetime | None = None
-    # The app's approval lifecycle (U12). NULL has ONE defined meaning: this project has
+    # The app's approval lifecycle. NULL has ONE defined meaning: this project has
     # no app row yet, so there is no lifecycle to report — never "we didn't look".
     approval: ApprovalState | None = None
-    # THE one computed publish state (U15). No default: every construction site names it
+    # THE one computed publish state. No default: every construction site names it
     # explicitly, the same fail-first posture `Settings` takes on a required field —
     # forgetting it should be a type error, not a value that quietly means nothing.
     publish_state: PublishState
-    # THE CITIZEN'S OWN LAST SAVE (U4), which `publish_state` until now only ever consumed
+    # THE CITIZEN'S OWN LAST SAVE, which `publish_state` until now only ever consumed
     # and threw away. The rail draws a "YOUR LATEST <date> <short id>" row, and both halves
     # of it come from the ONE metadata HEAD `latest_deployment` already takes — no second
     # call, and no container: a project whose workspace is stopped still answers, which is
@@ -363,9 +363,9 @@ class DeploymentResponse(CamelModel):
     # client renders as "cannot tell" and NEVER as a version. `saved_at` is the store's own
     # last-modified on that same object, so a stamp-less bundle can still say WHEN while
     # declining to say WHICH. Neither is ever invented: there is no placeholder that would
-    # make a missing save look present (`.claude/rules/fail-first.md`).
+    # make a missing save look present.
     #
-    # NO COUNT RIDES BESIDE THEM, and none can (ASM6/Decision 2): `snapshot_key` is
+    # NO COUNT RIDES BESIDE THEM, and none can: `snapshot_key` is
     # overwrite-latest with one bundle per app and there is no version-history table, so
     # "4 newer saves" has no source anywhere in this process. The chip says newer work
     # exists; it does not count it. A count waits for save history.

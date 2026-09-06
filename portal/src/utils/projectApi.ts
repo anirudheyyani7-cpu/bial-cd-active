@@ -6,7 +6,7 @@
  *
  * Wire format is camelCase (the backend serializes `by_alias=True`). Response
  * bodies are untrusted network input: they arrive as `unknown` and are narrowed
- * with type guards — never cast, never `any` (`.claude/rules/fail-first-typescript.md`).
+ * with type guards — never cast, never `any`.
  * Every non-2xx becomes an `ApiError` via `readApiError`, so callers branch on
  * `.status` / `.code` (409 / 429 / 503) instead of re-parsing three envelopes.
  */
@@ -41,7 +41,7 @@ export interface Project {
   appId: string | null
   appStatus: AppStatus | null
   /**
-   * Does this project have a snapshot a Relaunch could actually restore (N7)?
+   * Does this project have a snapshot a Relaunch could actually restore?
    * `true` = yes, `false` = confirmed no, `null` = the server could not reach the object
    * store, so it declines to claim anything — the UI must not read `null` as either answer.
    * Only the single-project GET computes it; the list leaves it `null` and no caller reads it.
@@ -49,7 +49,7 @@ export interface Project {
   hasRelaunchableSnapshot: boolean | null
   /**
    * Is the app SERVING right now? "Live = deployed / published — if the application is
-   * published and has url" (#158). Deliberately not derivable from `appStatus`: APPROVED
+   * published and has url". Deliberately not derivable from `appStatus`: APPROVED
    * means an administrator said yes, and one-click deploy never writes `status` at all, so
    * the ordinary live app is still `draft`. The server computes it from the deployment
    * history; `false` for a project with no app.
@@ -71,8 +71,8 @@ export interface Project {
 /**
  * One NUMBERED page of projects, newest-first.
  *
- * Was `{items, nextCursor, hasMore}` — a forward-only "Load more" — until #158 §2 specified
- * numbered pages and a rows-per-page selector. `Showing 1-8 of 12` and `Page 1 of 2` both
+ * Was `{items, nextCursor, hasMore}` — a forward-only "Load more" — until numbered pages
+ * and a rows-per-page selector replaced it. `Showing 1-8 of 12` and `Page 1 of 2` both
  * need a `total`, which the keyset envelope deliberately did not carry.
  *
  * `total` is counted AFTER the search is applied, so it describes the rows it sits under.
@@ -86,7 +86,7 @@ export interface ProjectsPage {
 }
 
 /**
- * The three numbers above the project list (#158 §1).
+ * The three numbers above the project list.
  *
  * A dedicated route rather than a count derived from the list: the page holds 8 of 12 rows,
  * so none of these is computable client-side, and polling the list for three integers would
@@ -155,8 +155,8 @@ function asAppStatus(value: unknown): AppStatus | null {
  *
  * A project with no `id` is not a project — coercing it to `''` would hand the UI
  * a card that links to `/projects/` and a delete that targets nothing. Fail here,
- * at the boundary, rather than let an empty string corrupt state downstream
- * (`.claude/rules/fail-first.md`). The other fields tolerate absence because each
+ * at the boundary, rather than let an empty string corrupt state downstream.
+ * The other fields tolerate absence because each
  * has a defined meaning: a missing `description`/`appId` IS null ("none yet"), and
  * `appStatus` outside the known union is unknown, not fatal.
  */
@@ -273,7 +273,7 @@ export async function patchProject(id: string, patch: ProjectPatch, deps: AuthFe
 }
 
 /**
- * Delete a project, with the reason the server requires (#158 §13.2). The server cascades
+ * Delete a project, with the reason the server requires. The server cascades
  * its chats, app, database and blobs; none of it comes back.
  *
  * THE REASON IS ALL THE CLIENT SENDS. The deletion also records WHO deleted it, but that is

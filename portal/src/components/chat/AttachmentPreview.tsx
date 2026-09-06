@@ -1,5 +1,5 @@
 /**
- * AN ATTACHMENT, OPENED OVER THE CONVERSATION (R47, R50, R52, R64).
+ * AN ATTACHMENT, OPENED OVER THE CONVERSATION.
  *
  * ══ NOTHING HERE IS FRAMED, AND THE AUTHORITY ON THAT IS THE CONTROL PLANE ══
  *
@@ -31,7 +31,7 @@
  * no `aria-modal`, no scroll lock, and it closed on a backdrop click with nothing returning
  * focus. The Radix Dialog brings all of that, and the old lightbox component is gone.
  *
- * ══ R47 — NOTHING BUT THE READER DISMISSES IT ══
+ * ══ NOTHING BUT THE READER DISMISSES IT ══
  *
  * `open` is NEVER derived from stream state. The transcript keeps streaming behind the dialog and
  * is not scrolled; closing returns the reader exactly where they were. `onInteractOutside` and

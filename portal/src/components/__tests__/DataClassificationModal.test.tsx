@@ -186,7 +186,7 @@ describe('DataClassificationModal', () => {
   })
 
   it('ties the warning to the explanation field for assistive tech, and clears invalid once written', async () => {
-    // R10 obliges the explanation, and the warning is the copy saying so — a screen
+    // The explanation is required, and the warning is the copy saying so — a screen
     // reader has to reach it FROM the field, not stumble on it. Asserted both ways so
     // a hardcoded `aria-invalid` cannot pass.
     await renderModal()
@@ -416,7 +416,7 @@ describe('the review pre-fill', () => {
 
   it('renders a leaked-credential reason verbatim — no file name, no value, no markdown mangling (AE1)', async () => {
     // Server-shaped reason: the backend strips locations and values before this body is
-    // built (R3). The render path's obligation is to pass it through VERBATIM in a
+    // built. The render path's obligation is to pass it through VERBATIM in a
     // whitespace-preserving plain element — the shared markdown renderer would collapse
     // the single newline (documented repo bug) and transform the asterisks.
     const reason =
@@ -454,7 +454,7 @@ describe('while the review runs', () => {
     expect(status.textContent).toMatch(/close this and come back/i)
     expect(status.textContent).toMatch(/20 seconds/)
     expect(status.textContent).toMatch(/up to a minute/i)
-    // OD-A: never claim closing loses the result — it is stored against the version.
+    // Never claim closing loses the result — it is stored against the version.
     // (Word-bounded: "close" contains "lose".)
     expect(status.textContent).not.toMatch(/\b(lose|lost|losing)\b|start over|again from/i)
     // The version is named from the moment it opens, review or no review.
@@ -701,7 +701,7 @@ describe('the failure buckets', () => {
       } else {
         expect(screen.queryByTestId('dc-recheck')).toBeNull()
       }
-      // A failure is never stored as an answer (R19): six unanswered questions the
+      // A failure is never stored as an answer: six unanswered questions the
       // citizen must answer, and the submit stays blocked until they do.
       expect(confirmButton().disabled).toBe(true)
       expect(screen.getByTestId('dc-question-healthData-no').getAttribute('aria-checked')).toBe(

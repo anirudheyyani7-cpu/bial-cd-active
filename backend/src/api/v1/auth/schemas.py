@@ -1,6 +1,6 @@
 """Auth response schemas.
 
-A deliberate mix (R11 carve-out): only `ProfileLimits` rides the shared `CamelModel`
+A deliberate mix: only `ProfileLimits` rides the shared `CamelModel`
 (it already used the same camel config, so reparenting is byte-identical). `UserProfile`
 is intentionally snake_case on the wire (`{id, email, display_name, is_admin, limits}` —
 the SPA contract), and the refresh/logout status bodies are single-field literals, so
@@ -27,7 +27,7 @@ class ProfileLimits(CamelModel):
 
 
 class ChatKindInfo(BaseModel):
-    """One entry in the U16/R73 catalogue (`services.agent.toolsets.CHAT_KIND_CATALOGUE`) —
+    """One entry in the catalogue (`services.agent.toolsets.CHAT_KIND_CATALOGUE`) —
     the value/name/description every surface that names a chat kind reads instead of writing
     its own. Plain `BaseModel` like `UserProfile`, not `CamelModel`: three lowercase
     single-word field names have no snake/camel seam to cross."""
@@ -46,7 +46,7 @@ class UserProfile(BaseModel):
     render the admin entry point. It is NOT the authorization gate — every `/v1/admin/*` route is
     still enforced server-side by `requires_superadmin`; a forged `is_admin` buys nothing.
 
-    `chat_kinds` rides this ONCE-CACHED bootstrap rather than a dedicated endpoint (R73): it is
+    `chat_kinds` rides this ONCE-CACHED bootstrap rather than a dedicated endpoint: it is
     the whole catalogue of what a Plan chat and a Build chat ARE, so the composer, the history
     list and the help page all read the same two descriptions instead of each spelling its own."""
 

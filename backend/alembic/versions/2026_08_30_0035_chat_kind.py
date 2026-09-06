@@ -9,7 +9,7 @@ WHAT THIS IS. `conversation_kind` (planning / assistant / builder) and `conversa
 thing: what a run is allowed to do. They become one two-valued `chat_kind` (plan / build),
 fixed at creation, on both `conversations` and `messages`.
 
-THE MAPPING IS HONEST, NOT CLEVER: **every existing row on both tables becomes `build`** (R53).
+THE MAPPING IS HONEST, NOT CLEVER: **every existing row on both tables becomes `build`**.
 Until now any conversation could be switched into building at any moment, so "was this a Plan
 chat?" is not a question the stored rows can answer — a conversation stamped `plan` was one
 mode switch away from writing files, and the per-row `mode` stamp records where a batch ran,
@@ -49,8 +49,8 @@ columns return to them, with every row reading `builder` / `write`. The deleted 
 resolution overlays do not come back. This is the same one-way-door posture as 0024, and it is
 deliberate — the distinctions were never recoverable from the rows.
 
-Hand-finalized (ADR-0013). ADR-0008 governs the native enums; this revision owns all three type
-lifecycles explicitly (`create_type=False` on every one).
+Hand-finalized. This revision uses native Postgres enums and owns all three type lifecycles
+explicitly (`create_type=False` on every one).
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ down_revision: str | None = "0034_project_description_fts"
 branch_labels: str | None = None
 depends_on: str | None = None
 
-# Native enums (ADR-0008) — `create_type=False` so THIS migration owns each lifecycle.
+# Native enums — `create_type=False` so THIS migration owns each lifecycle.
 chat_kind = postgresql.ENUM("plan", "build", name="chat_kind", create_type=False)
 conversation_kind = postgresql.ENUM(
     "planning", "assistant", "builder", name="conversation_kind", create_type=False
@@ -212,7 +212,7 @@ def upgrade() -> None:
 
     chat_kind.create(op.get_bind(), checkfirst=True)
 
-    # `conversations`: the kind column swaps type (every row becomes `build` — R53), and the
+    # `conversations`: the kind column swaps type (every row becomes `build`), and the
     # mode column goes entirely. Dropping the column takes its server default with it, which is
     # what lets `conversation_mode` be dropped at the end.
     op.execute(

@@ -1,4 +1,4 @@
-"""Kind dispatch for untrusted-file parsing (R26), run inside the killable process governor.
+"""Kind dispatch for untrusted-file parsing, run inside the killable process governor.
 
 The live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`), driven
 by `api/v1/attachments/router.py`. The extraction itself lives in `services/extract/office.py`;
@@ -8,7 +8,7 @@ The four bounds (untrusted-file-parsing learning): (1) the decoded-size cap is e
 by the caller before parsing (the attachments upload limits — the old per-app parse HTTP
 endpoint was retired with the open-sandbox pivot, but this parse SERVICE stays, driven by
 `attachments/router.py`); (2) the zip-bomb guard runs here BEFORE any inflate and the
-structural gate runs first inside the extract — Plan A's shared `zip_safety` + `office`
+structural gate runs first inside the extract — the shared `zip_safety` + `office`
 validators; (3) a row/col range-clamp is applied BEFORE iterating, by `office.py`'s
 `MAX_SHEET_ROWS`/text cap; (4) the whole dispatch runs inside the killable process governor
 (`governor.py`). Errors are the shared `FileParseError` (carries status + code, e.g.

@@ -1,45 +1,29 @@
 /**
- * The pre-publish form — six weighted Yes/No questions, pre-filled by an automatic
- * review of the app's last SAVED version, plus a gated explanation. Opening the dialog
- * ensures a review exists for that version (`ensureClassificationReview`); while one
- * runs, the dialog polls and the citizen can already answer. Confirm hands the answers
- * to the caller's `onConfirm`, which posts them to the deploy route; the SERVER re-reads
- * the stored review there and merges, taking the stricter of the two — nothing this
- * dialog learned rides in as authority.
+ * The pre-publish form — six weighted Yes/No questions, pre-filled from an automatic
+ * review of the app's last SAVED version, plus a gated explanation.
  *
- * THE RUNNING TOTAL HERE DECIDES NOTHING. It drives the action's label ("Send for
- * review" when a weighted Yes is present, "Publish" otherwise), the explanation gate,
- * and the score line — affordances only, recomputed from a hand-synced copy of the
- * weights the server also enforces. If the two drift, the server is right.
- *
- * MERGE, NEVER CLOBBER. Verdicts arriving from the review land only on questions the
- * citizen has NOT touched; a touched question keeps their answer and shows the review's
- * verdict alongside as a disagreement. Silently reverting someone's answer on the screen
- * built to make this trustworthy is the named failure to avoid. Responses are also
- * filtered by the version stamp this dialog asked about (`askedShaRef`), so a second
- * tab's newer review can never paint answers for a version this dialog never named.
- *
- * ESCAPE AND CANCEL STAY AVAILABLE WHILE THE REVIEW RUNS — the result is stored against
- * the version, so closing loses nothing and the waiting copy says so (OD-A). The
- * existing rule that blocks them applies to a SUBMIT in flight (`busy`) only, and must
- * not be widened to a window that can last a minute.
- *
- * REASONS ARE MULTI-LINE PROSE, rendered in whitespace-preserving plain elements — never
- * through the shared markdown renderer, which collapses single newlines (documented repo
- * bug: docs/solutions/ui-bugs/chat-markdown-single-newline-collapse-2026-08-10.md).
- *
- * FOCUS IS PART OF THE CONTRACT, same as `ReclaimWorkspaceDialog` (whose implementation
- * this follows deliberately): the trap has to survive the busy window, because a request
- * in flight disables Confirm/Cancel and the browser blurs to `<body>`, where neither Tab
- * cycling nor Escape would fire without parking focus on the card itself. The dialog's
- * contents now ARRIVE after it opens, so progress, arrival, and the failure fall-through
+ * WHY THIS EXISTS
+ * Opening the dialog ensures a review exists for that version; while one runs, the
+ * citizen can already answer. Confirm posts the answers to the deploy route, where the
+ * SERVER re-reads the stored review and merges, taking the stricter of the two — nothing
+ * this dialog computes rides in as authority. The running total shown here decides
+ * nothing: it only drives the action's label, the explanation gate, and the score line.
+ * MERGE, NEVER CLOBBER: a review verdict lands only on an untouched question, never
+ * overwriting an answer the citizen already gave — a touched question instead shows the
+ * verdict alongside as a disagreement, scoped to the version this dialog asked about.
+ * ESCAPE AND CANCEL STAY AVAILABLE WHILE THE REVIEW RUNS — closing loses nothing since the
+ * result is stored against the version; the block on them applies only to a SUBMIT in
+ * flight. Reasons render as whitespace-preserving plain text, never through the shared
+ * markdown renderer, which collapses single newlines.
+ * FOCUS IS PART OF THE CONTRACT, as in `ReclaimWorkspaceDialog`: the trap must survive the
+ * busy window, since a request in flight disables Confirm/Cancel and blurs focus to
+ * `<body>`. Its contents ARRIVE after opening, so progress, arrival, and failure all
  * announce through a polite live region (`dc-review-status`).
  *
- * Unanswered vs. No is the load-bearing distinction here (matches the backend, which only
- * ever accepts a complete six-of-six set): `answers` starts as six `null`s, never six
- * `false`s, so "hasn't gotten to this yet" can never be recorded as "the developer said
- * no" — and a question the REVIEW left unanswered stays null until the citizen answers
- * it, visibly marked as needing them.
+ * Unanswered vs. No is load-bearing too (the backend only accepts a complete six-of-six
+ * set): `answers` starts as six `null`s, never `false`s, so "not yet answered" can never
+ * read as "said no" — and a question the review left unanswered stays null until the
+ * citizen acts.
  */
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Loader2, ShieldAlert } from 'lucide-react'
@@ -85,7 +69,7 @@ type ReviewPhase =
   | { kind: 'ready'; review: ClassificationReview }
   | { kind: 'unreachable'; message: string; retryable: boolean }
 
-// The waiting copy tells the truth about closing (OD-A): the result is stored against
+// The waiting copy tells the truth about closing: the result is stored against
 // the version, so closing loses nothing — ask them to wait without claiming a loss
 // that does not happen, and set the real time expectation.
 const WAITING_COPY =
@@ -97,7 +81,7 @@ const ARRIVAL_COPY =
   'The automatic check has finished. Each question below starts from what it found — ' +
   'you can change any answer.'
 
-// R21: no saved code — nothing for a review to read, and nothing to publish either.
+// No saved code means nothing for a review to read, and nothing to publish either.
 // The server's nothing-to-review response carries no sentence, so this copy is the
 // client's, matching the server's own taxonomy sentence for the same state.
 const NOTHING_SAVED_COPY = 'There’s nothing saved to check yet — press Save first.'
@@ -199,7 +183,7 @@ export default function DataClassificationModal({
     }
   }, [projectId, applyReview])
 
-  // Opening the dialog is what asks for the review (R1).
+  // Opening the dialog is what asks for the review.
   useEffect(() => {
     void ask()
   }, [ask])
@@ -270,16 +254,16 @@ export default function DataClassificationModal({
 
   const review = phase.kind === 'ready' ? phase.review : null
   const verdicts = review?.verdicts ?? null
-  // R21: no saved code — the questions, the score, and the action all go with it.
+  // No saved code means the questions, the score, and the action all go with it.
   const nothingSaved = review?.status === 'nothing_to_review'
   // The ask in flight, or a run in flight. Either way the review hasn't landed, so the
   // action stays disabled: submitting now would route regardless (the server's rule 4),
   // and the label could not yet say which of its two things it will do.
   const reviewPending = phase.kind === 'asking' || review?.status === 'running'
 
-  // R21 removes every question from the DOM, and with them the element holding focus —
-  // the browser would blur to `<body>`, where the Tab/Escape trap can't hear. Park focus
-  // on the card, the same move the busy window makes below.
+  // The nothing-saved state removes every question from the DOM, and with them the
+  // element holding focus — the browser would blur to `<body>`, where the Tab/Escape
+  // trap can't hear. Park focus on the card, the same move the busy window makes below.
   useEffect(() => {
     if (nothingSaved) cardRef.current?.focus()
   }, [nothingSaved])
@@ -296,9 +280,9 @@ export default function DataClassificationModal({
   )
   const total = totalWeight(recorded)
   // A weighted Yes anywhere means this submission is a review request, not a publish —
-  // the action's label says so (R11), and the same condition compels the explanation
-  // (R10, issue #117 follow-up): a routed app is never unexplained, and an explanation
-  // is never compelled on a declaration that was going to pass anyway.
+  // the action's label says so, and the same condition compels the explanation: a routed
+  // app is never unexplained, and an explanation is never compelled on a declaration
+  // that was going to pass anyway.
   const sendForReview = total > AUTO_DEPLOY_MAX_SCORE
   const notesRequired = sendForReview
   const notesBlank = notes.trim() === ''
@@ -386,7 +370,7 @@ export default function DataClassificationModal({
 
   // Plain-language warning — shown only once every question has an answer, so "nothing
   // flagged yet" (unanswered) and "flagged nothing" (all six No) never read the same way.
-  // Two states, not three (issue #117 follow-up): notes-required and needs-a-human are now
+  // Two states, not three: notes-required and needs-a-human are now
   // the same condition (`notesRequired` above), so there is no longer a middle band that
   // handles some sensitive data but isn't refused — every nonzero total is both.
   let warning: string | null = null
@@ -488,12 +472,12 @@ export default function DataClassificationModal({
               const value = answers[key]
               const reviewQuestion = verdicts ? verdicts[key] : null
               const reviewVerdict = reviewQuestion?.verdict ?? null
-              // The review left this one to the citizen (R5) — visibly distinct from a
+              // The review left this one to the citizen — visibly distinct from a
               // No, and it blocks the submit through `allAnswered` until answered.
               const needsAnswer = reviewVerdict === 'unanswered' && value === null
               // The citizen's current answer differs from the review's verdict. Theirs
-              // stays — merge, never clobber — and the review's is shown alongside (R8:
-              // both answer sets are kept and recorded).
+              // stays — merge, never clobber — and the review's is shown alongside
+              // (both answer sets are kept and recorded).
               const disagreement =
                 (reviewVerdict === 'yes' || reviewVerdict === 'no') &&
                 value !== null &&
@@ -659,9 +643,9 @@ export default function DataClassificationModal({
         )}
 
         <div className="flex gap-3 mt-5">
-          {/* The label states which of the two things this will do (R11): a weighted Yes
+          {/* The label states which of the two things this will do: a weighted Yes
               makes the submission a review request, anything else publishes. Hidden
-              entirely when there is nothing saved — publishing already refuses (R21). */}
+              entirely when there is nothing saved — publishing already refuses. */}
           {!nothingSaved && (
             <button
               type="button"

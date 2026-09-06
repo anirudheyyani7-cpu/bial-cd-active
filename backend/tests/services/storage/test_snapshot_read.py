@@ -1,4 +1,4 @@
-"""U8 — server-side snapshot extraction for Ask/Plan reads.
+"""Server-side snapshot extraction for Ask/Plan reads.
 
 Round-trips a REAL git bundle (built in-test, the same `git bundle create <f> HEAD` shape
 `build_sessions/snapshot.py` writes) through `extract_snapshot`: storage fetch → header
@@ -107,7 +107,7 @@ async def test_extracts_the_bundle_to_a_sha_keyed_dir(
 async def test_committed_symlink_extracts_as_an_inert_file_not_a_link(
     tmp_path: Path, app_id: uuid.UUID, storage: FakeStorage
 ) -> None:
-    # Layer 1 of the P0 jail-escape fix: `core.symlinks=false` at clone time means a symlink
+    # Layer 1 of the jail-escape fix: `core.symlinks=false` at clone time means a symlink
     # committed into the untrusted bundle checks out as a REGULAR file holding its target text,
     # so no read command can follow it out of the extraction dir.
     secret = tmp_path / "outside" / "secret.txt"
@@ -177,7 +177,7 @@ async def test_a_missing_git_binary_raises_the_error_the_callers_actually_catch(
     binary against the PASSED env's PATH and raises `FileNotFoundError` BEFORE any process
     exists, so it never reaches the `returncode != 0` branch that raises
     `SnapshotExtractionError` — which means it sails straight past
-    `deploy/service.py:229`'s `except SnapshotExtractionError`, the one handler written to
+    `deploy/service.py`'s `except SnapshotExtractionError`, the one handler written to
     turn this into a clean citizen-facing message. Publish dies on an unhandled exception
     instead.
 

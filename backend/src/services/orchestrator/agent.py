@@ -1,4 +1,4 @@
-"""The module-level build `Agent` (KD-2).
+"""The module-level build `Agent`.
 
 ONE `Agent`, built WITHOUT a bound model — the Foundry model is passed per-run
 (`agent.iter(..., model=…)`) so import never needs a configured Foundry (dev/test boot without
@@ -23,8 +23,8 @@ def _sandbox_of(ctx: RunContext[BuildDeps]) -> SandboxSession:
 
 
 build_agent = Agent(deps_type=BuildDeps, retries=2, toolsets=[sandbox_toolset(_sandbox_of)])
-"""The build agent — no bound model (KD-2), `deps_type=BuildDeps`, per-tool retries=2 so a
-`ModelRetry` from a tool (e.g. an enriched str_replace failure, KD-5) is reflected back to the
+"""The build agent — no bound model, `deps_type=BuildDeps`, per-tool retries=2 so a
+`ModelRetry` from a tool (e.g. an enriched str_replace failure) is reflected back to the
 model in-run before it becomes a hard error."""
 
 

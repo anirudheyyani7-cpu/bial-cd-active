@@ -1,5 +1,5 @@
 /**
- * THE POLITE ACTIVITY REGION (R65, R66).
+ * THE POLITE ACTIVITY REGION.
  *
  * ══ THREE CHANNELS, EACH WITH A DISTINCT JOB, AND NO NEW DEPENDENCY ══
  *
@@ -16,10 +16,11 @@
  *
  * It renders exactly ONE live region for everything (`aria-live="polite"`, `aria-atomic="false"`;
  * `ToasterProps` exposes only `containerAriaLabel`) with no way to make any toast assertive — not
- * even `toast.error()`. So it could never have carried R65's urgent half. And the job turns out not
- * to need it: this surface's two toasts were the SAME VALUE — `usePendingAttachments`'s
- * `attachToast`, one hook with one timer — rendered twice in two corners with two different a11y
- * treatments. One composer rendering it once is the whole consolidation.
+ * even `toast.error()`. So it could never have carried this region's urgent half. And the job
+ * turns out not to need it: this surface's two toasts were the SAME VALUE —
+ * `usePendingAttachments`'s `attachToast`, one hook with one timer — rendered twice in two
+ * corners with two different a11y treatments. One composer rendering it once is the whole
+ * consolidation.
  *
  * ══ THE RULE THAT ACTUALLY BREAKS ══
  *
@@ -32,11 +33,12 @@
  * that sentence rendered twice to anything reading the DOM, and writing it that way broke three
  * existing tests the first time.
  *
- * ══ R66 IS TWO ANNOUNCEMENTS AND NO MORE ══
+ * ══ TWO ANNOUNCEMENTS AND NO MORE ══
  *
  * The agent started working, and what a group amounted to when it sealed. NOT every step as it
  * happens. The old sr-only mirror throttled to one change per ten seconds with a flush branch —
- * that throttle was solving the wrong problem, and R66 removes the problem rather than tuning it.
+ * that throttle was solving the wrong problem, and this hook removes the problem rather than
+ * tuning it.
  */
 import { useEffect, useRef, useState, type FC } from 'react'
 
@@ -68,7 +70,7 @@ const Announcer: FC<AnnouncerProps> = ({ message }) => (
 export default Announcer
 
 /**
- * What the activity region should currently be saying (R66's two announcements).
+ * What the activity region should currently be saying.
  *
  * Kept as a hook beside the region so the "two announcements and no more" rule is one piece of
  * code rather than a discipline spread across call sites. It deliberately does NOT announce each

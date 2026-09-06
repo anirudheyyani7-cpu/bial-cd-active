@@ -5,7 +5,7 @@ import TurnBanner, { withMailtoLinks } from '../TurnBanner'
 
 afterEach(cleanup)
 
-// The banner slot is where every sentence this plan says to a citizen lands: their app was
+// The banner slot is where every sentence the platform says to a citizen lands: their app was
 // recovered, it could not be, the workspace could not be checked, the change did not come
 // together, today's allowance is used up. All five arrive at the same moment in the same place.
 describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
@@ -51,7 +51,7 @@ describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
   })
 
   it('shows the newest sentence and nothing of the one it replaced', () => {
-    // The stacking risk U7 names is that two platform sentences about the same app are on screen
+    // The stacking risk is that two platform sentences about the same app are on screen
     // together — the older one is not extra information, it is a contradiction. This asserts the
     // OLD text is gone, which a component that appended would fail; asserting only "there is one
     // banner" could not fail for a component with a single string prop.
@@ -70,7 +70,7 @@ describe('TurnBanner — one banner, newest wins (U7/R13)', () => {
   })
 })
 
-// U24 — "who to ask for more" has to be CLICKABLE, or it is a string the citizen retypes.
+// "Who to ask for more" has to be CLICKABLE, or it is a string the citizen retypes.
 describe('an address in a platform sentence', () => {
   // ★ THIS IS THE SURFACE THE SENTENCE ACTUALLY LANDS ON. The at-limit copy also renders inside
   // the build-progress panel, but a plain Write turn never opens one — so the panel's own mailto
@@ -96,7 +96,7 @@ describe('an address in a platform sentence', () => {
   })
 })
 
-// The linkifier's own cases, moved here with the function (Plan D U17). They lived in
+// The linkifier's own cases, moved here with the function. They lived in
 // `BuildProgress.test.tsx`, which pinned a card this unit deleted; a relocated function keeps its
 // tests, or the move quietly costs the coverage. The two above assert the banner USES it — these
 // two assert what it does, which the surface-level pair cannot reach with a single address.

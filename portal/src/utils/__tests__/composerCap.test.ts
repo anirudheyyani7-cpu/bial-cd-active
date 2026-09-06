@@ -1,8 +1,7 @@
 /**
- * The browser's character cap (R42, R42a, R43).
+ * The browser's character cap.
  *
  * ══ WHY THE COUNTING RULE IS THE WHOLE TEST ══
- *
  * The server counts characters as Python counts them — one per Unicode CODE POINT. JavaScript's
  * `String.length` counts UTF-16 code UNITS, so anything above U+FFFF counts twice. A counter that
  * used `String.length` would drift from the server silently, by more the more emoji a citizen
@@ -103,7 +102,7 @@ describe('the gap to the server is deliberate and wide (R42a)', () => {
   it('stops six times below the server refusal, so the two never disagree in front of a citizen', () => {
     // The server REFUSES (does not trim) at 64,000 with a 422 and nothing stored. Six times the
     // headroom means a message that passes here cannot plausibly be refused there. Pinning the
-    // relationship rather than the number is what makes this survive Plan B moving the server's.
+    // relationship rather than the number is what makes this survive the server's cap moving.
     const SERVER_REFUSES_AT = 64_000
     expect(MAX_COMPOSER_CHARS * 6).toBeLessThanOrEqual(SERVER_REFUSES_AT)
   })

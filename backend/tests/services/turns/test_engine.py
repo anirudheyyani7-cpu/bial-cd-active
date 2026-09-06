@@ -1,4 +1,4 @@
-"""TurnEngine lifecycle tests (U10): detached runs, frame ring, snapshot consolidation,
+"""TurnEngine lifecycle tests: detached runs, frame ring, snapshot consolidation,
 stop semantics, and the write-before-DONE policy — all at the engine seam with scripted
 models (no HTTP; the transport rides `tests/api/v1/conversations/test_turn_stream.py`).
 
@@ -80,7 +80,7 @@ _CTX = PromptContext(user_name="Ada", project_name="Visitors", project_descripti
 
 @pytest.fixture(autouse=True)
 def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Every kind pins the project's LIVE container now (R18) — Plan and Ask attach a sandbox
+    # Every kind pins the project's LIVE container now — Plan and Ask attach a sandbox
     # exactly like Build does, so these engine-level tests need a configured deployment the
     # same way `test_write_turn.py` already does, or every turn dies at the workspace pin
     # before the model ever runs.
@@ -102,7 +102,7 @@ def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 async def _sandbox_dependencies(fake_redis, fake_storage) -> None:
-    """The R10 liveness lease (Redis) and the sandbox attach's storage reads both need a
+    """The liveness lease (Redis) and the sandbox attach's storage reads both need a
     backing fake now that every turn attaches a live container. Pulled in as an autouse
     wrapper around the shared `fake_redis`/`fake_storage` fixtures (`tests/conftest.py`)
     rather than added to every test signature — same effect, none of the churn."""
@@ -185,16 +185,16 @@ async def test_text_turn_streams_deltas_then_terminal(
     assert state is not None and state.status == "completed"
     frames, gap = engine.frames_since(state, 0)
     assert not gap
-    # U17 — EVERY turn now opens with the harness's acknowledgement, emitted synchronously at
+    # EVERY turn now opens with the harness's acknowledgement, emitted synchronously at
     # `start_turn` before the detached run exists. It is a transient feed row (never persisted,
     # never in `state.steps`), so it shows up here in the ring and nowhere durable.
     #
-    # R18 — every kind now pins the project's LIVE container (Plan/Ask attach a sandbox
+    # Every kind now pins the project's LIVE container (Plan/Ask attach a sandbox
     # exactly like Build), so the ack is followed by the workspace lifecycle pair
     # (preparing/ready), a compile-state read and a preview-url announce, all BEFORE the
     # model's own text — the same boilerplate a Build turn always carried.
     #
-    # THE SECOND `step` IS THE ACKNOWLEDGEMENT BEING TAKEN BACK (U3), and it lands immediately
+    # THE SECOND `step` IS THE ACKNOWLEDGEMENT BEING TAKEN BACK, and it lands immediately
     # before the first word: the same `tool_call_id`, `phase="finished"`, `hidden` flipped, which
     # is how a row leaves a feed that already filters hidden steps. Without it the opening line
     # sat in the activity group forever and the group never sealed. Asserted here rather than
@@ -246,7 +246,7 @@ async def test_text_turn_streams_deltas_then_terminal(
             sa.select(Message).where(Message.conversation_id == conv.id).order_by(Message.seq)
         )
     ).all()
-    # TWO ROWS, and the second is U20's durable terminal. The reply is the turn; the terminal
+    # TWO ROWS, and the second is the durable terminal. The reply is the turn; the terminal
     # is a hidden, payload-less record saying HOW it ended, so a transcript rebuilt without the
     # live stream can tell a finished turn from a running one.
     assert [row.entry_kind for row in rows] == [
@@ -254,7 +254,7 @@ async def test_text_turn_streams_deltas_then_terminal(
         MessageEntryKind.SYSTEM_EVENT,
     ]
     assert rows[0].payload[0]["kind"] == "response"
-    # The composed instructions never reach the row (U9's dump-seam strip).
+    # The composed instructions never reach the row.
     assert rows[0].payload[0].get("instructions") is None
     assert rows[1].visibility is MessageVisibility.HIDDEN
     # EMPTY PAYLOAD, checked here rather than only in the projection's tests: `load_history`
@@ -277,8 +277,8 @@ async def test_read_tool_calls_become_step_frames(
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
         if len(messages) == 1:
             # First request: call read_file against the freshly-provisioned (empty) fake
-            # container — R18 gives even a brand-new project a real one, so this reads the
-            # golden template's page, not a synthetic "no app yet" placeholder.
+            # container — every kind now pins a real one even for a brand-new project, so
+            # this reads the golden template's page, not a synthetic "no app yet" placeholder.
             yield DeltaToolCalls(
                 {
                     0: DeltaToolCall(
@@ -299,21 +299,21 @@ async def test_read_tool_calls_become_step_frames(
 
     state = engine.peek(conv.id)
     assert state is not None and state.status == "completed"
-    # U17 — the first step frame of any turn is the harness's own acknowledgement row, and U3
-    # gave it a second: the retraction that takes it back off the screen. Both are keyed on the
+    # The first step frame of any turn is the harness's own acknowledgement row, and it gets
+    # a second: the retraction that takes it back off the screen. Both are keyed on the
     # reserved ack id, so the agent's own steps are read by id rather than by position — slicing
     # off "the first one" silently swallowed the retraction the moment it was added.
     assert [f.phase for f in _ack_frames(state)] == ["started", "finished"]
     steps = [f for f in state.ring if f.type == "step" and f.tool_call_id == call_id]
     assert [s.phase for s in steps] == ["started", "finished"]
     assert steps[0].item.state == "pending" and steps[1].item.state == "ok"
-    # U5 — A READ IS VISIBLE NOW, and this assertion is the inverted twin of the one that
+    # A READ IS VISIBLE NOW, and this assertion is the inverted twin of the one that
     # stood here ("reads are hidden by default"). The whole class was hidden, which is why a
     # build's activity opened on a write with no account of what the agent had read to get
     # there. `hidden` marks two things now and neither of them is a read: a write to a
     # configuration file, and housekeeping shell commands.
     assert steps[1].item.hidden is False
-    # U16 — BOTH OF THESE PINNED THE LEAK (`== "Read app/page.tsx"`), on the LIVE feed and on
+    # BOTH OF THESE PINNED THE LEAK (`== "Read app/page.tsx"`), on the LIVE feed and on
     # the resume snapshot. Flipped, not deleted, and each paired with its liveness half: the
     # path is absent AND the friendly area still renders, so a label that collapsed to an empty
     # string could not pass. The two are asserted against the same literal on purpose — live and
@@ -323,7 +323,7 @@ async def test_read_tool_calls_become_step_frames(
     # A RESUME must not lose a step, whatever its render hint says. `hidden` is applied by the
     # client, not by the payload, and making it a filter HERE once cost a mid-turn reconnect the
     # very steps the live tail and the reload projection both kept. The step in this turn is a
-    # read and therefore visible now (U5), so what the snapshot is pinned on below is the pair
+    # read and therefore visible now, so what the snapshot is pinned on below is the pair
     # this test can still prove: the same label live and on resume, and the order.
     #
     # ORDER FIRST, because the snapshot is an ordered list of parts now rather than a step list
@@ -336,7 +336,7 @@ async def test_read_tool_calls_become_step_frames(
     snapshot_steps = [part for part in snapshot.parts if isinstance(part, TurnStepPart)]
     assert all("app/page.tsx" not in part.item.label for part in snapshot_steps)
     assert [part.item.label for part in snapshot_steps] == ["Looking at your app's main page"]
-    # Visible on the resume path too (U5). Live and reload read one translator, so a read that
+    # Visible on the resume path too. Live and reload read one translator, so a read that
     # came back on one side and stayed hidden on the other is exactly the drift this pair
     # catches — the same reason the label is asserted twice against one literal.
     assert snapshot_steps[0].item.hidden is False
@@ -348,7 +348,7 @@ async def test_read_tool_calls_become_step_frames(
 async def test_the_offer_tools_part_start_event_emits_a_started_step_the_card_then_replaces(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """U5 — the plan now rides the tool's own argument, so thousands of tokens can stream
+    """The plan now rides the tool's own argument, so thousands of tokens can stream
     between the block opening and the call resolving. The screen must not go dark for that
     whole window: the provider's `content_block_start` puts the tool's NAME on the wire
     before any argument does, which pydantic-ai surfaces as a `PartStartEvent` carrying a
@@ -398,7 +398,7 @@ async def test_the_offer_tools_part_start_event_emits_a_started_step_the_card_th
     assert step_frames[1].item.hidden is True
     assert step_frames[0].item.label == WRITING_UP_THE_PLAN_LABEL
     # The frame that opens the block carries no plan text — and now cannot: a step has no
-    # field a plan could ride in (U14). Asserted on the plan's own words rather than on the
+    # field a plan could ride in. Asserted on the plan's own words rather than on the
     # substring "plan", which the tool's name and its label both legitimately contain.
     assert "Ship the visitor log." not in json.dumps(step_frames[0].item.model_dump(mode="json"))
 
@@ -426,7 +426,7 @@ async def test_the_offer_tools_part_start_event_emits_a_started_step_the_card_th
 async def test_a_part_start_event_for_a_non_offer_tool_emits_no_extra_frame(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """Deliberately NOT widened to every tool (U5): the other tools resolve fast and already
+    """Deliberately NOT widened to every tool: the other tools resolve fast and already
     emit at `FunctionToolCallEvent`, so widening this branch would double every step row in
     the transcript. Pinned on the RING'S TOTAL FRAME COUNT, not just the step phases, so a
     silent extra frame of any type sneaking in from `PartStartEvent` would be caught too."""
@@ -456,7 +456,7 @@ async def test_a_part_start_event_for_a_non_offer_tool_emits_no_extra_frame(
     assert state is not None and state.status == "completed"
     # Ack opened, ack retired, tool started, tool finished = four step frames, one text delta
     # (the "done" reply) and the terminal — nothing extra rides in from the PartStartEvent that
-    # opened this tool's block. The workspace/compile/preview boilerplate (R18 — every kind pins
+    # opened this tool's block. The workspace/compile/preview boilerplate (every kind pins
     # a live container now) is filtered out here: it is unrelated to what THIS test is pinning,
     # and hard-coding its exact shape would make this test fail on a change to that machinery
     # instead of a change to the PartStartEvent branch it actually guards.
@@ -504,8 +504,8 @@ async def test_live_step_frames_are_redacted_like_the_persisted_rows(
     steps = [f for f in state.ring if f.type == "step"]
     assert steps, "no step frames were emitted"
 
-    # THIS TEST USED TO PIN A REDACTOR; IT NOW PINS AN ABSENCE, which is the stronger claim and
-    # the reason U14 exists. The live frame carried the tool call's arguments, run through
+    # THIS TEST USED TO PIN A REDACTOR; IT NOW PINS AN ABSENCE, which is the stronger claim.
+    # The live frame carried the tool call's arguments, run through
     # `redact_secrets` HERE at the frame boundary so the stream would not show a secret the
     # persistence seam had already masked — and the assertion was that the mask was applied
     # (`"***" in wire`). A boundary redactor is only ever as good as its pattern list, and the
@@ -552,7 +552,7 @@ async def test_stop_cancels_and_leaves_truthful_record(
         await db_session.scalars(sa.select(Message).where(Message.conversation_id == conv.id))
     ).all()
     # THE USER TURN IS ABSENT (the no-op persister) and no reply row was written — nothing
-    # finished. What IS here is U20's terminal, saying the turn stopped: the one durable record
+    # finished. What IS here is the terminal, saying the turn stopped: the one durable record
     # a reload can read to know this turn is over rather than still going.
     assert [row.entry_kind for row in rows] == [MessageEntryKind.SYSTEM_EVENT]
     assert rows[0].meta is not None
@@ -624,7 +624,7 @@ async def test_persist_failure_fails_the_turn_loudly(
 
 
 def test_persistable_keeps_tool_returns_drops_user_and_ephemeral_requests():
-    # The #3 fix: a responses-only filter drops the ModelRequest carrying the read_file result,
+    # A responses-only filter drops the ModelRequest carrying the read_file result,
     # so the reload's dangling-call repair papers a real result over with "interrupted". The
     # tool-return request MUST persist; the pre-persisted user turn and the ephemeral nudge
     # (both UserPromptPart requests) must NOT.
@@ -682,7 +682,7 @@ async def test_stopped_turn_still_bills_completed_model_requests(
     _fresh_engine, db_session, session_factory
 ) -> None:
     # A start→stop loop must not be a free ride: tokens the model already produced in a
-    # completed request before the Stop still count toward the daily cap (#5).
+    # completed request before the Stop still count toward the daily cap.
     gate = asyncio.Event()
 
     async def _stall_after_a_tool(messages: list[ModelMessage], info: AgentInfo):
@@ -718,7 +718,7 @@ async def test_stopped_turn_still_bills_completed_model_requests(
 async def test_failed_turn_bills_usage_the_model_already_produced(
     _fresh_engine, db_session, session_factory, monkeypatch
 ) -> None:
-    # A DB error AFTER the model replied must not silently drop the spend either (#17).
+    # A DB error AFTER the model replied must not silently drop the spend either.
     async def _explode(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("the database went away")
 
@@ -734,10 +734,10 @@ async def test_failed_turn_bills_usage_the_model_already_produced(
 async def test_write_mode_now_runs_on_the_engine_like_any_other_mode(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """U5's convergence, asserted at the seam that used to refuse it. Write raised
-    `TurnUnsupportedError` here because it had no toolset and no composable prompt — a build's
-    mode, not a chat mode. Both of those are false now: Write composes like every other mode
-    and carries the sandbox six, so the engine must accept it. The behaviour of the run itself
+    """Write mode's convergence onto this engine, asserted at the seam that used to refuse it.
+    Write raised `TurnUnsupportedError` here because it had no toolset and no composable prompt — a
+    build's mode, not a chat mode. Both of those are false now: Write composes like every other
+    mode and carries the sandbox six, so the engine must accept it. The behaviour of the run itself
     lives in `test_write_turn.py`; this pins only that the door is open."""
     engine = _fresh_engine
     user, conv = await _conversation(db_session, ChatKind.BUILD)
@@ -1058,7 +1058,7 @@ async def test_a_stop_whose_wait_expires_is_still_running_never_stopped(
     )
 
 
-# --- U16: the split audience -------------------------------------------------------------
+# --- the split audience -------------------------------------------------------------
 #
 # `BuildError` feeds two readers with opposite needs. These pin the split from both ends: the
 # model's half must not have moved, and the citizen's half must exist for every error class.
@@ -1072,7 +1072,7 @@ _RAW_TSC = (
 
 
 def test_the_model_still_gets_the_whole_diagnostic_unchanged() -> None:
-    """THE OTHER HALF OF U16, and the one that is easy to break by accident.
+    """THE OTHER HALF OF THE SPLIT AUDIENCE, and the one that is easy to break by accident.
 
     The unit removes developer text from the CITIZEN's surfaces. If it also softened `title` or
     trimmed `cleaned_stack`, the self-heal loop would be repairing from prose instead of from a
@@ -1133,7 +1133,7 @@ def test_every_error_class_reaches_the_citizen_with_a_sentence_and_an_action() -
 
         # A producer that knows only the model's half — every producer today — still emits a
         # frame carrying both citizen-facing fields, filled from the class. It cannot pass the
-        # model's half at all: `title` and `cleaned_stack` are not fields on this frame (U14).
+        # model's half at all: `title` and `cleaned_stack` are not fields on this frame.
         frame = DiagnosticFrame(seq=1, source=source)
         assert frame.user_message == copy.message
         assert frame.user_action == copy.action
@@ -1161,9 +1161,10 @@ def test_a_producer_may_speak_for_itself_without_losing_the_action() -> None:
 
 
 def test_the_client_report_never_rides_out_on_the_frame() -> None:
-    """U13's `exclude=True` is what structurally stops a browser stack reaching a person, and
-    U16 renders the CLIENT class rather than skipping it — so the guard matters more, not less.
-    Pinned on the SERIALIZATION, because that is the only thing egress actually looks at."""
+    """`exclude=True` on `agent_only_detail` is what structurally stops a browser stack reaching
+    a person, and the CLIENT error class is rendered here rather than skipped — so the guard
+    matters more, not less. Pinned on the SERIALIZATION, because that is the only thing egress
+    actually looks at."""
     from src.api.v1.build_sessions.schemas import ErrorSource
     from src.services.orchestrator.errors import from_client
 
@@ -1180,7 +1181,7 @@ def test_the_client_report_never_rides_out_on_the_frame() -> None:
     assert "page-8f2.js" not in json.dumps(dumped)
 
 
-# --- U20: exactly one durable terminal, per turn -------------------------------------------
+# --- exactly one durable terminal, per turn -------------------------------------------
 
 
 async def _terminal_rows(db_session, conversation_id) -> list[Message]:
@@ -1203,7 +1204,7 @@ async def _terminal_rows(db_session, conversation_id) -> list[Message]:
 async def test_a_stopped_turn_leaves_exactly_one_terminal_even_when_stopped_twice(
     _fresh_engine, db_session, session_factory
 ) -> None:
-    """★ U20's integration scenario: no turn writes two terminal rows.
+    """★ The integration scenario: no turn writes two terminal rows.
 
     THE SECOND STOP IS THE INTERESTING HALF. `stop_turn` answers False the second time — the
     task is already gone — but a design that wrote the row from each terminal ARM rather than
@@ -1274,7 +1275,7 @@ async def test_a_turn_that_never_reaches_a_terminal_writes_no_row(
     assert len(await _terminal_rows(db_session, conv.id)) == 1
 
 
-# --- U3: the acknowledgement is RETRACTED, never merely forgotten --------------------------
+# --- the acknowledgement is RETRACTED, never merely forgotten --------------------------
 #
 # "Getting started on that…" is the platform's own row, emitted synchronously inside
 # `start_turn` so that something is on screen before the first model request — a cold provision
@@ -1424,7 +1425,7 @@ async def test_a_turn_that_neither_spoke_nor_acted_still_retracts_the_acknowledg
     assert state.acknowledgement is None
 
 
-# --- U4: reasoning, as the status line and nothing else ------------------------------------
+# --- reasoning, as the status line and nothing else ------------------------------------
 #
 # Reasoning is requested adaptively with an effort level per kind, and the WHOLE of what it is
 # allowed to become on the way out is a boolean: "the agent is working". The blocks themselves
@@ -1703,7 +1704,7 @@ async def test_reasoning_is_kept_for_the_provider_and_projected_to_nobody(
     assert "Here is what I would build." in drawn
 
 
-# --- U4: the guard that only the real provider model executes -------------------------------
+# --- the guard that only the real provider model executes -------------------------------
 
 _DEPLOYED_MODEL = "claude-opus-4-7"
 """The deployment name `.env` carries, spelled out because the Foundry block is genuinely optional

@@ -1,8 +1,8 @@
 /**
- * U8 (F7 + F10) — the trimmed chat header.
+ * The trimmed chat header.
  *
- * The header is gone from this surface entirely (plan 002, U2): the redundant in-rail usage meter
- * (F7), the AI branding block, its avatar and the "Recent" builds dropdown (F10) went first, and
+ * The header is gone from this surface entirely: the redundant in-rail usage meter,
+ * the AI branding block, its avatar and the "Recent" builds dropdown went first, and
  * the breadcrumb that was left went to the shell's toolbar row, which draws the project, the chat's
  * kind and the chat's title above both columns. What this file still pins is the ABSENCE of the
  * four removed things, which is unaffected by where the surviving header lives.
@@ -34,7 +34,7 @@ vi.mock('../../utils/builderHistory', () => ({
   getBuild: h.getBuild, deleteBuild: h.deleteBuild, deriveTitle: (t) => (t || '').slice(0, 40),
 }))
 // SPREAD THE ORIGINAL — `uuidv7` is the shared mint `handleBuildIt` uses for the new build chat's
-// id (ADR-0006), and a factory that lists only `listProjectConversations` leaves every OTHER
+// id, and a factory that lists only `listProjectConversations` leaves every OTHER
 // export undefined. That used to be silent breakage; Vitest now warns loudly ("No 'uuidv7' export
 // is defined on the mock") the moment a real caller reaches for it — which `handleBuildIt` does on
 // every Build-it press, so the case had to be fixed here rather than merely noted.
@@ -46,7 +46,7 @@ vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 vi.mock('../../components/LivePreview', () => ({ default: () => null }))
 vi.mock('../../components/AttachmentChips', () => ({ default: () => null }))
 vi.mock('../../utils/attachmentStore', async (orig) => ({ ...(await orig()), buildUserParts: h.buildUserParts }))
-// `switchMode` is GONE from this list (U1/U19): the route it posted to no longer exists, and a
+// `switchMode` is GONE from this list: the route it posted to no longer exists, and a
 // chat's kind can't change after creation, so there is nothing left for a mock to intercept.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig()),
@@ -106,7 +106,7 @@ beforeEach(() => {
   h.listProjectConversations.mockResolvedValue([])
   h.buildUserParts.mockImplementation(async (text) => [{ type: 'text', text }])
   primeTurn(h)
-  // A build is a Write TURN (U5): the confirmed brief opens a second socket, and it stays open —
+  // A build is a Write TURN: the confirmed brief opens a second socket, and it stays open —
   // a HELD cross-tab claim is exactly a build that has not finished.
   h.readTurnStream.mockImplementation(scriptBuildTurn().impl)
 })
@@ -118,21 +118,21 @@ describe('U8 — the chat surface draws no header of its own', () => {
     // Settle the async adopt (getBuild → welcome message) before asserting on the header.
     await screen.findByPlaceholderText(/ask for another change/i)
 
-    // GONE (plan 002, U2): the breadcrumb that was the last thing left in this header. The
+    // GONE: the breadcrumb that was the last thing left in this header. The
     // project, the chat's kind and the chat's title are drawn by the shell's toolbar row above
     // both columns — see `WorkspaceToolbar.test.tsx`.
     expect(screen.queryByRole('link', { name: /VIP Movement/i })).toBeNull()
 
-    // GONE (F10): the AI branding block + its avatar. "powered by Anthropic" was branding-only
+    // GONE: the AI branding block + its avatar. "powered by Anthropic" was branding-only
     // (the welcome bubble never says it); the online-status dot was the avatar's distinguishing mark.
     expect(screen.queryByText(/powered by Anthropic/i)).toBeNull()
     expect(container.querySelector('.bg-green-400')).toBeNull()
 
-    // GONE (F10): the "Recent" builds button + its dropdown.
+    // GONE: the "Recent" builds button + its dropdown.
     expect(screen.queryByRole('button', { name: /Recent/i })).toBeNull()
     expect(screen.queryByText(/Recent builds/i)).toBeNull()
 
-    // GONE (F7): the redundant in-rail usage meter (real usage lives in the global nav).
+    // GONE: the redundant in-rail usage meter (real usage lives in the global nav).
     expect(screen.queryByRole('progressbar', { name: /daily assistant usage/i })).toBeNull()
     expect(container.querySelector('.usage-meter')).toBeNull()
   })
@@ -144,7 +144,7 @@ describe('U8 — the chat surface draws no header of its own', () => {
 
 describe('U8 regression guard — builds/refreshBuilds survive the dropdown removal', () => {
   it('the Build-it blocked advisory still names the blocking chat by title', async () => {
-    // Build-it is a HANDOFF now (U5/U12): pressing it in `build-A` creates a SECOND, brand-new
+    // Build-it is a HANDOFF now: pressing it in `build-A` creates a SECOND, brand-new
     // build chat and the claim + the live turn both belong to THAT chat, not to `build-A` — so
     // the entry `refreshBuilds` has to find by id is the handed-off chat's, not the plan chat's.
     const LIVE_BUILD_CHAT = 'build-A-live'
@@ -174,7 +174,7 @@ describe('U8 regression guard — builds/refreshBuilds survive the dropdown remo
     await buildFrom(b.container, 'add a table')
 
     // buildBlockedMessage READ `builds` to name the holder — proving builds/refreshBuilds were kept.
-    // RE-POINTED (Plan D U17): the refusal used to render inside the plan card, one per card id.
+    // RE-POINTED: the refusal used to render inside the plan card, one per card id.
     // There is one offer on the composer now, so the sentence goes to the surface's assertive
     // slot instead — which is also where every other interrupting refusal lands, so a citizen has
     // one place to look rather than one per control.

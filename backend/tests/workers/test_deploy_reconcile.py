@@ -1,4 +1,4 @@
-"""The scheduler's first passenger (U6, ADR-0011 / ADR-0029).
+"""The scheduler's first passenger.
 
 Three properties are worth a test rather than a comment, and each of them has a specific way of
 failing silently:
@@ -100,7 +100,7 @@ def on_duty(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Every behavioural test has to opt in explicitly: the suite runs with `DEPLOY__*` unset and the
     flag off, so without this the task would take the disabled branch and every assertion below
-    would pass vacuously (`.claude/rules/testing.md`).
+    would pass vacuously.
     """
     monkeypatch.setattr(settings, "deploy", _deploy_config(reconcile_enabled=True))
 
@@ -177,7 +177,7 @@ async def test_the_pass_settles_a_stalled_deploy_and_reports_the_count(
 async def test_the_log_line_carries_counts_and_nothing_identifying(
     monkeypatch: pytest.MonkeyPatch, db_session: Any, on_duty: None
 ) -> None:
-    """Counts only (`.claude/rules/security.md`). A deployment id or an app name in the worker's
+    """Counts only. A deployment id or an app name in the worker's
     log stream is a durable record of who deployed what, in a process that has no reason to know
     either."""
     deployment_id = await _abandoned(db_session)
@@ -195,7 +195,7 @@ async def test_a_pass_that_resolves_nothing_still_logs(
     monkeypatch: pytest.MonkeyPatch, db_session: Any, on_duty: None
 ) -> None:
     """Silence is how an out-of-process worker dies unnoticed. A completed pass is the liveness
-    signal (U11 reads its staleness), so "nothing to do" must be distinguishable from "nothing
+    signal, so "nothing to do" must be distinguishable from "nothing
     ran"."""
     _wire(monkeypatch, db_session, _Arm(fqdn=None))
 

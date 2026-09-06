@@ -4,11 +4,11 @@ Revision ID: 0005_feedback
 Revises: 0004_usage
 Create Date: 2026-07-06
 
-Citizen feedback submissions (R30). One row per message: author (`user_id`), the trimmed
+Citizen feedback submissions. One row per message: author (`user_id`), the trimmed
 `message` (TEXT; the 4000-byte cap is enforced at the API boundary), and a sanitized
 same-origin `page` path (or empty). No rating — feedback is message + page only. Chains off
-this plan's `0004_usage` branch; the parallel `app_registry` branch reconciles via
-`alembic merge heads` at integration. Hand-finalized (ADR-0013); no enums, so no DROP TYPE.
+the `0004_usage` branch; the parallel `app_registry` branch reconciles via
+`alembic merge heads` at integration. Hand-finalized; no enums, so no DROP TYPE.
 """
 
 from __future__ import annotations

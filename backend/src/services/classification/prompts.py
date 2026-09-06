@@ -1,5 +1,6 @@
-"""Prompt assembly for the classification review (U5, R3/R5, P8).
+"""Prompt assembly for the classification review.
 
+WHY THIS EXISTS
 THE ORDERING IS THE COST MODEL. `REVIEW_INSTRUCTIONS` — the six-question rubric, the
 output discipline and the scan-verification protocol — is BYTE-IDENTICAL across every
 review of every app, composed once at import from static sources. It rides the agent's
@@ -9,7 +10,7 @@ platform-wide. Everything app-specific — the file listing, the scan's hits —
 and goes in the per-run user prompt via `build_review_prompt`. Anything app-specific
 placed above the breakpoints would destroy the platform-wide hit; a test pins the split.
 
-THE SCAN'S HITS ARE DIRECTED EVIDENCE, NEVER VALUES (P8). Each hit is a location and a
+THE SCAN'S HITS ARE DIRECTED EVIDENCE, NEVER VALUES. Each hit is a location and a
 pattern family — `CredentialHit` structurally cannot carry the matched value, because
 putting the secret in the prompt is the exact leak the plain-language rule exists to
 prevent. The instruction is to VERIFY each hit and to look for what the scan would have
@@ -18,7 +19,7 @@ letting it hunt unaided, and confirmation is cheaper than discovery (the measure
 54-57s runs were an agent discovering an empty tree by itself).
 
 Explanations are kept plain by PROMPTING, not by a validator — the evidence fields carry
-the integrity load, and U6 additionally passes every reason through the shared redactor
+the integrity load, and each reason is additionally passed through the shared redactor
 before it is stored.
 """
 
@@ -120,7 +121,7 @@ short. When you are done, record the review with the output tool — exactly onc
 
 @dataclass(frozen=True)
 class LocatedHit:
-    """One scan hit tied to the file it was found in — the shape U6 hands the prompt
+    """One scan hit tied to the file it was found in — the shape the caller hands the prompt
     builder. Pairs the path with the `CredentialHit` (family / tier / line), which
     structurally carries no matched value."""
 

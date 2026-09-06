@@ -1,4 +1,4 @@
-"""record the deployed app's URL on app_registry (PILOT R5)
+"""record the deployed app's URL on app_registry
 
 Revision ID: 0019_app_registry_deployed_url
 Revises: 0018_app_registry_submissions
@@ -19,7 +19,7 @@ own `max_length`, so a URL that parses at the schema boundary always fits here.
 `downgrade` drops the column — the recorded URLs go with it, and they are re-typed
 from the runbook, never reconstructed. NOT destructive to any other column.
 
-Hand-finalized (ADR-0013).
+Hand-finalized.
 """
 
 from __future__ import annotations

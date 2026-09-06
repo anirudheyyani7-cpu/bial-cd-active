@@ -1,4 +1,4 @@
-"""The model-free credential scan over an extracted snapshot (U6, R4a/P8).
+"""The model-free credential scan over an extracted snapshot.
 
 Runs FIRST, before the model, and its hits go into the review's prompt as directed
 evidence — a path, a pattern family and a line, structurally never a value
@@ -8,7 +8,7 @@ sits on the critical path by choice.
 THE WALK MIRRORS THE READ TOOLS' JAIL, deliberately: the scan does not go through the
 model's tools, so it applies `IGNORED_DIRS` and `IGNORED_FILES` itself — without the
 file-level set the lockfile (the single largest file in a generated app) would sit in the
-path of the one check that must not be starved (R22a/U1). Symlinks are never listed and
+path of the one check that must not be starved. Symlinks are never listed and
 symlinked directories are never descended into, same as `ExtractedSnapshotWorkspace`:
 the tree came from a bundle the citizen's AI drove, so a planted link must not lead the
 scan out of the extraction.

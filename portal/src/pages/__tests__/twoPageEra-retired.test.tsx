@@ -1,5 +1,5 @@
 /**
- * THE TWO-PAGE ERA IS OVER — the inertness guard (L8, Plan D U17).
+ * THE TWO-PAGE ERA IS OVER — the inertness guard (L8).
  *
  * ══ WHAT USED TO BE HERE, AND WHY IT IS ONE FILE NOW ══
  *
@@ -28,7 +28,7 @@
  * loss — and so a reader can check the claim:
  *
  *   the send discipline        → `ConversationSurface-projectfirst`, `-composer`, `-persistence`
- *                                (persist-before-stream, the N8 both-bubble rollback, the gate)
+ *                                (persist-before-stream, the both-bubble rollback, the gate)
  *   drag-and-drop + the draft  → `components/chat/__tests__/Composer.test.tsx`
  *   the per-MESSAGE length cap → `utils/__tests__/composerCap.test.ts`
  *   the plan offer             → `components/chat/__tests__/OfferStrip.test.tsx`
@@ -54,7 +54,7 @@
  * deleting one page deleted a guarantee.
  *
  * The counts above are named in the PR so the suite arithmetic reconciles rather than being waved
- * through: 144 blocks removed here, plus 6 in U13's `attachmentInput-deck.test.js`, against the
+ * through: 144 blocks removed here, plus 6 in `attachmentInput-deck.test.js`, against the
  * new files listed above.
  */
 import { describe, it, expect } from 'vitest'

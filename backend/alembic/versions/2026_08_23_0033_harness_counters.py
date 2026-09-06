@@ -1,10 +1,10 @@
-"""the outcomes this plan's success criteria name, counted where an operator can read them (U25)
+"""the outcomes that count as success here, counted where an operator can read them
 
 Revision ID: 0033_harness_counters
 Revises: 0032_rejection_standing
 Create Date: 2026-08-23
 
-R32. There is no metrics system in this deployment, so an outcome is observable
+There is no metrics system in this deployment, so an outcome is observable
 only if the platform writes it down. This is the relational half — the pinned
 structlog events in `services/build_sessions/alarms.py` are the other.
 
@@ -27,7 +27,7 @@ THIS IS THE ONLY ALEMBIC REVISION IN EITHER PLAN. If one becomes necessary in th
 companion plan it chains onto this head and updates the same pinned string in
 `tests/db/test_suspended_at_migration.py`.
 
-Hand-finalized (ADR-0013).
+Hand-finalized.
 """
 
 from __future__ import annotations

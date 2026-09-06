@@ -7,7 +7,7 @@ extraction dir (`ExtractedSnapshotWorkspace`) answers about saved code, and one 
 from the live sandbox through the supervisor (`LiveSandboxWorkspace`) answers about the tree
 in front of the model instead of a stale bundle. WHICH workspace is a fact about the run, not
 about the ability: what these tools ALLOW is written down once, here, and no body below asks
-which agent or which chat kind resolved it (R71).
+which agent or which chat kind resolved it.
 
 Containment model for `run_command`, layered fail-closed:
 - exec-style argv only, no shell — pipes, redirection, and chaining are structurally
@@ -26,23 +26,23 @@ Containment model for `run_command`, layered fail-closed:
   explicit allowlist carrying no DSN and no tokens. The POLICY above is identical either
   way; the surroundings are not, and the richer one is now the normal case. Output on both
   is capped → de-escaped → secret-redacted → de-noised → cut to HEAD AND TAIL with the loss
-  stated (U22/R28; mirrors `orchestrator/tools._redact_command_output`, reimplemented here
+  stated; mirrors `orchestrator/tools._redact_command_output`, reimplemented here
   so this module never imports the build agent's tool module, whose import registers tools
-  on `build_agent` — one table-driven test runs both copies and pins them identical).
+  on `build_agent` — one table-driven test runs both copies and pins them identical.
 
-THE FOUR TOOL DOCSTRINGS IN `read_only_toolset` ARE PROMPT COPY (U20 / R26). pydantic-ai
+THE FOUR TOOL DOCSTRINGS IN `read_only_toolset` ARE PROMPT COPY. pydantic-ai
 sends each as the tool's description at registration, and `list_files`/`search_files` are
 additionally rendered into the Write prompt's generated `TOOL SURFACE` block
 (`agent/toolsets.render_tool_surface`), so editing one is editing a prompt and
 `test_prompt.py`'s drift check says so until the snapshot is regenerated. Write the FIRST
 SENTENCE as the line you want in the prompt.
 
-Refusals are teaching `ModelRetry`s in the U1 sentinel's voice — they say WHY and what to
-do instead, so the model self-corrects rather than retrying blind. There is no "no app
+Refusals are teaching `ModelRetry`s in the destructive-SQL sentinel's voice — they say WHY and
+what to do instead, so the model self-corrects rather than retrying blind. There is no "no app
 exists yet" answer here any more: the workspace a turn is given comes from one arm
 (`turns/engine._pin_workspace`, which always resolves the project's live container), so the
 emptiness signal never arrives and the workspace that used to produce it is gone — which is
-why no segment promises the model one (U20; pinned by
+why no segment promises the model one (pinned by
 `test_no_segment_promises_an_emptiness_signal_that_never_arrives`).
 
 `psql` is never on this allowlist (locked).
@@ -102,8 +102,8 @@ READ_EXEC_TIMEOUT_S = 15.0
 _REDACT_INPUT_MAX_CHARS = 32_000
 _OUTPUT_MAX_CHARS = 16_000
 """The dump budget, mirroring `orchestrator/constants.RUN_COMMAND_OUTPUT_MAX_CHARS`. Read mode
-renders under it on BOTH exit paths — see the U22 block below for why a success is not summarised
-on a surface that has no slice handle."""
+renders under it on BOTH exit paths — see the mirrored-output-cap discussion below for why a
+success is not summarised on a surface that has no slice handle."""
 
 # Heavy or history dirs the read surface refuses everywhere (list, search, read): they are
 # build artifacts or plumbing, never app truth. `.git` also hides the extraction's plumbing.
@@ -111,7 +111,7 @@ on a surface that has no slice handle."""
 # under the exact exclusions the model reads under.
 IGNORED_DIRS = frozenset({".git", "node_modules", ".next", "dist", ".turbo"})
 
-# Dependency lock files, refused at every site the directory set is applied (R22a): a lockfile
+# Dependency lock files, refused at every site the directory set is applied: a lockfile
 # is the single largest file in a generated app and carries no signal worth its tokens.
 # Deliberately MIRRORS the sandbox toolset's `orchestrator/constants.READ_IGNORE_FILES` rather
 # than importing it — the two toolsets are separate surfaces, and this module must add NO
@@ -132,7 +132,7 @@ def is_dependency_lockfile(path: Path) -> bool:
 
     Anchoring to the manifest keeps every byte of the intended saving, INCLUDING the
     monorepo case a root-only rule would have broken: `apps/web/package-lock.json` sits
-    beside `apps/web/package.json` and is still excluded. R22a's rationale (no signal worth
+    beside `apps/web/package.json` and is still excluded. That rationale (no signal worth
     its tokens; a multi-MB file would truncate the sweep) is true of exactly those files
     and of nothing else."""
     return path.name in IGNORED_FILES and (path.parent / "package.json").is_file()
@@ -303,7 +303,7 @@ class ExtractedSnapshotWorkspace:
     def _refuse_escaping_argv(self, argv: Sequence[str]) -> None:
         """Realpath-resolve each non-flag argv token against the resolved root and refuse any
         that lands outside — the BELT to `snapshot_read`'s `core.symlinks=false` braces, and
-        the only symlink guard when a live workspace (U12), not a clone-controlled extraction,
+        the only symlink guard when a live workspace, not a clone-controlled extraction,
         backs the reads. `check_the_guest_list` only vets tokens LEXICALLY (`/`, `~`, `..`), so
         a symlink inside the tree that points out of it would otherwise be followed by the OS
         when `cat`/`grep`/`find`/`sed` open it. A bare flag carries no path and is skipped, but
@@ -619,7 +619,7 @@ _PATH_BEARING_FLAG_REASON = (
 
 # The guest list: POSIX read-only classics, present on any Linux/macOS server
 # runtime (verified against POSIX; the extraction runs SERVER-side, not in the sandbox
-# image — when U12 routes to the live workspace these same names exist in the
+# image — when routing goes to the live workspace these same names exist in the
 # debian-based sandbox). `psql` is NEVER listed (locked). `sh`/`bash`/`node`/`npm`
 # are absent by design: no shell, no runtime, no package manager on a read-only surface.
 _GUEST_LIST: dict[str, CommandPolicy] = {
@@ -690,7 +690,7 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
     """The door policy for the read-only `run_command`: returns the teaching refusal, or
     None when the command may run. Mirrors `sql_guard.you_shall_not_pass`'s contract.
 
-    R71 — WHAT IT ALLOWS IS A PROPERTY OF THE ABILITY, and the signature is where that is
+    WHAT IT ALLOWS IS A PROPERTY OF THE ABILITY, and the signature is where that is
     provable: `argv` and nothing else. No `RunContext`, no deps, no settings, no chat kind,
     and nothing in this module imports one. Two agents reach these bodies today — a Plan
     chat's toolset and the classification agent's, which has no chat kind at all — and they
@@ -732,7 +732,7 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
 
 
 # ---------------------------------------------------------------------------------------
-# U22 / R28: the MIRRORED output cap — head AND tail, with the truncation stated
+# THE MIRRORED OUTPUT CAP — head AND tail, with the truncation stated
 # ---------------------------------------------------------------------------------------
 #
 # THE MIRROR of `orchestrator/tools`'s block of the same shape (`_is_predictable_noise` /
@@ -880,7 +880,7 @@ def _elision_notice(
 
 
 def _render_output(lines: list[str], *, budget: int, handle: str | None) -> str:
-    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL (ASM13).
+    """Render redacted lines under `budget`, keeping the HEAD AND THE TAIL.
 
     Head-only was the defect: a stack trace puts its message at the top and the failing assertion
     at the bottom, so a head cap loses the error and a tail cap loses the cause. The budget is

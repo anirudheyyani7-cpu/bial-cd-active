@@ -71,7 +71,7 @@ async def test_the_kind_column_is_the_native_type_not_null(db_session, table: st
     row = (
         await db_session.execute(sa.text(_COLUMN_SQL), {"table": table, "column": "kind"})
     ).one()
-    assert row.udt_name == "chat_kind"  # native enum (ADR-0008), not a varchar with a check
+    assert row.udt_name == "chat_kind"  # native enum, not a varchar with a check
     assert row.is_nullable == "NO"
     # NO SERVER DEFAULT on either table, unlike the `conversations` column this replaced, which
     # defaulted to 'plan'.
@@ -167,7 +167,7 @@ _MARKER = json.dumps(
 
 @pytest.mark.destructive_migration
 def test_the_data_step_over_a_conversation_in_the_old_shape() -> None:
-    """★ AE38. A conversation carrying all three retired modes, a mode-switch marker, and an
+    """★ A conversation carrying all three retired modes, a mode-switch marker, and an
     unresolved plan-options card, walked through the real revision.
 
     The card is the reason the data step exists at all — not a wedged conversation, which
@@ -250,7 +250,7 @@ def test_the_data_step_over_a_conversation_in_the_old_shape() -> None:
             ]
         )
 
-        # R53's honest mapping: every migrated conversation becomes a Build chat, because "was
+        # The honest mapping: every migrated conversation becomes a Build chat, because "was
         # this a Plan chat?" is not a question the stored rows can answer — any conversation was
         # one mode switch away from writing files.
         assert conversation.kind == "build"

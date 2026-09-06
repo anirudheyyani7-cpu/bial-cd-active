@@ -1,5 +1,5 @@
 """Daily-token gate service — IST math, effective-limit resolution, atomic accounting,
-and the byte-stable 429 (U6). Runs against the real migrated schema in the rolled-back
+and the byte-stable 429. Runs against the real migrated schema in the rolled-back
 per-test transaction.
 """
 
@@ -76,7 +76,7 @@ async def test_effective_limit_ignores_nonpositive_override(db_session) -> None:
     assert await effective_daily_limit(db_session, user.id) == settings.DAILY_TOKEN_LIMIT
 
 
-# --- the gate (AE2) -----------------------------------------------------------
+# --- the gate -----------------------------------------------------------
 
 
 async def test_enforce_passes_under_limit(db_session) -> None:
@@ -88,7 +88,7 @@ async def test_enforce_passes_under_limit(db_session) -> None:
 
 
 async def test_enforce_raises_at_limit(db_session) -> None:
-    # AE2: at-or-over the cap blocks (used >= limit).
+    # At-or-over the cap blocks (used >= limit).
     user = await UserFactory.create(db_session)
     db_session.add(UserLimit(user_id=user.id, daily_token_limit=50))
     await record_usage(db_session, user.id, input_tokens=30, output_tokens=20)
@@ -220,12 +220,12 @@ async def test_record_usage_accumulates(db_session) -> None:
     assert snapshot.used == 19
 
 
-# --- the kind dimension (U15): review spend is metered, never billed ------------
+# --- the kind dimension: review spend is metered, never billed ------------
 
 
 async def test_default_kind_is_build_so_existing_call_sites_stay_exact(db_session) -> None:
-    # Every pre-U15 call site records WITHOUT a kind and must keep its exact behaviour:
-    # the default lands the spend on the `build` row — the one the gate reads.
+    # Every call site that predates the kind dimension records WITHOUT a kind and must keep
+    # its exact behaviour: the default lands the spend on the `build` row — the one the gate reads.
     user = await UserFactory.create(db_session)
     await record_usage(db_session, user.id, input_tokens=10, output_tokens=5)
     row = await db_session.scalar(sa.select(TokenUsage).where(TokenUsage.user_id == user.id))
@@ -273,7 +273,7 @@ async def test_review_spend_accumulates_in_its_own_row(db_session) -> None:
 
 
 async def test_review_spend_never_moves_the_gate(db_session) -> None:
-    # The U15 core property: a citizen at 99% of their cap is NOT pushed over it by a
+    # The core property: a citizen at 99% of their cap is NOT pushed over it by a
     # review — the gate's number is unchanged by ANY amount of review spend, so opening
     # the publish dialog can never spend build budget the citizen never chose to spend.
     user = await UserFactory.create(db_session)

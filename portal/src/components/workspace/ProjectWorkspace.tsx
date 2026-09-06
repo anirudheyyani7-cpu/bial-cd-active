@@ -12,7 +12,7 @@
  *
  * `useWorkspaceState` performs the preview-state read with its own cadence and visibility
  * handling. The address is built from THAT SAME RESULT, feeding only the project-scoped input and
- * leaving every chat-scoped one at rest. U2's rule that its pure map neither takes nor returns an
+ * leaving every chat-scoped one at rest. The rule that its pure map neither takes nor returns an
  * address is about the MAP's type; it is not a bar on the caller that already holds the read.
  *
  * THE PRECEDENCE IS `previewAddress.ts`'s AND IS NOT RE-DERIVED HERE. Its two comments already name
@@ -183,7 +183,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
       occupyingProjectName: workspace.preview?.occupyingProjectName ?? null,
       // App-scoped facts this surface does not read. The compile state's producer is a turn and
       // `checkWorkspace` costs a container exec; neither is a question the project screen asks
-      // (R3 — the screen must not cause a container call).
+      // (the screen must not cause a container call).
       compileState: null,
       workspaceLost: false,
     }),

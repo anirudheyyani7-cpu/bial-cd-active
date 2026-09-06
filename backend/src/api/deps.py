@@ -38,7 +38,7 @@ _UNAUTHENTICATED = HTTPException(
 )
 
 # Suspension is the ONE distinguishable failure: the caller proved who they are but
-# a super-admin blocked the account (R11). A 403 tells the SPA to stop silently
+# a super-admin blocked the account. A 403 tells the SPA to stop silently
 # refreshing (which a 401 would trigger) and surface the state instead.
 _SUSPENDED = HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended")
 
@@ -62,7 +62,7 @@ async def current_user(request: Request, db: DbSession) -> User:
     if user is None:
         raise _UNAUTHENTICATED
     if user.suspended_at is not None:
-        # Suspension seam 2 of 3 (R11, KD-6): checked BEFORE the token_version gate on
+        # Suspension seam 2 of 3: checked BEFORE the token_version gate on
         # purpose. Deactivation bumps token_version AND sets suspended_at, so a suspended
         # user's live JWT is genuinely stale — checking token_version first would 401 them
         # and the SPA would silently refresh instead of surfacing the suspension. This is not
@@ -71,7 +71,7 @@ async def current_user(request: Request, db: DbSession) -> User:
         logger.warning("suspended_user_rejected", user_id=str(user.id), seam="current_user")
         raise _SUSPENDED
     # A session revoked by a token_version bump (logout / revocation) with no suspension —
-    # the live DB value is the source of truth (KD-6).
+    # the live DB value is the source of truth.
     if user.token_version != claims.token_version:
         raise _UNAUTHENTICATED
     return user

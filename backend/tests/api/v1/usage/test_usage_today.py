@@ -1,4 +1,4 @@
-"""GET /v1/usage/today — the SPA daily-cap badge read (U6). Cookie auth; byte-stable
+"""GET /v1/usage/today — the SPA daily-cap badge read. Cookie auth; byte-stable
 {used, limit, remaining, resetsAt} shape.
 """
 
@@ -65,7 +65,7 @@ async def test_usage_today_requires_auth(client) -> None:
 
 
 def test_usage_today_documents_401_in_openapi() -> None:
-    # Covers AE4: the inherited `current_user` 401 is documented in the route's
+    # The inherited `current_user` 401 is documented in the route's
     # OpenAPI `responses=` even though the raise originates in the dependency.
     responses = create_app().openapi()["paths"]["/v1/usage/today"]["get"]["responses"]
     assert "401" in responses

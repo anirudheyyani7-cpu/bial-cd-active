@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  // 'class' strategy for shadcn/ui (U13 prep). No behavior change today: the portal has
+  // 'class' strategy for shadcn/ui. No behavior change today: the portal has
   // zero `dark:` usages, so nothing activates until an element opts in with class="dark".
   darkMode: ['class'],
   // Streamdown's dist ships its own Tailwind utility classes (code-block controls,
@@ -9,7 +9,7 @@ export default {
   theme: {
     extend: {
       /**
-       * THE STACKING THRESHOLD, AS THE BOARD NUMBERS IT (plan 002, U7).
+       * THE STACKING THRESHOLD, AS THE BOARD NUMBERS IT.
        *
        * `ResizeBounds` is explicit: the handle is "ignored below 1100px of window — there is not
        * enough room for two useful columns, so the app pane stacks under the conversation and the
@@ -24,7 +24,7 @@ export default {
         wide: '1100px',
       },
       colors: {
-        // shadcn/ui token names (U13 prep) — ADDITIVE ONLY. Every pre-existing name
+        // shadcn/ui token names — ADDITIVE ONLY. Every pre-existing name
         // (primary/secondary/accent/…) keeps its literal hex DEFAULT so the 70+ existing
         // bg-primary/bg-accent/… call sites resolve byte-identically; shadcn components
         // pick the SAME brand values up through the new `*-foreground`/token names, whose
@@ -106,7 +106,7 @@ export default {
         danger: '#EF4444',
         /**
          * THE UX CANVAS'S OWN PALETTE — the roles the brand ramp has no name for. Every value
-         * below is a hex read off `docs/ux-canvas/boards/*.dc.html`; nothing here is invented,
+         * below is a hex read directly off the UX canvas board designs; nothing here is invented,
          * and nothing here is a second name for a colour the brand ramp already owns (the
          * canvas's ink #1A2B34 is `primary-900`, its hairline #E2E8F0 is `bial-border`, its
          * muted text #6B7280 is `neutral`, its teal #0D7377 is `primary`).
@@ -192,7 +192,7 @@ export default {
       },
       animation: {
         /**
-         * THE APP PANE LEAVING AND RETURNING (plan 002, U6). `T2Sliding` is a whole board about
+         * THE APP PANE LEAVING AND RETURNING. `T2Sliding` is a whole board about
          * this one movement — "the app card is sliding out to the right and fading as it goes" —
          * and its annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing
          * about the app is stopped or reloaded — it is only taken off the screen."

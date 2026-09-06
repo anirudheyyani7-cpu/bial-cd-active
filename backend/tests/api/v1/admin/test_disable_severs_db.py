@@ -1,6 +1,7 @@
-"""U5 — the admin database levers: `disable` severs, `enable` restores, the reveal
-endpoint hands over the DSN, and `hard_delete` salts the earth after committing (ADR-0028).
+"""The admin database levers: `disable` severs, `enable` restores, the reveal
+endpoint hands over the DSN, and `hard_delete` salts the earth after committing.
 
+WHY THIS EXISTS
 Real cluster, real connections, no fakes on the database side. That is not thoroughness
 theatre: after the shared `data_records` plane is retired, `disable`'s sever is the ONLY
 data kill for a deployed app — there is no `X-App-Key` 403 left to fall back on — so the
@@ -530,7 +531,7 @@ async def test_a_failing_drop_never_un_deletes_the_registry(
 ) -> None:
     # Post-commit best-effort: by the time the drop runs the commit is durable, so raising
     # would 500 a delete that in fact succeeded. The database becomes a logged orphan for
-    # the reconciler (U7) instead.
+    # the reconciler instead.
     _wire_storage(app)
     row, record = await _with_database(db_session, **_approved())
 

@@ -1,4 +1,4 @@
-"""`newest_build_outcome_status` — the U6 "last saved version" query (#43/F1): newest-wins
+"""`newest_build_outcome_status` — the "last saved version" query: newest-wins
 across a project's threads, owner-scoped, and best-effort on absent/unreadable outcomes."""
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ async def test_newest_outcome_wins(db_session: AsyncSession) -> None:
 
 
 async def test_scoped_to_the_owner_and_the_project(db_session: AsyncSession) -> None:
-    # Cross-user + cross-project isolation (ADR-0004): another user's failed build, and the
+    # Cross-user + cross-project isolation: another user's failed build, and the
     # same user's OTHER project, must both be invisible to this project's answer.
     user, project, _ = await _project_with_thread(db_session, "os3@rvaiglobal.com")
     other_user, _, other_conv = await _project_with_thread(db_session, "os3-other@rvaiglobal.com")

@@ -204,7 +204,7 @@ describe('R3 — loading a project address frames the running app, with no chat 
     return waitFor(() => {
       expect(screen.getByRole('button', { name: /launch application/i })).toBeTruthy()
       // …and exactly one of them. The rail shows the same SENTENCE, deliberately, and no second
-      // control: R3 says one control starts the app, and two would race the same endpoint.
+      // control: one control starts the app, and two would race the same endpoint.
       expect(screen.getAllByRole('button', { name: /launch application/i })).toHaveLength(1)
     })
   })
@@ -282,7 +282,7 @@ describe('AE4 — the app survives the round trip, in BOTH directions', () => {
 
 describe('AE37 — the stacked crossing is a class, not a remount', () => {
   it('expresses both layouts on ONE grid element, with no measurement anywhere', async () => {
-    // R13's crossing costs no `matchMedia` and no `ResizeObserver`: the container carries both
+    // This crossing costs no `matchMedia` and no `ResizeObserver`: the container carries both
     // directions as responsive classes, so the two-column ↔ stacked crossing cannot remount the
     // frame — there is only ever one tree.
     api.fetchPreviewState.mockResolvedValue(

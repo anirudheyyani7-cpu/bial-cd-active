@@ -1,11 +1,11 @@
-"""Exhaustive prefix enumeration for the delete paths (APPROVAL R23).
+"""Exhaustive prefix enumeration for the delete paths.
 
 `all_keys_under` walks `ListPage.next_token` to exhaustion — a single-page listing
 silently misses everything past `DEFAULT_PAGE_SIZE`, which on the delete paths
 means citizen source surviving a hard delete. Errors RAISE upward deliberately
 (the opposite of `sweep.py`'s swallow-and-log): a partial enumeration is
 indistinguishable from a complete one, so the caller must decide — the project
-cascade lets the raise roll the whole delete back with nothing destroyed (KD-3),
+cascade lets the raise roll the whole delete back with nothing destroyed,
 and `nuke_app` lets it surface so the admin's delete fails retryably instead of
 dropping the row and stranding unfindable blobs.
 """

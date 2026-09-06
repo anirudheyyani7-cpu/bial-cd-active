@@ -1,4 +1,4 @@
-"""Parse governor (U7, R26): the killable subprocess (timeout/OOM → 413) and the bounds
+"""Parse governor: the killable subprocess (timeout/OOM → 413) and the bounds
 the dispatch runs around the chat office→Markdown extract — zip-bomb pre-filter, OPC
 structural gate, and the refusal of kinds the dispatch does not serve.
 
@@ -50,7 +50,7 @@ def _lying_zip(entries: dict[str, bytes], declared_uncompressed: int) -> bytes:
 
 @pytest.mark.parametrize("kind", ["xlsx", "xls", "csv", "word", "pdf"])
 def test_retired_and_unknown_kinds_are_415(kind: str) -> None:
-    # The structured-row kinds went with the per-app parse endpoint (#37). The dispatch must
+    # The structured-row kinds went with the per-app parse endpoint. The dispatch must
     # REFUSE them, not fall through to something that half-works: re-adding a branch for any
     # of them turns this red rather than quietly reviving a surface with no consumer.
     with pytest.raises(FileParseError) as exc:

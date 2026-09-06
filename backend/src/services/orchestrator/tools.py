@@ -1,7 +1,8 @@
 """The eight sandbox tools — the model's ENTIRE action surface.
 
-Five file tools go through the C2 `files()` op; `run_command` runs a general shell command over
-the C2 `exec` transport — the vibe-coding pivot, so the model can `npm install`, run linters, and
+Five file tools go through the sandbox client's `files()` op; `run_command` runs a general
+shell command over its `exec` transport — the vibe-coding pivot, so the model can
+`npm install`, run linters, and
 drive its own build. `run_command`'s containment is NOT a tool-level allowlist (it can write
 anywhere the workspace allows): it is the demoted `appuser`, the supervisor's fail-closed
 child-env, and secret-redacted + length-capped output — plus the destructive-SQL
@@ -134,7 +135,7 @@ _NOISE_KEEP_TOKENS: Final = (
 )
 """WHERE THE NOISE BOUNDARY IS DRAWN, and the conservative half of it. A line carrying any of
 these is NEVER dropped, whatever else it looks like — `npm WARN deprecated x@1: use y`, an audit
-summary, a severity table, a CVE reference. R28 asks for predictable noise to go and for genuine
+summary, a severity table, a CVE reference. The goal is for predictable noise to go and for genuine
 vulnerability or deprecation signal to stay, and this is the second half stated as a rule instead
 of trusted to the patterns below being narrow enough."""
 
@@ -415,7 +416,7 @@ def _redact_command_output(
 def _new_output_handle() -> str:
     """A short, model-typeable name for one held capture. Random rather than sequential so a
     handle from a previous run cannot be guessed into a collision with a live one — it is not a
-    secret (it names redacted text), and it is not a UUID either (ADR-0006: a raw UUID is never
+    secret (it names redacted text), and it is not a UUID either (a raw UUID is never
     the thing a caller quotes)."""
     return f"out_{secrets.token_hex(4)}"
 
@@ -455,8 +456,8 @@ async def _format_command_result(
     notice the model reads names something that actually resolves. A stream that fits is not held
     at all: there is nothing to recover, and the ring is worth more to the next truncation.
 
-    `budget` OVERRIDES the exit code's own answer, and exists for exactly one caller: U23's
-    composite, whose whole point is that the underlying exit code lies. A step that exited 0 after
+    `budget` OVERRIDES the exit code's own answer, and exists for exactly one caller: the composite
+    step, whose whole point is that the underlying exit code lies. A step that exited 0 after
     failing must be DUMPED, not summarised — sizing its output from `result.exit` would let the
     misleading zero decide how much of the failure the model gets to read."""
     budget = output_budget_for_exit(result.exit) if budget is None else budget
@@ -535,8 +536,8 @@ class _CompositeStep:
     #: Substrings that mean "this failed", scanned case-folded over the RAW capture (before
     #: redaction and de-noising, so neither can hide a marker from the detector).
     failure_markers: tuple[str, ...]
-    #: What the workspace and the database are left in when THIS step fails. Not decoration: R29
-    #: asks the operation to say what state it left things in, and the answer differs per step.
+    #: What the workspace and the database are left in when THIS step fails. Not decoration: each
+    #: step must say what state it left things in, and the answer differs per step.
     state_when_failed: str
 
 
@@ -673,9 +674,9 @@ async def _step(
     state: Literal["started", "ok", "failed"],
     hidden: bool = False,
 ) -> None:
-    """The legacy C7 build feed. `emitter is None` on the chat-turn path, where the ENGINE emits a
-    StepFrame per tool call from the run's own FunctionToolCall/Result events using the same
-    `classify_tool_call` label — emitting both would render every step twice.
+    """The legacy build-progress feed. `emitter is None` on the chat-turn path, where the
+    ENGINE emits a StepFrame per tool call from the run's own FunctionToolCall/Result events
+    using the same `classify_tool_call` label — emitting both would render every step twice.
 
     NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, the same rule the turn engine's `_resolve_step`
     and the reload projection both apply, and `classify_command`'s docstring states for this
@@ -780,7 +781,7 @@ def sandbox_toolset[DepsT](
             raise  # terminal infra failure — propagate to the sandbox_gone escalation
         except SandboxError as exc:
             raise ModelRetry(f"Could not read `{path}`: {exc}. Check the path.") from exc
-        # `content` is a contractually-required C1 `view` field (C2) — a missing/non-str value is a
+        # `content` is a contractually-required `view` field — a missing/non-str value is a
         # malformed response, surfaced as a retry not a phantom empty file (fail-first).
         content = result.detail.get("content")
         if not isinstance(content, str):
@@ -894,7 +895,7 @@ def sandbox_toolset[DepsT](
         redacted_cmd = redact_secrets(" ".join(command)[:REDACT_INPUT_MAX_CHARS])
         # The data-safety sentinel runs BEFORE the transport: improvised destructive
         # SQL never reaches the sandbox. The blocked attempt is emitted as a failed step so
-        # route-around behaviour stays observable in BRAIN traces (the iteration-2 tripwire).
+        # route-around behaviour stays observable in BRAIN traces.
         refusal = you_shall_not_pass(command)
         if refusal is not None:
             # The `— blocked …`/`— couldn't finish` suffixes are a LIVE-ONLY affordance on the
@@ -909,18 +910,18 @@ def sandbox_toolset[DepsT](
                 hidden=hidden,
             )
             raise ModelRetry(refusal)
-        # U22's adoption question, counted where it is observable: did the slice handle actually
+        # The adoption question this counts, where it is observable: did the slice handle actually
         # replace the re-run it exists to save? An identical command run a second time inside ONE
         # turn is the cost being measured, and it is read beside `output_slice_fetched` — one
         # number alone says nothing.
         #
         # COUNTED AFTER THE SQL SENTINEL AND BEFORE THE TRANSPORT, deliberately. A refused command
-        # never ran, so a second refusal is the model routing around a guard (U1's own tripwire
-        # already watches that) rather than paying for output it lost. A command that RAN and
-        # failed is a genuine repeat and counts as one.
+        # never ran, so a second refusal is the model routing around a guard (a separate
+        # tripwire elsewhere already watches for that) rather than paying for output it lost.
+        # A command that RAN and failed is a genuine repeat and counts as one.
         if session.note_command(redacted_cmd):
             await _count_at_the_tool_boundary(HarnessCounter.COMMAND_RERUN_IN_TURN, session)
-        # U23's adoption question, its other half: the sequence driven BY HAND, counted where the
+        # The other half of that adoption question: the sequence driven BY HAND, counted where the
         # hand is. Read against `schema_change_composed` — one number alone cannot tell "the
         # composite is being used" from "nobody is changing the schema at all".
         if _still_doing_it_the_hard_way(command):
@@ -1079,8 +1080,9 @@ def sandbox_toolset[DepsT](
                 outcomes.append(_StepOutcome(step=step, result=None, ok=False))
                 continue
             argv = list(step.argv)
-            # F4's classifier, ASKED RATHER THAN ASSUMED — the same one `run_command` uses, so a
-            # step here can never get a different bound from the identical command run by hand.
+            # `command_needs_the_long_timeout`, ASKED RATHER THAN ASSUMED — the same one
+            # `run_command` uses, so a step here can never get a different bound from the
+            # identical command run by hand.
             # Neither of these is in the slow class, and that is the point: a generate still
             # running after minutes is waiting for a terminal that does not exist.
             timeout_s = (

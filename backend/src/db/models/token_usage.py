@@ -1,4 +1,4 @@
-"""The `token_usage` table — per-user daily token accounting (R13/R30).
+"""The `token_usage` table — per-user daily token accounting.
 
 One row per (user, IST calendar day, kind). The server-authoritative daily gate reconciles
 each turn's spend against this ledger. Mirrors Express `server/usage-repo.js`, which
@@ -29,7 +29,7 @@ from src.db.mixins import OwnedByUserMixin, TimestampMixin, UUIDv7PrimaryKeyMixi
 
 
 class TokenUsageKind(StrEnum):
-    """What the spend was FOR (U15, ASM14). Values are the native PG enum labels.
+    """What the spend was FOR. Values are the native PG enum labels.
 
     The dimension exists to keep two properties apart that one number cannot carry:
     who generated the spend (attribution — every row, whatever its kind, belongs to

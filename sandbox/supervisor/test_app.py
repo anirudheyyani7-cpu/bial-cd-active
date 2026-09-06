@@ -1,11 +1,11 @@
-"""Offline, NON-SPAWNING C1-conformance + guard-regression suite for the supervisor (U14).
+"""Offline, NON-SPAWNING conformance + guard-regression suite for the supervisor.
 
 The offline lane covers everything that does NOT spawn a child: the fail-closed child-env scrub
 (a pure function), `/files` (all actions), auth, and Pydantic/action body-validation — including
 the frozen 400-vs-422 split. SPAWNING scenarios (`/exec` exit/timeout, `/dev/*`), real UID
 demotion, and token isolation need root to demote to `appuser` (`_DEMOTE`'s `setgroups()` raises
 EPERM for a non-root process even demoting to itself), so they run IN-CONTAINER as root
-(`tests/test_supervisor_guards_incontainer.py`). See the plan U14 lane split.
+(`tests/test_supervisor_guards_incontainer.py`).
 
 Import note: `app.py` resolves `SUPERVISOR_TOKEN`, `WORKSPACE`, and `pwd.getpwnam(APP_USER)` at
 MODULE import (fail-fast config), so we seed a throwaway token, a temp workspace, and this
@@ -91,10 +91,10 @@ def test_child_env_extra_layers_on_and_path_survives() -> None:
 
 
 def test_child_env_carries_the_npm_and_node_runtime_names() -> None:
-    # The open-sandbox `run_command` npm install (U1/U7) needs its runtime env to survive the
+    # The open-sandbox `run_command` npm install needs its runtime env to survive the
     # scrub: the `npm_`/`NODE_` prefixes are allowlisted so npm config + node options pass
     # through, and HOME is forced to the appuser-owned account so npm's default cache
-    # ($HOME/.npm) is writable (R9/R13). This proves the EXISTING allowlist already covers a
+    # ($HOME/.npm) is writable. This proves the EXISTING allowlist already covers a
     # runtime install — no new entry (and no wildcard) is needed for a public, no-proxy registry.
     seeded = {
         "npm_config_registry": "https://registry.npmjs.org/",
@@ -123,7 +123,7 @@ def test_child_env_sets_ci_so_clis_refuse_to_prompt() -> None:
 
 
 def test_exec_closes_child_stdin_so_a_prompt_cannot_hang(monkeypatch: pytest.MonkeyPatch) -> None:
-    # F4: exec_cmd hands the child a CLOSED stdin (immediate EOF) so a CLI that probes
+    # exec_cmd hands the child a CLOSED stdin (immediate EOF) so a CLI that probes
     # `process.stdin.isTTY` (drizzle-kit's prompt renderer does this) aborts fast, not waiting on
     # input that never comes. We intercept subprocess.run to inspect the wiring without a real
     # spawn — a real spawn would demote to APP_USER (needs root, the in-container lane's job).
@@ -222,7 +222,7 @@ def test_wrong_bearer_is_401() -> None:
 
 
 def test_extra_whitespace_bearer_is_401() -> None:
-    # Exact string compare: even a doubled space between scheme and token fails (C1).
+    # Exact string compare: even a doubled space between scheme and token fails.
     r = client.post(
         "/files",
         json={"action": "view", "path": "x"},
@@ -248,7 +248,7 @@ def test_files_view_range_clamps_end_to_last_line() -> None:
 
 
 def test_files_view_range_minus_one_means_end_of_file() -> None:
-    # The C2/C7 read tool promises `end=-1` = end of file; a naive min(-1, len) computed an
+    # The read tool promises `end=-1` = end of file; a naive min(-1, len) computed an
     # EMPTY range. Regression-pin the full-file and from-line-2 spellings.
     _write("v3.txt", "a\nb\nc")
     full = client.post(
@@ -377,7 +377,7 @@ def test_exec_cwd_escape_is_400_before_any_spawn() -> None:
     assert r.status_code == 400
 
 
-# --- U8: the two per-app Blob vars reach the child via the allowlist --------------------------
+# --- the two per-app Blob vars reach the child via the allowlist --------------------------
 def test_child_env_admits_the_blob_vars() -> None:
     seeded = {
         "BIAL_BLOB_CONTAINER_URL": "http://azurite:10000/devstoreaccount1/app-x",
@@ -396,7 +396,7 @@ def test_child_env_admits_the_blob_vars() -> None:
     assert "SUPERVISOR_TOKEN" not in env  # the real token is never carried into the child env
 
 
-# --- U29: GET /env/manifest is retired — nothing in the platform had ever called it -----------
+# --- GET /env/manifest is retired — nothing in the platform had ever called it -----------
 def test_env_manifest_is_gone() -> None:
     # Dead-code removal, not a behavior change: the backend never called this route (grep across
     # `backend/` turns up nothing), so nothing loses a capability it was actually using. FastAPI
@@ -408,7 +408,7 @@ def test_env_manifest_is_gone() -> None:
     assert client.get("/env/manifest").status_code == 404
 
 
-# --- U8: the pure redactor — raw (already-encoded) AND URL-decoded forms, min-length guard -----
+# --- the pure redactor — raw (already-encoded) AND URL-decoded forms, min-length guard -----
 def test_redactor_strips_raw_and_url_decoded_secret_forms() -> None:
     # The SDK returns the SAS ALREADY percent-encoded; env holds that raw form.
     raw_sas = "sv=2021-08-06&sr=c&sp=rwdl&sig=abc%2Bdef%2Fghi%3D"
@@ -425,12 +425,12 @@ def test_redactor_strips_raw_and_url_decoded_secret_forms() -> None:
     finally:
         os.environ.pop("BIAL_BLOB_SAS", None)
     assert raw_sas not in red  # raw (encoded) form redacted
-    assert decoded_sas not in red  # URL-decoded form ALSO redacted (KTD-8)
+    assert decoded_sas not in red  # URL-decoded form ALSO redacted
     assert "keep this ordinary text" in red  # non-secret text untouched
     assert "***" in red
 
 
-# --- ADR-0028: the per-project database DSN — admitted by name, redacted both ways -----------
+# --- the per-project database DSN — admitted by name, redacted both ways -----------
 _DSN = "postgresql://bialrole_ab12:Sup3rSecretRolePassw0rd@db.example:5432/bialapp_ab12"
 
 
@@ -763,7 +763,7 @@ def test_the_probe_counts_a_bound_but_silent_port_as_not_serving() -> None:
         assert sup._dev_port_serving(port=port, timeout=0.5) is False
 
 
-# --- `ready` means a request ACTUALLY SUCCEEDED (U6) ------------------------------------------
+# --- `ready` means a request ACTUALLY SUCCEEDED ------------------------------------------
 def test_dev_status_is_ready_when_the_root_route_500s(monkeypatch: pytest.MonkeyPatch) -> None:
     """THE fail-open guard, and the single most dangerous behaviour in this change to get wrong.
 
@@ -970,7 +970,7 @@ def test_dev_start_with_a_free_port_still_spawns(monkeypatch: pytest.MonkeyPatch
     assert spawned == [["npm", "run", "dev"]]
 
 
-# --- U14: the overlay kill switch is baked into dev_start, outside /workspace/app -------------
+# --- the overlay kill switch is baked into dev_start, outside /workspace/app -------------
 def test_dev_start_spawns_with_the_overlay_kill_switch_in_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -978,8 +978,7 @@ def test_dev_start_spawns_with_the_overlay_kill_switch_in_env(
     spawned child's environment — asserted on the `Popen` call itself, not merely on `_child_env`
     as a pure function, so a mutation that drops it from `dev_start`'s literal `extra` (while
     leaving `_child_env` untouched) still fails this test. It suppresses BOTH the compile and the
-    runtime overlay (ASM15) — defence in depth behind plan one's portal cover (U12) and
-    client-error arm (U13).
+    runtime overlay — defence in depth behind the portal's own cover and client-error arm.
 
     The allowlist's fail-closed behaviour is unchanged by adding this one literal: a real secret
     seeded on the parent still does not reach the child on this same spawn.
@@ -1006,7 +1005,7 @@ def test_dev_start_spawns_with_the_overlay_kill_switch_in_env(
 
 
 def test_overlay_kill_switch_reaches_no_tracked_template_file() -> None:
-    """R19's second clause, pinned as an assertion rather than a hope: the flag must be settable
+    """This is pinned as an assertion rather than a hope: the flag must be settable
     ONLY from `dev_start`'s hard-coded `extra` literal, baked into the image outside
     `/workspace/app` — never from the golden template that seeds the workspace. If it ever leaked
     into a tracked template file, a restore (which replays tracked files) or the agent's own write
@@ -1028,7 +1027,7 @@ def test_next_cache_stays_gitignored_and_untracked() -> None:
     """The persistent build cache (`.next/cache`) is on by default from 16.3 — verified, not
     assumed, that the template's existing `/.next` .gitignore entry already covers it and that
     nothing under `.next/` has ever been tracked, so the bump does not newly leak a multi-MB cache
-    into a future C4 git-bundle snapshot."""
+    into a future git-bundle snapshot."""
     repo_root = Path(__file__).resolve().parents[2]
     gitignore = (repo_root / "sandbox" / "template" / ".gitignore").read_text(encoding="utf-8")
     assert "/.next" in gitignore.splitlines()
@@ -1077,7 +1076,7 @@ def test_dev_start_refuses_a_bound_but_silent_port_without_spawning(
 def test_process_kill_commands_are_refused_with_the_steering_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Round 3's opening move: `pkill` the supervisor's dev child, nohup a replacement, and the
+    """The move this refuses: `pkill` the supervisor's dev child, nohup a replacement, and the
     replacement dies unwatched after the turn. The probe makes that survivable; this makes it
     rare. Refused as a normal exit-1 with a correctable message (same shape as the TTY guard),
     and nothing is executed."""
@@ -1229,7 +1228,7 @@ def test_concurrent_polls_share_one_probe_and_agree_on_its_answer(
         )
 
 
-# --- R14 request accounting: the parser that decides whether a container is in use ----------
+# --- request accounting: the parser that decides whether a container is in use ----------
 #
 # WHY THESE EXIST. `_served_request_count` had ZERO coverage, and it fails toward the dangerous
 # answer: every failure mode returns a LOWER count, and `served: 0` is indistinguishable from
@@ -1322,7 +1321,7 @@ def test_a_uri_that_is_not_a_path_is_ignored() -> None:
     assert _served_request_count('{"request":"not-an-object"}') == 0
 
 
-# --- R17/R18: the compile state derived from the dev server's HMR socket ---------------------
+# --- the compile state derived from the dev server's HMR socket ---------------------
 #
 # The consumer THREAD is not exercised here (it needs a live `next dev`); what is pinned is the
 # part that decides what the platform believes: frame -> state, the debounce, the fail-closed
@@ -1624,7 +1623,7 @@ def test_a_malformed_base_path_is_treated_as_absent(
 
 
 def test_the_readiness_probe_asks_for_the_base_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ASM1. The probe's fail-open counts ANY response as serving, a 404 included — so under a
+    """The probe's fail-open counts ANY response as serving, a 404 included — so under a
     base path a probe left at `/` never FAILS, it just stops meaning anything. "Ready" would
     decay to "the dev server can render its own 404", which is true before the citizen's first
     route compiles and true forever for an app that never compiles."""

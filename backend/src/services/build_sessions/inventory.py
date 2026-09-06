@@ -61,7 +61,7 @@ class FleetLister(Protocol):
     """The one capability this module needs from a control plane. A Protocol rather than the
     concrete `AcaControlPlane` so a test needs no Azure client, and so a future substrate
     (ACA Sandboxes, say) satisfies it by shape. Deliberately NOT added to the `SandboxClient`
-    ABC, which is a frozen cross-track contract (C2) — the capability lives on the concrete
+    ABC, which is a frozen cross-track contract — the capability lives on the concrete
     client and the route checks for it at runtime.
 
     ONE ENUMERATION FOR EVERY QUESTION. One method rather than a names-only and a names→tags
@@ -76,7 +76,7 @@ class FleetLister(Protocol):
 
 @runtime_checkable
 class FleetTagger(FleetLister, Protocol):
-    """`FleetLister` plus the C10 write half: stamp identity tags onto a container.
+    """`FleetLister` plus the write half: stamp identity tags onto a container.
 
     TWO PROTOCOLS, NOT ONE, deliberately. `take_sandbox_inventory` above needs only to enumerate,
     and demanding a *stamper* for a read-only report would over-constrain a substrate that can list
@@ -167,13 +167,13 @@ async def take_sandbox_inventory(
     )
 
 
-# --- the C10 tag backfill ----------------------------------------------------------------
+# --- the tag backfill ----------------------------------------------------------------
 #
 # Every container provisioned since identity stamping shipped carries its identity from birth.
 # This is the other half: the containers that already exist. Until they are stamped, the whole
 # fleet is un-judgeable without Redis, which is why running this is a RELEASE PREREQUISITE and not
 # a follow-up — the destroy flag must not be flipped while the fleet still reports untagged
-# sandboxes (C10 §3.5).
+# sandboxes.
 
 
 @dataclass(frozen=True)
@@ -194,8 +194,8 @@ class TagBackfillReport:
     its first stamping: those containers now carry `bial-kind`, so the next pass counts them in
     `already_tagged`, and `already_tagged == scanned` — the endpoint's only clean-fleet signal —
     reads identically for a fully-identified fleet and for one made entirely of containers no
-    human has adjudicated. That is the number C10 §3 says matters most, going quiet exactly when
-    somebody is deciding whether to flip the destroy flag."""
+    human has adjudicated. That is the number an operator checks before flipping the destroy
+    flag, and it goes quiet exactly when that decision is being made."""
 
     scanned: int
     already_tagged: int
@@ -254,7 +254,7 @@ def _backfill_tags(owner: tuple[uuid.UUID, uuid.UUID] | None) -> dict[str, str]:
 
 
 async def backfill_sandbox_tags(db: AsyncSession, control_plane: FleetTagger) -> TagBackfillReport:
-    """Stamp C10 identity onto every sandbox container that predates identity stamping.
+    """Stamp identity onto every sandbox container that predates identity stamping.
 
     Idempotent: a container already carrying `bial-kind` is counted and LEFT ALONE. Re-stamping
     would overwrite a real `bial-created-at` with `now` on every run, resetting the age clock of
@@ -266,7 +266,7 @@ async def backfill_sandbox_tags(db: AsyncSession, control_plane: FleetTagger) ->
     the first failure would leave the fleet part-stamped with no report of what remains.
 
     AN ENUMERATION FAILURE IS DIFFERENT AND PROPAGATES. A half-listed fleet reporting "nothing left
-    to stamp" is the exact false green that the destroy flag is gated on (C10 §3.5)."""
+    to stamp" is the exact false green that the destroy flag is gated on."""
     live = {member.name: member.tags for member in await control_plane.list_sandbox_fleet()}
     owners = await _app_names_to_owners(db)
     # END THE READ TRANSACTION BEFORE THE ARM LOOP. `owners` is already materialised as plain

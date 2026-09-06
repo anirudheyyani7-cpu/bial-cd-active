@@ -58,7 +58,7 @@ import { SendRefusal } from './sendRefusal'
 export interface ComposerSubmission {
   text: string
   attachments: PendingAttachment[]
-  /** The conversation this send belongs to, stamped at press time (R60). */
+  /** The conversation this send belongs to, stamped at press time. */
   conversationId: string
 }
 
@@ -369,7 +369,7 @@ export default function ComposerBox({
             placeholder={locked && unavailableReason ? unavailableReason : placeholder}
             data-testid="composer-input"
             rows={1}
-            // NO maxLength. Issue #156 forbids it by name and a test asserts its absence.
+            // NO maxLength — deliberately forbidden, and a test asserts its absence.
             className="max-h-[168px] w-full resize-none bg-transparent text-[13.5px] leading-relaxed text-tertiary placeholder:text-canvas-placeholder focus:outline-none"
           />
 

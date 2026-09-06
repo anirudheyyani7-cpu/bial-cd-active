@@ -42,7 +42,7 @@ export default defineConfig({
     // so no /api call preflights, and the one CORS layer that matters is the control-plane's,
     // which reflects FRONTEND_URL alone.
     cors: false,
-    // Dev parity for the portal's document CSP (prod sets this via nginx envsubst; C8 §2, KTD-3).
+    // Dev parity for the portal's document CSP (prod sets this via nginx envsubst).
     // A concrete, non-empty value so a dev-server load exercises the SAME framing constraint the
     // built SPA ships with — only framing is constrained (no default-src/script-src/connect-src),
     // so vite's HMR client, module graph, and the API proxy below are untouched.
@@ -74,7 +74,7 @@ export default defineConfig({
       // The production edge strips /api before FastAPI (which serves /v1/auth/*),
       // so mirror that here with rewrite — the browser-visible path stays
       // /api/v1/auth/* dev↔prod, keeping the refresh cookie's Path and the OIDC
-      // redirect_uri consistent (KD-8).
+      // redirect_uri consistent.
       '/api/v1/auth': {
         target: 'http://localhost:8000',
         changeOrigin: true,

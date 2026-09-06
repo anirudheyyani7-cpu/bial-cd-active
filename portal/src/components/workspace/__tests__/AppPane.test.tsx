@@ -1,12 +1,10 @@
 /**
  * THE APP PANE — what it is called, how to get past it, and what it says instead.
  *
- * ═══ THE TRAP THIS FILE EXISTS FOR ═══
- *
- * An inertness-only assertion — "the old strings are gone" — passes just as happily on a screen
- * with no start control at all, which would satisfy R3's "exactly one control starts it" with
- * zero. So every no-frame state that can carry a start control is asserted here for the
- * affordance's PRESENCE, not its absence.
+ * THE TRAP THIS FILE EXISTS FOR: an inertness-only assertion — "the old strings are gone" —
+ * passes just as happily on a screen with no start control at all, which would satisfy
+ * "exactly one control starts it" with zero. So every no-frame state that can carry a start
+ * control is asserted here for the affordance's PRESENCE, not its absence.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'

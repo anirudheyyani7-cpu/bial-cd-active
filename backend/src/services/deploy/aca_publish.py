@@ -282,11 +282,11 @@ class AcaPublishedApps:
 
         return aca_models.ContainerApp(
             location=c.region,
-            # C10 identity. THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, so a tag missing from this
-            # envelope is not merely un-written — it is STRIPPED from a resource that already had
-            # it. `bial-kind=published-app` is what makes "a citizen's live application" a record
-            # rather than a `pub-` naming convention, and a reclamation pass that mistook one for a
-            # sandbox would take a production app down. See C10 §1.4.
+            # ARM identity tags. THIS CALL IS A FULL `PUT` ON EVERY REDEPLOY, so a tag missing
+            # from this envelope is not merely un-written — it is STRIPPED from a resource that
+            # already had it. `bial-kind=published-app` is what makes "a citizen's live
+            # application" a record rather than a `pub-` naming convention, and a reclamation
+            # pass that mistook one for a sandbox would take a production app down.
             tags=published_app_tags(app_id=app_id),
             properties=aca_models.ContainerAppProperties(
                 managed_environment_id=_managed_environment_id(c),

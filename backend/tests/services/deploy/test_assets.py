@@ -110,7 +110,7 @@ def test_the_config_default_and_the_dockerfile_arg_name_the_same_base() -> None:
 
     assert arg_default == DeployConfig.model_fields["node_base_image"].default
 
-    # R5: the shipped base is pinned by digest, not by a tag that moves under us. A bare tag
+    # The shipped base is pinned by digest, not by a tag that moves under us. A bare tag
     # would still pass the equality above while quietly reintroducing the drift the pin exists
     # to stop — the same failure that let the portal's base go 16 months stale.
     assert "@sha256:" in arg_default

@@ -1,40 +1,27 @@
-"""The `deployments` table — one append-only row per one-click deploy attempt.
+"""WHY THIS EXISTS
 
-A citizen presses Deploy and their app goes live; there is no admin approval on this path.
-That makes this table the ONLY durable record of what is running, so it carries the two
-facts nothing else in the schema can answer:
+One append-only row per one-click deploy attempt. A citizen presses Deploy and the app
+goes live with no admin approval, so this is the ONLY durable record of what is running:
+`head_sha` says WHICH commit went live (`app_registry`'s commit/submission columns belong
+to the manual-runbook lifecycle and stay unset while a self-deployed app is still `draft`),
+and `image_digest` says WHICH image is running — the reconciler's authorization to act
+(it may only promote a row whose digest matches what ARM reports as live, and must never
+delete a container app it cannot prove it created) and the rollback source (redeploying
+the previous digest is one ARM call against an image that already exists); without it a
+failed deploy that supersedes a working revision is unrecoverable.
 
-* `head_sha` — WHICH commit went live. `app_registry` has `approved_commit_sha` and
-  `deployed_submission_id`, but both belong to the manual-runbook lifecycle and are
-  guarded on `status == APPROVED`; a self-deployed app is still `draft`, so those columns
-  can never describe it. Deploy keeps its own lineage rather than relaxing that guard.
-* `image_digest` — WHICH image is running. This is not bookkeeping. It is (a) the
-  reconciler's **authorization to act**: after a crash it may only promote a row whose
-  digest matches what ARM reports as live, and it must never delete a container app it
-  cannot prove it created; and (b) the rollback source — redeploying the previous digest
-  is one ARM call against an image that already exists. Without this column a failed
-  deploy that supersedes a working revision is unrecoverable.
+It is a TABLE, not columns on `app_registry`, because a failed attempt must not overwrite
+the record of the version still serving traffic — one row per attempt keeps "what is
+live" and "what we last tried" separately answerable. The partial unique index
+`uq_deployments_one_in_flight` is the concurrency guard: claim with `INSERT ... ON
+CONFLICT DO NOTHING RETURNING`, where zero rows back means a deploy is already in flight.
+It lives in Postgres, not in-process, because the control plane restarts mid-pipeline and
+an in-process lock would go blind across exactly that restart.
 
-WHY A TABLE AND NOT COLUMNS ON `app_registry`: the deploy is a long-running attempt with
-its own failure states, and an attempt that fails must not overwrite the record of the
-version still serving traffic. One row per attempt keeps "what is live" and "what we last
-tried" separately answerable, which is exactly what the reconciler and rollback need.
-
-THE PARTIAL UNIQUE INDEX IS THE CONCURRENCY GUARD (`uq_deployments_one_in_flight`). Claim
-with `INSERT ... ON CONFLICT DO NOTHING RETURNING`; zero rows back means a deploy is
-already in flight. It is enforced in Postgres rather than in-process because the pipeline
-runs for minutes and the control plane restarts on every platform deploy — an in-process
-dict goes blind across exactly the restart a deploy is most likely to straddle, and it
-would add a fourth single-replica assumption to the three the deployment checklist already
-carries. Same shape as `project_databases`' unique claim (ADR-0028), one predicate wider.
-
-`heartbeat_at` is renewed by the running pipeline, and staleness is measured from IT, not
-from `created_at`: an image build legitimately runs for minutes, so a start-time threshold
-either kills live deploys or lets a crashed one wedge the app until someone notices.
-
-No `project_id` column: `app_registry` already enforces one app per project
-(`uq_app_registry_project`), so project → app is 1:1 and the route resolves it before
-claiming. Storing it here would be a second copy that can drift.
+`heartbeat_at` is renewed by the running pipeline; staleness is measured from IT, never
+`created_at`, since an image build legitimately runs for minutes. No `project_id` column:
+`app_registry` already enforces one app per project, so the route resolves that mapping
+before claiming, rather than storing a second copy that can drift.
 """
 
 from __future__ import annotations
@@ -58,7 +45,7 @@ class DeploymentStatus(StrEnum):
     `starting`, …) is display and lives in `step` as a plain string — adding a phase must
     never need a migration, while adding a STATUS would change what the partial index
     covers and is therefore a real schema decision. `unpublished_at` (below) is the same
-    reasoning applied to "is it live right now" (#113) — a second axis, not a fourth
+    reasoning applied to "is it live right now" — a second axis, not a fourth
     status."""
 
     RUNNING = "running"
@@ -69,7 +56,7 @@ class DeploymentStatus(StrEnum):
 # The native PG enum type, shared by the model column and the Alembic migration.
 # `create_type=False`: the migration owns CREATE/DROP TYPE explicitly (so a downgrade
 # drops it) — the column must not try to create the type itself. Mirrors
-# `app_registry.app_status_enum` (ADR-0008).
+# `app_registry.app_status_enum`.
 deployment_status_enum = sa.Enum(
     DeploymentStatus,
     name="deployment_status",
@@ -113,7 +100,7 @@ class Deployment(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base):
             unique=True,
             postgresql_where=sa.text("status = 'running'"),
         ),
-        # THE MARKETPLACE'S TWO COLLAPSES (#145, migration 0034). Partial indexes matching
+        # THE MARKETPLACE'S TWO COLLAPSES (migration 0034). Partial indexes matching
         # `_live_catalog`'s predicates exactly, so each collapse is an index scan rather
         # than a Seq Scan of this table.
         #
@@ -121,7 +108,7 @@ class Deployment(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base):
         # APPEND-ONLY with no reaper, so what the collapses scan is TOTAL HISTORICAL DEPLOY
         # ATTEMPTS across the platform's life, not the number of live apps. Measured on
         # PG18 at 51k rows: ~100-180ms of DB time per request without these, ~35ms with
-        # (#147 round 3). Declared here, not only in the migration, so `--autogenerate`
+        # them. Declared here, not only in the migration, so `--autogenerate`
         # does not emit a `drop_index` for them.
         #
         # THE SUCCESS INDEX HAS A LOAD-BEARING REQUIREMENT ON ITS QUERY: the `status`
@@ -231,7 +218,7 @@ class Deployment(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base):
     # Set exactly once, in the same UPDATE that writes a terminal status.
     finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
-    # WHETHER THE APP IS CURRENTLY LIVE — a second, independent axis from `status` (#113).
+    # WHETHER THE APP IS CURRENTLY LIVE — a second, independent axis from `status`.
     # `status` answers "how did this attempt end"; this answers "is it serving traffic right
     # now". Deliberately not a fourth `DeploymentStatus` — that would change what
     # `uq_deployments_one_in_flight`'s partial index covers, a real schema decision the

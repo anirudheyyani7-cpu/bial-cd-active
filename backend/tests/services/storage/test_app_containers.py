@@ -1,4 +1,4 @@
-"""AppContainerStore — per-app Blob container management (C9 §6).
+"""AppContainerStore — per-app Blob container management.
 
 Network-free unit tests inject a mock BlobServiceClient into the module client cache so
 ensure/mint/delete behavior and the account-key-vs-user-delegation SAS branch are observable
@@ -99,7 +99,7 @@ def test_container_url_defaults_to_account_url() -> None:
 
 
 def test_container_url_uses_sandbox_facing_base_and_strips_trailing_slash() -> None:
-    # KTD-2: the injected URL must be a host the sandbox reaches — callers pass the sandbox-facing
+    # The injected URL must be a host the sandbox reaches — callers pass the sandbox-facing
     # Blob base (e.g. the docker-network Azurite address), and the trailing slash is normalized.
     store = AppContainerStore(_azure())
     url = store.container_url(_APP, base_url="http://azurite:10000/devstoreaccount1/")
@@ -246,7 +246,7 @@ async def test_mint_container_sas_rejects_nonpositive_ttl() -> None:
         await AppContainerStore(_azure()).mint_container_sas(_APP, ttl=timedelta(0))
 
 
-# --- mint_deploy_container_sas (U2/R2) ---------------------------------------
+# --- mint_deploy_container_sas -----------------------------------------------
 
 
 def _deploy_mock(config: AzureStorageConfig) -> tuple[Any, Any, list[str]]:
@@ -576,7 +576,7 @@ async def test_deploy_sas_round_trips_and_is_revocable_by_policy(
 @pytest.mark.integration
 async def test_cross_container_sas_isolation(app_container_store: AppContainerStore) -> None:
     # The named acceptance criterion: app A's SAS must be refused (403) on read, write, AND delete
-    # against app B's container — proving container-scoping is the isolation boundary (C9 §6.4).
+    # against app B's container — proving container-scoping is the isolation boundary.
     app_a, app_b = uuid.uuid4(), uuid.uuid4()
     await app_container_store.ensure_container(app_a)
     await app_container_store.ensure_container(app_b)

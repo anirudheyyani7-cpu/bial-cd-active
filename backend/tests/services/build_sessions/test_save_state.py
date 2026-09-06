@@ -1,9 +1,9 @@
-"""U19 / R25 / ASM5 — what the Save indicator reports once the agent stops committing.
+"""What the Save indicator reports once the agent stops committing.
 
 THE CHANGE THIS FILE GUARDS IS A CHANGE OF WEIGHT, NOT OF SHAPE, which is exactly why it needs
 tests of its own. `_save_state_of` has always answered "uncommitted tree → dirty" before it
 compared any commits. While the Write prompt told the agent to commit each coherent slice, that
-arm was a backstop for a model that skipped one. U19 deleted the instruction — the platform
+arm was a backstop for a model that skipped one. That instruction was later deleted — the platform
 commits the tree itself, once, inside the turn-boundary bundle (`snapshot._COMMIT_SCRIPT`) — so
 for the whole of every building turn, and forever afterwards if the turn died before its
 finalizer ran, the user's new work exists ONLY as an uncommitted worktree at an unmoved HEAD.
@@ -73,7 +73,7 @@ async def _saved(store: FakeStorage, sha: str) -> None:
 
 
 # =============================================================================
-# The shape U19 makes normal: files written, nothing committed
+# The normal shape now: files written, nothing committed
 # =============================================================================
 
 
@@ -82,8 +82,9 @@ async def test_a_turn_that_wrote_files_and_committed_nothing_reports_unsaved_wor
 ) -> None:
     """★★ THE CONTRACT. HEAD is exactly where the user's last Save is, and the tree is dirty.
 
-    Before U19 this shape barely occurred: the agent committed as it worked, so its files had
-    become commits and the bottom of the ladder saw HEAD move. Now it is every building turn.
+    Before the platform took over committing, this shape barely occurred: the agent committed as it
+    worked, so its files had become commits and the bottom of the ladder saw HEAD move. Now it is
+    every building turn.
 
     Mutation check: drop the `state.uncommitted` arm from `_save_state_of` and this goes red with
     `dirty is False` — the platform telling the citizen their unsaved work is already saved."""
@@ -148,7 +149,7 @@ async def test_a_clean_tree_at_the_saved_commit_is_genuinely_clean(store: FakeSt
 
 
 async def test_a_container_that_will_not_answer_is_unknown_not_clean(store: FakeStorage) -> None:
-    """`dirty=None` survives U19 unchanged, and it is NOT False. A probe that could not run tells
+    """`dirty=None` means no claim was made, and it is NOT False. A probe that could not run tells
     us nothing about the tree — and a UI that renders unknown as clean tells the user their work
     is safe when nobody checked."""
     await _saved(store, SAVED_AT)
@@ -180,7 +181,7 @@ async def test_a_project_with_no_app_yet_is_unknown_rather_than_saved() -> None:
 
 async def test_work_no_one_has_ever_saved_is_dirty_not_unknown(store: FakeStorage) -> None:
     """Nothing in the store at all, and a container holding real commits. Reading that as unknown
-    hid the Save button on exactly the projects that most need it (#83)."""
+    hid the Save button on exactly the projects that most need it."""
     client = _container(head=MOVED_ON, porcelain="")
 
     state = await SessionManager()._save_state_of(client, _HANDLE, APP)

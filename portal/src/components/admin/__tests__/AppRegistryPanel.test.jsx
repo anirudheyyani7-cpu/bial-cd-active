@@ -1,4 +1,4 @@
-// U15: `act()`'s catch branch now calls `onToast(message, 'problem')` — the severity
+// `act()`'s catch branch calls `onToast(message, 'problem')` — the severity
 // AdminPage's shared toast channel uses to render a failure differently from a
 // confirmation, so an administrator can tell which one they're looking at without
 // reading the words. Every failure-path `onToast` assertion below carries that second
@@ -70,7 +70,7 @@ const declaration = ({
   explanation = 'The form only stores a staff name and a badge number, both kept in the app’s own database.',
 } = {}) => ({
   commits: { shipping, reviewed },
-  // U10's block, present ONLY on the pipeline's drift path — which is the only place the
+  // This block, present ONLY on the pipeline's drift path — which is the only place the
   // answered-about commit and the shipping commit ever differ. The `commits` pair cannot
   // express drift: the writer sets `reviewed` from the same head_sha as `shipping`.
   ...(answeredAbout === null ? {} : { drift: { answeredAbout, shipping } }),
@@ -131,7 +131,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     // Rejecting sets a standing rejection, which the marketplace query reads — so the app
     // vanishes from the catalog while its URL keeps serving, and only the OWNER can undo it
     // by submitting again. Submit is legal from APPROVED, so an admin rejecting a
-    // re-submission of a running app was doing this blind (#147 round 3 review).
+    // re-submission of a running app was doing this blind.
     h.listApps.mockResolvedValue([{ ...PENDING, deployedUrl: 'https://live.example/' }])
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
@@ -187,7 +187,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     // The false JSX-era claims are gone: no "pre-compiles" copy, no /apps/{id} link.
     expect(document.body.textContent).not.toMatch(/pre-compiles/i)
     expect(document.querySelector('a[href^="/apps/"]')).toBeNull()
-    // The dead bundle-download control (#118) is gone too — button and instruction both.
+    // The dead bundle-download control is gone too — button and instruction both.
     expect(screen.queryByTestId('download-bundle')).toBeNull()
     expect(document.body.textContent).not.toMatch(/download the submitted bundle/i)
   })
@@ -283,7 +283,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     ])
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
-    // The backend surfaces AdminAppOut.databaseBytes (R10) — the column must actually show it.
+    // The backend surfaces AdminAppOut.databaseBytes — the column must actually show it.
     expect(screen.getByTestId('db-bytes-app-sized').textContent).toBe('2.0 MB')
     // Null is "no number to show" (never provisioned / not ready / cluster unreachable), not 0 B.
     expect(screen.getByTestId('db-bytes-app-null').textContent).toBe('—')
@@ -299,10 +299,10 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
 })
 
 /**
- * U13 — the administrator's review screen.
+ * The administrator's review screen.
  *
  * What is IN DISPUTE leads, then the automatic check's reason for each, then the
- * developer's explanation (R15). Evidence locations never appear (OD-B). An item with no
+ * developer's explanation. Evidence locations never appear. An item with no
  * review says so rather than rendering blanks. And the whole thing stays operable: the
  * actions sit outside the scroll region, so a full six-category dispute cannot push
  * Approve off the bottom of a card that has no way to scroll to it.

@@ -5,10 +5,10 @@ Revises: 0016_user_suspended_at
 Create Date: 2026-07-15
 
 Retire the per-app file model (OPEN-SANDBOX). Every consumer was removed first —
-files_router/parse_router serving (U10), admin governance + project-delete off
-`AppFile` (U9), the `Storage` relocation (U8) — so this drop breaks nothing on read.
+files_router/parse_router serving, admin governance + project-delete off
+`AppFile`, the `Storage` relocation — so this drop breaks nothing on read.
 `app_files` has one outbound FK (app_registry.id CASCADE) and NO inbound FKs, so the
-drop is self-contained; it owns the native PG enum `app_file_status` (ADR-0008).
+drop is self-contained; it owns the native PG enum `app_file_status`.
 
 DESTRUCTIVE: `upgrade` deletes real rows. A pre-drop safety gate (row-count / empty
 check, or an export of the rows + their `blob_key`s for a deferred blob-GC) MUST run in
@@ -17,7 +17,7 @@ breaks on read, but only that gate protects the rows themselves. `downgrade` rec
 STRUCTURE (table + enum + indexes) but NOT the data.
 
 Mirrors 0012_app_files in reverse (its downgrade is this upgrade, its upgrade is this
-downgrade). Hand-finalized (ADR-0013).
+downgrade). Hand-finalized.
 """
 
 from __future__ import annotations

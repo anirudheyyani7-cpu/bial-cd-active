@@ -58,7 +58,7 @@ function watchModelCalls(page: Page): { count: () => number } {
 // Client-side rejections — no network, no model, identical in dev and container.
 // Fixtures are in-memory buffers (no committed binaries): the rejection is decided
 // by extension/size before any upload, so the bytes need not be valid OOXML.
-// BOTH tests below were written when DECK_ATTACHMENTS_ENABLED was on, and #157 B2 turned it
+// BOTH tests below were written when DECK_ATTACHMENTS_ENABLED was on, and it was later turned
 // off. Neither noticed, because this suite is not in CI (`ci.yml` runs typecheck + lint +
 // vitest), so it stays green until someone runs `npm run e2e` by hand. They are retargeted at
 // the shipped state rather than deleted: the invariant they exist for — a rejected attachment

@@ -78,7 +78,7 @@ def _fresh_engine():  # noqa: ANN201
 @pytest.fixture(autouse=True)
 def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
     """A sandbox client on both seams — a turn refuses 503 `workspace_unavailable` without
-    one (R98). Inlined from `tests/api/v1/conversations/conftest.py`, which journeys cannot
+    one. Inlined from `tests/api/v1/conversations/conftest.py`, which journeys cannot
     reach; `fake_redis` rides along because binding a workspace is what makes the send
     route's reclaim preflight reachable, and that preflight reads the coordination store."""
     from src.api.v1.build_sessions.deps import sandbox_dependency, sandbox_or_none_dependency
@@ -120,7 +120,7 @@ def set_chat_model(app):  # noqa: ANN001, ANN201
 
 
 async def _auth(db_session: Any, **overrides: Any):
-    """Cookie + CSRF headers (the U7 conversation-create step is CSRF-protected) and the
+    """Cookie + CSRF headers (the conversation-create step is CSRF-protected) and the
     user (the journey seeds a project for the create)."""
     user = await UserFactory.create(db_session, **overrides)
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
@@ -217,9 +217,9 @@ async def test_uploaded_image_reaches_the_model_as_binary_content(
 
     set_chat_model(FunctionModel(stream_function=_record))
 
-    # U7: the SPA sends only the new message — the typed text plus the OWNED reference to
+    # the SPA sends only the new message — the typed text plus the OWNED reference to
     # the stored upload. The server rehydrates the reference to real bytes at send. The
-    # conversation must exist first (`POST /v1/conversations`, the U7 ordering).
+    # conversation must exist first (`POST /v1/conversations`).
     from tests.factories import ProjectFactory
 
     project = await ProjectFactory.create(db_session, user.id)

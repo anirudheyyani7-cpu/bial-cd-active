@@ -133,7 +133,7 @@ describe('messagesFromProjection', () => {
       ]),
     ).toEqual([
       // The step part is now toStepItem(visible), not the raw stored item — the same
-      // narrowing function turnStreamApi.ts's live path uses (PR #93 review finding 9).
+      // narrowing function turnStreamApi.ts's live path uses.
       // It used to default-fill two fields the stored row never had, `mode` and
       // `detail: {args: null, result: null}`; StepItem carries neither any more, so a
       // reloaded step is exactly the six fields below and nothing is synthesized.
@@ -241,7 +241,7 @@ describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () 
 
 describe('the create / patch / delete round trips are gone', () => {
   /**
-   * A GUARD, not deleted coverage (plan 001, unit 6). All three were clients with no caller, and
+   * A GUARD, not deleted coverage. All three were clients with no caller, and
    * each lost its caller to a decision rather than to an accident.
    *
    * `createConversation` and `patchConversation`: a row's parentage rides its FIRST TURN now
@@ -252,7 +252,7 @@ describe('the create / patch / delete round trips are gone', () => {
    * with it, to `turnStreamApi.test.ts`, against the request that now carries it.
    *
    * `deleteConversation` had exactly one caller, the project rail's past-conversations list, and
-   * the ruling of 2026-09-02 deleted the list: nothing points back to a chat, so nothing offers
+   * a later product decision deleted the list: nothing points back to a chat, so nothing offers
    * to delete one. The SERVER routes are all untouched. Asserted rather than left silent so that
    * re-adding any of these clients has to be a decision someone makes on purpose.
    */
@@ -271,7 +271,7 @@ describe('the create / patch / delete round trips are gone', () => {
   })
 })
 
-// ADR-0006: the client-minted conversation id IS the row's primary key (the create route builds
+// The client-minted conversation id IS the row's primary key (the create route builds
 // `Conversation(id=body.id, …)`, overriding the server's UUIDv7 default), so minting a v4 here
 // scatters inserts across the btree. `crypto.randomUUID()` mints v4 and is not a substitute.
 describe('uuidv7', () => {
@@ -323,7 +323,7 @@ describe('deriveTitle', () => {
   })
 })
 
-// N3 — one `messages` row can project SEVERAL items, and every one of them inherits that row's
+// One `messages` row can project SEVERAL items, and every one of them inherits that row's
 // seq. Keyed `srv_{seq}_{kind}`, those collided. React states plainly that duplicate keys "may
 // cause children to be duplicated and/or omitted", so this was latent message-list corruption
 // rather than a console warning: a re-render could drop a bubble or paint one twice.
@@ -332,7 +332,7 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
   const unique = (keys) => new Set(keys).size === keys.length
 
   it('two assistant_text items in one row become ONE reply, under one key', () => {
-    // N3's collision is answered by there being nothing to collide: consecutive assistant
+    // The collision is answered by there being nothing to collide: consecutive assistant
     // content is now PARTS of one reply rather than separate messages. The source ordinal is
     // still in the key, which is what keeps it unique against everything around it.
     const messages = messagesFromProjection([
@@ -416,7 +416,7 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
  * messages. Anything mounted per message multiplied with them: a real eight-turn transcript
  * offered 41 copy buttons, and none of them copied the reply that had been read — only the
  * fragment beside it. The live path never had this shape (`streamingParts` builds one ordered
- * part list per turn), so this was also a live-vs-reload divergence against R72/AE43.
+ * part list per turn), so this was also a live-vs-reload divergence.
  */
 describe('one reply is one message (the copy-control guard)', () => {
   it('prose and steps interleaved come back as ONE assistant message, in order', () => {

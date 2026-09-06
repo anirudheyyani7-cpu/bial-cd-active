@@ -38,7 +38,7 @@
  *                                                          user — only the .pptx is
  *                                                          ever surfaced.
  *
- * The send path is byte-free entirely (U7): the browser sends only the new message —
+ * The send path is byte-free entirely: the browser sends only the new message —
  * typed prose, fenced attachment text, and OWNED refs for stored binaries
  * (`wireMessageFromParts`); the server rehydrates bytes and replays history from its
  * own store.
@@ -62,7 +62,7 @@ export interface AttachmentDescriptor {
   truncationNote?: string
 }
 
-/** The U7 stateless wire message `wireMessageFromParts` resolves to. */
+/** The stateless wire message `wireMessageFromParts` resolves to. */
 export interface WireMessage {
   text: string
   attachmentTexts?: string[]
@@ -140,10 +140,10 @@ export function countAttachments(messages: unknown): number {
 }
 
 /**
- * Map ONE user turn's `parts[]` to the U7 stateless wire message:
+ * Map ONE user turn's `parts[]` to the stateless wire message:
  * `{ text, attachmentTexts, attachmentIds }`.
  *
- * The full-transcript Anthropic assembly (`assembleApiMessages`) died with R9 — the server
+ * The full-transcript Anthropic assembly (`assembleApiMessages`) is gone — the server
  * loads history from its own store, so the browser sends only the NEW message:
  *  - typed prose → `text`
  *  - inline text attachments + office extractions → complete `<attachment>` fences in

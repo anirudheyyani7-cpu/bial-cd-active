@@ -1,5 +1,5 @@
 /**
- * The compile signal's last mile, portal side (U11/U12).
+ * The compile signal's last mile, portal side.
  *
  * The supervisor derives the state and the turn engine emits it; this file covers the only part
  * neither of those can: that a `compile` frame arriving on the turn stream actually reaches the
@@ -10,7 +10,7 @@
  * value is pinned in `components/__tests__/LivePreview.test.jsx`; what is unproven without this
  * file is the wiring between the two, which is exactly where a frame gets dropped silently.
  *
- * CHAT-KIND MIGRATION (sfw-002). `ConversationMode`/`ConversationKind` collapsed into one
+ * CHAT-KIND MIGRATION. `ConversationMode`/`ConversationKind` collapsed into one
  * two-valued `ChatKind` fixed at creation, and this page now renders ONLY a `build` chat — every
  * composer send holds the write toolset and runs directly against the sandbox (BuilderPage.tsx's
  * own routing-rule docblock). There is no more "send → plan card → Build it" detour to drive a
@@ -40,7 +40,7 @@ const h = vi.hoisted(() => ({
 
 /** Every `compileState` the pane has been handed, in order. */
 const seen = []
-/** Every `workspaceLost` the pane has been handed, in order (U4). */
+/** Every `workspaceLost` the pane has been handed, in order. */
 const lostSeen = []
 
 vi.mock('../../utils/builderHistory', () => ({
@@ -51,7 +51,7 @@ vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 vi.mock('../../components/LivePreview', () => ({
   default: (props) => {
     seen.push(props.compileState)
-    // U4 — the retraction reaches the pane as its own prop, so a test can watch it arrive without
+    // the retraction reaches the pane as its own prop, so a test can watch it arrive without
     // rendering the real component's whole cover machinery.
     lostSeen.push(props.workspaceLost)
     return null
@@ -315,7 +315,7 @@ describe('BuilderPage — the compile signal reaches the preview pane', () => {
 })
 
 
-// U4/R7 — the reversion that happens while nobody is sending messages.
+// The reversion that happens while nobody is sending messages.
 describe('BuilderPage — a workspace lost while the tab sat idle', () => {
   /** A framed preview, no live turn, and a standing completion claim in the transcript.
    *

@@ -1,4 +1,4 @@
-"""Request-scoped async session dependency (ADR-0013).
+"""Request-scoped async session dependency.
 
 One `AsyncSession` per request: FastAPI opens it, the endpoint uses it, and it is
 rolled back on any exception and closed on the way out. Never a module-global

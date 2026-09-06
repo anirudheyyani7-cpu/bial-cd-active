@@ -60,7 +60,7 @@ async def _auth_user(db: AsyncSession, *, with_csrf: bool = True, **overrides: o
 
 async def _submitted_app(db, user, store: FakeStorage):
     """An app taken to PENDING through the real submit service — the publish gate's
-    call, minus the gate (U9)."""
+    call, minus the gate."""
     app_row = await AppRegistryFactory.create(db, user_id=user.id)
     store.objects[snapshot_key(app_row.id)] = _BUNDLE
     receipt = await submit_app_for_review(
@@ -97,7 +97,7 @@ async def test_withdraw_returns_a_pending_submission_to_draft_and_clears_the_pin
     assert row.declaration is None
     assert row.approval_route is None
     # The immutable submission BLOB survives — submissions are retained and ids
-    # never reused (R2); withdrawal removes the queue item, not the artifact.
+    # never reused; withdrawal removes the queue item, not the artifact.
     assert submission_key(app_row.id, receipt.submission_id) in fake_storage.objects
 
 
@@ -156,8 +156,9 @@ async def test_withdraw_then_approve_conflicts_the_existing_guard_holds(
 ) -> None:
     # The approve-versus-withdrawal race needs NO new machinery: an approval naming
     # a submission id the row no longer carries updates zero rows and conflicts —
-    # the same D5 guard that answers the approve-versus-resubmit race. (What the
-    # administrator READS in that moment is U13's; this pins that nothing lands.)
+    # the same guard that answers the approve-versus-resubmit race. (What the
+    # administrator reads in that moment is out of scope here; this pins only that
+    # nothing lands.)
     user, headers = await _auth_user(db_session)
     app_row, receipt = await _submitted_app(db_session, user, fake_storage)
     _, admin_headers = await _auth_user(db_session, email="admin@bial.com")
@@ -220,7 +221,7 @@ async def test_withdraw_keeps_the_approved_pin_of_an_earlier_approval(client, db
 
 
 async def test_withdraw_of_another_users_app_is_a_non_leaking_404(client, db_session) -> None:
-    # 404, NOT 403 (ADR-0004): a cross-user id is indistinguishable from a missing
+    # 404, NOT 403: a cross-user id is indistinguishable from a missing
     # one, and nothing about the app — including that it exists — leaks.
     owner, _ = await _auth_user(db_session, email="wdowner@rvaiglobal.com")
     app_row = await AppRegistryFactory.create(

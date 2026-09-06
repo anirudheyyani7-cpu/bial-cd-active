@@ -1,11 +1,11 @@
 """Shared test doubles.
 
 `FakeStorage` is a dict-backed `ObjectStorage` so attachment upload/download/delete,
-conversation delete-sweeps, and the C4 snapshot round-trip run without Azurite.
+conversation delete-sweeps, and the snapshot round-trip run without Azurite.
 
-`FakeSandboxClient` is a canned C2 `SandboxClient` (the mock helper C1) and `FakeBrain`
-is a scripted mock C7 `run_build` — together they let SESSION-API's reaper + SessionManager
-+ router tests run without a live container, real ACA, or Track BRAIN.
+`FakeSandboxClient` is a canned `SandboxClient` (the mock helper) and `FakeBrain`
+is a scripted mock `run_build` — together they let SESSION-API's reaper + SessionManager
++ router tests run without a live container, real ACA, or BRAIN.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from src.services.sandbox.base import (
 from src.services.storage.base import ListPage, ObjectMeta, ObjectStorage
 from src.services.storage.errors import StorageNotFoundError
 
-# U6's baseline-identity probe, as a fake container answers it. Matched on a fragment of the real
+# The baseline-identity probe, as a fake container answers it. Matched on a fragment of the real
 # script rather than on the whole thing: the script is a private constant whose wording is allowed
 # to change, and a fake that string-matched all of it would go quietly inert the first time it did
 # — answering the generic empty result, which parses as `UNANSWERABLE`.
@@ -71,15 +71,16 @@ _BASELINE_STDOUT = (
 
 _STATE_MARKER = "git rev-list --count HEAD"
 
-#: The default answer to U1's workspace-state probe: a container holding real work, at the very
+#: The default answer to the workspace-state probe: a container holding real work, at the very
 #: sha the default bundle carries, whose HEAD is a descendant of whatever it was asked about.
 #:
 #: THE DEFAULT MATTERS MORE THAN IT LOOKS, and the version that was not here is the reason this
 #: constant is. `exec` used to answer every unrecognised command with `ExecResult(stdout="")`,
-#: which `parse_state` reads as `head=None` at exit 0 — and under U1 a repo-less container with a
-#: recovery bundle present is a CONFIRMED REVERSION. So every existing turn test that happened to
-#: seed a bundle would have exercised the quarantine-and-restore branch, silently, while asserting
-#: something else entirely. A fake's default has to be the ordinary case, not the empty one.
+#: which `parse_state` reads as `head=None` at exit 0 — and under this probe a repo-less container
+#: with a recovery bundle present is a CONFIRMED REVERSION. So every existing turn test that
+#: happened to seed a bundle would have exercised the quarantine-and-restore branch, silently,
+#: while asserting something else entirely. A fake's default has to be the ordinary case, not the
+#: empty one.
 _STATE_STDOUT = f"{'a' * 40}@@@@4"
 
 
@@ -116,7 +117,7 @@ def a_fleet_member(
     fqdn: str | None = None,
     arm_created_at: datetime | None = None,
 ) -> FleetMember:
-    """One container as `list_sandbox_fleet` projects it (U9).
+    """One container as `list_sandbox_fleet` projects it.
 
     Shared rather than re-declared per test file so every fleet fake agrees on the shape, and so
     a field added to the projection turns up in one place instead of six. The default is the
@@ -187,7 +188,7 @@ class FakeStorage(ObjectStorage):
     async def list(self, prefix, *, page_size=1000, token=None):
         # Real pagination (sorted keys, offset token) so callers' next_token walks are
         # actually exercised — a fake that returns everything in one page would let a
-        # single-page listing bug pass silently (R23).
+        # single-page listing bug pass silently.
         matching = sorted(k for k in self.objects if k.startswith(prefix))
         start = int(token) if token else 0
         page = matching[start : start + page_size]
@@ -217,21 +218,19 @@ def _fake_handle(app_name: str) -> SandboxHandle:
 
 async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
     """The one real-client side effect a canned fake must not omit: `_provision_container`
-    writes the C5 registry hash at container-create, for BOTH `provision_new` and
+    writes the registry hash at container-create, for BOTH `provision_new` and
     `restore_from_snapshot` (`services/sandbox/client.py`).
 
-    Load-bearing, not cosmetic. The relaunched-preview lease (#43) is a field ON that hash
-    and `grant_stay_of_execution` is guarded on the hash EXISTING — so a fake that never
-    writes it makes every lease assertion silently vacuous (the grant is skipped, the field
-    is absent, and a test asserting "spared" passes for the wrong reason). Same reason the
-    reaper's teardown target has to be discoverable: a registry the sweep cannot see is a
-    container nobody can reap."""
+    Load-bearing, not cosmetic. `grant_stay_of_execution` is guarded on this hash
+    EXISTING, so a fake that never writes it makes every lease assertion silently
+    vacuous (skipped grant, absent field, a "spared" assertion passing for the
+    wrong reason) — and an undiscoverable registry is a container nobody can reap."""
     await get_redis().hset(
         registry_key(uuid.UUID(user_id)),
         mapping={
             REGISTRY_FIELD_APP_NAME: handle.app_name,
             REGISTRY_FIELD_FQDN: handle.fqdn,
-            # A reference, never the raw token — mirrors the real client's C5 contract.
+            # A reference, never the raw token — mirrors the real client's contract.
             REGISTRY_FIELD_TOKEN_REF: f"ref-{handle.app_name}",
             REGISTRY_FIELD_CREATED_AT: datetime.now(UTC).isoformat(),
             REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
@@ -240,10 +239,10 @@ async def _hydrate_registry(user_id: str, handle: SandboxHandle) -> None:
 
 
 class FakeSandboxClient(SandboxClient):
-    """A canned C2 client (mock helper C1). Records provision/restore/teardown calls,
-    hydrates the C5 registry hash exactly as the real client does (see
+    """A canned client (mock helper). Records provision/restore/teardown calls,
+    hydrates the registry hash exactly as the real client does (see
     `_hydrate_registry`), honors teardown idempotency + the typed `SandboxGoneError`, and
-    lets tests script `exec` (e.g. a base64 bundle read for the C4 snapshot)."""
+    lets tests script `exec` (e.g. a base64 bundle read for the snapshot)."""
 
     def __init__(self) -> None:
         self.provisioned: list[str] = []
@@ -261,15 +260,15 @@ class FakeSandboxClient(SandboxClient):
         self.teardown_error: Exception | None = None
         # Optional per-command exec script; defaults to a clean exit-0 result.
         self.exec_handler: Callable[[list[str]], ExecResult] | None = None
-        # The U3 warm requests this client was asked for, and the status each one answers with.
+        # The warm requests this client was asked for, and the status each one answers with.
         self.warmed: list[str] = []
         self.warm_status: int | None = 200
-        # The R17/R18 compile signal this container reports, and how often it was asked.
+        # The compile signal this container reports, and how often it was asked.
         self.compile_report: CompileReport = CompileReport(
             state=CompileState.UNKNOWN, reason="endpoint_absent"
         )
         self.compile_polls = 0
-        # U6/R9 — what the app's own root answers, and every URL that was asked. `None` scripts
+        # What the app's own root answers, and every URL that was asked. `None` scripts
         # the probe that could not reach the app at all, which is an INDETERMINATE input.
         self.served_page: ServedPage | None = ServedPage(
             status=200, head="<!DOCTYPE html><html><body>an app</body></html>"
@@ -348,7 +347,7 @@ class FakeSandboxClient(SandboxClient):
         if self.exec_handler is not None:
             return self.exec_handler(cmd)
         if len(cmd) == 3 and cmd[0] == "sh" and _BASELINE_MARKER in cmd[2]:
-            # U6's baseline-identity probe. The default is a BUILT app — one root commit, and a
+            # The baseline-identity probe. The default is a BUILT app — one root commit, and a
             # root route whose blob no longer matches the one the baseline stored — for the same
             # reason the `base64` arm below exists: the realistic answer, not the empty one.
             #
@@ -359,7 +358,7 @@ class FakeSandboxClient(SandboxClient):
             # still be the starter page says so by overriding `exec_handler`.
             return ExecResult(stdout=_BASELINE_STDOUT, stderr="", exit=0)
         if len(cmd) == 3 and cmd[0] == "sh" and _STATE_MARKER in cmd[2]:
-            # U1's workspace-state probe. The ancestry field answers only when the probe ASKED —
+            # The workspace-state probe. The ancestry field answers only when the probe ASKED —
             # `0 0`, "the reference is in this repository and HEAD is below it", which is the
             # shape of a container that moved forward normally. Answering unconditionally would
             # be worse than useless: `Ancestry.NOT_ASKED` exists precisely to keep an unasked
@@ -387,7 +386,7 @@ class FakeSandboxClient(SandboxClient):
         return DevStatus(running=True, ready=True, port=3000)
 
     async def compile_state(self, handle: SandboxHandle) -> CompileReport:
-        """The R17/R18 compile signal, scripted per test.
+        """The compile signal, scripted per test.
 
         The DEFAULT is `UNKNOWN`, not `CLEAN`, and that is a deliberate copy of production
         rather than laziness: an existing container answers 404 here until it is next
@@ -398,7 +397,7 @@ class FakeSandboxClient(SandboxClient):
         return self.compile_report
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
-        """U6's serving probe — the health verdict's own GET at the app root.
+        """The serving probe — the health verdict's own GET at the app root.
 
         SEPARATE FROM `warm_status` even though production makes one request for both jobs,
         because the two are asserted for opposite reasons: `warmed` answers "was the first route
@@ -409,7 +408,7 @@ class FakeSandboxClient(SandboxClient):
         return self.served_page
 
     async def someone_has_to_go_first(self, handle: SandboxHandle) -> int | None:
-        """The U3 warm request. Recorded rather than performed — the real one is a live GET at
+        """The warm request. Recorded rather than performed — the real one is a live GET at
         the app root, and "was the first route paid for before the frame went out" is only
         answerable by counting. `warm_status` scripts the answer (a 500 is a compile error, and
         the frame must still go out)."""
@@ -429,11 +428,11 @@ ProgressSinkFn = Callable[[ProgressEnvelope], Awaitable[None]]
 
 
 class FakeBrain:
-    """A scripted mock C7 `run_build`: emits step → preview_ready via `on_progress`,
+    """A scripted mock `run_build`: emits step → preview_ready via `on_progress`,
     then RETURNS its verdict as a `BuildResult`.
 
-    It emits no terminal `ended` because real BRAIN cannot (R7): the frame is SESSION-API's,
-    rendered from the returned verdict after the C4 snapshot. A fake that emitted one would
+    It emits no terminal `ended` because real BRAIN cannot: the frame is SESSION-API's,
+    rendered from the returned verdict after the snapshot. A fake that emitted one would
     mask that seam — the manager would look correct while never exercising its own emission.
     `raise_before_ended` scripts the abnormal path where BRAIN dies with no verdict at all."""
 

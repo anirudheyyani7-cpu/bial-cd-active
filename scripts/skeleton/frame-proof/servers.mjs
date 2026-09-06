@@ -1,14 +1,14 @@
 // Frame-proof servers — the REAL cross-origin framing rig (no docker/Caddy needed).
 //
-// Emulates the sandbox's Caddy (docs/engineering/contracts/C8-preview-transport-framing.md)
-// in front of a real `next dev`, plus a portal framer and a rogue poster, so a browser can
-// prove — for real — the two facts the decomposition doc flagged as the genuine risks:
+// Emulates the sandbox's Caddy in front of a real `next dev`, plus a portal framer and a
+// rogue poster, so a browser can prove — for real — the two facts the decomposition doc
+// flagged as the genuine risks:
 //   1. a genuinely cross-origin frame with `frame-ancestors <portal-origin>` + origin-validated
 //      postMessage (accepts the sandbox origin, rejects everything else);
 //   2. the real golden template rendering inside that cross-origin frame.
 //
 // Origins (distinct ports = distinct origins):
-//   :4310  SANDBOX  — `/echo` (a controlled C8-handshake page) + proxy of everything else to
+//   :4310  SANDBOX  — `/echo` (a controlled handshake page) + proxy of everything else to
 //                     `next dev` (:3000); every response carries `frame-ancestors <PORTAL>` and
 //                     NO X-Frame-Options (the Caddyfile's next-dev block).
 //   :4315  ROGUE    — `/rogue`, an untrusted cross-origin page that posts to window.top; the
@@ -28,7 +28,7 @@ export const ORIGIN = {
 
 // ---- HTML for the controlled pages (kept inline so the rig is one file) --------------------
 
-// The trusted preview echo page (served at SANDBOX:/echo). Implements the C8 handshake with
+// The trusted preview echo page (served at SANDBOX:/echo). Implements the framing handshake with
 // EXPLICIT targetOrigin, an origin guard on inbound messages, a live JS counter (proves the
 // cross-origin frame runs script), and the containment probes for the WITHHELD sandbox tokens.
 const ECHO_HTML = `<!doctype html><meta charset="utf-8"><title>echo</title>
@@ -99,7 +99,7 @@ function reply(res, status, headers, body) {
   res.end(body)
 }
 
-// The C8 frame-ancestors header the sandbox Caddy emits on the next-dev block (+ no XFO).
+// The frame-ancestors header the sandbox Caddy emits on the next-dev block (+ no XFO).
 function frameAncestorsHeaders(portalOrigin) {
   return { 'content-security-policy': `frame-ancestors ${portalOrigin}` }
 }

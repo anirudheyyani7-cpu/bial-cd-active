@@ -111,8 +111,8 @@ describe('resolveMediaType', () => {
   })
 })
 
-// `officeFormat` and the two deck suites are GONE, along with the media types they described
-// (R46). Their inertness is asserted in `attachmentInput-deck-disabled.test.js`, which stopped
+// `officeFormat` and the two deck suites are GONE, along with the media types they described.
+// Their inertness is asserted in `attachmentInput-deck-disabled.test.js`, which stopped
 // mocking the flag when the flag stopped existing — a removal's tests become guards, not gaps.
 
 describe('ACCEPT_ATTR', () => {
@@ -153,9 +153,9 @@ describe('fileToBase64', () => {
   })
 })
 
-// THE SHIPPED DEFAULT block is gone with the flag it pinned (R46).
+// THE SHIPPED DEFAULT block is gone with the flag it pinned.
 //
-// It existed because #157 B2 turned the deck feature off and nothing went red: both deck spec
+// It existed because a past change turned the deck feature off and nothing went red: both deck spec
 // files mocked `config/features`, so between them they covered two hypothetical worlds and
 // neither said which one we shipped. There is no flag to pin now — presentations, spreadsheets and
 // documents are refused outright — and the inertness guard that replaces this lives in

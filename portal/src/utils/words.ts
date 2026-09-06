@@ -1,8 +1,8 @@
 /**
  * ONE definition of "a word" for the client, mirroring `backend/src/core/words.py`.
  *
- * Two surfaces count words (#158): the project title (§14, max 8) and the reason someone
- * gives for deleting a project (§13.2, 5–50). The issue names the hazard directly:
+ * Two surfaces count words: the project title (max 8) and the reason someone
+ * gives for deleting a project (5–50). The hazard is direct:
  *
  * >   Define "word" once and share it. Client and server must split identically, or a
  * >   message that passes in the browser gets refused by the API.
@@ -56,10 +56,10 @@ export function countWords(value: string): number {
   return value.split(PY_WHITESPACE).filter(Boolean).length
 }
 
-/** The project title cap (#158 §14) — mirrors `MAX_PROJECT_NAME_WORDS` in
+/** The project title cap — mirrors `MAX_PROJECT_NAME_WORDS` in
  *  `backend/src/db/models/project.py`. */
 export const MAX_PROJECT_NAME_WORDS = 8
 
-/** The delete-reason bounds (#158 §13.2). */
+/** The delete-reason bounds. */
 export const MIN_DELETE_REASON_WORDS = 5
 export const MAX_DELETE_REASON_WORDS = 50

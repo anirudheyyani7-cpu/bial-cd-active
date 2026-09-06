@@ -1,19 +1,21 @@
-"""The outcomes this plan's success criteria name, counted where an operator can read them (U25).
+"""The outcomes worth counting, in a place an operator can actually read them.
 
-R32. There is no metrics system in this deployment — `api/v1/admin/schemas.py` says so outright —
+WHY THIS EXISTS
+There is no metrics system in this deployment — `api/v1/admin/schemas.py` says so outright —
 so the established shape is a pinned, greppable structlog event an external log rule keys on, plus
 (where the outcome needs COUNTING rather than merely noticing) a relational record. This is the
 second half.
 
-WHY A NAME/VALUE ROW AND NOT A COLUMN PER COUNTER. The companion plan emits three adoption counters
-of its own at the tool boundary and ships no migration; the moment a counter needs a schema change
-to exist, the counter does not get added. A name as a column means a new counter is an INSERT.
+WHY A NAME/VALUE ROW AND NOT A COLUMN PER COUNTER. Three of the counters below — the
+tool-boundary adoption counters — were added as names only, with no accompanying migration;
+the moment a counter needs a schema change to exist, the counter does not get added. A name
+as a column means a new counter is an INSERT.
 
 NOT USER-SCOPED, like `worker_passes` and for the same reason: these are properties of the
 DEPLOYMENT, not of a citizen. `app_id` is here for diagnosis — "which app was this about" — and it
 is nullable, because some of these counters are about the platform rather than about any one app.
 
-THE PER-BUILD TOKEN COUNTER IS A SINGLE VALUE ON PURPOSE. R32 asks for "a counter to watch", and a
+THE PER-BUILD TOKEN COUNTER IS A SINGLE VALUE ON PURPOSE. The goal is "a counter to watch", and a
 number that takes a join and a judgement call to read is not one: it will not be watched. One row,
 one `value`, keyed by the build it describes.
 """
@@ -32,65 +34,63 @@ from src.db.mixins import TimestampMixin, UUIDv7PrimaryKeyMixin
 
 
 class HarnessCounter(enum.StrEnum):
-    """The counters this plan's success criteria are answered from.
+    """The counters used to judge whether the tracked behaviors actually happened.
 
     A NATIVE PG ENUM would be exactly the wrong choice here and it is worth saying why, since
-    ADR-0008 makes native enums the house default: every other enum in this schema is a closed set
-    the platform controls, and adding a member is a deliberate schema change. This set is
-    open BY DESIGN — the companion plan adds three of its own without shipping a migration — so
-    the column is a plain string and this enum is the vocabulary THIS plan writes with.
+    native enums are the house default: every other enum in this schema is a closed set the
+    platform controls, and adding a member is a deliberate schema change. This set is open
+    BY DESIGN — new counters can be added below without shipping a migration — so the column
+    is a plain string and this enum is the vocabulary this module writes with.
 
     Names are stable strings. Renaming one loses the history it names."""
 
-    #: A completion claim the health verdict refused (U6/U7). The headline number: how often the
+    #: A completion claim the health verdict refused. The headline number: how often the
     #: platform would have told a citizen their app was finished when it was not.
     CLAIM_BLOCKED = "claim_blocked"
     #: The preview cover was shown, and for how long (`value` is milliseconds). A holding state
     #: nobody complains about is one that resolved fast; this is how that stops being a guess.
     HOLDING_SHOWN_MS = "holding_shown_ms"
-    #: A workspace was restored after a confirmed reversion (U2).
+    #: A workspace was restored after a confirmed reversion.
     RESTORE_PERFORMED = "restore_performed"
-    #: A turn's work did not reach the recovery slot (U3). THE ONE THAT SETTLES 2026-08-18: it is
-    #: the difference between "the platform failed to CHECK the workspace" and "the platform
-    #: failed to make it DURABLE", which nobody could answer on the day.
+    #: A turn's work did not reach the recovery slot. This is the distinction between "the
+    #: platform failed to CHECK the workspace" and "the platform failed to make it DURABLE" —
+    #: otherwise unanswerable after the fact.
     RECOVERY_WRITE_MISSED = "recovery_write_missed"
-    #: Words in a completed build's agent-facing traffic, and tokens for the same build. R32's
-    #: baseline is the pair captured in Prerequisite 3; the measurement after this plan lands is
-    #: the companion plan's starting line.
+    #: Words in a completed build's agent-facing traffic, and tokens for the same build.
     BUILD_WORDS = "build_words"
     BUILD_TOKENS = "build_tokens"
-    #: ── The companion plan's tool-boundary adoption counters (U22 / R28) ─────────────────────
+    #: ── The tool-boundary adoption counters ───────────────────────────────────────────────
     #: Added as NAMES ONLY, with no migration, which is the property this table was shaped for.
-    #: A command's output was too long for its budget and was cut to head + tail (U22).
+    #: A command's output was too long for its budget and was cut to head + tail.
     OUTPUT_TRUNCATED = "output_truncated"
-    #: The model followed a truncation notice's handle and read the elided middle (U22). Read
+    #: The model followed a truncation notice's handle and read the elided middle. Read
     #: AGAINST `command_rerun_in_turn`: the pair is the adoption question — did the handle
     #: actually replace the re-run it exists to save, or is the model still paying for both?
     OUTPUT_SLICE_FETCHED = "output_slice_fetched"
-    #: An identical command ran a second time inside ONE turn (U22) — the cost the slice handle
+    #: An identical command ran a second time inside ONE turn — the cost the slice handle
     #: exists to remove, counted so "it got better" is a number rather than an impression.
     COMMAND_RERUN_IN_TURN = "command_rerun_in_turn"
-    #: ── U23's adoption pair (R29) ───────────────────────────────────────────────────────────
-    #: A PAIR, for the same reason U22's is: neither number means anything alone. "The composite
+    #: ── The schema-change adoption pair ─────────────────────────────────────────────────────
+    #: A pair, like the ones above: neither number means anything alone. "The composite
     #: was called 40 times" is a fact about traffic; "40 composite calls against 2 hand-rolled
-    #: sequences" is the answer to the behavioural bet R29 actually makes.
-    #: `apply_schema_change` ran — the one call that replaces generate-then-migrate (U23).
+    #: sequences" answers whether the composite is actually displacing hand-rolled sequences.
+    #: `apply_schema_change` ran — the one call that replaces generate-then-migrate.
     SCHEMA_CHANGE_COMPOSED = "schema_change_composed"
-    #: A raw `drizzle-kit generate` went through `run_command` instead (U23) — the HEAD of the
+    #: A raw `drizzle-kit generate` went through `run_command` instead — the HEAD of the
     #: two-step sequence the composite replaces, and deliberately the only half counted: a lone
     #: `npm run db:migrate` legitimately re-applies a migration that already exists, which is not
     #: the sequence. So one hand-rolled sequence scores one, exactly as one composite call does,
     #: and the two numbers can be read against each other without a correction factor.
     SCHEMA_CHANGE_BY_HAND = "schema_change_by_hand"
-    #: ── The citizen-journey counters (R102–R106) ────────────────────────────────────────────
+    #: ── The citizen-journey counters ────────────────────────────────────────────────────────
     #: Added as NAMES ONLY, no migration, each introduced by the unit that EMITS it. Three names
     #: already in this vocabulary have no production writer anywhere in the tree, which is
     #: decoration; the rule these follow is that a counter name ships in the same change as its
     #: writer or it does not ship.
     #:
-    #: R103's denominator. TWO WRITERS, ONE PER WAY A CONTAINER COMES UP, and they do not
-    #: overlap — `relaunch_preview` is reached only from the explicit start route, and the turn
-    #: engine's attach is reached only from a turn.
+    #: The denominator of the start-success ratio. TWO WRITERS, ONE PER WAY A CONTAINER COMES
+    #: UP, and they do not overlap — `relaunch_preview` is reached only from the explicit start
+    #: route, and the turn engine's attach is reached only from a turn.
     #:
     #: From `relaunch_preview`: one per press of the explicit start control, at entry, REFUSALS
     #: INCLUDED — the one-slot conflict and the reclaim refusal are presses that could have
@@ -99,22 +99,22 @@ class HarnessCounter(enum.StrEnum):
     #: complete denominator is worth more than attribution on a row that only ever means
     #: "someone pressed".
     #:
-    #: From `TurnEngine._attach_sandbox` (U15): one per turn that BROUGHT A CONTAINER UP on the
+    #: From `TurnEngine._attach_sandbox`: one per turn that BROUGHT A CONTAINER UP on the
     #: way to answering — a fresh provision or a restore, never a turn that merely joined a
     #: container already serving. Most turns do the latter, so counting them would make this
     #: number "turns" instead of "starts". That row carries the `app_id`, because by then it is
     #: resolved.
     APP_START_ATTEMPTED = "app_start_attempted"
-    #: One per start that reached a SERVING page — R103's numerator; the ratio of the two is
-    #: R103. Never written for the attach arm's fail-open `ready=False` outcome — that is a
-    #: framable URL, not a running app, and counting it would make R103 measure nothing.
+    #: One per start that reached a SERVING page — the numerator of the start-success ratio.
+    #: Never written for the attach arm's fail-open `ready=False` outcome — that is a
+    #: framable URL, not a running app, and counting it would make the ratio measure nothing.
     #:
     #: Same two writers, each gated so its numerator can only come from its own denominator:
     #: `relaunch_preview` gates on `wait_ready` returning, and the turn engine gates on the
     #: preview watcher's first served poll AND on this turn having started something.
     APP_START_REACHED_RUNNING = "app_start_reached_running"
     #: Milliseconds from the platform DECIDING to restore to the app answering — the restore arm
-    #: only (R102). The attach arm writes no duration at all: a 15-second attach budget and a
+    #: only. The attach arm writes no duration at all: a 15-second attach budget and a
     #: 120-second cold budget averaged together produce a number that describes neither.
     #: SCOPE, because a later reader will want to quote it: this is the explicit start CONTROL's
     #: number, and it is the ONE counter here with a single writer. A first build provisions
@@ -122,7 +122,7 @@ class HarnessCounter(enum.StrEnum):
     #: which starts containers on two arms with different budgets, so a mean over both would
     #: describe neither.
     APP_COLD_START_MS = "app_cold_start_ms"
-    #: ── Did the bounded-first-slice behaviour actually happen? (U14 / R92) ──────────────────
+    #: ── Did the bounded-first-slice behaviour actually happen? ──────────────────────────────
     #: Read together these two answer that without anyone opening a transcript, which is the
     #: point: the scripted-transcript tests can only pin what the PLATFORM does with a given
     #: proposal, and whether the model proposes against a nine-screen message is a fact about
@@ -140,17 +140,17 @@ class HarnessCounter(enum.StrEnum):
     #: own proposal. A second proposal in the same conversation is what "swapped something in"
     #: looks like from here, and it shows up as a second `proposed` with no second `accepted`.
     FIRST_SLICE_ACCEPTED = "first_slice_accepted"
-    #: ── The browser-observed half of the same four questions (R104, R105) ───────────────────
+    #: ── The browser-observed half of the same four questions ────────────────────────────────
     #: Written only through `POST /v1/observations`, whose server-side allowlist is these three
     #: names and nothing else — a browser cannot invent a counter.
-    #: Milliseconds from opening a project to the citizen actually LOOKING at their own app
-    #: (R104). Browser-measured, so bounded by a server-side ceiling rather than trusted; the
+    #: Milliseconds from opening a project to the citizen actually LOOKING at their own app.
+    #: Browser-measured, so bounded by a server-side ceiling rather than trusted; the
     #: user-facing "roughly how long" estimate is sourced from `app_cold_start_ms`, never here.
     PROJECT_TO_APP_VISIBLE_MS = "project_to_app_visible_ms"
     #: One per project-page visit, and one per visit in which a chat was then opened.
-    #: `1 - (project_opened_chat / project_opened)` is R105 — counted from the positive and
-    #: subtracted, because "a visit where no chat was opened" means waiting for a visit to END,
-    #: which no browser reports reliably.
+    #: `1 - (project_opened_chat / project_opened)` is the drop-off rate — counted from the
+    #: positive and subtracted, because "a visit where no chat was opened" means waiting for a
+    #: visit to END, which no browser reports reliably.
     PROJECT_OPENED = "project_opened"
     PROJECT_OPENED_CHAT = "project_opened_chat"
 
@@ -174,7 +174,8 @@ class HarnessCount(Base, UUIDv7PrimaryKeyMixin, TimestampMixin):
     build_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True, index=True)
     #: When the counted thing happened, as distinct from when the row was written.
     occurred_at: Mapped[dt.datetime] = mapped_column(sa.DateTime(timezone=True), index=True)
-    #: U6's RAW SERVED-HTML HEAD, carried on the row that recorded the verdict it produced.
+    #: The RAW SERVED-HTML HEAD from the completion-claim check, carried on the row that
+    #: recorded the verdict it produced.
     #:
     #: FOLDED INTO THIS TABLE rather than given one of its own, because it is only ever read
     #: beside the verdict it explains: an operator asking "why did this claim get blocked" wants

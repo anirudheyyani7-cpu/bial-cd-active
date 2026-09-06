@@ -129,9 +129,9 @@ export async function fetchFeedback(deps: AuthFetchDeps = {}): Promise<{ feedbac
  * contextSoftLimit / contextHardLimit — a number to set, or null to reset that field
  * to the default. Returns `{userId, limits, effectiveLimits}` (the new state).
  *
- * Propagation note (see docs/solutions/.../per-user-limits-daily-vs-context-…): a
- * dailyTokenLimit change lands on the user's NEXT request (live server read); the
- * context limits ride the cached profile and only take effect after the user reloads.
+ * Propagation note: a dailyTokenLimit change lands on the user's NEXT request (live
+ * server read); the context limits ride the cached profile and only take effect after
+ * the user reloads.
  */
 export async function updateUserLimits(
   userId: string,
@@ -194,7 +194,7 @@ export async function bulkUpdateUserLimits(
 }
 
 /**
- * POST to suspend a user (R10). Returns `{userId, suspendedAt}`. The server bumps
+ * POST to suspend a user. Returns `{userId, suspendedAt}`. The server bumps
  * the user's token_version and kills every live session/refresh/runner token, so the
  * suspension is immediate. Distinct failure paths the panel branches on:
  *   403 → target is a super-admin (never suspendable — and since the caller is one,
@@ -215,7 +215,7 @@ export async function deactivateUser(userId: string, deps: AuthFetchDeps = {}): 
 }
 
 /**
- * POST to restore a suspended user (R12). Returns `{userId, suspendedAt: null}`.
+ * POST to restore a suspended user. Returns `{userId, suspendedAt: null}`.
  *   409 → user is not suspended;
  *   404 → no such user.
  */

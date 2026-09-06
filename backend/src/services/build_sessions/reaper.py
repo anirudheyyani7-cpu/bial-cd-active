@@ -31,7 +31,7 @@ A sandbox whose registry entry is gone
 view that closes that gap is `inventory.take_sandbox_inventory`, surfaced at
 `POST /v1/admin/apps/reconcile-sandboxes`, and it REPORTS rather than deletes.
 
-Reaper ordering for one stale user (C5): mark-ending → teardown → clear registry →
+Reaper ordering for one stale user: mark-ending → teardown → clear registry →
 release lock (LAST). The reaper reclaims a possibly-drifted lock via the value-guarded
 `reap_lock`, NEVER the holder release (the crashed session's in-process token is gone).
 
@@ -42,9 +42,9 @@ replica A is actively building in — and it bit precisely in the quiet stretche
 was written for, because the only other liveness signal here
 (`lock_is_held AND heartbeat_is_alive`) lapses at the heartbeat TTL between renews.
 
-**THE R10 LEASE CLOSES THAT FOR THE SWEEP.** The turn engine renews a wall-clock liveness
-lease (C5 family 4) for the duration of every turn, and `reconcile_user` reads it before the
-lock/heartbeat pair — so a build in flight is legible to a sweep running anywhere, and
+**A WALL-CLOCK LIVENESS LEASE CLOSES THAT FOR THE SWEEP.** The turn engine renews the
+lease (sandbox key family 4) for the duration of every turn, and `reconcile_user` reads it
+before the lock/heartbeat pair — so a build in flight is legible to a sweep running anywhere, and
 `live_users` degrades from load-bearing to a fast in-process shortcut.
 
 **What still binds is `certified_dead`.** That flag is a caller ASSERTION whose third premise
@@ -237,15 +237,15 @@ async def _take_the_copy_we_promised(
     reached: _Reachable | None,
     expected_name: str,
 ) -> bool:
-    """ADR-0029 §7's second half. True when this container may now be reclaimed.
+    """True when this container may now be reclaimed.
 
-    §7 promises that if the newest durable copy predates the newest change, a copy is TAKEN before
-    the container is reclaimed. Until U5 neither call site took one: both read the verdict, logged
-    "not provably preserved" and spared — so a container whose autosave had silently failed was
+    If the newest durable copy predates the newest change, a copy is TAKEN before the container
+    is reclaimed. Neither call site used to take one: both read the verdict, logged "not provably
+    preserved" and spared — so a container whose autosave had silently failed was
     spared on that pass, and on every pass after it, forever. It kept a supervisor, a dev server
     and an ACA replica alive and billing, and the only trace was a log line that repeated every
-    fifteen minutes and looked, to anyone reading it, like the guard working correctly. ASM30
-    found the platform in exactly that state.
+    fifteen minutes and looked, to anyone reading it, like the guard working correctly. A real
+    incident found the platform in exactly that state.
 
     THE COPY GOES THROUGH THE GUARDED WRITE, never a raw `put`: `write_recovery_copy` promotes a
     tree only when it is a descendant of the copy already on record, and diverts anything else to a
@@ -258,7 +258,7 @@ async def _take_the_copy_we_promised(
 
     EVERY ARM THAT DOES NOT ESTABLISH A COPY SPARES, and every arm writes a record. The sparing is
     the pre-existing behaviour and is not up for negotiation on a destroy path; the record is what
-    stops a permanently-spared container from being silent, which is the half of ASM30 that made
+    stops a permanently-spared container from being silent, which is the gap that made
     the leak invisible rather than merely expensive."""
     # IMPORTED HERE, NOT AT MODULE SCOPE, and the reason is weight rather than a cycle. There is
     # no import cycle — `src.workers.reclamation` imports the reaper function-scoped, so nothing
@@ -386,18 +386,18 @@ async def reap_user(
     Either way the lock and registry are KEPT on failure so a later sweep retries — the
     strict arm changes who is told, never what is left behind.
 
-    THE DURABLE-COPY GATE (R9/R11). `app_id` opts this call into it, and the F1 path — which does
-    almost all of the deleting — is gated HERE rather than only on the orphan path. It is
-    optional rather than required for one reason: the two
-    in-repo callers that reap a user's OWN stale state (reconcile-on-start, and the sweep) run
-    where the builder is about to get a fresh container anyway, and a `None` keeps their behaviour
-    byte-identical while the scheduled janitor — the process with no human watching it — passes
-    the id and is gated. A gate nobody can satisfy protects nothing; a gate the janitor cannot
+    THE DURABLE-COPY GATE. `app_id` opts this call into it, and the fifth-tier reclaim path — which
+    does almost all of the deleting — is gated HERE rather than only on the orphan path. It is
+    optional rather than required for one reason: the two in-repo callers that reap a user's OWN
+    stale state (reconcile-on-start, and the sweep) run where the builder is about to get a fresh
+    container anyway, and a `None` keeps their behaviour byte-identical while the scheduled janitor
+    — the process with no human watching it — passes the id and is gated. A gate nobody can satisfy
+    protects nothing; a gate the janitor cannot
     skip protects the thing that matters."""
     reg = await read_registry(redis, user_uuid)
     if reg is None:
         # No sandbox registered — just clear any orphaned lock so a crashed-tab user is
-        # never locked out (the reconcile side of KTD-3).
+        # never locked out.
         await reap_lock(redis, user_uuid)
         return False
     registered_name = reg.get(REGISTRY_FIELD_APP_NAME, "")
@@ -426,7 +426,7 @@ async def reap_user(
             container_head=reached.head if reached else None,
             container_dirty=reached.uncommitted if reached else None,
         )
-        # AND THEN TAKE THE COPY (ADR-0029 §7), rather than sparing on the strength of the
+        # AND THEN TAKE THE COPY, rather than sparing on the strength of the
         # verdict alone.
         if not await _take_the_copy_we_promised(
             sandbox_client,
@@ -458,7 +458,7 @@ async def reap_user(
             raise
         return False
     await delete_registry(redis, user_uuid)  # registry cleared
-    # ...and the R10 lease goes WITH the record it belonged to (C5). Only here, after a
+    # ...and the liveness lease goes WITH the record it belonged to. Only here, after a
     # teardown that actually succeeded: the failure arm above keeps lock + registry so a
     # later sweep retries, and dropping the lease there would strip the protection off a
     # container that is still standing and may still be building.
@@ -510,7 +510,7 @@ async def reap_the_container_we_judged(
         container_head=reached.head if reached else None,
         container_dirty=reached.uncommitted if reached else None,
     )
-    # AND THEN TAKE THE COPY (ADR-0029 §7). The janitor is the caller with nobody watching it.
+    # AND THEN TAKE THE COPY. The janitor is the caller with nobody watching it.
     if not await _take_the_copy_we_promised(
         sandbox_client,
         app_id=app_id,
@@ -569,7 +569,7 @@ async def reconcile_user(
     deliberate — do NOT "simplify" it to one behaviour:
 
     * `sweep_all` (background timer) passes `honor_stay=True`. A relaunched preview
-      — and, identically, a COMPLETED build's pardoned preview (R2) — holds no lock
+      — and, identically, a COMPLETED build's pardoned preview — holds no lock
       and renews no heartbeat, so it trips the guard above the instant its heartbeat
       lapses; its bounded stay of execution is the ONLY thing standing between a preview
       the user is actively viewing and the sweep. Honoring it there is the entire point
@@ -580,7 +580,7 @@ async def reconcile_user(
       entry and ORPHAN the preview's container — a strictly worse leak than the one the
       lease exists to fix.
 
-    The R10 LIVENESS LEASE is the same asymmetry again, one key over, and for the same
+    The LIVENESS LEASE is the same asymmetry again, one key over, and for the same
     reason — so do not "simplify" it into one behaviour either:
 
     * The sweep honours a held lease unconditionally. A timer has no business destroying a
@@ -593,7 +593,7 @@ async def reconcile_user(
       delete clears a lease left where there is no longer a registry to reap, and the
       read-guard survives a delete that a racing renewal immediately undoes.
 
-    `certified_dead` (R3 — the 409 reap-through) is the second caller asymmetry:
+    `certified_dead` (the 409 reap-through) is the second caller asymmetry:
 
     * The sweep keeps the default `False`, so `lock_is_held AND heartbeat_is_alive` still
       shields what it was built to shield — an in-flight start's pre-adopt window (the
@@ -636,7 +636,7 @@ async def reconcile_user(
         await reap_lock(redis, user_uuid)  # clear any orphaned lock (no lockout)
         return False
     if not certified_dead and await liveness_lease_is_held(redis, user_uuid):
-        # R10: the one liveness input readable from a process that is not running the build.
+        # The one liveness input readable from a process that is not running the build.
         # Checked BEFORE the lock/heartbeat pair below because it outranks it in both
         # directions — a live build has lost that pair 90 seconds in, and a dead one leaves
         # it standing for a TTL. A held lease means an agent is making tool calls inside
@@ -708,10 +708,10 @@ async def sweep_all(
 ) -> SweepResult:
     """SCAN-iterate the registry namespace (never `KEYS`) and reconcile each user;
     returns what it reaped AND what it could not. Idempotent + concurrency-safe, so it is safe
-    to call on a timer (KTD-3). `live_users` are the SessionManager's live in-process sessions —
+    to call on a timer. `live_users` are the SessionManager's live in-process sessions —
     never reaped.
 
-    THIS IS THE SCHEDULED READER OF THE R10 LEASE, and that matters as much as writing it:
+    THIS IS THE SCHEDULED READER OF THE LIVENESS LEASE, and that matters as much as writing it:
     a lease nothing consults is a container nothing spares. It also keeps the default
     `certified_dead=False` — a sweep holds none of the three facts that certification rests
     on, and the third of them (single replica) is exactly what a worker removes.

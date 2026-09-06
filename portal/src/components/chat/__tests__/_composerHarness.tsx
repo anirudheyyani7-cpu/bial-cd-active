@@ -1,5 +1,5 @@
 /**
- * A COMPOSER, UNDER A RUNTIME — the harness every composer suite mounts through (plan 002, U5).
+ * A COMPOSER, UNDER A RUNTIME — the harness every composer suite mounts through.
  *
  * The composer is the library's box now, and every library composer primitive resolves against
  * `useAui()`. So a suite that renders `<Composer/>` bare gets "You are using a component or hook

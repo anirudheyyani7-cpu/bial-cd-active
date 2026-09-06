@@ -1,8 +1,8 @@
 /**
- * The U10 turn transport client: start/stop turns and read the per-conversation SSE
+ * The turn transport client: start/stop turns and read the per-conversation SSE
  * event stream with a PROPER carry buffer (the streamed-reply learning — a frame split
  * across TCP chunks must reassemble; `useClaudeAPI`'s reader lacked one and is retired
- * with the relay in U13).
+ * with the relay).
  *
  * Wire contract (server: `api/v1/conversations/turns.py`): frames are
  * `id: {seq}\ndata: {json}\n\n`, `: ping` comments ride between complete frames, and
@@ -26,7 +26,7 @@ import { readApiError } from './apiError'
  * internal that crossed to the browser and sat there, one refactor away from an expander.
  * Re-adding the field here would rebuild the client half of that seam and give the next
  * contributor something to wire up — which is why this comment names it rather than leaving
- * a silent omission. The egress rule it belongs to is C7 §3.0.
+ * a silent omission. It belongs to the progress-envelope egress rule.
  */
 export interface StepItem {
   type: 'step'
@@ -37,7 +37,7 @@ export interface StepItem {
   hidden: boolean
 }
 
-/** Projection items ride the snapshot verbatim (U6 shapes); the hook re-exposes them. */
+/** Projection items ride the snapshot verbatim; the hook re-exposes them. */
 export interface ProjectionItem {
   type: string
   seq: number
@@ -100,7 +100,7 @@ export interface SnapshotFrame {
   workspaceState?: 'preparing' | 'ready' | 'unavailable' | null
   previewUrl?: string | null
   previewState?: 'ready' | 'reconnecting' | null
-  /** R17/R18. Compile frames are emitted ON CHANGE, so a tab that reloads while the app is
+  /** Compile frames are emitted ON CHANGE, so a tab that reloads while the app is
    *  sitting broken would learn nothing until the next change — and would show an uncovered
    *  error screen until then. This is what makes a refresh mid-build land covered. */
   compileState?: CompileState | null
@@ -174,7 +174,7 @@ export interface WorkspaceFrame {
   state: 'preparing' | 'ready' | 'unavailable'
   /** What is happening RIGHT NOW, narrated — replaced by whatever the next phase says. */
   message?: string | null
-  /** U2 — something the platform needs the citizen to SEE, as distinct from `message`.
+  /** Something the platform needs the citizen to SEE, as distinct from `message`.
    *  A statement about the app (it was reset and is being put back, it was reset and cannot be,
    *  we could not check it) rather than about the phase, so it outlives the phase that carried
    *  it and belongs in the banner slot rather than in the build bubble. Sharing one field made
@@ -221,7 +221,7 @@ export interface QuotaFrame {
   resetsAt: string
 }
 
-/** What the app's dev server is compiling right now (R17/R18) — the preview pane covers its
+/** What the app's dev server is compiling right now — the preview pane covers its
  *  frame while this is `building` or `failed`, and uncovers on `clean`. Emitted ON CHANGE, not
  *  per poll. `unknown` is a real value the pane must HOLD its current cover on: it means the
  *  platform could not tell, which after a container image predating the signal is the normal
@@ -315,8 +315,7 @@ function asString(value: unknown): string {
 }
 
 /** Exported so conversationApi.ts's reload path can narrow a stored `step` item the
- * same way the live path does, instead of a raw `as unknown as StepItem` cast — see
- * PR #93 review finding 9. */
+ * same way the live path does, instead of a raw `as unknown as StepItem` cast. */
 export function toStepItem(value: unknown): StepItem | null {
   if (!isRecord(value)) return null
   const state = value.state
@@ -328,7 +327,7 @@ export function toStepItem(value: unknown): StepItem | null {
     // Fail SAFE, not silent: an unrecognized state renders as still-running rather than
     // claiming a success the server never reported.
     state: state === 'ok' || state === 'failed' ? state : 'pending',
-    // F3/U3: `hidden` is a RENDER hint that must survive the parse — dropping it makes the
+    // `hidden` is a RENDER hint that must survive the parse — dropping it makes the
     // consumer's `!step.hidden` filter a no-op on `undefined`.
     hidden: value.hidden === true,
   }
@@ -336,7 +335,7 @@ export function toStepItem(value: unknown): StepItem | null {
 
 /** Exported so conversationApi.ts's reload path can narrow a stored `plan_options`
  * item the same way the live path does, instead of a raw `as unknown as
- * PlanOptionsItem` cast — see PR #93 review finding 9. */
+ * PlanOptionsItem` cast. */
 export function toPlanOptionsItem(value: unknown): PlanOptionsItem | null {
   if (!isRecord(value)) return null
   const toolCallId = value.toolCallId
@@ -560,13 +559,13 @@ export function parseSseText(buffer: string): ParsedChunk {
 // ---------------------------------------------------------------------------------------
 
 /**
- * The one transport every turn call rides (U1 / KTD-9).
+ * The one transport every turn call rides.
  *
  * This module used to call raw `fetch` at six sites and hand-roll its own `credentials`
  * and CSRF header — a second, weaker copy of what `authFetch` already owns, and one that
  * had no 401 → refresh → retry at all. An expired session therefore killed the entire
  * chat transport: start, stop, Build-it, plan-resolve and the SSE reader all died where
- * every other call in the app quietly recovered (N11).
+ * every other call in the app quietly recovered.
  *
  * One shared expression, N readers — the rule from the daily-token-double-count learning.
  * `authFetch` owns the refresh retry, the per-attempt CSRF token, the suspension gate and
@@ -582,7 +581,7 @@ export interface StartTurnMessage {
 }
 
 /**
- * THE PARENTAGE OF A CHAT THAT DOES NOT EXIST YET (R-18, plan 006 U13).
+ * THE PARENTAGE OF A CHAT THAT DOES NOT EXIST YET.
  *
  * Sent only with a chat's FIRST message. Until this existed, the row was created by a separate
  * `POST /conversations` a round trip earlier — and that call's only workspace awareness was a
@@ -772,7 +771,7 @@ export async function readTurnStream(options: ReadStreamOptions): Promise<Stream
   // the suspension gate, the session cookie) and hands back a Response whose body is a
   // fresh stream. The reader, the carry buffer and the abort race below stay ours.
   //
-  // THE WATCHDOG COVERS THIS AWAIT TOO (#137). `raceAgainst` guards `reader.read()`, which
+  // THE WATCHDOG COVERS THIS AWAIT TOO. `raceAgainst` guards `reader.read()`, which
   // only begins once response HEADERS have arrived — so a server that accepted the socket
   // and then went quiet left this promise PENDING FOREVER. The caller's `endGenerating`
   // sits after the await, so `generatingChatId` never cleared and the composer animated
@@ -847,7 +846,7 @@ export async function readTurnStream(options: ReadStreamOptions): Promise<Stream
  * Generic over the work because BOTH halves of a subscribe need the same bound: the
  * request that produces the response, and each `reader.read()` that drains it. Two
  * watchdogs would be two answers to "how long may this hang", free to drift — and the
- * half that had none is exactly where #137 lived. `T` is a `Response` or a read result,
+ * half that had none is exactly where the defect lived. `T` is a `Response` or a read result,
  * never a string, so the `'stall' | 'abort'` sentinels stay unambiguous.
  */
 async function raceAgainst<T>(

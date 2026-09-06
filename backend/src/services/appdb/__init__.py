@@ -1,4 +1,4 @@
-"""Per-project PostgreSQL database provisioning, DSN assembly, and teardown (ADR-0028).
+"""Per-project PostgreSQL database provisioning, DSN assembly, and teardown.
 
 The platform owns each project database's LIFECYCLE — create the role, create the database,
 raise the cross-app wall, sever it, drop it — and never touches what is inside; Drizzle,

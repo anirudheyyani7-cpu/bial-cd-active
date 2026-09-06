@@ -1,25 +1,24 @@
 /**
- * The C3 progress feed consumer: a small typed wrapper around a native
+ * The progress feed consumer: a small typed wrapper around a native
  * `EventSource` that turns the SSE stream at `/api/build-sessions/{id}/events` into
- * dispatched, parsed C7 envelopes.
+ * dispatched, parsed envelopes.
  *
- * WHY `EventSource` (not the fetch-and-parse idiom the turn stream uses). C3 §4 designs
- * the feed around `EventSource` semantics — it is cookie-authed BY CONSTRUCTION
- * (`EventSource` cannot set an `Authorization` header, exactly what C3 §4.1 specifies) and
- * gives `Last-Event-ID` auto-reconnect/replay for free (C3 §4.2). A hand-rolled SSE parser
+ * WHY `EventSource` (not the fetch-and-parse idiom the turn stream uses): it is
+ * cookie-authed BY CONSTRUCTION (`EventSource` cannot set an `Authorization` header)
+ * and gives `Last-Event-ID` auto-reconnect/replay for free. A hand-rolled SSE parser
  * has no `event:`/`id:`/reconnect handling — reusing one would re-implement what the
- * platform primitive already provides (KTD-1).
+ * platform primitive already provides.
  *
- * SCOPE OF "for free" (KTD-1, corrected): native `EventSource` attaches
+ * SCOPE OF "for free": native `EventSource` attaches
  * `Last-Event-ID` ONLY on its OWN auto-reconnect (a transient mid-stream drop) — it
  * cannot set headers on the initial GET, so a full page reload starts a FRESH stream
  * from the live position (prior history is NOT replayed). Preview continuity on
- * connect/reattach is recovered from `getStatus` (C3 §2.3) by the owning hook (U4),
+ * connect/reattach is recovered from `getStatus` by the owning hook,
  * not from catching a live `preview_ready`.
  *
  * The consumer does NOT dedup by `seq` — it dispatches every parsed envelope in
  * arrival order (including a replay overlap after reconnect). Idempotency is pinned
- * at the U4 hook, which upserts its envelope store by `seq` (C3 §4.2).
+ * at the owning hook, which upserts its envelope store by `seq`.
  */
 import { isRecord } from './apiError'
 import { assertNever } from './assertNever'
@@ -34,7 +33,7 @@ const BASE = '/api/build-sessions'
 /** The non-retryable `EventSource` readyState (WHATWG): the connection is done and will not reconnect. */
 const CLOSED = 2
 
-/** The terminal SSE sentinel — byte-identical to the chat relay's, emitted once after the `ended` envelope (C3 §4.3). */
+/** The terminal SSE sentinel — byte-identical to the chat relay's, emitted once after the `ended` envelope. */
 const DONE_SENTINEL = '[DONE]'
 
 /**
@@ -57,7 +56,7 @@ export type EventSourceFactory = (url: string) => EventSourceLike
 export interface BuildFeedError {
   /**
    * `admission` — the stream never opened (`readyState === CLOSED` on the first
-   * `error`): a 401/404 admission failure per C3 §4.1. `reconnect_exhausted` — the
+   * `error`): a 401/404 admission failure. `reconnect_exhausted` — the
    * stream opened, then dropped, and the bounded auto-reconnect gave up (network / 5xx).
    */
   kind: 'admission' | 'reconnect_exhausted'
@@ -67,7 +66,7 @@ export interface BuildFeedError {
 export interface BuildFeedHandlers {
   /** Every successfully-parsed envelope, in arrival order. Dedup is the hook's job (upsert by `seq`). */
   onEnvelope: (env: ProgressEnvelope) => void
-  /** A terminal transport failure — surfaced so the feed never dies silently (KTD-1). */
+  /** A terminal transport failure — surfaced so the feed never dies silently. */
   onError: (err: BuildFeedError) => void
   /** The connection opened (first byte). Optional — useful to clear a "connecting" banner. */
   onOpen?: () => void
@@ -102,11 +101,11 @@ const DEFAULT_MAX_RECONNECTS = 5
 const STABILITY_RESET_MS = 10_000
 
 const defaultEventSourceFactory: EventSourceFactory = (url) =>
-  // `withCredentials` rides the HTTP-only session cookie (C3 §4.1). Referenced only
+  // `withCredentials` rides the HTTP-only session cookie. Referenced only
   // at runtime in the browser — jsdom has no `EventSource`, so tests always inject.
   new EventSource(url, { withCredentials: true })
 
-// ─── parse-at-the-boundary: untrusted `data:` line → typed C7 envelope ───────
+// ─── parse-at-the-boundary: untrusted `data:` line → typed envelope ───────
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -124,7 +123,7 @@ function toBuildError(value: unknown): BuildError {
 }
 
 /**
- * Narrow one untrusted parsed frame into a typed C7 envelope, or `null` to DROP it
+ * Narrow one untrusted parsed frame into a typed envelope, or `null` to DROP it
  * (an unknown `type`, a non-numeric `seq`, or a `preview_ready` with no url — a
  * frame we cannot act on). A dropped frame is the runtime half of the `assertNever`
  * compile guard: unknown variants never reach the dispatch `switch`.
@@ -142,17 +141,17 @@ export function toProgressEnvelope(value: unknown): ProgressEnvelope | null {
         name: asString(value.name),
         label: asString(value.label),
         state: value.state === 'ok' || value.state === 'failed' ? value.state : 'started',
-        // F3/U3: carry `hidden` through the parse, or the LIVE feed's `!env.hidden` filter is a
+        // Carry `hidden` through the parse, or the LIVE feed's `!env.hidden` filter is a
         // no-op (undefined) and read-only/housekeeping steps render live but not on reload.
         hidden: value.hidden === true,
       }
     case 'error':
       return { type: 'error', seq, source: toErrorSource(value.source), title: asString(value.title), cleaned_stack: asString(value.cleaned_stack) }
     case 'preview_ready':
-      // A preview_ready with no url is unusable — drop it (the hook seeds from getStatus anyway, KTD-1).
+      // A preview_ready with no url is unusable — drop it (the hook seeds from getStatus anyway).
       return typeof value.preview_url === 'string' && value.preview_url !== '' ? { type: 'preview_ready', seq, preview_url: value.preview_url } : null
     case 'preview_reconnecting':
-      // F8/U5 — the dev-server process crashed after framing. No payload; the hook routes it to the
+      // The dev-server process crashed after framing. No payload; the hook routes it to the
       // distinct `reconnecting` flag (never a feed row, never the "building" spinner).
       return { type: 'preview_reconnecting', seq }
     case 'escalation':
@@ -170,9 +169,9 @@ export function toProgressEnvelope(value: unknown): ProgressEnvelope | null {
 
 /**
  * True when an envelope is a terminal boundary that must close the feed. Written as
- * a TOTAL `switch` so adding an 8th C7 member becomes a compile error right here
+ * a TOTAL `switch` so adding an 8th member becomes a compile error right here
  * (`assertNever`) — forcing a deliberate terminal / non-terminal decision instead of
- * a silent default. Only `ended` is terminal (C3 §1: it is the single absorbing
+ * a silent default. Only `ended` is terminal (it is the single absorbing
  * envelope; `escalation` is informational, its terminal boundary is the `ended` that
  * follows; `preview_reconnecting` is a transient live-preview signal, never terminal).
  */
@@ -195,10 +194,10 @@ export function isTerminalEnvelope(env: ProgressEnvelope): boolean {
 // ─── the subscription ─────────────────────────────────────────────────────────
 
 /**
- * Open the C3 SSE feed for `sessionId` and dispatch each envelope. Returns a handle
+ * Open the SSE feed for `sessionId` and dispatch each envelope. Returns a handle
  * whose `close()` tears the transport down.
  *
- * TERMINAL CLOSE IS LOAD-BEARING (C3 §4.3). A native `EventSource` left open after a
+ * TERMINAL CLOSE IS LOAD-BEARING. A native `EventSource` left open after a
  * clean server close AUTO-RECONNECTS (WHATWG treats a server stream-close as a
  * droppable connection) — re-opening the feed with `Last-Event-ID` at the final
  * `seq` against an already-torn-down session, a zombie reconnect. So the consumer
@@ -253,7 +252,7 @@ export function subscribeBuildFeed(
     const data: unknown = ev.data
     if (typeof data !== 'string') return
 
-    // Special-case the terminal sentinel AHEAD of the malformed-skip rule (C3 §4.3):
+    // Special-case the terminal sentinel AHEAD of the malformed-skip rule:
     // `[DONE]` is not JSON, so the parser would otherwise drop it and leave the feed
     // open to auto-reconnect against a dead session.
     if (data === DONE_SENTINEL) {
@@ -283,9 +282,9 @@ export function subscribeBuildFeed(
     if (closed) return
     cancelStabilityTimer() // a drop before the stability window keeps the flap counting
 
-    // `error` cannot expose the HTTP status. Distinguish by readyState (KTD-1):
+    // `error` cannot expose the HTTP status. Distinguish by readyState:
     //   CLOSED → the stream will NOT retry — a non-retryable admission failure (401/404 / wrong
-    //            content-type, C3 §4.1). Fail closed and stop.
+    //            content-type). Fail closed and stop.
     //   CONNECTING / OPEN → a retryable drop (a transient network blip, whether on the initial
     //            connect or mid-stream): let the native auto-reconnect run, but BOUND it so a dead
     //            relay can't loop forever. (Do NOT treat a never-yet-opened CONNECTING blip as
@@ -301,7 +300,7 @@ export function subscribeBuildFeed(
       shutDown()
       handlers.onError({ kind: 'reconnect_exhausted', message: 'Lost the build activity feed and could not reconnect.' })
     }
-    // else: within budget — let `EventSource` retry with `Last-Event-ID` (C3 §4.2).
+    // else: within budget — let `EventSource` retry with `Last-Event-ID`.
   }
 
   return {

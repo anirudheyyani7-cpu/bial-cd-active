@@ -1,11 +1,11 @@
-"""Plan-options resolution (U11 / R7): the user's click IS the tool result.
+"""Plan-options resolution: the user's click IS the tool result.
 
 `present_plan_options` DEFERS (the run ends with the call unanswered); the choice arrives
 minutes later as a button click — or implicitly, when the user keeps typing instead
 (free text while options are pending resolves them as `refine`). The stored resolution is
 a plain `ToolReturnPart` row (`refine` or `build` — a migrated row may still hold a
 `build_failed:<reason>` string from the retired recorder, which reads as resolved), so the next
-run's history carries call + return natively, and the U6 projection derives the card
+run's history carries call + return natively, and the projection derives the card
 state from exactly what the model will see — one record, no drift.
 
 A SYNTHESIZED pending (the model never called the tool even when forced — the engine's

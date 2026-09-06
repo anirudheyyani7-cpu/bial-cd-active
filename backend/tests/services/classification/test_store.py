@@ -3,7 +3,7 @@ terminal write.
 
 Three properties carry the design and each gets a test that would fail loudly if it broke:
 
-* a stored COMPLETE answer for the SAME version is returned, never re-run — R6's "re-opening
+* a stored COMPLETE answer for the SAME version is returned, never re-run — "re-opening
   the form for an unchanged version returns the stored answers" is this store's whole reason
   to exist;
 * a stored answer for an OLDER version is never returned as the answer for a newer one — the
@@ -30,7 +30,7 @@ from tests.factories import AppRegistryFactory, UserFactory
 _V1 = "a" * 40
 _V2 = "b" * 40
 
-# A complete six-verdict answer set, reasons included — the shape U6 will store.
+# A complete six-verdict answer set, reasons included — the shape the review runner will store.
 _VERDICTS: dict[str, Any] = {
     "credentials_secrets": {"answer": "yes", "reason": "The app stores a sign-in secret."},
     "health_data": {"answer": "no", "reason": "No health information is handled."},
@@ -40,7 +40,7 @@ _VERDICTS: dict[str, Any] = {
     "public_data": {"answer": "yes", "reason": "The app shows public timetables."},
 }
 
-# The internal half (R4) — locations the citizen and the administrator never see.
+# The internal half — locations the citizen and the administrator never see.
 _EVIDENCE: dict[str, Any] = {
     "credentials_secrets": [{"path": "src/lib/auth.ts", "line": 12, "family": "tier_a"}]
 }
@@ -98,7 +98,7 @@ async def test_a_first_claim_creates_the_row_running_and_stamped(db_session) -> 
 async def test_a_stored_complete_row_for_the_same_version_is_returned_not_rerun(
     db_session,
 ) -> None:
-    """R6 / AE4: re-opening the form for an unchanged version returns the stored answers
+    """Re-opening the form for an unchanged version returns the stored answers
     without running again — the store must not mark the row running."""
     user, app = await _app(db_session)
     first = await _claimed(db_session, app_id=app.id, user_id=user.id, head_sha=_V1)
@@ -138,7 +138,7 @@ async def test_a_claim_while_the_same_version_is_running_does_not_double_the_run
 
 
 async def test_a_claim_for_a_newer_version_replaces_the_row_wholesale(db_session) -> None:
-    """R6a: a new claim replaces what was there, whatever it was — verdicts, failure,
+    """A new claim replaces what was there, whatever it was — verdicts, failure,
     usage, the lot. A stored answer for an older commit is not history, it is a stale
     answer waiting to be mistaken for a current one."""
     user, app = await _app(db_session)
@@ -173,7 +173,7 @@ async def test_a_claim_for_a_newer_version_replaces_the_row_wholesale(db_session
 
 
 async def test_a_failed_row_can_be_reclaimed_for_the_same_version(db_session) -> None:
-    """R19's "ask again without re-saving": the app did not change, the citizen asks
+    """Ask again without re-saving: the app did not change, the citizen asks
     again, and the attempt counter — the spend bound's raw material — increments."""
     user, app = await _app(db_session)
     first = await _claimed(db_session, app_id=app.id, user_id=user.id, head_sha=_V1)
@@ -329,7 +329,7 @@ async def test_a_zombie_from_a_superseded_attempt_writes_nothing(db_session) -> 
 
 
 async def test_a_failure_stores_the_bucket_and_the_spend_never_an_answer_set(db_session) -> None:
-    """R19: a failure is never stored as the answer — `verdicts` stays NULL so "the check
+    """A failure is never stored as the answer — `verdicts` stays NULL so "the check
     couldn't run" can never be read as six No's. The spend still lands: the failing runs
     are the expensive ones, and they are what the attempt cap is bounding."""
     user, app = await _app(db_session)
@@ -351,7 +351,7 @@ async def test_a_failure_stores_the_bucket_and_the_spend_never_an_answer_set(db_
     row = await store.get_for_app(db_session, app_id=app.id)
     assert row is not None
     assert row.status is ClassificationReviewStatus.FAILED
-    assert row.head_sha == _V1  # stamped with the version it ATTEMPTED (R6a)
+    assert row.head_sha == _V1  # stamped with the version it ATTEMPTED
     assert row.failure_code == "review_abandoned"
     assert row.failure_detail == "The check ran past its ceiling."
     assert row.verdicts is None
@@ -428,7 +428,7 @@ async def test_claim_complete_claim_newer_read_leaves_one_truthful_row(db_sessio
         answers_complete=True,
     )
 
-    # Re-open unchanged: the stored answers come back, no run starts (AE4).
+    # Re-open unchanged: the stored answers come back, no run starts.
     unchanged = await store.claim(db_session, app_id=app.id, user_id=user.id, head_sha=_V1)
     assert unchanged.claimed is False
     assert unchanged.review.verdicts == _VERDICTS

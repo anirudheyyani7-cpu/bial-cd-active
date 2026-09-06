@@ -1,4 +1,4 @@
-"""What a scheduled worker pass did, and — far more important — THAT it happened (U11, R20).
+"""What a scheduled worker pass did, and — far more important — THAT it happened.
 
 WHY THIS IS A TABLE AND NOT A REDIS KEY. The fleet-count alarm is emitted *by the pass itself*, so
 a crashlooping scheduler emits nothing and reads exactly like a healthy quiet fleet: the origin
@@ -29,7 +29,7 @@ from src.db.mixins import TimestampMixin, UUIDv7PrimaryKeyMixin
 
 
 class PassOutcome(enum.StrEnum):
-    """How a pass ended. A NATIVE PG enum (ADR-0008), so a typo is a database error."""
+    """How a pass ended. A NATIVE PG enum, so a typo is a database error."""
 
     OK = "ok"
     #: The pass ran and refused to act — a store fault, an unreadable fleet, a disabled flag.
@@ -77,6 +77,6 @@ class WorkerPass(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     #: `app_registry.current_code`), and an operator wanting "every pass that destroyed anything"
     #: needs the operators `json` does not have.
     counts: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
-    #: Free text for the declined/failed arms. NEVER a container name (C10 §3.6) — this is read
+    #: Free text for the declined/failed arms. NEVER a container name — this is read
     #: by an admin endpoint, and a sandbox name embeds 28 hex characters of its app's uuid.
     detail: Mapped[str | None] = mapped_column(sa.String(512), nullable=True)

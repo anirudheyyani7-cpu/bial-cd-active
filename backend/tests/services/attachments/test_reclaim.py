@@ -1,4 +1,4 @@
-"""`reclaim_orphaned_attachments` — the never-sent-upload sweep (R10 / U9).
+"""`reclaim_orphaned_attachments` — the never-sent-upload sweep.
 
 The eligibility rule is the crux: a row is orphaned iff (a) NO sent message references its
 token AND (b) it is older than the 48h window. NULL `conversation_id` is legacy, never a
@@ -61,7 +61,7 @@ async def _add_attachment(
 
 
 async def _file_message(db, *, user_id: uuid.UUID, attachment_id: str) -> None:
-    """A sent message that references `attachment_id` via a native ref marker (U4 shape)."""
+    """A sent message that references `attachment_id` via a native ref marker."""
     from pydantic_ai import BinaryContent
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
@@ -271,7 +271,7 @@ async def test_second_run_is_a_noop(db_session) -> None:
 
 
 def test_window_is_the_err_long_48h() -> None:
-    # The err-long posture (KD-7): 48h, a large multiple of any upload-then-send interval.
+    # The err-long posture: 48h, a large multiple of any upload-then-send interval.
     assert NEVER_SENT_RECLAIM_WINDOW == datetime.timedelta(hours=48)
 
 

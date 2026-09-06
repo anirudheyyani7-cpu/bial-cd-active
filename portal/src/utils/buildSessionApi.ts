@@ -1,15 +1,15 @@
 /**
- * Typed client for the C3 build-session control API (`/api/build-sessions*`), the
+ * Typed client for the build-session control API (`/api/build-sessions*`), the
  * portal's FIRST build-session control surface. Mirrors `projectApi.ts` exactly:
  * every call is `fn(args, deps = {})`, forwards `deps` to `authFetch` (cookie
  * session + one 401-refresh retry), and the edge rewrites `/api/*` → `/v1/*`.
  *
- * Wire format is camelCase (C3 `CamelModel`). Response bodies are untrusted network
+ * Wire format is camelCase (`CamelModel`). Response bodies are untrusted network
  * input: they arrive as `unknown` and are narrowed with `toX()` guards — never cast,
  * never `any`. Every non-2xx becomes an `ApiError` (via `readApiError`) so callers
  * branch on `.status` / `.code` (409 / 403) instead of re-parsing envelopes.
  *
- * CSRF (KTD-2): `relaunchPreview` / `stop` / `forceEnd` are mutating POSTs and carry the
+ * CSRF: `relaunchPreview` / `stop` / `forceEnd` are mutating POSTs and carry the
  * signed double-submit token (`X-CSRF-Token`, reusing `auth.js` `getCsrfToken()`);
  * `getStatus` GET and the SSE GET (a separate transport, `buildSessionEvents.ts`)
  * are safe methods and carry NO token. This is net-new: no prior business route in
@@ -46,7 +46,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
 /**
  * Thrown by `relaunchPreview` on a `409 build_session_already_active`, carrying the EXISTING
- * session's id — the `409` alone is not a self-describing discriminator (U5 identity model).
+ * session's id — the `409` alone is not a self-describing discriminator.
  *
  * Its one live handler is `StartAppControl`, which reports "a build is already running in this
  * project" through the workspace state.
@@ -187,7 +187,7 @@ async function getJson(
 
 /**
  * A mutating POST with CSRF. `body === undefined` sends no JSON body (`forceEnd` — the one
- * surviving lock op — takes none, C3 §3). A non-2xx becomes an `ApiError`, EXCEPT a
+ * surviving lock op — takes none). A non-2xx becomes an `ApiError`, EXCEPT a
  * `409 build_session_already_active` which becomes the richer
  * `BuildSessionAlreadyActiveError` carrying the existing session id.
  */
@@ -219,7 +219,7 @@ async function postJson(url: string, body: unknown, fallback: string, deps: Auth
   return res.json()
 }
 
-// ─── control operations (C3 §2) ─────────────────────────────────────────────
+// ─── control operations ─────────────────────────────────────────────
 
 // `start` IS GONE: nothing here provisions a session — a build happens inside the turn's own
 // transaction. The ROUTE is untouched; deleting a browser client says nothing about it.
@@ -265,7 +265,7 @@ export async function forceEnd(sessionId: string, deps: AuthFetchDeps = {}): Pro
 }
 
 /**
- * The dependency bag the C3 client + event feed accept, so U4's hook and U5's page
+ * The dependency bag the client + event feed accept, so a hook and a page
  * can swap in the scripted mock (dev/test) or the real transport (prod default).
  * The client half is the `buildSessionApi` module surface; the feed half is the
  * `EventSource` factory (`buildSessionEvents.ts`).
@@ -277,7 +277,7 @@ export interface BuildSessionClient {
   forceEnd: typeof forceEnd
 }
 
-/** The real, wired-by-default client (this track merges after SESSION-API, so no swap is needed at merge — KTD-6). */
+/** The real, wired-by-default client — already the final implementation, so no later swap between mock and real is needed. */
 export const buildSessionClient: BuildSessionClient = {
   relaunchPreview,
   stop,
@@ -285,7 +285,7 @@ export const buildSessionClient: BuildSessionClient = {
   forceEnd,
 }
 
-// --- the save model (U5b / KTD-5e) ---------------------------------------------------------
+// --- the save model ---------------------------------------------------------
 
 export interface SaveResult {
   appId: string
@@ -654,7 +654,7 @@ export function asReclaimBlocked(err: unknown): ReclaimBlocked | null {
   }
 }
 
-/** What is (or is not) serving a project's preview right now — C3 §8.3.
+/** What is (or is not) serving a project's preview right now.
  *
  *  FIVE STATES AND AN UNKNOWN, because `alive: false` used to mean all five at once and one
  *  of them was not a state at all but an error:
@@ -662,9 +662,9 @@ export function asReclaimBlocked(err: unknown): ReclaimBlocked | null {
  *   - `alive`       — a container is serving this project; `previewUrl` is framable.
  *   - `asleep`      — built before, nothing serving it now. The next prompt brings it back
  *                     from the durable copy. NOT a failure, and nothing may style it as one.
- *   - `starting`    — U13: a build, a relaunch, or a turn's sandbox start is IN FLIGHT for this
+ *   - `starting`    — a build, a relaunch, or a turn's sandbox start is IN FLIGHT for this
  *                     project right now. Not `alive` (no container yet) and not `asleep` (a
- *                     start is actively under way) — the server's own action mapping (C3 §10.3)
+ *                     start is actively under way) — the server's own action mapping
  *                     groups it with `alive` as "nothing to offer, just a wait", so it must NOT
  *                     be treated as a "gone" state that invites a remedy.
  *   - `slot_taken`  — another of this user's projects holds the one-per-user workspace.
@@ -691,7 +691,7 @@ export interface PreviewState {
    *  from the recovery copy or the saved bundle, `false` = confirmed it could not, `null` =
    *  NO CLAIM, so the UI promises nothing and keeps whatever it already knew. Two ways to
    *  reach that null and they mean the same thing to us: the object store was unreachable, or
-   *  `state === 'alive'` and the poll did not ask (C3 §8.3 — a running app renders no restore
+   *  `state === 'alive'` and the poll did not ask (a running app renders no restore
    *  affordance, so the answer could not change the screen and is not worth a Blob round trip
    *  every 45 seconds). This is why `hasSavedBuild` reads it with `??` and not `||`. */
   restorable: boolean | null
@@ -717,14 +717,14 @@ function asPreviewLifeState(value: unknown, alive: boolean): PreviewLifeState {
   return PREVIEW_LIFE_STATES.find((s) => s === value) ?? (alive ? 'alive' : 'unknown')
 }
 
-/** Is the preview this tab is framing still real — and if not, why? (C3 §8.3.)
+/** Is the preview this tab is framing still real — and if not, why?
  *
  *  A reclaimed preview is visually IDENTICAL to a working one — the last render stays on
  *  screen, the iframe reports nothing, and a cross-origin pane cannot read a status code. Once
  *  a build ends there is no SSE and no timer left, and the teardown happens inside another
  *  project's request, so nothing can be pushed here. The tab has to ask.
  *
- *  Cheap by contract (C3 §8.3): one Redis hash read, at most two rows, at most two object-store
+ *  Cheap by contract: one Redis hash read, at most two rows, at most two object-store
  *  HEADs, and no container call at all — unlike `fetchSaveState`, which runs two `git` execs
  *  inside the container per call. */
 export async function fetchPreviewState(
@@ -771,7 +771,7 @@ export async function fetchPreviewState(
 /** Is there unsaved work? Compared by COMMIT server-side, so it survives a reload and a
  *  second tab — neither of which a local dirty flag would. */
 /**
- * What is the app compiling right now — for a tab with NO LIVE TURN (R17/R18).
+ * What is the app compiling right now — for a tab with NO LIVE TURN.
  *
  * During a turn the state arrives on the turn stream as a `compile` frame. That producer stops
  * at the terminal, so a tab that reloads after a red turn has nothing to cover a broken preview
@@ -779,7 +779,7 @@ export async function fetchPreviewState(
  * live-preview label. This is the producer that outlives the turn.
  *
  * Deliberately its own call rather than a field on `preview-state`, whose cost budget is frozen
- * at no container call of any kind (C3 §8.3). Anything unreadable answers `unknown`, which the
+ * at no container call of any kind. Anything unreadable answers `unknown`, which the
  * pane HOLDS its cover on — never `clean`. It never throws for the same reason: this is a
  * signal about an app that may already be broken, and it must not become a second failure.
  */

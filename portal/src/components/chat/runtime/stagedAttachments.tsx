@@ -1,11 +1,12 @@
 /**
- * THE ADAPTER, BOUND TO THE RUNTIME IT IS REGISTERED ON (plan 002, U5).
+ * THE ADAPTER, BOUND TO THE RUNTIME IT IS REGISTERED ON.
  *
  * `add` has to see what is ALREADY staged, because the per-message file cap and the
- * per-conversation text-byte budget are both cumulative — checking only the arriving file is the
- * cap bypass R57 records. But the staged list lives ON the runtime, and the runtime cannot be
- * built until the adapter has been handed to it. So the adapter reads through a ref, and a tiny
- * component INSIDE the provider — the only place `useAui` resolves — keeps that ref current.
+ * per-conversation text-byte budget are both cumulative — checking only the arriving file is
+ * exactly how the cap gets bypassed. But the staged list lives ON the runtime, and the runtime
+ * cannot be built until the adapter has been handed to it. So the adapter reads through a ref,
+ * and a tiny component INSIDE the provider — the only place `useAui` resolves — keeps that ref
+ * current.
  *
  * PER PROVIDER, NEVER MODULE-LEVEL. Two runtimes can be mounted at once (the project rail's
  * composer-only one and a chat's), and a shared ref would have each one validating against the

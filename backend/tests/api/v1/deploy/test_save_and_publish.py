@@ -1,11 +1,10 @@
-"""Save-and-publish, where the version moves under the answers (U10, R12/R13/R18).
+"""Save-and-publish, where the version moves under the answers.
 
 The gate's rungs are pinned in `test_publish_gate.py` and the pipeline's own decisions in
 `tests/services/deploy/test_service.py`. What lives here is the SEAM between them, which
 neither of those files can see: a citizen presses "Save and publish", the save mints a
 commit no review has ever looked at, the request answers 202 anyway — and the version that
 actually goes live (or into the queue) is the one the pipeline extracted and checked.
-
 So this file wires the REAL deploy pipeline behind the real route, with fakes only at the
 outward edges (the image registry, ARM, the object store, and a reviewer that writes real
 review rows without a model). A recording pipeline would prove the route said "defer" and
@@ -90,10 +89,11 @@ def _verdicts(**by_key: str) -> dict[str, Any]:
 class _GatedReviewer:
     """The review runner's two verbs over the real review store, with a LATCH.
 
-    The latch is what makes AE5 provable rather than plausible: while it is closed the
-    review cannot finish, so a request that answers at all is a request that did not wait
-    for one. If the route ever went back to waiting, this file would hang instead of
-    quietly passing — which is why every request below is bounded by `_answer`."""
+    The latch is what proves the review runs on the publish control's own progress
+    rather than inside the request: while it is closed the review cannot finish, so a
+    request that answers at all is a request that did not wait for one. If the route
+    ever went back to waiting, this file would hang instead of quietly passing — which
+    is why every request below is bounded by `_answer`."""
 
     def __init__(self) -> None:
         self.verdicts: dict[str, Any] | None = None
@@ -252,13 +252,13 @@ async def _answer(coro):
     return await asyncio.wait_for(coro, timeout=10)
 
 
-# --- AE5: the request returns, and the pipeline checks what it saved ------------------
+# The request returns, and the pipeline checks what it saved.
 
 
 async def test_save_and_publish_answers_before_the_new_version_is_reviewed(
     wire, app, client, db_session, monkeypatch
 ) -> None:
-    """AE5 — the review of the new version runs on the publish control's own progress,
+    """The review of the new version runs on the publish control's own progress,
     not inside the request. The latch is closed for the whole exchange below: the 202
     arrives while the re-check is provably still unfinished."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
@@ -298,7 +298,7 @@ async def test_save_and_publish_answers_before_the_new_version_is_reviewed(
 async def test_the_re_check_is_about_the_version_the_save_minted(
     wire, app, client, db_session, monkeypatch
 ) -> None:
-    """R12/R13 — the whole point of deferring: the review the pipeline runs is stamped the
+    """The whole point of deferring: the review the pipeline runs is stamped the
     POST-save commit, not the one the citizen's form was filled in against."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _stale_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -359,13 +359,13 @@ async def test_publishing_with_nothing_unsaved_never_re_checks(
     assert row.status is DeploymentStatus.SUCCEEDED
 
 
-# --- AE5a: the version moved and so did the answer ------------------------------------
+# The version moved and so did the answer.
 
 
 async def test_a_new_yes_on_the_saved_version_queues_it_instead_of_publishing(
     wire, app, client, db_session, monkeypatch
 ) -> None:
-    """AE5a — end to end. The citizen answered No to everything about the previous version
+    """End to end. The citizen answered No to everything about the previous version
     and pressed Save and publish; the version they just saved handles health data. Nothing
     is published, the app waits for an administrator at exactly that commit, and the
     status the control polls says why."""
@@ -404,7 +404,7 @@ async def test_a_new_yes_on_the_saved_version_queues_it_instead_of_publishing(
     # publish banner has no routed response to render and falls through to `failureDetail`
     # — which means whatever is stored here IS the citizen-facing copy. It used to be the
     # operator string (`submitted for review as <uuid> at <40-hex>; routed on: ...`), so
-    # the amber banner showed raw identifiers and internal field names where U10's
+    # the amber banner showed raw identifiers and internal field names where
     # purpose-written sentences belong. Asserted on the STORED value, because a test that
     # supplies its own readable string proves only that the surface renders what it is
     # handed — which is exactly how this shipped.
@@ -470,7 +470,7 @@ async def test_a_declared_yes_cannot_publish_by_saving_first(
         client.post(
             _DEPLOY.format(pid=app_row.project_id),
             headers=auth_headers(user),
-            # The citizen's own honest declaration, with the explanation R10 compels.
+            # The citizen's own honest declaration, with the explanation a weighted Yes requires.
             json=_body(healthData=True, notes="It stores patient appointment reminders."),
         )
     )
@@ -523,7 +523,7 @@ async def test_a_save_landing_between_the_save_and_the_stamp_is_refused(
 async def test_the_gate_hands_the_pipeline_the_commit_it_examined(
     wire, app, client, db_session, monkeypatch
 ) -> None:
-    """R18's mechanism, recorded: the deploy's own row names the commit that was reviewed
+    """The mechanism, recorded: the deploy's own row names the commit that was reviewed
     and shipped, and it is the one the save minted rather than the one on the form."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _stale_review(db_session, app_id=app_row.id, user_id=user.id)
@@ -579,9 +579,10 @@ async def test_a_rejected_app_never_defers_through_rule_3a(
 async def test_rule_3a_still_demands_the_explanation_a_weighted_yes_owes(
     wire, app, client, db_session, monkeypatch
 ) -> None:
-    """R10 on the defer path. The check used to sit BELOW rule 3a, so this exact request
-    returned 202 and the pipeline filed the queue item with `citizen.explanation: null` —
-    an administrator handed a self-declared sensitive app with nothing written about it.
+    """The weighted-Yes explanation requirement, on the defer path. The check used to sit
+    BELOW rule 3a, so this exact request returned 202 and the pipeline filed the queue
+    item with `citizen.explanation: null` — an administrator handed a self-declared
+    sensitive app with nothing written about it.
 
     The citizen's own weighted Yes is knowable at request time on every branch, which is
     why the check belongs above the defer rather than after it."""
@@ -606,7 +607,7 @@ async def test_rule_3a_defers_normally_once_the_explanation_is_there(
     wire, app, client, db_session, monkeypatch
 ) -> None:
     """The counterweight: moving the check must not break the defer it sits above. Same
-    weighted Yes, now explained — 3a fires and the pipeline decides, as R13 intends."""
+    weighted Yes, now explained — 3a fires and the pipeline decides."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _stale_review(db_session, app_id=app_row.id, user_id=user.id)
     _dirty_workspace(monkeypatch, app_row.id)

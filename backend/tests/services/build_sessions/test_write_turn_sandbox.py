@@ -1,12 +1,13 @@
-"""U5 — the WRITE turn's sandbox lifecycle: `ensure_sandbox` / `finish_turn_sandbox`.
+"""The WRITE turn's sandbox lifecycle: `ensure_sandbox` / `finish_turn_sandbox`.
 
 A Write turn allocates everything a build allocates (container, one-per-user lock, registry
 entry, heartbeat) and none of what a build runs (the `run_build` task, the `build_started`
 marker, attachments). These tests pin both halves of that sentence.
 
-The starred one is `test_the_write_turn_terminal_actually_saves_the_work`. It is the P0 this
+The starred one is `test_the_write_turn_terminal_actually_saves_the_work`. It is the test this
 whole commit exists for: `write_snapshot` is the only thing that ever pushes the sandbox tree
-to Blob storage, and before U5 the only caller was the build harness's `_do_finalize`. A Write
+to Blob storage, and before Write turns could reach it, the only caller was the build harness's
+`_do_finalize`. A Write
 turn running on the chat engine with no equivalent save point would report success, show a
 correct preview, and lose every edit to the next reaper sweep — silently, with nothing in any
 log to say so.
@@ -204,7 +205,7 @@ def _with_head(client: FakeSandboxClient, sha: str) -> FakeSandboxClient:
             # sitting on the baseline alone is deliberately reclaimable. A test that means
             # "this workspace holds work" has to say so.
             #
-            # The ancestry field answers only when the probe ASKED (U1) — `0 0`, "the reference
+            # The ancestry field answers only when the probe ASKED — `0 0`, "the reference
             # is in this repository and HEAD is below it", which is the shape of a container
             # that moved forward normally. Answering it unconditionally would be worse than
             # useless: an unasked probe returning a judgement is exactly the confusion
@@ -237,7 +238,7 @@ def _pristine(client: FakeSandboxClient) -> FakeSandboxClient:
 async def test_the_turn_terminal_does_not_save_because_saving_is_the_users_call(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ THE SAVE MODEL (KTD-5e). This used to snapshot at every turn terminal, which quietly
+    """★ THE SAVE MODEL. This used to snapshot at every turn terminal, which quietly
     took the decision away from the user: every message became a new saved version, so there
     was no such thing as trying something and walking away from it. The agent commits inside
     the container as it works; the bundle is pushed only when the user asks.
@@ -330,7 +331,7 @@ async def test_a_brand_new_project_offers_a_save_rather_than_reading_unknown(
         db_session, user, project_id, sandbox_client=client, may_write=True
     )
     client.attach_handle = session.handle
-    # SAID EXPLICITLY, because the fake's default is now a container that HOLDS work (U2). It has
+    # SAID EXPLICITLY, because the fake's default is now a container that HOLDS work. It has
     # to be: read as "no head at exit 0", the old empty default made every turn test with a
     # recovery bundle exercise the confirmed-reversion branch while asserting something else.
     # A test that means "this container has no repository" says so.
@@ -447,11 +448,10 @@ async def test_a_different_project_never_steals_the_container(
     "something is live". Attaching to whatever container happened to be up would hand project B
     project A's code. The ghost hazard the reconcile exists for stays closed.
 
-    RE-CUT FOR #83 (was `…_still_reaps_rather_than_stealing_the_container`). The claim above is
-    unchanged and still the point: B must never inherit A's workspace. What changed is the
-    alternative. Refusing to STEAL the container never implied a licence to DESTROY it, but
-    that is what the code did — silently, inside B's request, taking A's unsaved work with it.
-    A's container survives now; the destruction moved to `release_project_sandbox`, which the
+    The claim above is unchanged and still the point: B must never inherit A's workspace. What
+    changed is the alternative. Refusing to STEAL the container never implied a licence to DESTROY
+    it, but that is what the code did — silently, inside B's request, taking A's unsaved work with
+    it. A's container survives now; the destruction moved to `release_project_sandbox`, which the
     user reaches through a prompt. See the refusal tests below."""
     user, project_a = await _mk(db_session, "w11@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
@@ -479,14 +479,14 @@ async def test_a_different_project_never_steals_the_container(
 async def test_a_clean_incumbent_is_asked_about_and_reported_clean(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """INVERTED DELIBERATELY (R94). This used to assert the opposite — "only unsaved
+    """INVERTED DELIBERATELY. This used to assert the opposite — "only unsaved
     work earns an interruption; with A saved there is nothing to lose, so the switch stays silent".
 
     That was true about the WORK and wrong about the person. Their other project stopped with no
     warning and no record because a screen somewhere else needed the one workspace, and
-    sandbox-first makes it far more common, since a planning question now takes the slot too. R94
-    says the asking happens either way: "Today it asks only when there is something to lose … that
-    difference goes."
+    sandbox-first makes it far more common, since a planning question now takes the slot too. The
+    fix makes the asking happen either way: "Today it asks only when there is something to lose …
+    that difference goes."
 
     TWO ASSERTIONS, AND THE SECOND IS THE ONE WITH TEETH. That the dialog opens is the easy half —
     it passes against the wrong `dirty` value too. That the refusal reports the incumbent CLEAN is
@@ -618,7 +618,7 @@ async def test_a_storage_failure_during_save_reaches_the_user(
     assert state.dirty is True
 
 
-# --- #83 follow-up: autosave to the recovery slot ------------------------------------
+# --- autosave to the recovery slot ------------------------------------
 
 
 async def test_a_finished_write_turn_autosaves_to_recovery_not_over_the_saved_bundle(
@@ -628,8 +628,8 @@ async def test_a_finished_write_turn_autosaves_to_recovery_not_over_the_saved_bu
     net so a crash, a closed laptop or the idle reaper stops costing a whole session — while
     `snapshot_key` stays exactly what the user last chose to save.
 
-    Point the autosave at `snapshot_key` and this goes red twice over: KTD-5e is reversed (every
-    message becomes a saved version again) and the assertion below that the user's bundle is
+    Point the autosave at `snapshot_key` and this goes red twice over: the save model is reversed
+    (every message becomes a saved version again) and the assertion below that the user's bundle is
     untouched fails outright."""
     user, project_id = await _mk(db_session, "w14@rvaiglobal.com")
     manager = SessionManager()
@@ -702,7 +702,7 @@ async def test_a_plan_only_project_does_not_block_a_real_one(
     client seeds `bial: golden template baseline` at birth, so a pristine container has exactly
     one and a no-commits check would never fire.
 
-    WHAT R94 CHANGED HERE, AND WHAT IT DID NOT. The switch is no longer SILENT —
+    WHAT CHANGED HERE, AND WHAT DID NOT. The switch is no longer SILENT —
     it raises, because the platform now asks every time. What `_nothing_to_lose` still decides is
     the thing it was written for: the COPY. Its arm reports `dirty=False`, so the dialog offers a
     clean stop with no Save button and no unsaved-work claim, instead of telling a citizen their
@@ -739,7 +739,7 @@ async def test_a_committed_but_unsaved_workspace_still_blocks(
 ) -> None:
     """The other side of the same line, so the exemption above cannot quietly widen into
     "never-saved projects are always disposable". A commit in the container IS work — it is
-    what a Write turn leaves behind — and losing it is the whole point of #83."""
+    what a Write turn leaves behind — and losing it is the whole point."""
     user, project_a = await _mk(db_session, "w18@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -758,12 +758,11 @@ async def test_a_committed_but_unsaved_workspace_still_blocks(
     assert client.torn_down == []
 
 
-# --- the guard's UNKNOWN arms (#83 review, findings 4 and 5) ----------------------
+# --- the guard's UNKNOWN arms ----------------------
 #
 # Every `return` inside `_refuse_if_reclaim_would_destroy_work` lets the teardown below
 # proceed, so each one asserts "nothing will be lost". These two pin the arms where the
-# honest answer is "I could not tell" — which the first cut answered by reclaiming, i.e.
-# #83 again with a rarer trigger.
+# honest answer is "I could not tell" — which the first cut answered by reclaiming.
 
 
 class _UnreachableAttach(FakeSandboxClient):
@@ -1087,7 +1086,7 @@ async def test_a_read_only_turn_on_an_empty_project_refuses_as_clean_not_as_buil
     raising `building` above it meant a user who had typed a single question into an untouched
     template was locked out of the project holding their real app.
 
-    R94 makes the refusal unconditional, so the old assertion — "no refusal at all"
+    The fix makes the refusal unconditional, so the old assertion — "no refusal at all"
     — is inverted. The regression it guarded is NOT inverted with it, and this is the distinction
     worth holding on to: the failure was never that a dialog appeared, it was WHICH dialog. The
     building arm shows a hammer icon and two Stop buttons the server then refuses; the clean arm
@@ -1185,7 +1184,7 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
 ) -> None:
     # RENAMED from "failed_attach", which it never tested: it scripts `provision_new` to raise,
     # i.e. a failure on the CREATE arm, before any handle is assigned. That is why nothing here
-    # caught #90 — no committed test took the ATTACH arm and then failed. The attach-arm
+    # caught the bug — no committed test took the ATTACH arm and then failed. The attach-arm
     # failures are pinned separately below.
     user, project_id = await _mk(db_session, "w5@rvaiglobal.com")
     manager = SessionManager()
@@ -1209,7 +1208,7 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
     assert session.handle is not None
 
 
-# --- #90: a failure on the ATTACH arm must not destroy the borrowed container ---
+# --- a failure on the ATTACH arm must not destroy the borrowed container ---
 # `_resolve_sandbox` has three arms. Two CREATE a container, so compensation tearing it down is
 # a genuine rollback. One ATTACHES to a container that was already serving — and the attach arm
 # is the STEADY STATE for every Write message after the first, because
@@ -1217,11 +1216,11 @@ async def test_a_failed_provision_leaks_neither_lock_nor_slot(
 # message does not demolish and rebuild a running app.
 #
 # The container's tree is the ONLY copy of everything since the user last clicked Save
-# (`finish_turn_sandbox` does not snapshot — KTD-5e), so destroying it here is unrecoverable and
+# (`finish_turn_sandbox` does not snapshot), so destroying it here is unrecoverable and
 # silent: the preview simply stops loading and Relaunch restores the older SAVED bundle, so the
 # app comes back looking healthy at an earlier state.
 #
-# These invert the four probes from issue #90 — they assert the container SURVIVES.
+# These invert the four probes below — they assert the container SURVIVES.
 
 
 class _RecordingClient(FakeSandboxClient):
@@ -1601,11 +1600,11 @@ async def test_an_unchanged_tree_is_not_offered_however_new_its_bundle_is(
     claims work that does not exist — permanently, and while `dirty` is False. The stamped HEAD is
     what settles it.
 
-    THE NEWER BUNDLE IS PLACED DIRECTLY NOW, and that is a consequence of U3 rather than a
-    weakening of the test. `finish_turn_sandbox` used to produce this shape by rewriting the
+    THE NEWER BUNDLE IS PLACED DIRECTLY NOW, and that is a consequence of the guarded write rather
+    than a weakening of the test. `finish_turn_sandbox` used to produce this shape by rewriting the
     recovery bundle from an unchanged worktree on every mutating turn; the guarded write skips
     that outright (see `test_finish_turn.py`). But `recoverable_work`'s guard still has to hold,
-    because the recovery slot has other writers — the U25 operator promote among them — and a
+    because the recovery slot has other writers — the operator promote among them — and a
     newer object over an identical tree is still not work to recover."""
     user, project_id = await _mk(db_session, "wsame@rvaiglobal.com")
     manager = SessionManager()
@@ -1638,7 +1637,7 @@ async def test_a_recovery_write_that_fails_outright_is_alarmed_not_swallowed_sil
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ U3 — the third way a turn's work fails to reach a durable copy, and the only one the
+    """★ The third way a turn's work fails to reach a durable copy, and the only one the
     call site can see.
 
     The swallow stays: a safety net that can fail a turn is not a safety net. What changes is
@@ -1673,7 +1672,7 @@ async def test_a_recovery_write_that_fails_outright_is_alarmed_not_swallowed_sil
 
 
 # --------------------------------------------------------------------------------------
-# R94 — the asking is unconditional, and EXACTLY TWO EXITS WIDENED
+# The asking is unconditional, and EXACTLY TWO EXITS WIDENED
 # --------------------------------------------------------------------------------------
 #
 # The unit's own framing: "an implementer who reads 'always ask' as 'delete the silent path'
@@ -1726,7 +1725,7 @@ async def test_a_ghost_registry_entry_raises_nothing_because_it_has_no_project_t
     """THE SHARP EXIT — the one the unit singles out. The registry names a container whose app maps
     to no project this user owns: a leftover the reconcile will clear.
 
-    R95 requires the dialog to NAME the project being stopped. There is no project here, so
+    The dialog is required to NAME the project being stopped. There is no project here, so
     widening this exit renders a dialog with a blank where the name goes — worse than the silence
     it replaced, because it asks a person to make a decision about something it cannot describe."""
     user, project_a = await _mk(db_session, "w94-ghost@rvaiglobal.com")

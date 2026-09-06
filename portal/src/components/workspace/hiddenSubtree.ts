@@ -1,5 +1,5 @@
 /**
- * HIDDEN, NOT UNMOUNTED — one treatment, one definition, with its reason attached (Plan A, U5).
+ * HIDDEN, NOT UNMOUNTED — one treatment, one definition, with its reason attached.
  *
  * `visibility:hidden` rather than `aria-hidden` or zero width alone, and the difference is not
  * cosmetic. Zero width plus `overflow:hidden` clips a subtree visually but does NOT remove its

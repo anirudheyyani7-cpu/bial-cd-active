@@ -83,16 +83,16 @@ Object.defineProperty(window, 'matchMedia', {
 // ── Element methods jsdom leaves undefined ───────────────────────────────────────────────────
 // Radix Select calls all four while opening: it captures the pointer to track a drag-select, and
 // scrolls the highlighted item into view. Without them the component throws before it renders,
-// which is why three test files stub them by hand today. Plan F adds a Radix Select to the
-// history filter; three lines here are the difference between that landing and its implementer
-// re-deriving a per-file stub from a comment that will by then be out of date.
+// which is why three test files stub them by hand today. A future Radix Select on the history
+// filter will need the same stubs; three lines here are the difference between that landing and
+// its implementer re-deriving a per-file stub from a comment that will by then be out of date.
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
   return false
 }
 Element.prototype.setPointerCapture ??= function setPointerCapture() {}
 Element.prototype.releasePointerCapture ??= function releasePointerCapture() {}
-// The FIFTH, added when the thread's viewport arrived (U17): `useThreadViewportAutoScroll` calls
+// The FIFTH, added when the thread's viewport arrived: `useThreadViewportAutoScroll` calls
 // `scrollTo` from a `requestAnimationFrame` callback, so its absence surfaces as an UNCAUGHT
 // exception rather than a failing assertion — the test that provoked it has usually already
 // passed, and the message names a library file nobody edited. jsdom implements `scrollTo` on
@@ -100,9 +100,9 @@ Element.prototype.releasePointerCapture ??= function releasePointerCapture() {}
 Element.prototype.scrollTo ??= function scrollTo() {}
 
 // ── Clipboard ────────────────────────────────────────────────────────────────────────────────
-// A SPY, not a stub, and reset between tests. N1's copy button is the only consumer and its
+// A SPY, not a stub, and reset between tests. The copy button is the only consumer and its
 // failure path is a requirement, not a nicety: clipboard writes reject on insecure origins and
-// under a denied permission, and R65 says the citizen is told. A shim that can only succeed
+// under a denied permission, and the citizen must be told. A shim that can only succeed
 // makes the half that matters untestable.
 //
 // It is re-installed in `beforeEach` rather than once at module scope because a test that calls

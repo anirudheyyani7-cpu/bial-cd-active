@@ -36,7 +36,7 @@ const FRAME_LOAD_CAP_MS = 20000
 const RECONNECT_CAP_MS = 20000
 
 // The scheme://host[:port] of an absolute preview URL, or null if unset/malformed. Used to
-// VALIDATE inbound postMessage origins (C8 §3). A malformed value fails closed (null → no
+// VALIDATE inbound postMessage origins. A malformed value fails closed (null → no
 // frame trusted, every inbound message rejected).
 function originOf(url: string | null): string | null {
   try {
@@ -126,14 +126,14 @@ const IDLE_BROKEN_TEXT =
 const STOPPED_RUNNING_TEXT =
   'Your app stopped running and needs to be brought back. Send a message and we\u2019ll restore it.'
 
-/** The headline for a pane whose container is not serving this project — C3 §8.3.
+/** The headline for a pane whose container is not serving this project.
  *
  *  NONE OF THESE IS AN ERROR. "Preview unavailable" describes a platform fault; a reclaimed
  *  workspace is a sleeping workspace whose work is on durable storage, and the next prompt
  *  brings it back. */
 /** The three states that mean "no container is serving this project" — `alive` and `unknown` are
  *  pointedly excluded, and so is `starting`: a start already under way is the opposite of
- *  gone, and the server's own action mapping (C3 §10.3) groups it with `alive` as "nothing to
+ *  gone, and the server's own action mapping groups it with `alive` as "nothing to
  *  offer, just a wait" — this pane must not invite a "send a prompt" remedy over a container that
  *  is already on its way up. Named once so the copy tables and the render sites all narrow to the
  *  same union instead of each asserting it with a cast. */
@@ -181,7 +181,7 @@ function goneBody(
 /**
  * `RelaunchAffordance` IS GONE, and its four render sites with it.
  *
- * R3 says exactly ONE control starts the app, pressed deliberately, and that control is
+ * Exactly ONE control starts the app, pressed deliberately, and that control is
  * `components/workspace/StartAppControl.tsx` — rendered by `AppPane` from the one computed
  * workspace state, whose action union contains no destructive verb at all. Four more start
  * buttons scattered through this file's placeholder arms, each with its own copy and its own
@@ -231,20 +231,20 @@ function BouncingWait({ children, className = '' }: { children: ReactNode; class
  * The live-preview pane.
  *
  * Phase-2 model: the agent builds a REAL running Next.js app inside a per-user sandbox, and
- * this pane frames that app's genuinely CROSS-ORIGIN `previewUrl` (C8) once the dev server is
+ * this pane frames that app's genuinely CROSS-ORIGIN `previewUrl` once the dev server is
  * up. All single-file machinery — the `jsx:preview` fence, `previewCode` threading, the
  * outbound `postMessage` of `{previewCode, config, accessToken, user}`, the `generationStage`
  * progress theater, and the "View Code" source panel — is GONE. The app gets its data
- * credentials server-side at provision (C9); the portal feeds the app nothing.
+ * credentials server-side at provision; the portal feeds the app nothing.
  *
- * Driven entirely by the C3 build session:
- *   - `previewUrl` — the sandbox `next dev` root (C3 status / C7 `preview_ready`). Framed once set.
- *   - `status`     — the C3 lifecycle; drives loading / framed / terminal visuals.
+ * Driven entirely by the build session:
+ *   - `previewUrl` — the sandbox `next dev` root (status / `preview_ready`). Framed once set.
+ *   - `status`     — the lifecycle; drives loading / framed / terminal visuals.
  *   - `iterating`  — true while the loop keeps emitting step/log envelopes AFTER the preview
  *                    went live (a refine turn holding at `ready`); shows a subtle overlay.
  *   - `onFrameMessage` — the client-error receiver seam. The inbound `message`
  *                    listener validates BOTH `e.origin` against the preview origin AND `e.source`
- *                    against this pane's own iframe window (the C8 §3 security assertion), and
+ *                    against this pane's own iframe window, and
  *                    forwards only messages that pass both; the conversation surface relays
  *                    them to the harness, where a reported browser crash makes the health verdict not-green.
  *                    The source half is what survives every app sharing one hostname — origin
@@ -291,7 +291,7 @@ export interface LivePreviewProps {
   completedLive?: boolean
   hasSavedBuild?: boolean | null
   reconnecting?: boolean
-  // C3 §8.3 — the server's verdict on THIS project's container, in five
+  // The server's verdict on THIS project's container, in five
   // values rather than the one boolean (`previewReclaimed`) it replaces. That boolean could
   // only ever say "not serving", so a Redis blip, a sleeping workspace, a slot taken by a
   // sibling project and a project nobody ever built all arrived here identically and got the
@@ -391,7 +391,7 @@ export default function LivePreview({
   // same reason the two above are: the listener mounts once and must read the CURRENT frame.
   const frameRef = useRef<HTMLIFrameElement | null>(null)
 
-  // C8 §3: the one cross-origin trust seam, and it now takes TWO facts, not one.
+  // The one cross-origin trust seam, and it now takes TWO facts, not one.
   //
   // WHY THE ORIGIN CHECK STOPPED BEING ENOUGH. It only ever discriminated because each app had a
   // hostname of its own. BIAL refused a wildcard certificate, so every generated app is now served
@@ -909,7 +909,7 @@ export default function LivePreview({
                    container, repaired app. A plain re-render still keeps the same DOM node,
                    so the framed app's HMR websocket is not leaked on every status tick. */
                 key={frameKey}
-                /* The identity the inbound message gate compares `e.source` against (C8 §3).
+                /* The identity the inbound message gate compares `e.source` against.
                    React attaches and detaches this alongside `key`, so a remount or an unmounted
                    pane nulls it on its own — which is the fail-closed state, not a gap. */
                 ref={frameRef}
@@ -919,7 +919,7 @@ export default function LivePreview({
                 onLoad={() => setLoadedUrl(frameKey)}
                 className="w-full h-full border-0"
                 title="App Preview"
-                /* C8 §4 (FROZEN): the preview is a genuinely CROSS-ORIGIN sandbox frame (the sandbox's
+                /* FROZEN: the preview is a genuinely CROSS-ORIGIN sandbox frame (the sandbox's
                    own FQDN, served by its Caddy with `frame-ancestors <portal-origin>`), so the token
                    list ADDS `allow-same-origin` — the real `next dev` app must run as its own
                    sandbox-FQDN origin (storage, the HMR websocket, RSC fetches). Safe BECAUSE the
@@ -927,7 +927,7 @@ export default function LivePreview({
                    cross-origin barrier stops the framed script stripping its own sandbox.
                    `allow-top-navigation*` / `allow-popups` stay WITHHELD — the framed app is unreviewed,
                    agent-generated, self-heal-loop code (no top-nav hijack of, nor popup-phishing of, the
-                   portal tab). Do not widen without revising C8. */
+                   portal tab). Do not widen this sandbox token list without a deliberate security review. */
                 sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
               />
             </div>

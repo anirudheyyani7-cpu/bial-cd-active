@@ -8,8 +8,7 @@
  *  - **Generate saves first.** `POST …/description:generate` revises the *stored*
  *    description. If the user has typed and not saved, generating would silently
  *    revise a stale copy and throw their edit away. So when the field is dirty we
- *    `patchProject({description})` the typed text FIRST, then generate. (Origin
- *    R19: revise, don't discard.)
+ *    `patchProject({description})` the typed text FIRST, then generate.
  *  - **Every failure leaves the field untouched.** We never optimistically clear
  *    or replace the text; the textarea only changes on a *successful* save/generate
  *    (to the server's canonical copy) or by the user typing.
@@ -184,7 +183,7 @@ export default function ProjectDescriptionEditor({
     setError(null)
     try {
       // Generate saves first: persist the typed text so generation revises what the
-      // user can see, not a stale stored copy (origin R19).
+      // user can see, not a stale stored copy.
       //
       // Lift the SAVED project immediately, before generating. That patch already landed on the
       // server; if generation then fails, the parent must not go on believing the description is
@@ -206,7 +205,7 @@ export default function ProjectDescriptionEditor({
   return (
     <section className="font-manrope">
       <div className="flex items-center justify-between mb-2">
-        {/* THE RAIL'S OWN SECTION-LABEL TREATMENT (plan 002, U3). `PreviewOff`, `Main` and
+        {/* THE RAIL'S OWN SECTION-LABEL TREATMENT. `PreviewOff`, `Main` and
             `NothingBuilt` draw `DESCRIPTION` in exactly the micro-label form `START A CHAT` and
             `APP STATUS` use — 10.5px, 700, .7px tracking, `#9CA3AF` — with a grey Edit beside it.
             It shipped as 14px sentence-case bold with a teal Edit, which read as a heading of a
@@ -274,7 +273,7 @@ export default function ProjectDescriptionEditor({
               className="w-full rounded-xl border border-bial-border bg-white px-3 py-2 text-sm text-tertiary placeholder:text-neutral focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:bg-bial-bg disabled:text-neutral resize-y"
             />
 
-            {/* THE WRITE-SURFACE NOTICE (#147). This field was introduced as CHAT GROUNDING
+            {/* THE WRITE-SURFACE NOTICE. This field was introduced as CHAT GROUNDING
                 — private context for the builder's own assistant — and the marketplace
                 republishes it verbatim to the whole org and indexes it for full-text search.
                 It can also be model-written from the app's source by Generate above, so the

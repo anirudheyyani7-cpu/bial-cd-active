@@ -1,31 +1,27 @@
-"""The durable-copy precondition — nothing is destroyed until its work is provably safe (U14).
+"""The durable-copy precondition — nothing is destroyed until its work is provably safe.
 
-R9, R11. This is the last gate before an ARM delete, and it is the one whose failure a builder
-experiences directly: every other guard in this system protects money, this one protects work.
-
+WHY THIS EXISTS
+This is the last gate before an ARM delete, and it is the one whose failure a builder experiences
+directly: every other guard in this system protects money, this one protects work.
 WHAT "CURRENT" MEANS. `HEAD` in the container versus the `head_sha` stamped on the recovery
 bundle's blob metadata — **not** `last_modified`. Azure stamps that in whole seconds, so a Save and
 an autosave landing inside one second are indistinguishable by time, and "indistinguishable" on
 this path means deleting a container whose newest change was never copied.
-
 WHY THE RECOVERY SLOT AND NOT THE SAVED BUNDLE. The recovery key is the platform's own autosave at
-turn boundaries; the saved bundle is the user's explicit click. R11 asks for "their last completed
-change", which is the former — a builder who never pressed Save still has work worth keeping, and
-that is the population most likely to be reclaimed.
-
+turn boundaries, while the saved bundle is the user's explicit click; the relevant guarantee is
+"their last completed change" — the former, since a builder who never pressed Save still has work
+worth keeping and is the population most likely to be reclaimed.
 THE FALLBACK ORDER IS DELIBERATE: recover the token → read `HEAD` → compare. If TOKEN RECOVERY
 ITSELF fails, a present and parseable bundle counts as confirmed — otherwise a container that is
 already dead can never be collected, which is the entire point of the exercise. If there is no
 parseable bundle either, escalate. The real comparison still happens in the normal case.
-
 "STORAGE IS OFF" IS NOT "THERE IS NO WORK TO PRESERVE". An unset store is a fact about the
-DEPLOYMENT, an unreadable one is a fact about this moment, and only "the store answered and holds
-no bundle for this app" is a fact about the CONTAINER. Just that last one is a confirmed absent
-here; the other two are UNCONFIRMED, and the container is spared and reported. Folding "no store"
-into "no bundle" is right for a caller deciding whether to OFFER a restore — never offer one that
-cannot work — and exactly wrong on a destroy path, which reads a confirmed absent as "nothing to
-preserve, safe to delete": the most ordinary misconfiguration in the system would otherwise delete
-the whole fleet while believing it had verified every container.
+DEPLOYMENT and an unreadable one a fact about this moment; only "the store answered and holds no
+bundle" is a fact about the CONTAINER, so only that case counts as confirmed absent — the other two
+spare the container as UNCONFIRMED. Folding "no store" into "no bundle" is right for offering a
+restore, but wrong on a destroy path, where a confirmed absent reads as "safe to delete": the most
+ordinary misconfiguration would otherwise delete the whole fleet while believing every container
+had been verified.
 """
 
 from __future__ import annotations
@@ -73,7 +69,7 @@ class CopyVerdict:
 async def confirm_durable_copy(
     app_id: uuid.UUID, *, container_head: str | None, container_dirty: bool | None
 ) -> CopyVerdict:
-    """Is this container's work provably preserved? (R9, R11.)
+    """Is this container's work provably preserved?
 
     `container_head` is the container's current `HEAD`, or `None` when it could not be read —
     which is the ordinary case for the population this gate exists to judge, since an orphan has
@@ -116,7 +112,8 @@ async def confirm_durable_copy(
     stamped = (meta.metadata or {}).get("head_sha")
     if not stamped:
         # A bundle whose head is unknown cannot be compared against anything. Older bundles
-        # predate the metadata stamp, and this is exactly the "unreadable signal" R4 covers.
+        # predate the metadata stamp, and this is exactly the kind of unreadable signal that
+        # spares the container rather than confirming it.
         return CopyVerdict(CopyState.UNCONFIRMED, "the recovery copy carries no head_sha")
 
     if container_head is None:

@@ -6,10 +6,10 @@
  * redirect shims. Any such stray URL falls through to the `*` catch-all (→ /login) rather than
  * being carried anywhere.
  *
- * WHY THE SHELL'S CLAIM IS ASSERTED HERE AND NOT IN A COMPONENT TEST. The whole of R8 rests on one
- * structural fact — that `/projects/:projectId` and `/chat/:chatId` are children of a pathless
- * layout route, so React Router renders the same shell element at the same position across a move
- * between them and only the outlet content is replaced. A hand-built route table inside a
+ * WHY THE SHELL'S CLAIM IS ASSERTED HERE AND NOT IN A COMPONENT TEST. The whole of that claim
+ * rests on one structural fact — that `/projects/:projectId` and `/chat/:chatId` are children of a
+ * pathless layout route, so React Router renders the same shell element at the same position across
+ * a move between them and only the outlet content is replaced. A hand-built route table inside a
  * component test would prove the component and not the wiring, and the wiring is the part that can
  * be got wrong. This file renders the REAL `<App/>` and drives it by URL, so the thing under test
  * is the table the product ships.

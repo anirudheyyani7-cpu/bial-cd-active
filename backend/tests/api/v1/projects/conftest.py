@@ -12,8 +12,8 @@ import pytest
 
 from tests.fakes import FakeStorage
 
-# THE DELETE BODY, in one place. `DELETE /v1/projects/{id}` requires a signed reason (#158
-# §13), and roughly thirty tests in this directory delete a project as a SETUP step — teardown,
+# THE DELETE BODY, in one place. `DELETE /v1/projects/{id}` requires a signed reason, and
+# roughly thirty tests in this directory delete a project as a SETUP step — teardown,
 # cascade and ownership cases that care about what the delete destroys, not about what the
 # body must contain. Inlining the JSON at each of them meant the last required field was a
 # thirty-site sweep, and the next one would be too.

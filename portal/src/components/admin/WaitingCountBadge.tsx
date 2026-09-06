@@ -1,5 +1,5 @@
 /**
- * The waiting-count badge (U13/P1) — how many apps sit in the review queue.
+ * The waiting-count badge — how many apps sit in the review queue.
  *
  * It appears in TWO places, which is the reason it is a component rather than two spans:
  * on the admin navigation entry, so a superadmin signing in sees the queue without
@@ -27,7 +27,7 @@ interface Props {
 
 /** The accessible sentence. Singular is not pedantry — "1 apps waiting" is the kind of
  *  thing that makes a person trust the rest of the screen slightly less. */
-// Module-local since #157 A removed the bell, which was its only outside caller. Still
+// Module-local now that the bell that called it is gone, its only outside caller. Still
 // used by the badge's own sr-only label below, so it stays a function — it just stops
 // advertising itself as part of this module's surface.
 function waitingForReviewLabel(count: number): string {

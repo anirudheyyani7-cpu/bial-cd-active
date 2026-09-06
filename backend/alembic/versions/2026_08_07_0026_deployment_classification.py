@@ -34,7 +34,7 @@ because the gate is checked before the claim: refusing is not an event with a de
 attach to. The refusal is audited (`audit_log`, action `deploy`) rather than half-recorded
 as a deployment that never was.
 
-Hand-finalized (ADR-0013).
+Hand-finalized.
 """
 
 from __future__ import annotations

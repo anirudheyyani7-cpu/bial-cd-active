@@ -22,7 +22,7 @@
  *
  * The two SHAPE tests are what go red, and they are kept for that reason as much as for the
  * shapes themselves — both of which are load-bearing and easy to get subtly wrong:
- *  - the clipboard spy must be REJECTABLE (R65 and the copy button's failure path both need it);
+ *  - the clipboard spy must be REJECTABLE (the copy button's failure path needs it);
  *  - `matchMedia` must return `removeEventListener` as well as `addEventListener`, or every
  *    component that subscribes to reduced motion throws on UNMOUNT rather than on render.
  */
@@ -46,7 +46,7 @@ import {
 describe('the test environment has the shims the component libraries need', () => {
   it('OPENS a real Radix Select in a file that stubs nothing', async () => {
     // Not the canary (see the docblock), but the closest thing in the tree to a real consumer of
-    // the pointer-capture shims, and the reason they are shipped: Plan F puts a Radix Select on
+    // the pointer-capture shims, and the reason they are shipped: a Radix Select sits on
     // the history filter, and today three test files stub those methods by hand because there
     // was nowhere global to put them. This is the working recipe, written down once —
     // `fireEvent.click` then `findByRole('option')`. `fireEvent.change` on a `combobox` button
@@ -67,8 +67,8 @@ describe('the test environment has the shims the component libraries need', () =
   })
 
   it('renders and unmounts a real Radix Dialog in a file that stubs nothing', () => {
-    // Not a canary — a Dialog needs no shims — but U14 hosts the attachment preview in one, so
-    // this pins that the component vendored in U1 mounts and tears down cleanly.
+    // Not a canary — a Dialog needs no shims — but the attachment preview lives in one, so
+    // this pins that the vendored component mounts and tears down cleanly.
     const { unmount } = render(
       <Dialog open>
         <DialogContent>
@@ -85,7 +85,7 @@ describe('the test environment has the shims the component libraries need', () =
   })
 
   it('gives navigator.clipboard a spy that resolves, and that a test can make reject', async () => {
-    // Clipboard writes genuinely fail — insecure origins, denied permissions — and N1's copy
+    // Clipboard writes genuinely fail — insecure origins, denied permissions — and the copy
     // button has to announce that. A shim that can only succeed cannot test the half that
     // matters.
     await expect(navigator.clipboard.writeText('hello')).resolves.toBeUndefined()

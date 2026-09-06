@@ -1,6 +1,6 @@
 /**
  * Reading the submitted data-classification declaration for the administrator's review
- * screen (U13: R15, P3, OD-B).
+ * screen.
  *
  * The declaration is STORED DATA, not a wire schema: the publish gate writes it once
  * (`backend/src/api/v1/deploy/router.py::_declaration`), three consumers read it, and the
@@ -9,10 +9,10 @@
  * unrecognised key renders as nothing, never as a crash and never as a blank dispute row
  * an administrator would read as "nothing was flagged".
  *
- * WHAT THE ADMINISTRATOR IS DECIDING (P3): whether an app holding this kind of data is
+ * WHAT THE ADMINISTRATOR IS DECIDING: whether an app holding this kind of data is
  * acceptable to publish. Not whether the code is correct — they are not re-auditing it.
  *
- * WHAT THEY NEVER SEE (OD-B): evidence locations. They are structurally absent from the
+ * WHAT THEY NEVER SEE: evidence locations. They are structurally absent from the
  * declaration — the review stores them in a separate `evidence` document that no path
  * reaching this screen reads — so this module has no branch to get wrong. The reasons it
  * does render were written for a non-technical reader and passed through the shared
@@ -167,7 +167,7 @@ export function readDeclaration(declaration: Record<string, unknown> | null): Re
 
   const shippingCommit = shaOrNull(commits.shipping)
   const reviewedCommit = shaOrNull(commits.reviewed)
-  // U10's own block. Absent on the ordinary path — its PRESENCE is the signal that this
+  // The drift block. Absent on the ordinary path — its PRESENCE is the signal that this
   // queue item was routed by the pipeline after a save, with nobody at the form.
   const answeredAbout = shaOrNull(record(declaration, 'drift').answeredAbout)
 

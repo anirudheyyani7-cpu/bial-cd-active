@@ -1,4 +1,4 @@
-"""Foundry model wiring — the Foundry-only (AE5) guard and the api_key build path (U12)."""
+"""Foundry model wiring — the Foundry-only guard and the api_key build path."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _timeout_of(client: AsyncAnthropicFoundry) -> Timeout:
 
 
 def test_guard_rejects_public_anthropic_api() -> None:
-    # AE5: the public API endpoint is refused, fail-closed.
+    # The public API endpoint is refused, fail-closed.
     with pytest.raises(FoundryOnlyError):
         _assert_foundry_only("https://api.anthropic.com/v1")
 
@@ -71,13 +71,13 @@ def test_build_client_targets_foundry() -> None:
 
 
 def test_build_model_from_api_key_config() -> None:
-    # AE5: a valid Foundry config builds an AnthropicModel (Foundry-backed).
+    # A valid Foundry config builds an AnthropicModel (Foundry-backed).
     model = build_foundry_model(_config())
     assert isinstance(model, AnthropicModel)
 
 
 def test_api_key_client_applies_configured_timeout_and_retries() -> None:
-    # U8: the shared model client gets a FINITE, retried socket sourced from FoundryConfig, so a
+    # The shared model client gets a FINITE, retried socket sourced from FoundryConfig, so a
     # dead server→model connection surfaces as a catchable timeout instead of a hang. Custom
     # values prove the wiring (config → SDK client), not just that a default happened to match.
     client = build_foundry_client(
@@ -121,7 +121,7 @@ def test_entra_client_also_applies_timeout_and_retries(monkeypatch: pytest.Monke
     assert timeout.connect == 7.0
 
 
-# --- U8 behavioral scenarios --------------------------------------------------
+# --- behavioral scenarios --------------------------------------------------
 # The wiring tests above prove the config LANDS on the client; these prove the SDK machinery it
 # configures actually behaves: a transient connection failure is retried through to success, a
 # dead endpoint surfaces a catchable timeout instead of a hang, and a slow-but-alive stream is
@@ -212,7 +212,7 @@ async def _read_http_request(reader: asyncio.StreamReader) -> None:
 async def test_transient_connection_errors_are_retried_to_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # U8(a): a connection that fails on every attempt but the last must be retried through to a
+    # A connection that fails on every attempt but the last must be retried through to a
     # completed call by the machinery `max_retries` configured — the count proves it happened.
     monkeypatch.setattr("anthropic._base_client.INITIAL_RETRY_DELAY", 0.0)
     client = build_foundry_client(_config(max_retries=2))
@@ -225,8 +225,8 @@ async def test_transient_connection_errors_are_retried_to_success(
             raise httpx2.ConnectError("connection refused")
         return httpx2.Response(200, json=_A_COMPLETED_MESSAGE)
 
-    # Swap the transport UNDER the built client so the SDK's own retry loop (the thing U8 tuned)
-    # stays fully in play; only the network is faked.
+    # Swap the transport UNDER the built client so the SDK's own retry loop stays fully in
+    # play; only the network is faked.
     client._client._transport = httpx2.MockTransport(flaky)
     msg = await client.messages.create(
         model="claude-opus", max_tokens=16, messages=[{"role": "user", "content": "hi"}]
@@ -240,7 +240,7 @@ async def test_transient_connection_errors_are_retried_to_success(
 async def test_dead_endpoint_surfaces_a_catchable_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # U8(b): an endpoint that accepts the socket but never answers must become a catchable
+    # An endpoint that accepts the socket but never answers must become a catchable
     # `APITimeoutError` within the configured read-timeout budget (retries exhausted) — the
     # wedged server→model connection the module docstring promises never hangs.
     monkeypatch.setattr("anthropic._base_client.INITIAL_RETRY_DELAY", 0.0)
@@ -257,7 +257,7 @@ async def test_dead_endpoint_surfaces_a_catchable_timeout(
         client = build_foundry_client(
             _config(read_timeout_s=0.1, connect_timeout_s=1.0, max_retries=1)
         )
-        # The AE5 guard already passed at build time; repoint at the local socket for the test.
+        # The guard already passed at build time; repoint at the local socket for the test.
         client.base_url = f"http://127.0.0.1:{port}"
         with pytest.raises(APITimeoutError):
             await client.messages.create(
@@ -267,7 +267,7 @@ async def test_dead_endpoint_surfaces_a_catchable_timeout(
 
 
 async def test_slow_but_alive_stream_survives_the_read_timeout() -> None:
-    # U8(c): the read timeout is a PER-CHUNK idle bound, not a whole-turn deadline. A streamed
+    # The read timeout is a PER-CHUNK idle bound, not a whole-turn deadline. A streamed
     # turn whose chunks each land inside the window must complete even though the WHOLE response
     # (7 chunks × 0.05 s ≈ 0.35 s) takes longer than read_timeout_s — the false-FAILED guard.
     async def dribble(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

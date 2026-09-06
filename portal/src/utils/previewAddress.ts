@@ -1,5 +1,5 @@
 /**
- * WHAT GETS FRAMED, decided once (Plan A, U2).
+ * WHAT GETS FRAMED, decided once.
  *
  * The app pane is about to stop being rendered by the route and start being rendered by the
  * address: the shell mounts one iframe for the whole workspace, and the *element exists* whenever
@@ -71,7 +71,7 @@ export interface PreviewAddressInputs {
 
   // ── project-scoped ────────────────────────────────────────────────────────────────────────
   /**
-   * A restored app (#43). It has no build lifecycle at all — no feed, no keep-alive, no lock —
+   * A restored app. It has no build lifecycle at all — no feed, no keep-alive, no lock —
    * which is why it resolves the status to `ready` on its own rather than reading one.
    */
   relaunchedUrl: string | null

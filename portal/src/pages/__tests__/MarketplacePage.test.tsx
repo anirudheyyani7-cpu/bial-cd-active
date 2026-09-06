@@ -407,7 +407,7 @@ describe('MarketplacePage', () => {
     // Driven to page 3 rather than MOCKED there. The previous version set `page: 3` in the
     // response payload while the component's own `page` stayed 1 — so it asserted copy the
     // product would never show in that combination, which is the same "seed a state the
-    // product reaches differently" shape flagged twice in review (#147 round 3).
+    // product reaches differently" shape flagged twice in review.
     //
     // What is pinned here is RECOVERY, because that is what is durable: the overshoot copy
     // is transient by construction — the auto-correct effect fires in the same commit and

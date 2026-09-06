@@ -1,4 +1,4 @@
-"""U8 / R6 — the kind → toolset registry: gating is STRUCTURAL, at the agent layer.
+"""The kind → toolset registry: gating is STRUCTURAL, at the agent layer.
 
 For each of the two kinds, the model's actual tool list — what `AgentInfo.function_tools`
 carries into the model request — contains exactly that kind's tools, and a FORGED tool call
@@ -26,7 +26,7 @@ from pydantic_ai.toolsets.abstract import AbstractToolset
 from src.db.models.conversation import ChatKind
 from src.services.agent.read_tools import ExtractedSnapshotWorkspace
 from src.services.agent.toolsets import (
-    _WRITE_STRUCTURED_READS,  # the allowlist U22's trap lives in — asserted against directly
+    _WRITE_STRUCTURED_READS,  # the fetch_output_slice trap's allowlist — asserted directly
     CHAT_KIND_CATALOGUE,
     ReadDeps,
     ToolSurface,
@@ -49,7 +49,7 @@ below stay exact: a shared tool has to appear in both, and a test that quietly d
 side would pass while the two arms drifted."""
 _WRITE_ONLY_TOOLS = {"write_file", "edit_file", "insert_lines", "declare_done"}
 _SANDBOX_ONLY_TOOLS = _WRITE_ONLY_TOOLS | {"fetch_output_slice", "apply_schema_change"}
-"""U22 / U23: `fetch_output_slice` and `apply_schema_change` are registered on `sandbox_toolset`,
+"""`fetch_output_slice` and `apply_schema_change` are registered on `sandbox_toolset`,
 so they are Build-only for exactly the same reason the four mutators are — and NOT on
 `read_only_toolset`, where the `_WRITE_STRUCTURED_READS` allowlist would have filtered them out of
 the only kind that runs commands, silently."""
@@ -219,8 +219,8 @@ def _build_deps() -> BuildDeps:
 
 
 async def test_build_agent_still_carries_the_whole_sandbox_set_natively() -> None:
-    # The harness path is unchanged by U5's convergence: `build_agent` is constructed with
-    # `sandbox_toolset` and offers exactly that set. Pinned here so the registry work below
+    # The harness path is unchanged by the registry convergence below: `build_agent` is constructed
+    # with `sandbox_toolset` and offers exactly that set. Pinned here so the registry work below
     # cannot quietly move the harness's surface too.
     seen: dict[str, Any] = {}
     await build_agent.run(
@@ -248,7 +248,7 @@ def _write_toolsets(
 async def test_a_build_chat_is_the_sandbox_set_plus_exactly_two_structured_reads(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
-    # U5: Build is composed HERE now, not delegated to build_agent. The surface is the sandbox
+    # Build is composed HERE now, not delegated to build_agent. The surface is the sandbox
     # tools plus `list_files`/`search_files` borrowed off the read-only registry —
     # and nothing else. Mutation-check: widen `_WRITE_STRUCTURED_READS` to include
     # `read_file` and the CombinedToolset raises on the duplicate name → red.
@@ -292,7 +292,7 @@ async def test_writes_run_command_is_the_sandbox_one_not_the_read_only_guest_lis
 
 
 async def test_a_caller_that_cannot_run_build_is_told_so_rather_than_handed_no_tools() -> None:
-    # The U8 agent-level `ReadDeps` surface has no sandbox to resolve. Returning `[]` would
+    # The agent-level `ReadDeps` surface has no sandbox to resolve. Returning `[]` would
     # hand a Build run a model with zero tools — it would produce prose and "succeed" having
     # built nothing. Fail-first instead.
     with pytest.raises(ValueError, match="sandbox accessor"):
@@ -300,7 +300,7 @@ async def test_a_caller_that_cannot_run_build_is_told_so_rather_than_handed_no_t
 
 
 async def test_fetch_output_slice_reaches_the_only_kind_that_runs_commands() -> None:
-    """★ THE ALLOWLIST TRAP (U22/R28), asserted where it would have fired silently.
+    """★ THE ALLOWLIST TRAP, asserted where it would have fired silently.
 
     `_WRITE_STRUCTURED_READS` is an ALLOWLIST of exactly `list_files`/`search_files`. Register the
     slice tool on `read_only_toolset` — the natural home for something that only reads — and the
@@ -334,9 +334,9 @@ async def test_the_registry_is_exhaustive_over_the_enum() -> None:
 
 
 async def test_the_kinds_differ_by_which_toolsets_they_are_handed_and_by_nothing_else() -> None:
-    """★ U1 / R69 / N2 — the whole difference between the two kinds, stated as one claim.
+    """★ THE WHOLE DIFFERENCE BETWEEN THE TWO KINDS, STATED AS ONE CLAIM.
 
-    Every other unit in this plan rests on this: if the two surfaces overlap somewhere other
+    Every other test in this suite rests on this: if the two surfaces overlap somewhere other
     than the read surface, then something outside the registry has to know which kind it is
     looking at, and "the kind decides only the toolset" stops being true.
 
@@ -348,8 +348,8 @@ async def test_the_kinds_differ_by_which_toolsets_they_are_handed_and_by_nothing
     only way the model can tell them apart — by their description, which is why
     `test_writes_run_command_is_the_sandbox_one_not_the_read_only_guest_list` exists.
 
-    Deliberately NOT a tool count. This plan adds a shared toolset to both arms (U3, U10) and
-    a count assertion would go red two units from now with nothing wrong."""
+    Deliberately NOT a tool count. A shared toolset is expected to land on both arms later, and
+    a count assertion here would go red then, with nothing actually broken."""
     plan = await registered_tool_definitions(ChatKind.PLAN)
     build = await registered_tool_definitions(ChatKind.BUILD)
 
@@ -364,11 +364,11 @@ async def test_the_kinds_differ_by_which_toolsets_they_are_handed_and_by_nothing
     assert plan["run_command"].description != build["run_command"].description
 
 
-# --- U16 / R73: the chat-kind catalogue, beside the registry above ------------------------
+# --- the chat-kind catalogue, beside the registry above ------------------------
 
 
 def test_chat_kind_catalogue_covers_every_member_of_the_enum() -> None:
-    """The exhaustiveness guard R73 asks for: a kind with no wording must fail loudly rather
+    """The exhaustiveness guard asks for: a kind with no wording must fail loudly rather
     than render a blank label. `_describe`'s `match` (no wildcard case) already makes an
     unhandled member a type-checker error at that function — this walks the enum at RUN time
     too, so the guard holds even for whoever isn't running `pyright` on this change.
@@ -380,7 +380,7 @@ def test_chat_kind_catalogue_covers_every_member_of_the_enum() -> None:
 
 
 def test_chat_kind_wording_says_what_the_chat_does_for_you_not_what_the_agent_is() -> None:
-    """R73's real trap. The wording is what a citizen reads in the composer, the history list
+    """The real trap. The wording is what a citizen reads in the composer, the history list
     and the help page — never a description of an agent being run, gated or watched. A
     description that leaked "toolset", "sandbox", "mode" or a file name would be accurate to
     an engineer and either meaningless or alarming to the person clicking the button."""
@@ -392,7 +392,7 @@ def test_chat_kind_wording_says_what_the_chat_does_for_you_not_what_the_agent_is
 
 
 def test_no_second_copy_of_the_chat_kind_wording_lives_under_backend_src() -> None:
-    """R73's copy guard, scoped exactly the way it has to be: the ONLY place under
+    """This copy guard is scoped exactly the way it has to be: the ONLY place under
     `backend/src/` allowed to hold a string describing what a chat kind does — one that could
     reach a browser — is this catalogue.
 

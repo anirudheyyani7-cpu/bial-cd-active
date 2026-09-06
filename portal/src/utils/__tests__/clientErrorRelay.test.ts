@@ -1,8 +1,8 @@
 /**
- * U13 (portal half) — the relay from the framed app's error reporter to the build harness.
+ * The relay from the framed app's error reporter to the build harness.
  *
  * The origin check that decides whether a message is seen at all lives in `LivePreview` and is
- * tested there (C8 §3). What is pinned here is everything AFTER that gate: shape narrowing on a
+ * tested there. What is pinned here is everything AFTER that gate: shape narrowing on a
  * payload written by unreviewed agent-authored code, the crash-loop throttle, and the rule that a
  * failed report costs the citizen nothing.
  */

@@ -1,4 +1,4 @@
-"""Post-commit blob sweeping for the delete endpoints (KD-3).
+"""Post-commit blob sweeping for the delete endpoints.
 
 The rows are already committed-deleted when a sweep runs, so NOTHING here may
 surface: a raised error would 500 a delete that in fact succeeded and abandon the
@@ -31,7 +31,7 @@ async def sweep_blobs(storage: ObjectStorage, blob_keys: list[str]) -> None:
     """Best-effort post-commit delete of every key, run concurrently behind a bounded
     semaphore; log-and-continue on ANY failure. Each delete swallows its own error, so one
     dropped key never cancels a sibling and nothing surfaces to 500 an already-committed
-    delete (KD-3)."""
+    delete."""
     if not blob_keys:
         return
     limiter = asyncio.Semaphore(_SWEEP_CONCURRENCY)
@@ -47,11 +47,11 @@ async def sweep_blobs(storage: ObjectStorage, blob_keys: list[str]) -> None:
 
 
 async def sweep_app_containers(store: AppContainerStore | None, app_ids: list[uuid.UUID]) -> None:
-    """Best-effort post-commit delete of every app's per-app Blob container (KTD-7), run
+    """Best-effort post-commit delete of every app's per-app Blob container, run
     concurrently behind the same bounded semaphore; log-and-continue on ANY failure so one
     orphaned container never cancels a sibling and nothing surfaces to 500 an already-committed
-    project delete (KD-3). Early-returns when the store is disabled (`None`) — even with a
-    non-empty id list — because dev/test has no object store to sweep (KTD-2); a residual
+    project delete. Early-returns when the store is disabled (`None`) — even with a
+    non-empty id list — because dev/test has no object store to sweep; a residual
     container is a bounded, unmetered orphan, not a failure."""
     if store is None:
         return

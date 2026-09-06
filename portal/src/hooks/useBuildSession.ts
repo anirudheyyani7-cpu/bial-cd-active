@@ -1,6 +1,6 @@
 /**
- * The single owner of a build session's lifecycle: it RE-ATTACHES to a C3 session, stops or
- * force-ends it, subscribes to its C7 SSE feed and derives the `BuildSessionStatus`. Every cockpit
+ * The single owner of a build session's lifecycle: it RE-ATTACHES to a session, stops or
+ * force-ends it, subscribes to its SSE feed and derives the `BuildSessionStatus`. Every cockpit
  * surface (LivePreview, the conversation surface's banners) reads from here.
  *
  * IT NO LONGER STARTS ONE, AND IT NO LONGER RELAUNCHES ONE. `start()` went with the client wrapper
@@ -32,12 +32,12 @@
  *    overriding the envelope-derived status.
  *  - **There is no `reclaimed` state.** Nothing on the client can tell that a container was taken
  *    back; the frozen-tab case is covered by the preview poll's `asleep` state in `LivePreview`.
- *  - **Feed-disconnected** (KTD-1): a bounded `EventSource` reconnect exhaustion (or an admission
+ *  - **Feed-disconnected**: a bounded `EventSource` reconnect exhaustion (or an admission
  *    failure) raises a distinct `feedDisconnected` flag with a manual `reconnect()` — heartbeat /
  *    renew may still be succeeding, so nothing else signals the dead feed.
  *
- * `buildLock` is NOT consulted here — its `blockedBy` pre-check lives at the composer (U5); the
- * authoritative barrier is the server's 409 (KTD-7). This hook no longer surfaces that 409 at
+ * `buildLock` is NOT consulted here — its `blockedBy` pre-check lives at the composer; the
+ * authoritative barrier is the server's 409. This hook no longer surfaces that 409 at
  * all: `blocked` went with the `start` client above, so the two callers that can still provoke
  * one — `relaunchPreview` and the turn stream — each render it in their own surface's words.
  */
@@ -49,7 +49,7 @@ import { subscribeBuildFeed } from '../utils/buildSessionEvents'
 import type { BuildFeedError, BuildFeedSubscription, EventSourceFactory } from '../utils/buildSessionEvents'
 import type { BuildSessionStatus, FeedEnvelope, ProgressEnvelope } from '../utils/buildSessionTypes'
 
-/** How long a live `ready` preview may go quiet before the "still working" overlay clears (KTD-8b). */
+/** How long a live `ready` preview may go quiet before the "still working" overlay clears. */
 const ITERATION_QUIET_MS = 4000
 
 /** The graceful-quota terminal surfaced to the banner ("resets at midnight IST"). */
@@ -72,7 +72,7 @@ export interface UseBuildSessionResult {
    * WHY the session reached its terminal, from the `ended` envelope's `reason` (or the local
    * action that settled it): 'completed' | 'stopped_by_user' | 'quota_exceeded' | … — null while
    * live, and null when the terminal arrived without a reason (reclaim, force-end, reattach onto
-   * an already-ended session). 'completed' is the one the preview pane cares about (R2): the
+   * an already-ended session). 'completed' is the one the preview pane cares about: the
    * server PARDONS a completed build's container (it stays up under an idle lease), so
    * `ended` + 'completed' + `previewUrl` means "done, preview live" — not "no longer running".
    */
@@ -84,11 +84,11 @@ export interface UseBuildSessionResult {
   stopping: boolean
   feedDisconnected: boolean
   /**
-   * F8/U5 — the dev-server PROCESS crashed after the preview was framed (a `preview_reconnecting`
+   * The dev-server PROCESS crashed after the preview was framed (a `preview_reconnecting`
    * envelope). DISTINCT from `feedDisconnected` (the SSE feed dropping): this is the app's own dev
    * process dying, so the pane shows a "reconnecting" visual over the dead frame — never the
    * "building" spinner. Cleared by the next `preview_ready` (the re-frame). Not a 6th
-   * `BuildSessionStatus` — the C3 enum stays frozen at five.
+   * `BuildSessionStatus` — the enum stays frozen at five.
    */
   reconnecting: boolean
   quota: QuotaState | null
@@ -188,7 +188,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
   const onEnvelope = useCallback(
     (env: ProgressEnvelope) => {
       if (env.type === 'preview_ready') {
-        // Routed to preview status ONLY — never a feed row (C7 §3.4). Don't override a terminal.
+        // Routed to preview status ONLY — never a feed row. Don't override a terminal.
         setPreviewUrl(env.preview_url)
         setReconnecting(false) // a fresh frame (re-frame after a crash) clears the reconnecting state
         if (statusRef.current !== 'ended' && statusRef.current !== 'failed') setPhase('ready')
@@ -200,7 +200,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
         setReconnecting(true)
         return
       }
-      // Every other member is a feed row — upsert by seq (duplicate replaces, C3 §4.2).
+      // Every other member is a feed row — upsert by seq (duplicate replaces).
       setEnvelopes((prev) => upsertBySeq(prev, env))
 
       if (env.type === 'quota_exceeded') {
@@ -227,7 +227,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     (_err: BuildFeedError) => {
       // The feed died (admission failure or bounded-reconnect exhaustion). Heartbeat/renew may
       // still be succeeding, so surface a DISTINCT feed-disconnected state — never let a dead feed
-      // masquerade as a slow build (KTD-1). A terminal session ignores it.
+      // masquerade as a slow build. A terminal session ignores it.
       if (settledRef.current) return
       setFeedDisconnected(true)
     },
@@ -270,8 +270,8 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
   const reattach = useCallback(
     async (sid: string): Promise<void> => {
       reset()
-      // Seed from the authoritative status (C3 §2.3) — this is what frames a `preview_ready` that
-      // fired before we connected (KTD-1). May throw; U5 handles (falls back to the block banner).
+      // Seed from the authoritative status — this is what frames a `preview_ready` that
+      // fired before we connected. May throw; the composer handles it (falls back to the block banner).
       const st = await client.getStatus(sid)
       // Unmounted mid-flight: don't subscribe a feed the unmount cleanup has already run past.
       if (!mountedRef.current) return
@@ -338,7 +338,7 @@ export function useBuildSession(deps: UseBuildSessionDeps = {}): UseBuildSession
     if (!sid || settledRef.current) return
     closeFeed()
     subscribe(sid)
-    // Reseed preview/status from the authoritative getStatus (mirrors reattach, KTD-1): the
+    // Reseed preview/status from the authoritative getStatus (mirrors reattach): the
     // feed was dead for a while and the fresh EventSource on a LIVE session starts
     // live-from-now, so a `preview_ready` (or a status hop) that fired during the gap would
     // otherwise be lost. Best-effort — a failed reseed leaves the resubscribed live stream.

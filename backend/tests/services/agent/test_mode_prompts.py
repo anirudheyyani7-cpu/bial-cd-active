@@ -111,7 +111,7 @@ def test_every_kind_carries_the_truthful_portal_self_description(
         "Admin review area",
     ):
         assert real_surface in composed
-    # R10: the unified chat's right pane is the APP. The relay's retiring wording said the
+    # The unified chat's right pane is the APP. The relay's retiring wording said the
     # builder view was "a chat beside a live preview"; this layout must not be re-described.
     assert "the right pane shows the app itself" in composed
 
@@ -124,7 +124,7 @@ def test_base_survives_an_undescribed_project() -> None:
 
 
 def test_build_composes_like_the_other_kind() -> None:
-    """A Build chat has a segment like any other (KTD-5/KTD-5a)."""
+    """A Build chat has a segment like any other."""
     composed = compose_kind_prompt(ChatKind.BUILD, _CONTEXT)
     assert "WRITE MODE" in composed
     assert 'on "Visitor Log"' in composed  # the same BASE both kinds carry
@@ -139,7 +139,7 @@ def test_the_write_segment_and_the_build_prompt_come_from_one_source() -> None:
     assert WRITE_IDENTITY in composed
     assert WRITE_IDENTITY in BUILD_SYSTEM_PROMPT
     assert BUILD_WORKING_RULES_HEAD in BUILD_SYSTEM_PROMPT
-    # U15's audience block is shared the same way — one constant, reached by both Write prompts
+    # The audience block is shared the same way — one constant, reached by both Write prompts
     # through the TAIL they already share, so neither can grow a voice the other does not have.
     assert NARRATION_VOICE in composed
     assert NARRATION_VOICE in BUILD_SYSTEM_PROMPT
@@ -204,9 +204,9 @@ def test_write_speaks_to_the_person_who_asked_for_the_app() -> None:
     assert "plain, everyday words" in lowered
     assert "keep the how-it's-built details behind the scenes" in lowered
     assert "the file and folder names, the commands you run" in lowered
-    # R20 covers the hard turns as well: a failure and its recovery stay in product language.
+    # The hard turns are covered as well: a failure and its recovery stay in product language.
     assert "when something goes wrong" in lowered
-    # R23: the technical record is untouched, which is what lets the narration be short.
+    # The technical record is untouched, which is what lets the narration be short.
     assert "recorded step by step" in lowered
 
 
@@ -272,12 +272,12 @@ def test_both_kinds_inherit_the_one_audience_contract() -> None:
     assert "a plan is as long as it needs to be" not in build.lower()
     assert "a couple of lines at each milestone" not in build.lower()
 
-    # AE44's other half: the two prompts say the same thing about voice, with nothing left that
+    # The two prompts say the same thing about voice, with nothing left that
     # differs. Nothing in the shared block is reachable from only one kind.
     assert plan.count(NARRATION_VOICE) == build.count(NARRATION_VOICE) == 1
 
 
-# --- U19 / R25: the version control the agent no longer does ---------------------------------
+# --- the version control the agent no longer does ---------------------------------
 #
 # The commit the platform takes instead is `build_sessions/snapshot._COMMIT_SCRIPT`.
 #
@@ -308,7 +308,7 @@ _RETIRED_GIT_INSTRUCTIONS = (
     "prompt_name", ["write_mode_segment", "build_system_prompt"], ids=["write_mode", "build"]
 )
 def test_neither_write_prompt_instructs_the_agent_in_git(prompt_name: str) -> None:
-    """★ THE INERTNESS GUARD (U19 / R25, cross-plan constraint 9). Asserted as a SET so the
+    """★ THE INERTNESS GUARD. Asserted as a SET so the
     failure names every instruction that crept back, and asserted on BOTH Write prompts because
     they compose from shared blocks and either composition site could grow one.
 
@@ -357,7 +357,7 @@ def test_a_plan_chat_stays_lean() -> None:
 
 
 _FORBIDDEN_FRUIT = (
-    # R13: prohibition prose aimed at tools the mode doesn't have. The registry already
+    # Prohibition prose aimed at tools the mode doesn't have. The registry already
     # removed them — ban text would teach the model to reason about absent capabilities
     # (the research doc's anti-pattern 1/2).
     "do not",
@@ -391,7 +391,7 @@ def test_the_plan_still_says_nothing_technical_even_with_its_shape_freed() -> No
 
 
 def test_plan_segment_is_citizen_facing_not_a_developer_spec() -> None:
-    # F9: the plan streams as ordinary assistant TEXT, so its register is dictated entirely by
+    # The plan streams as ordinary assistant TEXT, so its register is dictated entirely by
     # _PLAN_SEGMENT. The developer skeleton ("the files you would touch", "the trade-offs the
     # user should weigh") is retired; the segment now steers an outcome-first, plain-language plan,
     # while KEEPING the read-first grounding. This asserts the PROMPT's shape — the ground-truth
@@ -406,7 +406,7 @@ def test_plan_segment_is_citizen_facing_not_a_developer_spec() -> None:
     # citizen framing is present: outcome-first + see/do + the options contract. "Plain,
     # everyday words" is NO LONGER asserted here on purpose — it moved to the shared audience
     # block, and a Plan chat inherits it through `_base` rather than restating it. Asserting it
-    # against the segment again would recreate the second copy R79 exists to prevent;
+    # against the segment again would recreate a second copy of the same text;
     # `test_a_plan_chat_inherits_the_contract_and_only_the_length_differs` holds that ground on
     # the composed prompt, where the model actually reads it.
     assert "plain, everyday words" in compose_kind_prompt(ChatKind.PLAN, _CONTEXT).lower()
@@ -437,13 +437,13 @@ def test_the_plan_segment_says_the_plan_travels_in_the_offer_argument() -> None:
     assert "not as a message beside the call" in lowered
     # AND IT NO LONGER LIES TO THE MODEL. The segment used to say anything written in the same
     # breath as a tool call "does not reach the user", which stopped being true the moment the
-    # hold was deleted — R7's whole point is that nothing tells the model something about this
+    # hold was deleted — the point is that nothing tells the model something about this
     # system that is no longer so.
     assert "does not reach the user" not in lowered
     assert "everything else you write does reach them" in lowered
 
 
-# THE PLAN REMINDERS' OWN F9 CHECK USED TO SIT HERE, and it is not orphaned: the reminders it
+# THE PLAN REMINDERS' OWN CHECK USED TO SIT HERE, and it is not orphaned: the reminders it
 # guarded no longer exist (`tests/services/turns/test_reminders.py` is their inertness guard),
 # and every property it asserted — citizen-plain wording, prohibition-free, the
 # `present_plan_options` contract — is asserted directly against `_PLAN_SEGMENT` above, which is
@@ -462,12 +462,12 @@ async def test_relay_path_stays_verbatim_deps_system(db_session) -> None:
     captured: dict[str, str] = {}
     deps = ChatDeps(db=db_session, user_id=uuid.uuid4(), system="RELAY-PROMPT")
     result = await chat_agent.run("hi", deps=deps, model=_capturing_model(captured))
-    assert captured["instructions"] == "RELAY-PROMPT"  # mode=None → byte-identical U7 path
+    assert captured["instructions"] == "RELAY-PROMPT"  # mode=None → byte-identical path
     assert result.output == "ok"
 
 
 async def test_mode_run_composes_and_never_persists_instructions(db_session) -> None:
-    """D4 delivery: the model RECEIVES the composition; the store's dump seam keeps it out
+    """Delivery: the model RECEIVES the composition; the store's dump seam keeps it out
     of any persisted payload (the JSONB half is pinned in test_store_roundtrip)."""
     captured: dict[str, str] = {}
     deps = ChatDeps(
@@ -507,7 +507,7 @@ def test_no_segment_promises_an_emptiness_signal_that_never_arrives(kind: ChatKi
     lowered = compose_kind_prompt(kind, _CONTEXT).lower()
     assert "your tools will tell you truthfully" not in lowered
     assert "if there is no app yet" not in lowered
-    # THE ASSERTION THAT WAS WITHHELD (U14): Plan's composition now carries the instruction the
+    # THE ASSERTION THAT WAS WITHHELD: Plan's composition now carries the instruction the
     # retired sentence's ACTION half taught, and Build's — which shares the workspace note's
     # FACT but not the segment — does not. Parametrized over the whole enum like the rest of
     # this test, so a third kind added without a decision here fails loudly instead of silently.

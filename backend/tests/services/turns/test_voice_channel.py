@@ -1,4 +1,4 @@
-"""U3 / R75 / R75a — the one deliberate way the agent speaks in the middle of its work.
+"""The one deliberate way the agent speaks in the middle of its work.
 
 WHY A CHANNEL AT ALL, NOW THAT EVERY PARAGRAPH REACHES THE CITIZEN. Free prose is streamed as
 the model writes it, so this tool is no longer the only way words get through — it is the only
@@ -155,7 +155,7 @@ async def test_an_update_is_acknowledged_so_the_model_does_not_say_it_twice() ->
 
 
 async def test_a_long_update_is_accepted_rather_than_refused_for_its_length() -> None:
-    """★ U6 — the ceiling is gone from the tool BODY, where it used to be enforced.
+    """★ The ceiling is gone from the tool BODY, where it used to be enforced.
 
     TWO FIXTURES, BECAUSE A REINSTATED CEILING COULD SIT ANYWHERE. One character past the
     retired number kills a straight re-introduction of it — including the off-by-one variants,
@@ -172,7 +172,7 @@ async def test_a_long_update_is_accepted_rather_than_refused_for_its_length() ->
 
 
 async def test_an_empty_update_is_still_refused_rather_than_shown_as_nothing() -> None:
-    """The one refusal that survived U6, and it survived because it is not a matter of taste.
+    """The one refusal that survived, and it survived because it is not a matter of taste.
 
     A call carrying no words has nothing for either emitter to draw, so the alternatives are
     an empty block in the transcript or a silent no-op the model never learns about. The retry
@@ -191,7 +191,7 @@ def test_one_rule_decides_what_is_shown_and_both_emitters_read_it() -> None:
     transcript while the model was being told to retry.
 
     WHAT IT DECIDES IS WHETHER THERE ARE WORDS, NEVER HOW MANY. The long update comes back
-    byte-for-byte, and that is the renderer's half of U6: taking the ceiling out of the body
+    byte-for-byte, and that is the renderer's half: taking the ceiling out of the body
     alone would have taught the model it may write at length while this function went on
     deleting what it wrote — the same two-sided failure in reverse.
 
@@ -211,7 +211,7 @@ def test_one_rule_decides_what_is_shown_and_both_emitters_read_it() -> None:
 
 @pytest.mark.parametrize("kind", list(ChatKind))
 def test_a_spoken_line_reaches_the_live_feed_in_either_kind(kind: ChatKind) -> None:
-    """R75 — the channel is on both arms, and behaves identically on both.
+    """The channel is on both arms, and behaves identically on both.
 
     AS ITS OWN BLOCK, which is the half a substring check would miss. A platform-rendered line
     always opens a block, so it can never be glued onto the end of whatever paragraph the model
@@ -242,7 +242,7 @@ def test_speaking_is_not_a_step_and_never_shows_its_wire_name(kind: ChatKind) ->
 
 @pytest.mark.parametrize("kind", list(ChatKind))
 def test_a_long_update_reaches_the_live_feed_whole(kind: ChatKind) -> None:
-    """★ U6 ON THE LIVE EMITTER. A four-hundred-character update arrives as ONE block holding
+    """★ ON THE LIVE EMITTER. A four-hundred-character update arrives as ONE block holding
     every character of it: not refused, not clipped, and not silently dropped, which is what
     the emitter did for as long as it asked a function that counted.
 
@@ -284,7 +284,7 @@ def test_an_empty_update_reaches_the_live_feed_nowhere(kind: ChatKind) -> None:
 async def test_live_order_and_reload_order_are_the_same_order(
     db_session: AsyncSession, kind: ChatKind
 ) -> None:
-    """★★ THE SCENARIO THIS DESIGN EXISTS FOR (R75a), and the one that would have caught
+    """★★ THE SCENARIO THIS DESIGN EXISTS FOR, and the one that would have caught
     the shape it replaces.
 
     A turn that reads, speaks, reads again and speaks again must produce a reloaded transcript
@@ -344,7 +344,7 @@ async def test_live_order_and_reload_order_are_the_same_order(
 
 
 async def test_a_long_update_renders_whole_on_reload_too(db_session: AsyncSession) -> None:
-    """★ U6's OTHER EMITTER, because a rendering checked on only one of them is checked
+    """★ THE OTHER EMITTER, because a rendering checked on only one of them is checked
     nowhere. The same four-hundred-character update that reaches the live feed whole is read
     back off the stored CALL and drawn whole, so a citizen who reloads gets the sentence they
     watched arrive rather than a shorter one.
@@ -473,15 +473,15 @@ async def test_prose_and_a_spoken_line_in_one_response_both_land_in_the_order_wr
     assert state.text_blocks() == [narration, _APP_WORDS]
 
 
-# --- U8 / R78: the platform never puts one of its own notes on the wire ----------------------
+# --- the platform never puts one of its own notes on the wire ----------------------
 #
-# THIS CHECKS OUR OWN STRINGS, NOT THE MODEL'S VOCABULARY, and that distinction is the one R82
-# and L1 both turn on. A denylist over what the agent wrote would be a word filter over model
+# THIS CHECKS OUR OWN STRINGS, NOT THE MODEL'S VOCABULARY, and that distinction is the one
+# L1 turns on. A denylist over what the agent wrote would be a word filter over model
 # text. A denylist over what the PLATFORM wrote is
 # legitimate precisely because we own both ends: we know exactly what we sent, so we can say
 # exactly what must not come back.
 #
-# WHAT THIS SECTION NO LONGER COVERS, STATED FIRST. R78 used to be enforced by the drop: a note
+# WHAT THIS SECTION NO LONGER COVERS, STATED FIRST. This used to be enforced by the drop: a note
 # the model quoted back sat in prose beside a tool call, and prose beside a tool call was
 # deleted. Deleting that hold is the whole of this change, and it takes the quote with it — a
 # fence cannot be stripped back out of a token stream without re-introducing the hold, and
@@ -528,7 +528,7 @@ async def test_a_note_the_model_quotes_back_reaches_the_citizen_like_any_other_p
 
     The model here does the worst thing available to it: quotes a private note back, verbatim,
     in prose beside a tool call. That prose used to be deleted — not because it was a note, but
-    because a tool call followed it — and R78 rode on that deletion. The deletion is gone in
+    because a tool call followed it — and this rule rode on that deletion. The deletion is gone in
     both kinds, so the quote lands in the transcript, at the position it was written, exactly
     like every other paragraph.
 
@@ -592,7 +592,7 @@ async def test_the_live_emitter_shows_the_same_quoted_note_in_the_same_place() -
 async def test_no_note_the_platform_wrote_is_rendered_from_the_result_it_rides_on(
     db_session: AsyncSession, kind: ChatKind
 ) -> None:
-    """★ R78's surviving MECHANISM: the carrier, not the vocabulary.
+    """★ THE RULE'S SURVIVING MECHANISM: the carrier, not the vocabulary.
 
     A tool RESULT is rendered as text by neither emitter. The reload projection indexes one
     only to decide whether a step succeeded; the live emitter reads one bit off it — return or
@@ -666,7 +666,7 @@ async def test_no_note_the_platform_wrote_is_rendered_from_the_result_it_rides_o
     assert state.text_blocks() == [_APP_WORDS]
 
 
-# --- U7 / R82: on the turn that went wrong, what the user reads is ours ----------------------
+# --- on the turn that went wrong, what the user reads is ours ----------------------
 
 
 def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
@@ -684,7 +684,7 @@ def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
         # sentence that used to fill one is NOT in this set — and its absence is the point. It
         # was deleted rather than reworded, because a platform line standing in for the model's
         # own is written in a voice nobody used, and the only thing that made a wordless turn
-        # reachable in the first place was the narration drop this plan removed.
+        # reachable in the first place was the narration drop, since removed.
         copy_module.PLAN_NOT_KEPT_TEXT,
         copy_module.DID_NOT_COME_TOGETHER_TEXT,
         copy_module.COULD_NOT_CONFIRM_TEXT,
@@ -705,8 +705,8 @@ def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
     }
     assert endings <= in_module
 
-    # And none of them is empty or a placeholder — an ending that says nothing is the failure
-    # R77 is about, arriving through the other door.
+    # And none of them is empty or a placeholder — an ending that says nothing is a failure of
+    # its own, arriving through the other door.
     for ending in endings:
         assert ending.strip()
 

@@ -1,12 +1,12 @@
 /**
  * Regression carried over from the single-file era: the assistant's build turn must be visible
- * WITHOUT a page refresh. Re-expressed against the TURN model (U5) — a build is a Write turn, so
+ * WITHOUT a page refresh. Re-expressed against the TURN model — a build is a Write turn, so
  * its narrative is the `workspace` / `step` / `preview` frames of that turn, pushed to visible
  * React state as they arrive (never a remount); and while the agent keeps working AFTER the
- * preview frames, the live preview is NOT blanked (KTD-8b).
+ * preview frames, the live preview is NOT blanked.
  *
  * CHAT-KIND MIGRATION (sfw-002). The build used to begin when the user confirmed the model's
- * brief card (003-U4), and that click was the moment these tests measured immediacy from. It is
+ * brief card, and that click was the moment these tests measured immediacy from. It is
  * not any more: this page renders ONLY a `build` chat (a chat's kind is fixed at creation), so
  * EVERY composer send already holds the write toolset and runs directly against the sandbox —
  * there is no card-confirm gate in front of it (BuilderPage.tsx's routing-rule docblock).
@@ -124,7 +124,7 @@ describe('BuilderPage — build turn visible without a refresh', () => {
     expect(h.getBuild).toHaveBeenCalledTimes(1) // the single mount-time adopt — no second hydration
 
     await turn.frame(T_STEP('Scaffolding your app…'))
-    // RE-POINTED AT THE ACTIVITY GROUP (Plan D U6/U17). The step used to draw a single feed row
+    // RE-POINTED AT THE ACTIVITY GROUP. The step used to draw a single feed row
     // inside the progress card; it is a part on the streaming message now, and the group's trigger
     // names the step happening NOW while it runs. Same claim, same frame, different element: the
     // label reached the DOM without a re-hydration.
@@ -133,8 +133,9 @@ describe('BuilderPage — build turn visible without a refresh', () => {
   })
 
   it('frames the preview as soon as its frame arrives', async () => {
-    // REWRITTEN WITH ITS SUBJECT (Plan D U17). "Preview is live" was the progress card's status
-    // LINE — chat-side narration of a pane state, in the register R35 removes. What the frame is
+    // REWRITTEN WITH ITS SUBJECT. "Preview is live" was the progress card's status
+    // LINE — chat-side narration of a pane state, in a register that no longer appears in the
+    // chat. What the frame is
     // actually for survives and is the stronger claim: the app pane frames the URL, without a
     // reload and without waiting for the turn to end.
     const turn = scriptTurn()

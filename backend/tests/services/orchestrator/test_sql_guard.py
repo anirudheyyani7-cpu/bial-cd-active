@@ -1,6 +1,6 @@
-"""U1 / R1 — the destructive-SQL sentinel over the improvisation channel (#12).
+"""The destructive-SQL sentinel over the improvisation channel.
 
-Test-first encoding of the 2026-07-22 walkthrough incident: during a change build, BRAIN issued
+Test-first encoding of the walkthrough incident: during a change build, BRAIN issued
 an unguarded ``DELETE FROM visitors`` through ``run_command`` and wiped real app data. The
 sentinel (`you_shall_not_pass`) must block improvised destructive SQL carried in argv — psql
 one-liners, node/bash payloads, heredocs — while the sanctioned migration channel
@@ -65,8 +65,8 @@ def test_normal_build_commands_pass() -> None:
 
 def test_migration_apply_passes_even_when_the_migration_drops_a_table() -> None:
     # The sanctioned channel: the DROP lives in the generated migration FILE, never in argv —
-    # requirements legitimately evolve to remove features (user decision 2026-07-23, no
-    # additive-only gate). The sentinel scans argv only, so this passes structurally.
+    # requirements legitimately evolve to remove features, and there is deliberately no
+    # additive-only gate. The sentinel scans argv only, so this passes structurally.
     assert you_shall_not_pass(["npm", "run", "db:migrate"]) is None
     assert you_shall_not_pass(["npx", "drizzle-kit", "migrate"]) is None
 
@@ -224,8 +224,8 @@ async def test_destructive_sql_is_blocked_in_run_and_the_build_self_heals(
     sink: CollectingSink,
 ) -> None:
     # The FunctionModel first improvises destructive SQL (blocked → ModelRetry re-enters the
-    # loop), then self-corrects to a non-destructive verification — the plan's integration
-    # scenario. The destructive command must NEVER reach the exec transport.
+    # loop), then self-corrects to a non-destructive verification. The destructive command
+    # must NEVER reach the exec transport.
     fake = FakeSandbox()
     fake.queue_commands(ExecResult(stdout="", stderr="", exit=0))
     captured: dict[str, Any] = {}

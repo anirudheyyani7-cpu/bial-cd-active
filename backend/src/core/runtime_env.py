@@ -19,9 +19,9 @@ import order, which no deployment controls; and the suite rebinds settings betwe
 
 THE TWO CALLERS MEAN DIFFERENT THINGS BY IT and keep their own names for it. The Redis key prefix
 scopes coordination state so a process pointed at the wrong instance cannot read another
-environment's fleet as a spare-list (C5); the `bial-control-plane` tag decides which control plane
-is entitled to judge a container (R22). They read the same value today, and nothing says they must
-forever — so neither is redefined in terms of the other.
+environment's fleet as a spare-list; the `bial-control-plane` tag decides which
+control plane is entitled to judge a container. They read the same value today, and nothing says
+they must forever — so neither is redefined in terms of the other.
 """
 
 from __future__ import annotations

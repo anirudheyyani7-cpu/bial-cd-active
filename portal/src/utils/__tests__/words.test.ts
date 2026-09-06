@@ -1,5 +1,5 @@
 /**
- * The client half of the shared word rule (#158).
+ * The client half of the shared word rule.
  *
  * The cases below are the SAME list `tests/api/v1/projects/test_project_name_words.py`
  * asserts on the server. That duplication is the point: the rule is written twice, once per

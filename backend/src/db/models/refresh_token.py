@@ -2,12 +2,12 @@
 
 Refresh reuse-detection is served entirely by columns denormalized onto each row
 (`family_id` + `used_at` + `revoked` + `absolute_expires_at`) — there is no
-separate `token_families` table (KD-7). A login mints a fresh family; each silent
+separate `token_families` table. A login mints a fresh family; each silent
 rotation writes a NEW row sharing the parent's `family_id` and `absolute_expires_at`
 and stamps the old row's `used_at`. Presenting an already-`used_at` (or `revoked`)
-token is reuse -> the whole family is revoked (KD-5, AE2).
+token is reuse -> the whole family is revoked.
 
-Only the SHA-256 hash of the opaque token is stored, never the token itself (R7):
+Only the SHA-256 hash of the opaque token is stored, never the token itself:
 a database read cannot reconstruct a usable credential.
 """
 
@@ -36,8 +36,8 @@ class RefreshToken(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base
     token_hash: Mapped[str] = mapped_column(sa.String(64), unique=True, index=True, nullable=False)
     # Per-token lifetime (rotates on each refresh).
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
-    # Family-wide hard cap, constant across rotations (~8h) — enforces AE3: past
-    # this instant no rotation succeeds and a fresh Entra sign-in is required.
+    # Family-wide hard cap, constant across rotations (~8h): past this instant no
+    # rotation succeeds and a fresh Entra sign-in is required.
     absolute_expires_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False
     )

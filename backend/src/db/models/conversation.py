@@ -12,15 +12,15 @@ that touched the app. Many conversations build against one app over its life, so
 `appId` names the wrong thing. The id still must not be reassigned — it is what the SPA routes on
 and what `conversation_id` points at — but preserving it is no longer preserving an app identity.
 
-`kind` is a native PG enum (ADR-0008) and it is the WHOLE classification: `plan` or `build`,
-chosen at creation and never changed, because no route mutates it (R14/R15). Tool gating
+`kind` is a native PG enum and it is the WHOLE classification: `plan` or `build`,
+chosen at creation and never changed, because no route mutates it. Tool gating
 derives from this column and from nothing the client sends. There is no `mode` column any
 more — it and its switch endpoint were dropped in migration 0035, and the two three-valued
 vocabularies they carried collapsed into this one two-valued one.
 `title`/`context` are the mutable header fields the SPA owns. The legacy `code` JSONB (the
 single builder code snapshot) was dropped in migration 0024 — code truth lives in
 `app_registry.current_code` and the build snapshots.
-Ownership is `user_id` (ADR-0004) — every read scoped by it.
+Ownership is `user_id` — every read scoped by it.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from src.db.mixins import OwnedByUserMixin, TimestampMixin, UUIDv7PrimaryKeyMixi
 
 
 class ChatKind(StrEnum):
-    """What a chat IS — chosen when it is created and never changed (R14/R15).
+    """What a chat IS — chosen when it is created and never changed.
 
     This replaced two independent three-valued enums that between them decided one thing: what
     a run is allowed to do. One of them (planning / assistant / builder) gated nothing but a
@@ -81,18 +81,18 @@ chat_kind_enum = sa.Enum(
 class Conversation(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
     __tablename__ = "conversations"
 
-    # The parent project (R2, KD-4). Every conversation — every kind — is a *session*
+    # The parent project. Every conversation — every kind — is a *session*
     # under exactly one project. NOT NULL FK; the DB cascade is a row backstop only
-    # (blob-aware cleanup runs through the U6 service, KD-3a). `user_id` remains the
-    # isolation predicate (ADR-0004); `project_id` is organizational, not tenancy, and
-    # a project and its children always share the same `user_id`.
+    # (blob-aware cleanup runs through the conversation-delete service's project-cascade
+    # path). `user_id` remains the isolation predicate; `project_id` is organizational,
+    # not tenancy, and a project and its children always share the same `user_id`.
     project_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid,
         sa.ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    # Fixed at creation and never changed: there is no route that mutates it (R14/R15), and
+    # Fixed at creation and never changed: there is no route that mutates it, and
     # no server default — a chat whose kind the creator did not choose is a programming error,
     # not a chat that quietly becomes one of them (fail-first).
     kind: Mapped[ChatKind] = mapped_column(chat_kind_enum, nullable=False)
@@ -103,7 +103,7 @@ class Conversation(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base
     # through `POST /conversations` and the header PATCH.
     #
     # NOTHING WRITES IT TODAY, AND IT IS KEPT ANYWAY. It carried the Express-POC builder's
-    # generation settings; `theme` went with the Select Theme control (#157 B1) and
+    # generation settings; `theme` went with the Select Theme control and
     # `uploadedFiles` never had a producer, so the last live round trip through it was dead and
     # has been removed. Production rows still hold POC-era payloads no code can reconstruct, so
     # the column stays and a `DROP COLUMN` is a separate, staged decision — not a dead-code

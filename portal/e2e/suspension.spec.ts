@@ -77,8 +77,8 @@ test('a 403 "Super-admin privileges required." does NOT redirect, and its messag
 })
 
 test('a citizen developer is gated by the SPA before it ever calls the admin API', async ({ page }) => {
-  // RBAC is enforced at the API (.claude/rules/security.md); this client gate is an
-  // affordance, not the enforcement. It must still not crash or look like a suspension.
+  // RBAC is enforced at the API; this client gate is an affordance, not the
+  // enforcement. It must still not crash or look like a suspension.
   await mockSession(page, { isAdmin: false })
   let adminCalls = 0
   await page.route('**/api/admin/**', (route) => {

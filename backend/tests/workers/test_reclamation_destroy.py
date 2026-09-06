@@ -1,4 +1,4 @@
-"""U15 — the destructive half: single-flight, re-validated, ceilinged, allowlisted (R7/R8/R19).
+"""The destructive half: single-flight, re-validated, ceilinged, allowlisted.
 
 This is the only file in the repo where a bug deletes somebody's work, so every protection here
 is asserted by making it FAIL rather than by observing it succeed. Four independent guards, each
@@ -41,7 +41,7 @@ STAGED = {TAG_RECLAIM_STAGED_AT: dt.datetime(2026, 8, 11, tzinfo=dt.UTC).isoform
 
 @pytest.fixture(autouse=True)
 def copy_attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
-    """Every U5 copy-before-reclaim outcome this test recorded, WITHOUT touching the database.
+    """Every copy-before-reclaim outcome this test recorded, WITHOUT touching the database.
 
     AUTOUSE for the same reason as in the reaper's own suite: `record_durable_copy_attempt` opens
     its own session and COMMITS, so any test here that reaches a real reap would leave a permanent
@@ -142,7 +142,7 @@ def test_only_production_may_destroy() -> None:
 
 
 async def test_a_staged_unclaimed_container_is_destroyed() -> None:
-    """*Covers AE1.* Everything concurred, it was staged on an earlier pass, and it goes."""
+    """Everything concurred, it was staged on an earlier pass, and it goes."""
     arm = _Arm()
 
     outcome = await _destroy(arm, ["sbx-ghost"])
@@ -213,7 +213,7 @@ async def test_a_builder_who_came_back_is_spared_even_though_the_tags_never_chan
 
     A staged container stays fully attachable on purpose: `attach_existing` refuses anything
     reading `ending`, so a citizen coming back has to be able to reach it, and coming back is
-    exactly what should spare it. But coming back writes a LOCK, a heartbeat, a stay or an R10
+    exactly what should spare it. But coming back writes a LOCK, a heartbeat, a stay or a
     lease — none of which are ARM tags. So between enumeration and this delete the classifier's
     verdict can go stale in the one direction that costs somebody their work, with every tag
     still saying precisely what it said when we judged it, and the tag re-read waving it through.
@@ -293,7 +293,7 @@ async def test_a_teardown_that_declined_is_not_counted_as_a_destruction() -> Non
 
 
 async def test_the_pass_stops_at_the_ceiling_and_reports_the_remainder() -> None:
-    """*Covers AE12.* A bounded blast radius AND a bounded runtime: ACA sends SIGTERM with a ~30s
+    """A bounded blast radius AND a bounded runtime: ACA sends SIGTERM with a ~30s
     grace, and `asyncio.wait(..., timeout=)` does not cancel on timeout — so a pass that overran
     would be killed mid-flight holding whatever it held.
 
@@ -395,9 +395,10 @@ async def test_the_lock_is_released_even_when_a_teardown_raises() -> None:
 
 
 def test_the_staging_tag_is_not_readable_as_ending() -> None:
-    """`attach_existing` refuses a sandbox whose registry state reads `ending` BEFORE it probes,
-    so a staged container that looked `ending` would be unreachable to the citizen coming back to
-    it — rebuilding a known P0. A staged container must stay fully attachable; a citizen
+    """`attach_existing` refuses a sandbox whose registry state reads `ending` BEFORE it probes, so
+    a staged container that looked `ending` would be unreachable to the citizen coming back to it —
+    reproducing a failure this system has already hit. A staged container must stay fully
+    attachable; a citizen
     returning is precisely what clears the tag and spares it."""
     tags = staging_tags(dt.datetime(2026, 8, 11, tzinfo=dt.UTC))
 
@@ -566,7 +567,8 @@ class _DestroyerYouCanAlsoBundleFrom(FakeSandboxClient):
 
     `_Destroyer` above is neither: it answers the three fleet methods and nothing else, which is
     fine for every test that monkeypatches the reap away, and useless for the one test that must
-    not. U5 writes a real bundle out of the judged container through the SAME client the janitor
+    not. The copy-before-reclaim step writes a real bundle out of the judged container through the
+    SAME client the janitor
     hands the reaper, so the seam is only observable against a double that can do both jobs."""
 
     def __init__(self, *, head: str, bundles_to: str) -> None:
@@ -611,14 +613,15 @@ async def test_the_scheduled_janitor_takes_the_copy_before_it_deletes_anything(
 
     Every other test on this seam monkeypatches `reap_the_container_we_judged`, which is right for
     what they assert — that the janitor reaps by NAME and passes an `app_id` — and is precisely
-    what makes them blind to whether the reap it calls does anything with that id. ADR-0029 §7's
-    promise lives inside the function they replace, and it went unkept for the entire life of the
-    feature: the janitor is the caller with no human watching it, so a container whose autosave
-    had failed was spared on every fifteen-minute pass, indefinitely, at full ACA cost.
+    what makes them blind to whether the reap it calls does anything with that id. The
+    durable-copy- before-reclaim promise lives inside the function they replace, and it went unkept
+    for the entire life of the feature: the janitor is the caller with no human watching it, so a
+    container whose autosave had failed was spared on every fifteen-minute pass, indefinitely, at
+    full ACA cost.
 
     So this one runs the real reap, against a control plane that can both destroy a fleet and be
-    execed in — which is what production hands it. The copy is BEHIND the container, so §7 applies:
-    take one, then reclaim.
+    execed in — which is what production hands it. The copy is BEHIND the container, so the promise
+    above applies: take one, then reclaim.
 
     Mutation check: put `if not verdict.may_destroy: return False` back in
     `reap_the_container_we_judged` and this goes red on `destroyed == 1` — the container is spared
@@ -808,7 +811,7 @@ async def test_one_container_that_refuses_the_stamp_does_not_cost_the_others_the
 ) -> None:
     """A throttled or vanished container is stepped over, not raised on. The stamp is idempotent
     and the next pass retries it; aborting on the first failure would leave the fleet part-staged
-    with no report of what remains — the same rule the C10 tag backfill follows."""
+    with no report of what remains — the same rule the ARM tag backfill follows."""
     from src.services.build_sessions import reclamation_pass as pass_mod
     from src.workers import reclamation
 
@@ -837,9 +840,9 @@ async def test_one_container_that_refuses_the_stamp_does_not_cost_the_others_the
 
 # --- the OTHER scheduled reaper, which does almost all of the deleting -------------
 #
-# `sandbox_reap` ports the F1 sweep onto the worker. It ran with no `app_id` (which is exactly how
-# the U14 durable-copy gate is opted out of) and behind no allowlist at all — so the path that does
-# almost all of the deleting was the one path with none of this plan's protection, while the
+# `sandbox_reap` ports the sweep onto the worker. It ran with no `app_id` (which is exactly how
+# the durable-copy gate is opted out of) and behind no allowlist at all — so the path that does
+# almost all of the deleting was the one path with none of the usual protections, while the
 # report-only pass above carefully guarded the rare case.
 
 
@@ -888,7 +891,8 @@ def test_the_sweep_does_not_stop_because_the_new_pass_is_switched_off(
 ) -> None:
     """THE UPGRADE THAT SILENTLY STOPS REAPING.
 
-    `sweep_all` predates this whole ADR: it ran as an unflagged `while True` in the API lifespan,
+    `sweep_all` predates the reclamation work here: it ran as an unflagged `while True` in the
+    API lifespan,
     wherever a sandbox was configured, and it does almost all of the deleting. Porting it onto
     the scheduler was meant to change WHERE it runs. Gating it on `reclaim_enabled` — which ships
     off in every environment, deliberately — changed WHETHER it runs, so deploying this release
@@ -912,9 +916,9 @@ async def test_the_scheduled_sweep_hands_the_owning_app_ids_to_the_gate(
     monkeypatch: pytest.MonkeyPatch, fake_redis: aioredis.Redis
 ) -> None:
     """WITHOUT THE MAP THE GATE IS OFF ON THIS PATH. `reap_user` only consults
-    `confirm_durable_copy` when it is handed an `app_id`, and this sweep handed it nothing — so
-    U14 protected the rare orphan the janitor collects and not the claimed-but-expired population,
-    which is where the deletions actually happen.
+    `confirm_durable_copy` when it is handed an `app_id`, and this sweep handed it nothing — so the
+    durable-copy gate protected the rare orphan the janitor collects and not the
+    claimed-but-expired population, which is where the deletions actually happen.
 
     Mutation-check: drop `app_ids_by_name=await _owning_app_ids()` from the sweep call and this
     goes red (the sweep is handed `None`, which is indistinguishable from opting out)."""

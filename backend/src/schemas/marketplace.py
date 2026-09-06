@@ -2,12 +2,12 @@
 
 THIS IS THE EXPOSURE BOUNDARY, and it is the reason these models are hand-written rather
 than derived from the ORM rows. Every other list on the platform is scoped by `user_id`
-(ADR-0004: cross-user access is normally an explicit, role-gated, audited action); the
+(cross-user access is normally an explicit, role-gated, audited action); the
 marketplace is a DELIBERATE, REASONED DEVIATION from that default rather than an
 oversight — an enterprise platform where no app is a private document.
-There is no separate ADR document to amend for this (ADR-0004 has no standalone file in
-this repo, only inline citations); what a caller may see about someone else's app is
-instead enumerated in one place a reviewer can check at a glance, here.
+The cross-user policy has no standalone document — only statements like this one at the
+sites that implement it — so what a caller may see about someone else's app is enumerated
+in one place a reviewer can check at a glance, here.
 
 FOUR FIELDS, and nothing else: the application name, its description, the display name of
 the person who built it, and the address it is live at. Never app code, submission
@@ -35,15 +35,15 @@ class MarketplaceEntry(CamelModel):
     and a published app carries no auth of its own — so this endpoint converts "you need to
     already have the URL" into "everyone signed in has every URL, searchable by what the app
     does." No `SECURITY.md` exists in this repo to carry that line separately, so it is
-    recorded here, next to the field that does it (`url`). The mitigating context: #148's
+    recorded here, next to the field that does it (`url`). The mitigating context: the
     `AUTO_DEPLOY_MAX_SCORE = 0` gate already routes any sensitive-category app through
     mandatory admin review before it can go live at all."""
 
-    #: The app's name. `app_registry` carries no name of its own (#48) — the owning
+    #: The app's name. `app_registry` carries no name of its own — the owning
     #: project's name IS the app name.
     name: str
     #: What the app does. Nullable: an app whose builder never wrote one still appears in
-    #: the unfiltered catalog, it simply cannot be found by typing (#145, accepted).
+    #: the unfiltered catalog, it simply cannot be found by typing (accepted).
     #:
     #: WORTH KNOWING, and not a leak: `Project.description` was introduced as CHAT
     #: GROUNDING — private context for the builder's own assistant — and it can be

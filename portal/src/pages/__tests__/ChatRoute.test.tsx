@@ -3,7 +3,7 @@
  *
  * The SLOT is stubbed so this file tests exactly one thing: what the route resolves — which
  * conversation, of which kind, in which project — and when it bails to /projects instead. It used
- * to stub two pages and assert which one mounted; there is one surface now (Plan D U17), so the
+ * to stub two pages and assert which one mounted; there is one surface now, so the
  * resolution IS the contract.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -29,7 +29,7 @@ vi.mock('../../utils/conversationApi.js', () => ({ getConversation: h.getConvers
 vi.mock('../../utils/projectApi', () => ({ getProject: h.getProject }))
 
 /**
- * ONE STUB, AND IT IS THE SLOT (Plan D U17).
+ * ONE STUB, AND IT IS THE SLOT.
  *
  * This file used to stub two PAGES, because the route chose between them and "which one mounts"
  * was the contract. There is one surface now, so the route's contract is the VALUE it hands the
@@ -75,7 +75,7 @@ import { beaconsFrom } from './_observeBeacons'
 import { markProjectOpened } from '../../utils/observe'
 
 /**
- * WHAT THE TOOLBAR ROW WOULD NAME, read straight off the channel (plan 002, U2).
+ * WHAT THE TOOLBAR ROW WOULD NAME, read straight off the channel.
  *
  * The row itself is the shell's and has its own suite; what is only observable HERE is the value
  * this route PUBLISHES, which every one of those scenarios takes as a given. Rendered as one
@@ -136,7 +136,7 @@ afterEach(() => cleanup())
 const beacons = () => beaconsFrom(h.authFetch)
 
 describe('ChatRoute — kind RESOLUTION (it no longer dispatches)', () => {
-  // THE NAME CHANGED BECAUSE THE JOB DID (Plan D U17). These two used to assert which PAGE
+  // THE NAME CHANGED BECAUSE THE JOB DID. These two used to assert which PAGE
   // mounted; there is one surface now, so what is left to be right about is the kind the route
   // RESOLVES and hands on. That is the whole of the route's remaining contract, and it is still
   // worth pinning — the value decides which toolset the server gives the model.
@@ -147,7 +147,7 @@ describe('ChatRoute — kind RESOLUTION (it no longer dispatches)', () => {
   })
 
   // Was "renders BuilderPage for a builder conversation": `builder` was the OLD three-valued
-  // ConversationKind's word. It collapsed into the two-valued ChatKind's `build` (U1).
+  // ConversationKind's word. It collapsed into the two-valued ChatKind's `build`.
   it('resolves a build conversation as build', async () => {
     h.getConversation.mockResolvedValue(conversation({ kind: 'build' }))
     renderRoute('/chat/c1')
@@ -205,7 +205,7 @@ describe('ChatRoute — a conversation whose row does not exist yet', () => {
 })
 
 describe('ChatRoute — the GET that cannot succeed', () => {
-  // A chat this session just minted has no row until the send path creates it (U7), so its
+  // A chat this session just minted has no row until the send path creates it, so its
   // `getConversation` is a guaranteed 404 on every cold new-chat open — and it is not the only
   // one: both pages keep their own hydration fetch, and StrictMode doubles the pair again in dev.
   it('a freshly-minted open issues NO getConversation and renders from the query', async () => {
@@ -266,7 +266,7 @@ describe('ChatRoute — the project breadcrumb', () => {
 })
 
 /**
- * WHAT THE ROW IS TOLD TO NAME (plan 002, U2), and the merge that fills in its title.
+ * WHAT THE ROW IS TOLD TO NAME, and the merge that fills in its title.
  *
  * The row's own rendering is covered in `WorkspaceToolbar.test.tsx`, but every scenario there
  * publishes a SYNTHETIC heading. This is the component that publishes the real one in production,
@@ -461,8 +461,8 @@ describe('ChatRoute — the page is never torn down mid-turn', () => {
 
 describe('ChatRoute — the chat-open mark (U4; R105)', () => {
   it('marks a chat open for a project whose page this load opened', async () => {
-    // R105's numerator, taken at THE resolution seam rather than on the three handlers that
-    // navigate here — those live in components other work is mid-rewrite of.
+    // The chat-open ratio's numerator, taken at THE resolution seam rather than on the three
+    // handlers that navigate here — those live in components other work is mid-rewrite of.
     markProjectOpened('p-open', { hasApp: false })
     h.authFetch.mockClear()
     h.getConversation.mockResolvedValue(conversation({ projectId: 'p-open' }))
@@ -491,7 +491,7 @@ describe('ChatRoute — the chat-open mark (U4; R105)', () => {
 
   it('★ marks nothing for a deep link into a project this load never opened', async () => {
     // A bookmark, a shared link or a browser restore resolves a project whose page was never on
-    // screen. Counting it would push R105's ratio above 1 — a denominator smaller than its
+    // screen. Counting it would push the visit-count ratio above 1 — a denominator smaller than its
     // numerator is not a bias, it is a broken number. And it must not invent the denominator
     // either: no `project_opened` appears here.
     h.getConversation.mockResolvedValue(conversation({ projectId: 'p-deep-link' }))

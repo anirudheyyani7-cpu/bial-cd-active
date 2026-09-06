@@ -1,5 +1,5 @@
 /**
- * Pins the memo contract review round 2's fix 1 restores: `ChatMessageRow` (React.memo,
+ * Pins the memo contract: `ChatMessageRow` (React.memo,
  * BuilderPage.tsx) must actually bail out for a historical bubble when something UNRELATED to
  * that message changes. Before the fix, `handleBuildIt`'s `useCallback` depended on
  * `buildBlockedMessage`/`watchBuildTurn` — two plain in-body functions recreated every render —
@@ -70,7 +70,7 @@ const composer = () => screen.getByPlaceholderText(/ask for another change/i)
 /**
  * How many times MessageContent was invoked for the row carrying this exact text.
  *
- * IT ACCEPTS BOTH SHAPES because the caller changed (Plan D U17). The deleted row component handed
+ * IT ACCEPTS BOTH SHAPES because the caller changed. The deleted row component handed
  * `MessageContent` a whole `parts` ARRAY; the thread's text-part slot hands it the already-
  * assembled STRING of one part. Reading both is what lets this test keep asserting the same
  * property across the rewrite instead of being deleted with the component it was named after.
@@ -93,7 +93,7 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-// RENAMED WITH ITS SUBJECT (Plan D U17). `ChatMessageRow` — the hand-rolled, hand-memoised
+// RENAMED WITH ITS SUBJECT. `ChatMessageRow` — the hand-rolled, hand-memoised
 // transcript row — is deleted. The property it was written to defend is not: typing must not
 // re-render history. It is now defended by construction rather than by a `memo()` call, because
 // the composer's text is local state inside `Composer` and never reaches the transcript at all —

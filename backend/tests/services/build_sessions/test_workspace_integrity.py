@@ -1,4 +1,4 @@
-"""U1 — does this container still hold this app's work? (R1, R2.)
+"""Does this container still hold this app's work?
 
 WHY THIS FILE IS SEPARATE FROM `test_integrity.py`. That one covers the two probes the health
 verdict asks (baseline identity, the agent watermark), which answer "is this app finished". This
@@ -8,9 +8,10 @@ facts the container holds about its own git repository; they share nothing else.
 
 THE TWO TESTS THAT MATTER MOST, and they pull in opposite directions:
 
-* `test_a_factory_reset_container_with_no_durable_copy_at_all_is_still_a_reversion` is the
-  2026-08-18 P0. Every check the platform had came back green on that container because each one
-  asked "is an app running here". This one asks whether the app's own repository is still there.
+* `test_a_factory_reset_container_with_no_durable_copy_at_all_is_still_a_reversion` guards
+  against a real incident: every check the platform had came back green on that container because
+  each one asked "is an app running here". This one asks whether the app's own repository is
+  still there.
 * `test_a_lineage_that_moved_over_a_tree_that_still_holds_content_is_never_a_reversion` is the
   guard against the cure being worse than the disease. `git reset --hard`, `--amend` and `rebase`
   all break the lineage over a perfectly good workspace, and the live Write prompt still teaches
@@ -118,8 +119,8 @@ def test_the_four_field_form_parses_every_field() -> None:
 
 def test_a_truncated_three_field_body_still_parses_and_reads_as_unasked() -> None:
     """★ The shape a container answers with when nobody supplied a reference sha — and the shape
-    every pre-U1 caller of this script produced. It must parse, and the ancestry must be
-    `NOT_ASKED` rather than any judgement about the lineage."""
+    every caller of this script produced before callers started supplying one. It must parse,
+    and the ancestry must be `NOT_ASKED` rather than any judgement about the lineage."""
     state = parse_state("abc123@@@@3")
 
     assert state.head == "abc123"
@@ -202,7 +203,7 @@ async def test_framework_churn_alone_still_reads_as_a_brand_new_project(
 async def test_a_factory_reset_container_with_a_recovery_copy_is_a_reversion(
     store: FakeStorage,
 ) -> None:
-    """★ AE2. No repository at all, on an app whose work was copied at a turn boundary."""
+    """★ No repository at all, on an app whose work was copied at a turn boundary."""
     await _seed_recovery(store)
     client = _client(_stdout(head=None, commits=0, ancestry=""))
 
@@ -218,12 +219,12 @@ async def test_a_factory_reset_container_with_a_recovery_copy_is_a_reversion(
 async def test_a_factory_reset_container_with_no_durable_copy_at_all_is_still_a_reversion(
     store: FakeStorage,
 ) -> None:
-    """★ AE2(b)/AE3 — THE P0, and the arm that is easiest to get backwards.
+    """★ THE CRITICAL CASE, and the arm that is easiest to get backwards.
 
-    A container whose turn-end autosave silently failed (ASM30 says that is a live state) and
-    which then factory-resets has NO durable copy. Reading that as "nothing to compare against,
-    carry on" is exactly how the agent came to build on a wiped tree and stamp the empty tree in
-    as the newest copy of somebody's finished app.
+    A container whose turn-end autosave silently failed (a documented failure mode, not a
+    hypothetical) and which then factory-resets has NO durable copy. Reading that as "nothing to
+    compare against, carry on" is exactly how the agent came to build on a wiped tree and stamp the
+    empty tree in as the newest copy of somebody's finished app.
 
     Mutation check: move the `not facts.any_copy` arm above the `head is None` arm and this goes
     red while every other test here stays green."""
@@ -233,12 +234,13 @@ async def test_a_factory_reset_container_with_no_durable_copy_at_all_is_still_a_
 
     assert verdict.state is WorkspaceState.REVERTED
     assert verdict.may_restore is True
-    assert verdict.durable_copy_exists is False  # U2 takes the no-source arm on this
+    assert verdict.durable_copy_exists is False  # this scenario takes the no-source arm
 
 
 async def test_a_repository_with_work_and_no_durable_copy_is_intact(store: FakeStorage) -> None:
     """A repository that holds real history and has simply never been copied. Nothing to report,
-    nothing to restore from — U3 writes this app's first recovery copy at the end of the turn."""
+    nothing to restore from — the turn-end autosave writes this app's first recovery copy at the
+    end of the turn."""
     client = _client(_stdout(head="abc", commits=6, ancestry=""))
 
     verdict = await workspace_integrity(client, _HANDLE, APP, restore_source_key=None)
@@ -331,8 +333,8 @@ async def test_a_reference_the_repository_does_not_contain_is_unverifiable(
 ) -> None:
     """`--is-ancestor` never ran, so the lineage question was not answered by git — it was
     answered by an object being missing, which has innocent explanations. The conservative arm
-    still protects the user: no restore, and U3 refuses the recovery write, so the good bundle
-    survives for an operator to promote."""
+    still protects the user: no restore, and the turn-end autosave refuses the recovery write,
+    so the good bundle survives for an operator to promote."""
     await _seed_recovery(store)
     client = _client(_stdout(head="abc", commits=1, ancestry="1 128"))
 
@@ -508,7 +510,7 @@ async def test_the_streak_is_counted_per_app(store: FakeStorage) -> None:
 async def test_a_storage_off_deployment_proceeds_silently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ KTD-2, and the guard that keeps local development working. With no store there can be
+    """★ The guard that keeps local development working. With no store there can be
     no durable copy for anyone, so there is nothing to compare against and nothing to restore
     from — a fact about the DEPLOYMENT, not about anybody's work.
 
@@ -609,7 +611,7 @@ async def test_the_probe_never_raises_on_a_container_that_cannot_answer() -> Non
 
 
 def test_a_container_state_defaults_to_not_asked() -> None:
-    """Every pre-U1 construction site (the reaper, the save indicator) supplies no reference, and
+    """Every construction site (the reaper, the save indicator) supplies no reference, and
     must keep meaning "nobody asked" rather than any judgement."""
     assert (
         ContainerState(

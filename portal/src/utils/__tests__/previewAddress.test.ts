@@ -1,5 +1,5 @@
 /**
- * The preview address resolver (Plan A, U2).
+ * The preview address resolver.
  *
  * The whole precedence, every arm violated independently, and above all the ASYMMETRIC cell: the
  * project predicate false while the turn arm still frames. A resolver that "tidied" the two
@@ -61,7 +61,7 @@ describe('resolvePreviewAddress — the precedence', () => {
   })
 
   it('the project preview resolves last, when nothing above it qualifies', () => {
-    // Plan F's first screen: arrive at a project, see the app. There is no chat here at all, so
+    // The first screen: arrive at a project, see the app. There is no chat here at all, so
     // the three arms above are structurally unavailable — this arm is the only one that can
     // answer, and without it the project screen frames nothing.
     expect(

@@ -1,5 +1,5 @@
-"""The native message store (U4) — append/load/repair over the rebuilt `messages` table —
-and the display projection over it (U6)."""
+"""The native message store — append/load/repair over the rebuilt `messages` table —
+and the display projection over it."""
 
 from src.services.messages.projection import (
     AssistantTextItem as AssistantTextItem,

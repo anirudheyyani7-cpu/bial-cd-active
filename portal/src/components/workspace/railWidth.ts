@@ -1,5 +1,5 @@
 /**
- * HOW FAR THE LEFT COLUMN MOVES (plan 002, U7) — the board's four numbers, in one place.
+ * HOW FAR THE LEFT COLUMN MOVES — the board's four numbers, in one place.
  *
  * `ResizeBounds` is a whole artboard about this, and every number on it has a stated reason:
  *

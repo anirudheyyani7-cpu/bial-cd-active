@@ -1,5 +1,5 @@
 /**
- * THE RAIL'S COMPOSER — the mint-and-navigate protocol and R15's kind picker.
+ * THE RAIL'S COMPOSER — the mint-and-navigate protocol and the kind picker.
  *
  * Two things are under test and they fail differently.
  *
@@ -79,7 +79,7 @@ afterEach(() => {
 
 describe('the mint-and-navigate protocol, carried through the deletion', () => {
   it('mints a UUIDv7, not a v4 — this id becomes a primary key', () => {
-    // ADR-0006 wants a sortable primary key. Two sites each kept a private `crypto.randomUUID()`
+    // The id must be a sortable primary key. Two sites each kept a private `crypto.randomUUID()`
     // and both went on producing v4 long after the store's mint moved on. Nothing about the screen
     // looks different when this is wrong.
     renderComposer()

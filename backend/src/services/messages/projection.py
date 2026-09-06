@@ -12,8 +12,7 @@ catch-up snapshot (live) — never a second source of truth. The input is the ra
 
 Hidden rows are excluded from RENDERING but still inform derived state: an unclosed
 `build_started` marker (no `build_outcome` with the same sessionId anywhere after it)
-projects a truthful "a build was running here" anchor — the crashed/mid-build reload story
-(R8).
+projects a truthful "a build was running here" anchor — the crashed/mid-build reload story.
 
 Inside a build session's step rows, only the FIRST row's user prompt renders as a user
 bubble: that is the instruction the user actually sent. Later step-row prompts are the
@@ -39,12 +38,12 @@ from src.services.messages.store import ATTACHMENT_REF_KIND
 PLAN_OPTIONS_TOOL: Final = "present_plan_options"
 
 TELL_THE_USER_TOOL: Final = "tell_the_user"
-"""The mid-work voice channel's wire name (R75). Named HERE, beside the parser both
+"""The mid-work voice channel's wire name. Named HERE, beside the parser both
 emitters call, for the same reason `PLAN_OPTIONS_TOOL` is: the live emitter and this one must
 agree on the spelling or a spoken line renders on one side and not the other."""
 
 PROPOSE_SLICE_TOOL: Final = "propose_first_slice"
-"""The scope-negotiation tool's wire name (R83–R88). Named here for the same reason the
+"""The scope-negotiation tool's wire name. Named here for the same reason the
 other two are: the live emitter and this one must agree on the spelling, and the stored call is
 the record both of them read."""
 
@@ -144,7 +143,7 @@ _LBL_PREVIEW: Final = "Getting your preview ready"
 # commands, so a recognized-only allowlist that leaked argv on the long tail is the bug we refuse.
 _LBL_FALLBACK: Final = "Working on your app"
 
-# R24 — WHAT A LONG OPERATION SAYS WHILE IT IS STILL RUNNING.
+# WHAT A LONG OPERATION SAYS WHILE IT IS STILL RUNNING.
 #
 # EXTENDS the table above rather than adding a second one, and that is the whole design. Every
 # label this module produces — the command classes, `_LBL_FALLBACK`, and the file-area labels
@@ -481,7 +480,7 @@ def command_only_inspects(argv: list[str]) -> bool:
 
 def long_operation_line(label: str) -> str:
     """A step's friendly label, restated for an operation that has outrun the stillness
-    threshold (R24) — the harness's own words for "this is still running".
+    threshold — the harness's own words for "this is still running".
 
     FAILS CLOSED THE SAME WAY THE TABLE DOES. The input is always a label this module already
     produced, so it is already free of argv and file paths; an empty one degrades to
@@ -758,7 +757,7 @@ def clean_pieces(raw: Any) -> list[str]:
 
 
 def render_proposal(proposal: dict[str, Any]) -> str:
-    """R85's message, built by the PLATFORM from the call's arguments.
+    """The proposal's message, built by the PLATFORM from the call's arguments.
 
     THE SHAPE IS THE RENDERER'S, NOT THE MODEL'S PROSE — which is the whole reason the proposal
     is a tool rather than an instruction. "Lists everything back, names the first slice, says

@@ -1,4 +1,4 @@
-"""The Redis key namespace for the sandbox lifecycle (contract C5).
+"""The Redis key namespace for the sandbox lifecycle.
 
 These key strings are a **byte-stable cross-track contract**. Every key is built here, through the
 single `ns()` choke point, so no module ever hand-writes one — drift in a prefix is a cross-track
@@ -7,23 +7,23 @@ break (a lock written under one format is invisible to a reaper reading another)
 a `:`, so the `user_id` axis can never forge a different family, and the type IS the boundary.
 
 Five sandbox families share the environment-scoped root `bial:{environment}:sandbox:`; the segment
-after it is the family discriminator (C5):
+after it is the family discriminator:
 
     bial:{env}:sandbox:lock:{user_id}        string  — one-per-user lock (SET NX EX)
     bial:{env}:sandbox:heartbeat:{user_id}   string  — idle timer (presence = active)
     bial:{env}:sandbox:registry:{user_id}    hash    — {app_name, fqdn, token_ref, created_at,
                                                         state, preview_stay_until?}
-    bial:{env}:sandbox:lease:{user_id}       string  — R10 liveness lease (wall-clock deadline,
+    bial:{env}:sandbox:lease:{user_id}       string  — liveness lease (wall-clock deadline,
                                                         epoch seconds, TTL mandatory)
-    bial:{env}:sandbox:starting:{user_id}    string  — U13 start-in-flight marker (the project id
+    bial:{env}:sandbox:starting:{user_id}    string  — start-in-flight marker (the project id
                                                         being started, TTL mandatory)
 
-The sixth C5 family is the taskiq queue, built in `src/broker.py`: `bial:{env}:taskiq:stream` plus
+The sixth family is the taskiq queue, built in `src/broker.py`: `bial:{env}:taskiq:stream` plus
 the library-derived `autoclaim:<group>:<stream>`, whose literal prefix cannot be moved under
 `bial:` and therefore sits outside the environment-scoping guarantee by construction.
 
 Single-replica deployment ⇒ there is intentionally **NO** `:channel` family: build progress is an
-in-process asyncio channel (C7), not Redis pub/sub.
+in-process asyncio channel, not Redis pub/sub.
 
 Every key carries the environment because production shares one Redis instance with other BIAL
 applications, and a scheduled job reads this namespace as a spare-list and deletes Azure
@@ -49,12 +49,14 @@ KEY_ROOT: Final = "bial:"
 # The sandbox domain segment, below the environment.
 KEY_DOMAIN: Final = "sandbox:"
 
-# The pre-R22 root, frozen as HISTORY rather than taste: it is what the live fleet was registered
-# under, so a typo here silently un-reaches every container the dual-read exists to keep visible.
-# READ-ONLY — nothing writes it, and release B deletes it (C5).
+# The legacy root, from before the environment segment was added to sandbox keys, frozen as
+# HISTORY rather than taste: it is what the live fleet was registered under, so a typo here
+# silently un-reaches every container the dual-read exists to keep visible.
+# READ-ONLY — nothing writes it, and it goes once the fleet inventory reports zero
+# legacy-prefix records.
 LEGACY_KEY_PREFIX: Final = "bial:sandbox:"
 
-# The family discriminators (C5). Named rather than inlined so `ns()` callers and the scan
+# The family discriminators. Named rather than inlined so `ns()` callers and the scan
 # patterns cannot disagree about a spelling.
 FAMILY_LOCK: Final = "lock"
 FAMILY_HEARTBEAT: Final = "heartbeat"
@@ -64,7 +66,7 @@ FAMILY_STARTING: Final = "starting"
 
 
 def _environment() -> str:
-    """This process's environment segment — the scope every sandbox key sits under (C5).
+    """This process's environment segment — the scope every sandbox key sits under.
 
     Delegated to `src.core.runtime_env`, which is a leaf with no module-scope imports: `src.config`
     reaches `src.settings.api`, which imports `src.services.redis.config` — which imports
@@ -86,7 +88,7 @@ def key_prefix() -> str:
 
 
 def ns(family: str, user_id: uuid.UUID) -> str:
-    """THE choke point. Every sandbox key in the platform is this string (C5).
+    """THE choke point. Every sandbox key in the platform is this string.
 
     The `uuid.UUID` check is a runtime guard, not a redundant assertion of the annotation. User ids
     arrive from JSON, from Redis key names and from ARM tags — all places the type checker cannot
@@ -102,22 +104,22 @@ def ns(family: str, user_id: uuid.UUID) -> str:
 
 
 def lock_key(user_id: uuid.UUID) -> str:
-    """`bial:{env}:sandbox:lock:{user_id}` — the one-per-user lock (C5). Held via `SET … NX EX`;
-    `NX` is the enforcement point for C2's one-sandbox-per-user rule. Released LAST
-    (compare-and-delete) in the C4 / reaper ordering."""
+    """`bial:{env}:sandbox:lock:{user_id}` — the one-per-user lock. Held via `SET … NX EX`;
+    `NX` is the enforcement point for the client ABC's one-sandbox-per-user rule. Released
+    LAST (compare-and-delete) in the snapshot / teardown / reaper ordering."""
     return ns(FAMILY_LOCK, user_id)
 
 
 def heartbeat_key(user_id: uuid.UUID) -> str:
-    """`bial:{env}:sandbox:heartbeat:{user_id}` — the idle timer (C5). Rewritten with a fresh
+    """`bial:{env}:sandbox:heartbeat:{user_id}` — the idle timer. Rewritten with a fresh
     expiry on each activity; **expiry = idle** (eligible for reaper teardown, which snapshots
-    first per C4)."""
+    first)."""
     return ns(FAMILY_HEARTBEAT, user_id)
 
 
 def registry_key(user_id: uuid.UUID) -> str:
-    """`bial:{env}:sandbox:registry:{user_id}` — the sandbox record hash (C5). Read on
-    `attach_existing` (C2) to reconnect. Fields are the `REGISTRY_FIELD_*` constants below;
+    """`bial:{env}:sandbox:registry:{user_id}` — the sandbox record hash. Read on
+    `attach_existing` to reconnect. Fields are the `REGISTRY_FIELD_*` constants below;
     `state` is the reaper's durable mark-ending marker.
 
     THE ONLY WRITE TARGET for the registry. The legacy key below is read-only."""
@@ -125,7 +127,7 @@ def registry_key(user_id: uuid.UUID) -> str:
 
 
 def lease_key(user_id: uuid.UUID) -> str:
-    """`bial:{env}:sandbox:lease:{user_id}` — the R10 wall-clock liveness lease (C5 family 4).
+    """`bial:{env}:sandbox:lease:{user_id}` — the wall-clock liveness lease (family 4).
 
     The value is a deadline in Unix epoch seconds (`time.time()`, never `time.monotonic()` — a
     monotonic reading means nothing outside the process that took it, and cross-process
@@ -136,7 +138,7 @@ def lease_key(user_id: uuid.UUID) -> str:
 
 
 def starting_key(user_id: uuid.UUID) -> str:
-    """`bial:{env}:sandbox:starting:{user_id}` — the U13 start-in-flight marker (C5 family 5).
+    """`bial:{env}:sandbox:starting:{user_id}` — the start-in-flight marker (family 5).
 
     The value is the `project_id` (str(uuid.UUID)) being started, and it **must** carry a TTL
     bounded by the cold-start budget plus margin: the marker is one of the disjuncts that spare
@@ -153,11 +155,12 @@ def starting_key(user_id: uuid.UUID) -> str:
 
 
 def legacy_registry_key(user_id: uuid.UUID) -> str:
-    """`bial:sandbox:registry:{user_id}` — the pre-R22 registry key. **READ-ONLY.**
+    """`bial:sandbox:registry:{user_id}` — the legacy registry key. **READ-ONLY.**
 
     Every write goes to `registry_key`. This exists so the dual-read window can still reach a
     fleet registered before the environment segment did, and so `delete_registry` can clear the
-    key a migration may have left behind. Deleted in release B (C5)."""
+    key a migration may have left behind. It goes once the fleet inventory reports zero
+    legacy-prefix records."""
     if not isinstance(user_id, uuid.UUID):
         raise TypeError(
             f"a sandbox key is built from a uuid.UUID, never a {type(user_id).__name__}"
@@ -179,34 +182,36 @@ def registry_scan_patterns() -> tuple[str, ...]:
 
 REGISTRY_FIELD_APP_NAME: Final = "app_name"
 REGISTRY_FIELD_FQDN: Final = "fqdn"
-# A REFERENCE to the supervisor bearer token — NEVER the raw token (C5): the raw
-# token lives only in the sandbox env (C1) and in-process in SandboxHandle.token.
+# A REFERENCE to the supervisor bearer token — NEVER the raw token: the raw token
+# lives only in the sandbox container's own env and in-process in SandboxHandle.token.
 REGISTRY_FIELD_TOKEN_REF: Final = "token_ref"
 REGISTRY_FIELD_CREATED_AT: Final = "created_at"
 REGISTRY_FIELD_STATE: Final = "state"
 # A relaunched preview's STAY OF EXECUTION: the ISO-8601 UTC instant its bounded
-# lease lapses (#43). A relaunched preview holds no lock and renews no heartbeat, so
+# lease lapses. A relaunched preview holds no lock and renews no heartbeat, so
 # absent this field the background sweep would reap a preview the user is still
 # looking at. Honored by `sweep_all` ONLY — reconcile-on-start reaps regardless,
 # because the incoming build needs the one-per-user slot.
 REGISTRY_FIELD_PREVIEW_STAY_UNTIL: Final = "preview_stay_until"
-# WHICH NAMED WRITER last moved the stay above (U13, R13). Provenance, not control flow:
+# WHICH NAMED WRITER last moved the stay above. Provenance, not control flow:
 # nothing branches on it, and it exists so an operator staring at a container that refuses
 # to lapse can answer "what is holding this open?" without guessing. A deadline with no
-# attributable author is the state R13 exists to remove.
+# attributable author is the state this field exists to remove.
 REGISTRY_FIELD_STAY_WRITER: Final = "stay_writer"
 
-# THIS PROCESS ADOPTED THIS RECORD FROM THE LEGACY PREFIX (R22 dual-read window). Written only by
-# `_adopt_a_pre_cutover_record`, read only by `delete_registry`, and gone in release B with the
-# rest of the legacy arm.
+# THIS PROCESS ADOPTED THIS RECORD FROM THE LEGACY PREFIX during the dual-read window that lets a
+# process still reach fleets registered under the un-scoped legacy prefix. Written only by
+# `_adopt_a_pre_cutover_record`, read only by `delete_registry`, and it goes with the rest of
+# the legacy arm once the fleet inventory reports zero legacy-prefix records.
 #
 # It exists because the legacy prefix is the one namespace with NO environment segment, so
 # `bial:sandbox:registry:{user}` means different containers in different deployments that share a
 # Redis instance. `delete_registry` deleted it unconditionally: a process reaping its own session
 # also deleted whatever another environment had under that key — leaving the owning environment a
-# running container with no record, which is exactly the orphan class ADR-0029 exists to collect,
-# manufactured by R22's own cleanup. The adoption path already refuses to delete on read for this
-# reason; this marker extends the same rule to the one place that still deletes.
+# running container with no record, which is exactly the class of orphan the scheduled fleet sweep
+# exists to collect, manufactured by the environment-scoping migration's own cleanup. The adoption
+# path already refuses to delete on read for this reason; this marker extends the same rule to the
+# one place that still deletes.
 #
 # Durable rather than in-process, because the delete happens in a later session — often a later
 # process — than the adoption.
@@ -227,7 +232,7 @@ REGISTRY_FIELDS: Final = frozenset(
     }
 )
 
-# The two lifecycle values the reaper writes to REGISTRY_FIELD_STATE (C5): `ready`
+# The two lifecycle values the reaper writes to REGISTRY_FIELD_STATE: `ready`
 # is the normal live state; `ending` is the durable mark-ending marker set FIRST in
 # the reaper ordering (mark-ending → teardown → release lock) so a concurrent
 # attach sees a dying container and does not reconnect.

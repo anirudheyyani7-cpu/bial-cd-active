@@ -1,7 +1,7 @@
-"""Per-model-step metering across the multi-run loop (U6, KD-1/KD-3, C7 §6).
+"""Per-model-step metering across the multi-run loop.
 
 enforce-before / record-after, one billing session per step, BRAIN owns the commit — charged to the
-session owner (ADR-0025), written into the rolled-back test transaction.
+session owner, written into the rolled-back test transaction.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _ready_fake() -> FakeSandbox:
 async def test_two_model_steps_fold_two_per_step_usages(db_session, billing_factory, sink) -> None:
     user = await UserFactory.create(db_session)
     fake = _ready_fake()
-    # TWO TOOL STEPS, NOT "a tool step then the closing paragraph" (U18/R30): a passing
+    # TWO TOOL STEPS, NOT "a tool step then the closing paragraph": a passing
     # `declare_done` now ENDS the run in this harness too, so a script that put it first only
     # ever bought one model step and this test measured folding against a single usage.
     model = scripted_model(
@@ -65,7 +65,7 @@ async def test_two_model_steps_fold_two_per_step_usages(db_session, billing_fact
     # Both per-step RequestUsages folded verbatim (no subtraction) — charged to the owner.
     assert row.input_tokens == 111
     assert row.output_tokens == 222
-    # The cache columns are the R1 read-out: now that the loop sets Anthropic breakpoints
+    # The cache columns are the read-out: now that the loop sets Anthropic breakpoints
     # (`CACHE_TTL`), a real build reports these non-zero and they must reach `token_usage`
     # unaltered — the path the admin roster reads.
     assert row.cache_read_tokens == 8
@@ -82,7 +82,7 @@ async def test_enforce_raises_on_second_step_so_that_request_never_fires(
     model = scripted_model(
         [
             # Step 1 spends exactly the cap; step 2's pre-request enforce then trips. Step 1 is a
-            # NON-terminal tool call: a passing `declare_done` ends the run outright (U18/R30), so
+            # NON-terminal tool call: a passing `declare_done` ends the run outright, so
             # putting it here would mean there was never a second request for the gate to block.
             tool_turn(
                 "write_file",
@@ -99,7 +99,7 @@ async def test_enforce_raises_on_second_step_so_that_request_never_fires(
     # Graceful quota end, not a failure.
     assert result.status == BuildSessionStatus.ENDED
     assert any(e.type == "quota_exceeded" for e in sink.events)
-    assert result.reason == "quota_exceeded"  # on the verdict; BRAIN emits no terminal (R7)
+    assert result.reason == "quota_exceeded"  # on the verdict; BRAIN emits no terminal
     # The second step's request never fired: only step 1's 100 input tokens were ever recorded
     # (the 999/999 usage would appear if the blocked request had run).
     row = await _usage_row(db_session, user.id)
@@ -120,7 +120,7 @@ async def test_build_result_app_id_comes_from_the_run_context(
     result = await orchestrator.run_build(uuid.uuid4(), user.id, fake, sink)
 
     assert app_id == expected_app_id
-    assert result.app_id == expected_app_id  # from the KD-13 provider, not derived from app_name
+    assert result.app_id == expected_app_id  # from the provider, not derived from app_name
 
 
 async def test_record_step_db_blip_is_logged_and_the_build_continues(
@@ -157,7 +157,7 @@ async def test_attach_gone_escalates_and_never_raises(db_session, billing_factor
     assert result.snapshot_committed is False
     assert result.app_id == app_id  # known from the run-context, even though attach failed
     assert any(e.type == "escalation" and e.reason == "sandbox_gone" for e in sink.events)
-    assert not any(e.type == "ended" for e in sink.events)  # the terminal is SESSION-API's (R7)
+    assert not any(e.type == "ended" for e in sink.events)  # the terminal is SESSION-API's
     assert fake.dev_start_calls == 0  # never got past attach
 
 
@@ -194,7 +194,7 @@ async def test_tool_runtime_error_escalates_and_never_escapes(
     result = await orchestrator.run_build(uuid.uuid4(), user.id, fake, sink)  # must NOT raise
 
     assert result.status == BuildSessionStatus.FAILED
-    # BRAIN emits no terminal; the verdict carries the end and the seq baton (R7/KD-12).
+    # BRAIN emits no terminal; the verdict carries the end and the seq baton.
     assert not any(e.type == "ended" for e in sink.events)
     assert result.last_seq == max(e.seq for e in sink.events)
     assert any(e.type == "escalation" for e in sink.events)

@@ -1,8 +1,8 @@
 """App-row resolution + the base provision-env builder.
 
 `resolve_app_for_project` maps a project to its single `app_registry` row — minting the
-`bial_…` app-key on first build, reusing it forever after — scoped by the owning `user_id`
-(ADR-0004). `build_app_env` returns the two vars injected at provision and re-injected on
+`bial_…` app-key on first build, reusing it forever after — scoped by the owning `user_id`.
+`build_app_env` returns the two vars injected at provision and re-injected on
 restore: `BIAL_APP_ID`, the only structural read of `app_env`, and `BIAL_PORTAL_ORIGIN`,
 the Caddy `frame-ancestors` origin, which fails closed when unset.
 
@@ -32,11 +32,11 @@ async def resolve_app_for_project(
     db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID
 ) -> uuid.UUID:
     """Resolve the project's ONE app (mint on first build, reuse thereafter) and return its
-    id. Owner-scoped (ADR-0004). The CALLER owns the commit (U5). The upsert still mints
+    id. Owner-scoped. The CALLER owns the commit. The upsert still mints
     `app_key` on insert — the key is read back by `GET /apps/{id}/status`, not by callers
     of this function."""
     project = await owned_project_or_404(db, user_id, project_id)
-    # The frozen one-app-per-project upsert (KTD-6): a first build INSERTs + mints the
+    # The frozen one-app-per-project upsert: a first build INSERTs + mints the
     # key; a repeat DO-UPDATEs (bumps `updated_at`) and returns the SAME row + original
     # key. The owner-guarded WHERE means the DO-UPDATE only touches the caller's own app.
     # No `conversation_id` here — a build session is project-first, not conversation-bound.
@@ -70,8 +70,8 @@ async def resolve_app_for_project(
 
 
 def _origin(url: str) -> str:
-    """The bare origin (`scheme://host[:port]`, no path / trailing slash) of a URL, per
-    C8 §1 — `FRONTEND_URL` is a plain `str`, not guaranteed path-free."""
+    """The bare origin (`scheme://host[:port]`, no path / trailing slash) of a URL —
+    `FRONTEND_URL` is a plain `str`, not guaranteed path-free."""
     parts = urlsplit(url)
     if parts.scheme and parts.netloc:
         return f"{parts.scheme}://{parts.netloc}"
@@ -80,7 +80,7 @@ def _origin(url: str) -> str:
 
 def build_app_env(app_id: uuid.UUID) -> dict[str, str]:
     """The two always-present `BIAL_*` env vars injected into the sandbox at provision and
-    re-injected on restore (the app identity + the C8 `BIAL_PORTAL_ORIGIN`). Requires a
+    re-injected on restore (the app identity + the `BIAL_PORTAL_ORIGIN`). Requires a
     configured sandbox (the router's 503 gate runs first, so this is reached only in the
     configured path) — the check stays because a sandbox-less caller has no business
     building a sandbox env at all, and it is the seam the 503 test pins."""

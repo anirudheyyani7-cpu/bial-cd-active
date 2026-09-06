@@ -6,8 +6,8 @@ Two guarantees:
    for a password field that means leaking the plaintext (and it may be logged).
    We return only ``type``/``loc``/``msg``.
 2. Any unhandled exception returns a generic 500 with no internal detail; the real
-   error is logged server-side only (`.claude/rules/security.md`: NEVER expose
-   internal errors to the frontend).
+   error is logged server-side only. NEVER expose an internal error to the
+   frontend.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class AppApiError(Exception):
     ``code`` is surfaced under ``error.code`` so the SPA can branch on it rather than
     string-matching the message, and an optional structured ``detail`` is surfaced
     under ``error.detail`` for the refusals a client must RENDER rather than merely
-    branch on (R15b's waiting-for-review 409 carries the pending state, the submitted
+    branch on (the waiting-for-review 409 carries the pending state, the submitted
     version and the rejection note, so neither citizen surface needs a second call).
     ``detail`` must be JSON-ready — plain strings/numbers/bools/None only, never an
     un-serialisable object and never internal identifiers a citizen must not see.
@@ -76,7 +76,7 @@ def app_api_error_handler(request: Request, exc: Exception) -> JSONResponse:
 #
 #     Value error, name must be at most 120 characters
 #
-# The validators now write for a person (#158 §14), and the prefix is the one part they
+# The validators now write for a person, and the prefix is the one part they
 # cannot remove themselves — it is added after they raise. So it comes off HERE, at the
 # boundary that already exists to curate what leaves.
 #

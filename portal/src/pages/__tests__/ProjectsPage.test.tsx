@@ -1,12 +1,12 @@
 /**
  * ProjectsPage (`/projects`) — the landing screen: three numbers, then list or grid.
  *
- * #158 replaced the card grid with two views, numbered pagination and a summary strip, so
+ * The card grid gave way to two views, numbered pagination and a summary strip, so
  * this file was rewritten rather than patched. What it used to assert — a "Load more"
  * button, the first-run CTA that named creating a project, the card grid as the ONLY
  * layout — describes a page
- * that no longer exists, and §16.3 names that describe block as dead code to remove rather
- * than leave failing beside the new work.
+ * that no longer exists, so that block was deleted as dead code rather
+ * than left failing beside the new work.
  *
  * The data layer is mocked at the module boundary; the page's own paging state runs for
  * real, because that is what is being exercised. A LocationProbe outside the Routes reports
@@ -133,7 +133,7 @@ describe('list and grid', () => {
     expect(await screen.findByText('Visitor Log')).toBeTruthy()
     expect(screen.getByText('Application')).toBeTruthy()
     // "Details updated", never "Last updated": `updatedAt` moves on a rename or a
-    // description edit and never on a build, publish or deploy (§10 Trap 1).
+    // description edit and never on a build, publish or deploy.
     expect(screen.getByText('Details updated')).toBeTruthy()
     expect(screen.queryByText('Last updated')).toBeNull()
   })
@@ -265,7 +265,7 @@ describe('the states', () => {
 
     const empty = await screen.findByTestId('projects-empty')
     expect(within(empty).getByText('Nothing here yet')).toBeTruthy()
-    // No composer, no chat-kind toggle, no second "name it yourself" path (§11).
+    // No composer, no chat-kind toggle, no second "name it yourself" path.
     expect(within(empty).getAllByRole('button')).toHaveLength(1)
   })
 
@@ -295,7 +295,7 @@ describe('the states', () => {
   })
 
   it('a LATER page failure keeps the rows already on screen', async () => {
-    // §11's rule: never blank the list the reader is using.
+    // The rule under test: never blank the list the reader is using.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 12, totalPages: 2 }))
     renderPage()
     await screen.findByText('Alpha')
@@ -374,7 +374,7 @@ describe('create and delete', () => {
     renderPage()
     await screen.findByText('Alpha')
 
-    // The trap §16 names first: adding it to the controls row without deleting the page
+    // The trap: adding it to the controls row without deleting the page
     // header's one ships two.
     expect(screen.getAllByRole('button', { name: /New project/i })).toHaveLength(1)
   })
@@ -386,7 +386,7 @@ describe('create and delete', () => {
     await screen.findByText('Alpha')
 
     fireEvent.click(screen.getByLabelText('Delete Alpha'))
-    // The dialog gates on a 5-50 word reason (#158 §13.1), which the page forwards to the
+    // The dialog gates on a 5-50 word reason, which the page forwards to the
     // API. Its own bounds are asserted in ProjectDeleteDialog.test.tsx; here it just has to
     // be valid so the delete runs.
     fireEvent.change(await screen.findByLabelText(/why are you deleting/i), {
@@ -399,8 +399,7 @@ describe('create and delete', () => {
   })
 
   it('a delete failure does not auto-dismiss, and carries a failure marker', async () => {
-    // CARRIED FORWARD FROM #172, which landed this contract on the page this rewrite
-    // replaced. Rewriting a file is the easiest way to drop a behaviour nobody restates,
+    // Rewriting a file is the easiest way to drop a behaviour nobody restates,
     // so it is restated: the marker distinguishes a failure at a glance, and it has its own
     // testid because the dismiss button's X is an svg too — "some icon in the toast" would
     // let a mutant that deletes the marker pass.
@@ -423,7 +422,7 @@ describe('create and delete', () => {
   })
 
   it('does not flash the first-run state while a cleared search is still debouncing', async () => {
-    // ALSO FROM #172. `appliedQuery` is what decides what an empty list MEANS; branching on
+    // `appliedQuery` is what decides what an empty list MEANS; branching on
     // the live input would read a cleared box as "this person has no projects" and flash
     // the first-run panel at someone who has plenty.
     h.listProjects.mockResolvedValue(page([]))
@@ -521,7 +520,7 @@ describe('create and delete', () => {
   })
 
   it('jumps to the first page and back, without walking', async () => {
-    // §2 spells the control set literally — « ‹ 1 2 › ». Both jumps were missing.
+    // The control set is spelled out literally — « ‹ 1 2 › ». Both jumps were missing.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 80, totalPages: 10 }))
     renderPage()
     await screen.findByText('Alpha')
@@ -566,7 +565,6 @@ describe('create and delete', () => {
     // FOCUS LANDS ON THE HEADING, not <body>. The row (and its Delete button, the trigger
     // Radix would otherwise try to restore focus to) left the DOM well before the dialog
     // closed, so a detached-node no-op is exactly the failure this proves did not happen
-    // (round-4 finding 2).
     expect(document.activeElement?.textContent).toBe('Your apps')
   })
 

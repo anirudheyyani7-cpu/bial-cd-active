@@ -1,4 +1,4 @@
-"""The per-question merge truth table (U6, R9/R5/P8) — written FIRST, before merge.py.
+"""The per-question merge truth table — written FIRST, before merge.py.
 
 Every cell of the plan's merge table gets a named test. The module under test is PURE —
 no database, no model, no I/O — so the table can be pinned exhaustively, which is the
@@ -7,7 +7,7 @@ would prove nothing about it.
 
 Two upstream mappings the table relies on are documented by their own tests here rather
 than hidden in the service: a Yes with invalid evidence was ALREADY downgraded to
-unanswered before storage (R4 — the merge never sees it), and "no review at all",
+unanswered before storage (the merge never sees it), and "no review at all",
 "review still running" and "review never returned" all reach the merge as the SAME
 absent verdict (`review_verdict=None`) — the gate's ladder rule 4 is what routes those,
 not the merge.
@@ -78,7 +78,7 @@ def test_review_yes_over_citizen_no_is_yes_and_the_disagreement_is_recorded() ->
 
 
 # ---------------------------------------------------------------------------------------
-# Row 2: review Yes (evidence invalid) → treated as Unanswered — UPSTREAM (R4).
+# Row 2: review Yes (evidence invalid) → treated as Unanswered — UPSTREAM.
 # ---------------------------------------------------------------------------------------
 
 
@@ -108,7 +108,7 @@ def test_review_no_citizen_no_is_no() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Row 5: review Unanswered | citizen decides alone (R5) — no disagreement to record
+# Row 5: review Unanswered | citizen decides alone — no disagreement to record
 # ---------------------------------------------------------------------------------------
 
 
@@ -125,11 +125,11 @@ def test_review_unanswered_citizen_no_decides_no() -> None:
 
 
 def test_a_yes_discarded_for_bad_evidence_routes_instead_of_falling_to_the_citizen() -> None:
-    # R4 turns a Yes whose every cited location is absent into UNANSWERED, which from the
-    # verdict alone is indistinguishable from an honest abstention — so it used to land on
-    # the citizen's answer and publish. "Not evidence" and "not a signal" are different
-    # things: the agent DID raise this, and raising it on hallucinated citations is the
-    # last state that should buy less scrutiny. It routes and the discard is recorded.
+    # The upstream downgrade turns a Yes whose every cited location is absent into UNANSWERED,
+    # which from the verdict alone is indistinguishable from an honest abstention — so it used to
+    # land on the citizen's answer and publish. "Not evidence" and "not a signal" are different
+    # things: the agent DID raise this, and raising it on hallucinated citations is the last state
+    # that should buy less scrutiny. It routes and the discard is recorded.
     merged = _merge(review=Verdict.UNANSWERED, citizen_yes=False, downgraded_from_yes=True)
     assert merged.effective_yes is True
     assert merged.weighted_yes is True
@@ -138,7 +138,7 @@ def test_a_yes_discarded_for_bad_evidence_routes_instead_of_falling_to_the_citiz
 
 def test_an_honest_abstention_is_still_the_citizens_alone() -> None:
     # The mutant guard for the test above: without the flag the SAME verdict must still
-    # fall to the citizen (R5). If this ever goes green with `effective_yes is True`, the
+    # fall to the citizen. If this ever goes green with `effective_yes is True`, the
     # routing rule has stopped keying off the discard and started keying off UNANSWERED.
     merged = _merge(review=Verdict.UNANSWERED, citizen_yes=False, downgraded_from_yes=False)
     assert merged.effective_yes is False
@@ -146,7 +146,7 @@ def test_an_honest_abstention_is_still_the_citizens_alone() -> None:
 
 
 def test_a_discarded_yes_at_weight_zero_still_routes_nothing() -> None:
-    # Public Data is untouched by any of this (ASM22): weight zero contributes no routing
+    # Public Data is untouched by any of this: weight zero contributes no routing
     # however the answer was arrived at.
     merged = _merge(
         review=Verdict.UNANSWERED,
@@ -162,7 +162,7 @@ def test_a_discarded_yes_at_weight_zero_still_routes_nothing() -> None:
 # ---------------------------------------------------------------------------------------
 # Rows 6-7: no review at all / review still running → citizen's answer.
 # Both reach the merge as `review_verdict=None`; ROUTING those states is ladder rule 4's
-# job (U9), never the merge's.
+# job, never the merge's.
 # ---------------------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ def test_review_still_running_maps_to_the_same_absent_verdict() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Row 8: any | any | Tier A hit, review ran → the REVIEW'S verdict decides (P8); an
+# Row 8: any | any | Tier A hit, review ran → the REVIEW'S verdict decides; an
 # overrule is recorded as a dispute. The scan never overrides a review that ran — the
 # citizen merge still applies on top, exactly as on every other row.
 # ---------------------------------------------------------------------------------------
@@ -196,7 +196,7 @@ def test_tier_a_with_review_yes_is_yes_and_no_dispute() -> None:
 def test_tier_a_overrule_routes_even_when_both_sides_answered_no() -> None:
     # THE CELL THE WHOLE DISPUTE RECORD EXISTS FOR, and the one where it used to reach
     # nobody. The model was SHOWN a Tier A hit and said No; the citizen said No too.
-    # Recording the disagreement was P8's compensation for making the scan non-binding,
+    # Recording the disagreement was the compensation for making the scan non-binding,
     # but the record renders only on the administrator's review screen, which is only
     # ever opened for an app that ROUTED — so on the one app where the scan is the sole
     # remaining signal, the note was written to a page nobody would open. It routes now.
@@ -227,7 +227,7 @@ def test_tier_a_overrule_with_citizen_yes_records_both() -> None:
 
 def test_tier_a_with_review_unanswered_citizen_decides_and_no_dispute() -> None:
     # An overrule is the model saying NO to a shown Tier A hit; an honest abstention is
-    # R5's defined state — the citizen decides, and no dispute is recorded.
+    # Row 5's defined state — the citizen decides, and no dispute is recorded.
     merged = _merge(review=Verdict.UNANSWERED, citizen_yes=False, scan=ScanSignal.TIER_A)
     assert merged.effective_yes is False
     assert merged.recorded == ()
@@ -235,7 +235,7 @@ def test_tier_a_with_review_unanswered_citizen_decides_and_no_dispute() -> None:
 
 # ---------------------------------------------------------------------------------------
 # Row 9: no review at all | Tier A hit → Yes — the scan IS the answer when the model
-# never returned (P8's second obligation), recorded as standing in.
+# never returned, recorded as standing in.
 # ---------------------------------------------------------------------------------------
 
 
@@ -296,7 +296,7 @@ def test_public_data_merges_the_same_way_but_never_weights() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Aggregation — the shape U9's stricter-of gate consumes.
+# Aggregation — the shape the stricter-of gate consumes.
 # ---------------------------------------------------------------------------------------
 
 

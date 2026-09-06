@@ -1,21 +1,19 @@
-"""The Redis error TAXONOMY, and the single place it becomes an HTTP status (KD-1).
+"""The Redis error TAXONOMY, and the single place it becomes an HTTP status.
 
 Two Redis failure modes look alike and are not alike, and collapsing them is an
-anti-pattern this repo has already shipped and been burned by (see
-`docs/solutions/best-practices/green-tests-that-prove-nothing-fixture-and-passthrough-coverage-gaps-2026-07-17.md`
-— a uniform "unavailable ⇒ 503" 503'd every build start on deployments that had
-deliberately switched the dependency off, with the whole suite green because the
-fixture always bound one):
+anti-pattern this repo has already shipped and been burned by: a uniform "unavailable
+⇒ 503" 503'd every build start on deployments that had deliberately switched the
+dependency off, with the whole suite green because the fixture always bound one.
 
 * `RedisNotConfiguredError` is a CERTAIN answer. Redis is genuinely optional outside
   production (`settings.redis: RedisConfig | None`), and with no Redis there is no
   build-session subsystem at all — so no lock can be held, and the caller PROCEEDS.
 * `RedisError` is AMBIGUITY. The store exists and failed to answer, so a check over it
-  decided nothing → 503 (`.claude/rules/fail-first.md`: any error or ambiguity denies).
+  decided nothing → 503 (fail-first: any error or ambiguity denies).
 
 Anything else propagates untouched — this is a taxonomy, never a catch-all.
 
-WHY THIS LIVES IN `services/redis/` and not `services/build_sessions/` (KD-5): the
+WHY THIS LIVES IN `services/redis/` and not `services/build_sessions/`: the
 build-sessions package has a real module-level import cycle
 (`build_sessions/__init__ → locks → api.build_sessions.schemas → its router → deps →
 back into the half-initialized package`), which `apps/router.py` works around with a
@@ -38,11 +36,12 @@ from src.services.redis.client import RedisNotConfiguredError
 
 _log = structlog.get_logger()
 
-# USER-FACING COPY, not a log line. `portal/src/hooks/useBuildSession.ts:130` surfaces the
-# backend's 503 message VERBATIM (asserted at `useBuildSession.test.ts:76-83`), so this
+# USER-FACING COPY, not a log line. The portal surfaces this 503 message VERBATIM — an
+# `ApiError`'s `message` becomes the citizen-facing reason, asserted in the portal's
+# `StartAppControl.test.tsx` ("carries the server's named reason verbatim") — so this
 # string is read by citizen developers: professional, actionable, and leaking no internal
-# detail (`.claude/rules/security.md`). It is hoisted to a constant so the router and this
-# helper can never drift apart into two subtly different apologies.
+# detail. It is hoisted to a constant so the router and this helper can never drift
+# apart into two subtly different apologies.
 BUILD_COORDINATION_UNAVAILABLE_MSG: Final = (
     "Build coordination is temporarily unavailable. Please try again."
 )

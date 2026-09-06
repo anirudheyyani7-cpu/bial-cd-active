@@ -1,7 +1,7 @@
 """The per-conversation guardrail, at the routes that enforce it.
 
 ★ THIS IS THE FILE WHOSE ABSENCE LET THE REGRESSION THROUGH. The old client-side guardrail died
-with `ChatPage.tsx` in #170 and nothing turned red, because the only tests that covered it were
+with `ChatPage.tsx` and nothing turned red, because the only tests that covered it were
 deleted in the same commit. Meanwhile an administrator had been setting a number in a field
 whose help text promised a hard stop, and no call site anywhere — front or back — read it.
 
@@ -232,8 +232,8 @@ async def test_an_administrator_override_changes_what_the_platform_accepts(
     have changed the answer is the number an administrator typed.
 
     Without this test the unit has not done its job: a gate hard-wired to `DEFAULT_CONTEXT_HARD`
-    would pass every other test in this file and leave `UsersLimitsPanel.tsx:193`'s "Hard stop
-    for a single chat" exactly as false as it was."""
+    would pass every other test in this file and leave `UsersLimitsPanel.tsx`'s "Hard stop
+    for a single chat" hint exactly as false as it was."""
     size = 40_000
 
     allowed_user, _p1, allowed_conv = await _a_conversation(db_session)
@@ -281,7 +281,7 @@ async def test_a_user_with_no_override_is_governed_by_the_default(client, db_ses
 
 
 # =============================================================================
-# The second door (KTD-4)
+# The second door
 # =============================================================================
 
 
@@ -406,7 +406,7 @@ async def test_an_accepted_turn_still_resolves_a_pending_card(
 
     Moving the guardrail above `resolve_pending_as_refine` reordered a write. This is the test
     that the write still happens on the path where it should: free text past a pending card, in
-    a conversation comfortably under the limit, resolves the card as U11 intends."""
+    a conversation comfortably under the limit, resolves the card."""
     user, _project, conversation = await _a_conversation(db_session)
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model()
     assert (await _send(client, user, conversation.id, "plan it")).status_code == 202

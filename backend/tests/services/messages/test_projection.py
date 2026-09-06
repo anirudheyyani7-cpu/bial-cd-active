@@ -1,9 +1,9 @@
-"""U6 — the one history→display derivation (`services/messages/projection.py`).
+"""The one history→display derivation (`services/messages/projection.py`).
 
 Rows are written through the REAL producers/store (`append_batch`, `write_build_started`,
-`write_build_outcome`) in the exact shapes U5 pinned
+`write_build_outcome`) in the exact shapes pinned
 (`test_transcript_steps.py` / `test_producers.py`), so these tests break when the producer
-contract drifts — which is the point. The golden build test doubles as U10's parity fixture:
+contract drifts — which is the point. The golden build test doubles as the parity fixture:
 the live stream must render THIS list for THIS transcript.
 """
 
@@ -68,7 +68,7 @@ async def _thread(db_session):
 
 
 async def _step(db_session, user, conversation, session_id, messages) -> None:
-    """One BRAIN step row, exactly as the U5 harness persists it."""
+    """One build-step row, exactly as the harness persists it."""
     await append_batch(
         db_session,
         user_id=user.id,
@@ -86,12 +86,12 @@ async def _rows(db_session, user, conversation):
     )
 
 
-# --- the golden build (U10's parity fixture) ----------------------------------
+# --- the golden build (the parity fixture) -------------------------------------
 
 
 async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
-    """A full build session → the exact friendly item list. U10's catch-up snapshot must
-    reproduce THIS list for THIS transcript (live == reload, R8)."""
+    """A full build session → the exact friendly item list. The catch-up snapshot must
+    reproduce THIS list for THIS transcript (live == reload)."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
 
@@ -172,7 +172,7 @@ async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
 
     golden = [
         ("user_text", "build me a visitor log"),
-        # F3/U3: friendly AREA, never the raw path; friendly command copy, never the argv.
+        # friendly AREA, never the raw path; friendly command copy, never the argv.
         ("step", "Building your app's main page"),
         ("step", "Setting up the tools your app needs"),
         ("assistant_text", "All done — the visitor log is live."),
@@ -389,7 +389,8 @@ async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db
 
 
 async def test_a_configuration_write_and_a_housekeeping_command_stay_hidden(db_session) -> None:
-    """The other half of U5, and the reason it is a NARROWING rather than a deletion.
+    """The other half of `test_reads_are_visible_steps_that_say_only_what_they_touched`,
+    and the reason it is a NARROWING rather than a deletion.
 
     A write to `package.json` and a `mkdir` are plumbing between the steps that matter. Both
     still render as ITEMS — the flag says "do not draw this", not "forget this happened" — so the
@@ -442,7 +443,7 @@ async def test_a_configuration_write_and_a_housekeeping_command_stay_hidden(db_s
 
 
 async def test_a_housekeeping_command_that_failed_is_never_hidden(db_session) -> None:
-    """★ U5's rule that nothing is hidden when something went wrong, whatever class it belongs to.
+    """★ The rule that nothing is hidden when something went wrong, whatever class it belongs to.
 
     A group opens itself saying one thing went wrong and then counts the rows the citizen can
     see; a hidden failure makes that count name a row nobody can find. The identical command that
@@ -601,7 +602,7 @@ async def test_hidden_rows_render_nothing_but_stay_auditable(db_session) -> None
 
 
 async def test_unclosed_build_started_projects_an_in_progress_anchor(db_session) -> None:
-    """Crash/mid-build reload (R8): a started-but-never-closed session must anchor a truthful
+    """A crash or a mid-build reload: a started-but-never-closed session must anchor a truthful
     'a build was running here' item — not vanish."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
@@ -781,7 +782,7 @@ async def test_plan_options_states_have_no_third_member(db_session) -> None:
 
 
 async def test_the_plan_renders_from_the_offers_own_stored_call_args(db_session) -> None:
-    """U5 — the offer's stored `args` is the single authoritative copy of the plan. The
+    """The offer's stored `args` is the single authoritative copy of the plan. The
     projection reads it out and renders it as an ordinary assistant message immediately
     ahead of the card, so live and reload show the same text from the same single copy
     rather than two writers agreeing to say the same thing.
@@ -823,7 +824,7 @@ async def test_the_plan_renders_from_the_offers_own_stored_call_args(db_session)
 
 
 async def test_a_call_with_no_plan_renders_no_text_and_still_renders_its_card(db_session) -> None:
-    """Every card presented before U5's migration is exactly this shape: the tool call
+    """Every card presented before the plan-args migration is exactly this shape: the tool call
     carries no argument at all. It must not render a phantom text item, and it must not lose
     its card either — revision 0035 resolved these rows rather than deleting them."""
     user, _, conversation = await _thread(db_session)
@@ -848,7 +849,7 @@ async def test_a_call_with_no_plan_renders_no_text_and_still_renders_its_card(db
     assert len(cards) == 1 and cards[0].tool_call_id == "opt-1" and cards[0].state == "pending"
 
 
-# --- F3/U3: the friendly classifier (one source of truth, live == reload) -------
+# --- the friendly classifier (one source of truth, live == reload) -------------
 
 
 def test_classify_command_maps_the_pinned_commands() -> None:
@@ -875,8 +876,8 @@ def test_classify_command_maps_the_pinned_commands() -> None:
 
 
 def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
-    """U5, at the shell half of the classifier. This asserted `hidden is True` for BOTH groups
-    until the flag stopped meaning "a read" and started meaning "plumbing".
+    """The hidden-flag rule, at the shell half of the classifier. This asserted `hidden is True`
+    for BOTH groups until the flag stopped meaning "a read" and started meaning "plumbing".
 
     Housekeeping keeps the flag, which is why the flag is kept at all — `mkdir`, `mv` and
     `touch` draw a generic line that says nothing about the app.
@@ -917,7 +918,7 @@ def test_only_configuration_writes_and_housekeeping_are_hidden_on_the_shared_ent
 
 
 def test_a_read_binary_asked_to_write_is_never_drawn_as_an_inspection() -> None:
-    """★ U5's read class is decided by argv[0], and two of its members write on a flag.
+    """★ The read class is decided by argv[0], and two of its members write on a flag.
 
     `sed -i` rewrites a file in place and `find -delete` removes what it matched, so both would
     otherwise draw "Inspected the app's files" over a command that changed the citizen's app.
@@ -1008,10 +1009,10 @@ def test_classify_file_step_carries_the_verb_and_area() -> None:
     assert classify_file_step("write_file", "package.json")[1] is True
 
 
-# --- AE13: the complete set of messages a citizen sees -----------------------------------
+# --- the complete set of messages a citizen sees -----------------------------------------
 
 
-# THE SHARED VOCABULARY GUARD, written once (U16) — U15 and U18 assert against this same list.
+# THE SHARED VOCABULARY GUARD, written once — other surfaces assert against this same list.
 #
 # Four categories, from the acceptance criterion: a file path, a command, a library name, a
 # framework term. Substring matching on a lowercased haystack, which over-matches on purpose: a
@@ -1063,7 +1064,7 @@ _DEVELOPER_VOCABULARY: tuple[str, ...] = (
 def assert_speaks_product_language(text: str, *, where: str) -> None:
     """No file path, command, library name, or framework term in a string a citizen reads.
 
-    Exported by name so U15 and U18 can assert their own surfaces against the SAME list rather
+    Exported by name so other surfaces can assert against the SAME list rather
     than each growing a private near-copy that drifts."""
     lowered = text.lower()
     hits = [word for word in _DEVELOPER_VOCABULARY if word in lowered]
@@ -1073,7 +1074,7 @@ def assert_speaks_product_language(text: str, *, where: str) -> None:
 async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to_a_developer(
     db_session,
 ) -> None:
-    """AE13 — asserted over the COMPLETE rendered set, not only the agent's narration.
+    """Asserted over the COMPLETE rendered set, not only the agent's narration.
 
     This walks a full build — a read, a write, an install, a failed typecheck, the agent's
     closing line, the outcome banner — and then walks the platform's error copy for EVERY error
@@ -1201,7 +1202,8 @@ async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to
 
     # LIVENESS: the build genuinely rendered, so the absences below mean something.
     labels = [item.label for item in items if isinstance(item, StepItem)]
-    assert len(labels) == 6  # every tool call produced a row, and after U5 every one is drawn
+    assert len(labels) == 6  # every tool call produced a row, and after the hidden-flag
+    # change every one is drawn
     assert "Building how your app saves and loads information" in labels
     assert "Looking at your app's main page" in labels
     assert any(isinstance(item, BannerItem) for item in items)
@@ -1339,12 +1341,12 @@ async def test_build_text_with_no_tool_call_survives(db_session) -> None:
 async def test_a_plan_chat_renders_prose_beside_a_tool_call_exactly_as_a_build_chat_does(
     db_session,
 ) -> None:
-    """★ AE43 / R74 / N2 — one rule, and it still does not ask which kind of chat this is.
+    """★ One rule, and it still does not ask which kind of chat this is.
 
-    THIS TEST USED TO ASSERT THE PROSE WAS DROPPED, on the grounds that a plan travels in the
-    offer tool's argument and a mid-work word travels through `tell_the_user`. Those routes are
-    still the right home for each, but they stopped being the ONLY way a word reaches the citizen.
-    What N2 forbids is one response meaning two different things depending on the chat it sat in.
+    THIS TEST USED TO ASSERT THE PROSE WAS DROPPED, on the grounds that a plan travels in the offer
+    tool's argument and a mid-work word travels through `tell_the_user`. Those routes are still the
+    right home for each, but they stopped being the ONLY way a word reaches the citizen. What that
+    rule forbids is one response meaning two different things depending on the chat it sat in.
     `entry_kind=TURN`, not STEP, because that is the only shape the product can produce: every
     production writer of a STEP row stamps the Build kind, and a Plan turn persists as TURN."""
     user, _project, conversation = await _thread(db_session)
@@ -1446,11 +1448,11 @@ async def test_a_row_written_before_this_change_renders_its_prose_too(db_session
     assert text_item.text == "Here is what your visitor log will do."
 
 
-# --- U14/R36: redaction at the seam, asserted as a SHAPE ------------------------------------
+# --- redaction at the seam, asserted as a SHAPE --------------------------------------------
 
 
 def test_no_browser_facing_shape_carries_tool_arguments_results_or_a_stack() -> None:
-    """★ AE34, and this is where U14's guarantee actually lives.
+    """★ This is where the redaction guarantee actually lives.
 
     THE MECHANISM IS THE ABSENCE OF A FIELD, not a promise at a draw site. A client that does not
     render a field is not a guarantee — it is a client, and the next one is a different client.
@@ -1532,7 +1534,7 @@ async def test_a_tool_result_the_platform_wrote_to_itself_reaches_no_rendered_fi
     assert "app/page.tsx" not in whole
 
 
-# --- U20: the durable turn terminal, read back --------------------------------------------
+# --- the durable turn terminal, read back --------------------------------------------------
 
 
 async def _terminal_row(
@@ -1561,7 +1563,7 @@ async def _terminal_row(
 async def test_a_finished_turn_is_readable_as_finished_without_the_live_stream(
     db_session,
 ) -> None:
-    """★ U20's happy path, and the reason the row exists at all.
+    """★ The turn terminal's happy path, and the reason the row exists at all.
 
     A transcript rebuilt from rows alone — a reload, a second tab, a process that restarted —
     has no `TurnEndedFrame` to read: that frame was delivered once, to whoever was subscribed.
@@ -1596,7 +1598,7 @@ async def test_a_finished_turn_is_readable_as_finished_without_the_live_stream(
 
 
 async def test_a_plan_chats_turn_gets_the_same_terminal_as_a_builds(db_session) -> None:
-    """R72's reload half, asserted SEPARATELY rather than parameterised, because the failure
+    """The reload half, asserted SEPARATELY rather than parameterised, because the failure
     this guards against is one kind quietly getting the weaker path — and a parameterised test
     that someone later narrows to one kind reads as still covering both."""
     user, _, conversation = await _thread(db_session)
@@ -1737,7 +1739,7 @@ async def test_the_terminal_row_is_invisible_to_the_model(db_session) -> None:
 
 
 async def test_a_voice_update_far_past_the_old_ceiling_renders_whole(db_session) -> None:
-    """★ R5 — a spoken update the old character ceiling would have swallowed reaches the citizen
+    """★ A spoken update the old character ceiling would have swallowed reaches the citizen
     byte for byte.
 
     Mutation-check: put any `len(text) > N` arm back into `update_from_args` and this goes red on
@@ -1782,7 +1784,7 @@ async def test_a_voice_update_far_past_the_old_ceiling_renders_whole(db_session)
 
 
 async def test_a_first_slice_far_past_the_old_ceiling_renders_whole(db_session) -> None:
-    """★ R6 — how many pieces belong in a first round is a judgement about the citizen's request,
+    """★ How many pieces belong in a first round is a judgement about the citizen's request,
     which is the thing the agent is for. A ceiling here refused proposals the agent had made well
     and drew nothing for a call the tool body had already refused.
 

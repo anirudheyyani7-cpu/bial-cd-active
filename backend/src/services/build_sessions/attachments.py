@@ -1,31 +1,25 @@
-"""R3 — materialize a conversation's attachments into the build agent's prompt (native store).
+"""Materialize a conversation's attachments into the build agent's prompt (native store).
 
+WHY THIS EXISTS
 Binary attachments live in messages as `{kind: "bial-attachment-ref", attachment_id}` markers
-(U4 externalizes `BinaryContent` at the persist seam — bytes never sit in a row). This module is
-the build path's read-back: the markers appended since the last build STARTED are resolved to
-`BinaryContent` for `agent.iter`, owner-scoped through the attachments table.
+(externalized at the persist seam — bytes never sit in a row). This module is the build path's
+read-back: the markers appended since the last build STARTED are resolved to `BinaryContent` for
+`agent.iter`, owner-scoped through the attachments table. Inline text/office content needs no
+materialization here anymore — the fenced text already lives inside the user prompt's content
+strings — so only binaries make this round trip through the object store.
 
-Inline text/office content needs NO materialization here anymore: in the native shape the fenced
-text lives INSIDE the user prompt's content strings (the producer inlines it at persist time —
-U5/U7), so it reaches the model as ordinary history. Only binaries make the round trip through
-the object store.
-
-TODO(U5): once producers write native turns, re-verify the boundary semantics against a real
+TODO: once producers write native turns, re-verify the boundary semantics against a real
 mid-build turn (the `startedSeq` capture in `SessionManager.start` is unchanged).
 
-**Why the build path may read messages from the DB at all.** Issue #28's "the server never reads
-messages from the DB" was a rule about the retired stateless relay, whose whole contract was that
-the browser carried the transcript. It is NOT a rule about the build path — attachments travel by
-conversation REFERENCE (an optional `conversationId` on the start body) precisely so the bytes
-don't have to make a second trip through the browser.
+The old rule that "the server never reads messages from the DB" was about the retired stateless
+relay, whose whole contract was that the browser carried the transcript — not about the build
+path, which reaches messages by conversation REFERENCE (an optional `conversationId` on the start
+body) precisely so attachment bytes don't make a second trip through the browser.
 
-**Every failure RAISES** `BuildAttachmentError`, which the router turns into a 422 naming the
-file. A clear "we couldn't read your file" beats a build that pretends it read it (the
-silent-drop bug this module exists to prevent).
-
-**Fail-first, before provisioning.** The whole resolution runs at the very top of
-`SessionManager.start` — before the per-user lock, before the sandbox — so a rejected attachment
-costs the user nothing (no container, no quota, no lock to compensate).
+Every failure RAISES `BuildAttachmentError`, which the router turns into a 422 naming the file —
+a clear "we couldn't read your file" beats a build that pretends it read it. This whole resolution
+also runs at the very top of `SessionManager.start`, before the per-user lock and before the
+sandbox, so a rejected attachment costs the user nothing.
 """
 
 from __future__ import annotations
@@ -55,12 +49,12 @@ from src.services.storage import (
 
 class BuildAttachmentError(Exception):
     """An attachment could not be materialized → the router's 422. The message is USER-FACING
-    (it names the file) and carries no internal detail (`.claude/rules/security.md`)."""
+    (it names the file) and carries no internal detail."""
 
 
 class ConversationNotFoundError(Exception):
     """The referenced conversation is not the caller's, or does not belong to the start's
-    project → the router's non-leaking 404 (ADR-0004). A cross-user id and a cross-project id
+    project → the router's non-leaking 404. A cross-user id and a cross-project id
     are both indistinguishable from a missing one: grounding a build in another project's files
     must not even be detectable, let alone possible."""
 
@@ -141,7 +135,7 @@ async def _binary_from_ref(
     """An attachment reference → `BinaryContent`, rehydrated from Blob.
 
     The storage key + media type come from the `attachments` TABLE, never from the payload: the
-    row is looked up by (`user_id`, `attachmentId`) — owner-scoped by construction (ADR-0004) —
+    row is looked up by (`user_id`, `attachmentId`) — owner-scoped by construction —
     exactly as `attachments/router.py::_load_owned` does. The magic-byte gate the upload path
     applied is re-asserted, so a swapped blob can't ride a stale row.
     """

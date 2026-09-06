@@ -1,8 +1,8 @@
 /**
- * PRESENTATIONS ARE GONE — the inertness guard (L8).
+ * PRESENTATIONS ARE GONE — the inertness guard.
  *
  * This file used to mock `DECK_ATTACHMENTS_ENABLED` to `false` and describe one of the flag's two
- * positions. There is no flag now: Plan D's U13 deleted it along with the arms it guarded and the
+ * positions. There is no flag now: an earlier change deleted it along with the arms it guarded and the
  * media type itself, so there is no "off world" left to pin. What remains worth asserting is that
  * the capability is UNREACHABLE — which is what a removal's tests become, rather than being
  * deleted with the code.
@@ -65,9 +65,9 @@ describe('formats that need a conversion step are unreachable (R46)', () => {
   })
 
   it('the deck flag is not exported from config/features, and nothing imports it', () => {
-    // L8's fifth link. The constant, its thirty-line docblock and every branch reading it are
-    // gone together — a flag left behind with no arms is read by the next person as a capability
-    // that still exists somewhere.
+    // The last link in a chain of deletions. The constant, its thirty-line docblock and every
+    // branch reading it are gone together — a flag left behind with no arms is read by the
+    // next person as a capability that still exists somewhere.
     const src = path.resolve(__dirname, '../../..')
     const features = readFileSync(path.join(src, 'src/config/features.ts'), 'utf8')
     expect(features).not.toMatch(/DECK_ATTACHMENTS_ENABLED/)

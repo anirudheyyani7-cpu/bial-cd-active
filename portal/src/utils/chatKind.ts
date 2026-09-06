@@ -10,7 +10,7 @@
  * is about to click — and not "Assistant", which is a schema word, not a product word. "Chat" is
  * true of every value this field can carry, including ones that do not exist yet.
  *
- * U16/R73 RE-POINTED THE WORDING AT THE SERVER. `word` and `description` no longer live as
+ * RE-POINTED THE WORDING AT THE SERVER. `word` and `description` no longer live as
  * literals in this file — they come from `chat_kinds` on the once-cached `GET /auth/me` bootstrap
  * (`utils/auth.ts`'s `UserProfile.chat_kinds`, mirroring `backend/src/services/agent/toolsets.py`'s
  * `CHAT_KIND_CATALOGUE`), the same catalogue the toolset registry sits beside. Only `Icon` and
@@ -19,7 +19,7 @@
  * Tailwind class, and re-pointing those too would just move the "what does this look like"
  * decision somewhere it does not belong.
  *
- * THIS IS THE SINGLE FRONTEND SOURCE of what a kind is CALLED and what it DOES (R73). Its readers
+ * THIS IS THE SINGLE FRONTEND SOURCE of what a kind is CALLED and what it DOES. Its readers
  * are the toolbar row's kind pill and the rail composer's kind picker. Said plainly rather than
  * as an aspiration, because one surface still spells the words itself: the help page's prose, a
  * named deferral rather than an oversight — the copy rides a later release. When it does catch
@@ -48,7 +48,7 @@ export interface ChatKindPresentation {
   /** The one line a citizen reads about what this kind of chat does for them — the bootstrap
    * catalogue's `description`, verbatim. Not rendered by today's one reader (the badge shows
    * only `word`), but carried here rather than dropped, so the composer and the help page read
-   * it from here instead of writing their own when they arrive (R73). */
+   * it from here instead of writing their own when they arrive. */
   description: string
   Icon: LucideIcon
   /**
@@ -82,8 +82,8 @@ export interface ChatKindPresentation {
    * rather than part of what a kind IS, so there is nothing for it to drift out of sync with.
    *
    * It lives HERE rather than as a `kind === 'plan' ? … : …` at the one place that renders it,
-   * and that is not a style preference: R72 forbids branching on a chat's kind under `pages/`
-   * and `components/workspace/`, mechanically, because per-kind branches scattered across
+   * and that is not a style preference: branching on a chat's kind under `pages/`
+   * and `components/workspace/` is forbidden, mechanically, because per-kind branches scattered across
    * surfaces are how the two-page era grew. One entry per kind in the catalogue is the shape
    * that rule leaves open.
    *

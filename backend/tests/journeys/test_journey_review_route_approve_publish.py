@@ -1,18 +1,18 @@
-"""The journey that makes the publish flow TERMINATE: route → approve → publish (U9).
+"""The journey that makes the publish flow TERMINATE: route → approve → publish.
 
 This is the one property an isolated unit test cannot prove. Ladder rule 6 routes any
 weighted Yes, and the review keeps returning the same Yes for the same code — so without
 rule 3 (the approval override, sitting ABOVE rule 6) a flagged app would route on every
-publish forever, and the admin queue would be a roundabout with no exit (R17). This
+publish forever, and the admin queue would be a roundabout with no exit. This
 journey drives the whole loop once, end to end, through the real composition root:
 
 1. a citizen's publish is ROUTED — the review found personal information AND something
    the citizen did not declare (financial data), so the queue item carries both answer
-   sets and the disagreement (R15, AE3);
-2. an administrator approves exactly that version (R16);
+   sets and the disagreement;
+2. an administrator approves exactly that version;
 3. the citizen publishes again, unchanged, and the SAME answers that routed in step 1
    now PUBLISH — rule 3 satisfied by the pinned commit and the self-publish lineage
-   (R17, AE5b) — reaching the deploy pipeline, with no second queue entry.
+   reaching the deploy pipeline, with no second queue entry.
 
 The review service is the REAL one (no dependency override): the gate reads the stored
 row through the same singleton production resolves, so a mock returning what it was fed
@@ -93,7 +93,7 @@ def _answers(**yes: object) -> dict[str, object]:
 
 
 def _verdicts_doc(**by_key: str) -> dict[str, Any]:
-    """A stored COMPLETE verdicts document, the exact shape U6's runner writes."""
+    """A stored COMPLETE verdicts document, the exact shape the review runner writes."""
     return {
         "source": "review",
         "questions": {
@@ -188,7 +188,7 @@ async def test_route_approve_publish_terminates(app: FastAPI, client, db_session
     assert fresh.source_commit_sha == _SHA
     declaration = fresh.declaration
     assert declaration is not None
-    # Both answer sets and the difference reached the queue (R15/AE3): the citizen said
+    # Both answer sets and the difference reached the queue: the citizen said
     # No to financial data, the review said Yes, and the record names it.
     assert declaration["citizen"]["answers"]["financial_data"] is False
     assert declaration["review"]["answers"]["financial_data"] == "yes"
@@ -197,7 +197,7 @@ async def test_route_approve_publish_terminates(app: FastAPI, client, db_session
     assert declaration["review"]["available"] is True
     assert declaration["commits"]["shipping"] == _SHA
 
-    # --- 2. an administrator approves EXACTLY that version (R16) ---------------------
+    # --- 2. an administrator approves EXACTLY that version ---------------------
     admin = await UserFactory.create(db_session, email="admin@bial.com")
     approved = await client.post(
         f"/v1/admin/apps/{app_row.id}/approve",
@@ -221,7 +221,7 @@ async def test_route_approve_publish_terminates(app: FastAPI, client, db_session
     assert final is not None
     assert final.status is AppStatus.APPROVED
 
-    # --- the trail: every decision app-scoped and readable in one query (ASM7/R22) ---
+    # --- the trail: every decision app-scoped and readable in one query ---
     rows = (
         (
             await db_session.execute(

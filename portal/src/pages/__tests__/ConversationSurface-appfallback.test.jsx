@@ -1,6 +1,6 @@
 /**
- * The passive "seed the preview from the project's stored app code" fallback is GONE (U5). A stored
- * app is not a running sandbox: the live preview now comes ONLY from a per-session C3 build. This
+ * The passive "seed the preview from the project's stored app code" fallback is GONE. A stored
+ * app is not a running sandbox: the live preview now comes ONLY from a per-session build. This
  * pins the removed path as INERT — landing a saved chat fires no `getAppSource`, and no stored code
  * is flashed into the preview (which stays its empty, session-driven state until a build starts).
  */

@@ -20,19 +20,16 @@
  * A crashed tab must not wedge the project forever, so a claim is renewed by a heartbeat and
  * expires without one. A lock that never clears is worse than no lock.
  *
- * DEMOTED TO ADVISORY (Phase-2, ORIG-§3-g / KTD-7). The AUTHORITATIVE one-build-per-user
- * barrier lives server-side, and still does: the C3 routes answer `409 build_session_already_active`
- * carrying the existing sessionId. WHAT CHANGED IS WHO RENDERS IT. This used to say "the cockpit
- * renders the block + force-end UI from that"; there is no such UI any more — the banner and its
- * Force-end button went with the browser's `start` client, and the 409 now reaches two live
- * surfaces instead, each answering in its own sentence: `relaunchPreview` throws
+ * DEMOTED TO ADVISORY. The AUTHORITATIVE one-build-per-user barrier lives server-side: the
+ * build-session routes answer `409 build_session_already_active` carrying the existing sessionId, and the 409
+ * reaches two live surfaces, each answering in its own sentence: `relaunchPreview` throws
  * `BuildSessionAlreadyActiveError` (`buildSessionApi.ts`) and the turn stream carries the same
  * code (`turnStreamApi.ts`). This module keeps only the FAST LOCAL UX role — `blockedBy` is the
  * instant cross-tab "another chat is building" pre-check (`ConversationSurface.tsx` calls it
  * before the network round-trip). `acquire`/`release` are advisory
- * mirrors: a stale or lost local claim never blocks the authoritative C3 start, and the server's
+ * mirrors: a stale or lost local claim never blocks the authoritative server start, and its
  * 409 is the real gate. This mirrors the daily-vs-context seam — the client mirror is advisory,
- * the server is the enforcement boundary ([[per-user-limits-daily-vs-context-propagation-2026-07-09]]).
+ * the server is the enforcement boundary.
  */
 
 import { isRecord } from './apiError'
@@ -52,8 +49,9 @@ interface ClaimMessage {
 
 export interface BuildLock {
   /**
-   * Advisory claim (KTD-7). Announces this conversation's build to other tabs and returns null,
-   * or the claim that blocks it. NOT the enforcement boundary — C3 `start`'s 409 is authoritative;
+   * Advisory claim. Announces this conversation's build to other tabs and returns null,
+   * or the claim that blocks it. NOT the enforcement boundary — the server `start`'s 409 is
+   * authoritative;
    * a stale/lost claim here never blocks the real start.
    */
   acquire(projectId: string, conversationId: string): BuildClaim | null

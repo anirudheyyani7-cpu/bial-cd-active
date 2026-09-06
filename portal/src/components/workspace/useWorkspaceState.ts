@@ -1,42 +1,30 @@
 /**
- * THE READ BEHIND THE WORKSPACE STATE (Plan F, U2).
+ * THE READ BEHIND THE WORKSPACE STATE.
  *
- * `workspaceState.ts` is pure. This is the half that talks to the server: one cheap read, on a
- * cadence, turned into the one value the pane and the Plan-chat line both render.
+ * WHY THIS EXISTS
+ * `workspaceState.ts` is pure; this is the half that talks to the server — one cheap read, on
+ * a cadence, turned into the one value the pane and the Plan-chat line both render.
  *
- * ═══ IT RUNS WHEN THERE IS NO FRAME, AND THAT IS THE WHOLE DIFFERENCE ═══
+ * It runs even with NO FRAME on screen — unlike the conversation surface's own preview probe,
+ * which only asks while a frame is actually live, right for a pane watching a framed app get
+ * reclaimed underneath it. That is exactly wrong here: a project whose app is saved but not
+ * running has no address at all, and that no-frame state is precisely what this hook exists to
+ * describe, and to carry the product's one start control for.
  *
- * The conversation surface's own preview probe returns early on `!framedPreviewUrl` — "only worth
- * asking while a frame is actually on screen claiming to be live". That is right for a pane whose
- * job is to catch a framed app being reclaimed underneath it. It is exactly wrong here: the
- * no-frame case is precisely what this hook exists to describe. A project whose app is saved and
- * not running has no address at all, and it is the state that carries the product's one start
- * control.
+ * `fetchPreviewState` is CHEAP BY CONTRACT: one cache read, at most two rows, at most two
+ * object-store HEADs, no container call — safe on a timer. `fetchSaveState` is not: it runs two
+ * `git` executions inside the container, so it is called only when the read says `alive` (asking
+ * a stopped project about unsaved work would attach to a dead workspace, which the platform
+ * forbids); a stopped project shows no save state and no commit. `fetchCompileState` and
+ * `checkWorkspace` are not called from here at all — they belong to a surface with a live turn
+ * behind it, and both cost a container exec.
  *
- * ═══ WHAT IT COSTS, AND THE LINE IT WILL NOT CROSS ═══
- *
- * `fetchPreviewState` is CHEAP BY CONTRACT (C3 §8.3): one cache read, at most two rows, at most
- * two object-store HEADs, and NO container call. It is safe on a timer.
- *
- * `fetchSaveState` is not. It runs two `git` executions INSIDE the container, so it is called only
- * when the read says `alive`. Asking a stopped project whether it has unsaved work is an attach
- * against a dead workspace — a start the screen caused, which R3 forbids. The consequence is
- * stated rather than hidden: at rest, a stopped project shows no save state and no commit, and the
- * save half of the rail appears only while the app is running.
- *
- * `fetchCompileState` and `checkWorkspace` are not called from here at all. They belong to a
- * surface with a live turn behind it, and both cost a container exec.
- *
- * ═══ TWO CONSEQUENCES OF THE TIMER, WRITTEN DOWN BECAUSE FEATURES DEPEND ON THEM ═══
- *
- *  - `starting` reaches `running` WITH NO USER GESTURE. Somebody presses start, the server holds
- *    the state, and the pane arrives at the running app on its own.
- *  - THE THIRTY-MINUTE STAY LAPSING IS NOTICED. `RELAUNCH_PREVIEW_STAY_SECONDS` is granted at
- *    relaunch and extended only by a turn's own deadline writers; the start-then-read shape has no
- *    turn, so the stay can lapse under a person who is still reading. The next read returns
- *    `asleep` and the pane says "Your app is saved." with the start offered again — one press to
- *    recover, nothing lost. Renewing the stay on a read would be a new way to hold a container
- *    claimed, which is a server capability nobody has planned.
+ * Two consequences of the timer, worth stating because features depend on them: `starting`
+ * reaches `running` with no user gesture, since the server holds the state and the pane arrives
+ * at the running app on its own; and the thirty-minute stay can lapse unnoticed, because
+ * `RELAUNCH_PREVIEW_STAY_SECONDS` is granted at relaunch and renewed only by a turn's own
+ * deadline writers, so a reader on the start-then-read path can outlast it — the next read
+ * returns `asleep` and the pane offers the start again, one press to recover, nothing lost.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchPreviewState, fetchSaveState, samePreviewState, sameSaveState } from '../../utils/buildSessionApi'

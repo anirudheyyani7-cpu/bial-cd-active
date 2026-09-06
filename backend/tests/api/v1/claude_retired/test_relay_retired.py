@@ -1,14 +1,13 @@
-"""GUARDS: the legacy chat relay `POST /v1/claude` is GONE (R72, R17).
+"""GUARDS: the legacy chat relay `POST /v1/claude` is GONE.
 
 The relay was the SECOND way of running a turn: its own history load, its own stream reader,
 its own send path, its own copy of the build-in-flight gate. Retiring it — rather than gating
 it, or leaving it mounted and uncalled — is what makes "one turn engine" true, because a
-mounted second engine is a way around every bound the first one enforces. #170 removed the
-last caller from the portal; this removes the door.
+mounted second engine is a way around every bound the first one enforces. The portal's last
+caller was removed already; this removes the door.
 
-Per the repo's retire-a-behaviour convention
-(`docs/solutions/conventions/cleanly-removing-dead-ui-controls-2026-06-23.md`, the same flip
-`tests/api/v1/apps/test_submit_retired.py` carries for `POST /apps/{id}/submit`), the route's
+Per the repo's retire-a-behaviour convention — the same flip
+`tests/api/v1/apps/test_submit_retired.py` carries for `POST /apps/{id}/submit` — the route's
 tests become guards that it stays gone. If any of these fails, someone reinstated the relay.
 
 The BEHAVIOUR the relay carried is not gone — it is the turn engine
@@ -99,8 +98,8 @@ def test_the_relay_is_gone_from_the_openapi_schema() -> None:
 
 def test_there_is_exactly_one_send_path_and_one_stream_path() -> None:
     """STRUCTURAL: no second send path or conversation stream is mounted under `/v1`. This is
-    the assertion that would have gone red at any point in the U10→R72 window, and the one
-    that stops a third engine arriving the way the second did.
+    the assertion that would have caught the second relay for as long as it existed, and the
+    one that stops a third engine arriving the way the second did.
 
     `/v1/build-sessions/{session_id}/events` IS a second stream, and it is named here rather
     than filtered away: it is the older build harness, still mounted and unreachable from the

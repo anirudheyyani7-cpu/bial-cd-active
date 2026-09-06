@@ -1,7 +1,8 @@
 /**
- * THE ONE WORKSPACE STATE (Plan F, U2) — what the platform reports, turned into what a person
+ * THE ONE WORKSPACE STATE — what the platform reports, turned into what a person
  * reads and what they may press.
  *
+ * WHY THIS EXISTS
  * WHAT THESE TESTS CAN AND CANNOT PROVE, said up front because the distinction is the unit's
  * whole point. They prove the CLIENT's vocabulary: that no arm of this map reaches a destructive
  * verb, that a sentence says what the register requires, that a withheld attribution renders no
@@ -9,9 +10,9 @@
  * is server behaviour, asserted in `backend/tests/api/v1/build_sessions/`, and a client test
  * saying "this made no restore call" would pass in exactly the state that loses work.
  *
- * The copy assertions are deliberately literal. R-16 was a client call on exact wording, and a
- * test that matched loosely would let the sentence drift back to the negation it was chosen to
- * replace.
+ * The copy assertions are deliberately literal — a deliberate choice about exact wording, since
+ * a test that matched loosely would let the sentence drift back to the negation it was chosen
+ * to replace.
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -56,7 +57,7 @@ describe('the register — what the pane may and may not say', () => {
     const state = resolve({ preview: reading({ state: 'asleep', restorable: true }) })
 
     expect(state.name).toBe('not-running')
-    // VERBATIM. R-16 was a client call on this exact sentence — full stop after "saved", and no
+    // VERBATIM — a deliberate choice on this exact sentence — full stop after "saved", and no
     // negation of any kind after it.
     expect(state.headline).toBe('Your app is saved.')
     expect(state.action).toEqual({ kind: 'start', label: 'Launch Application' })
@@ -106,8 +107,9 @@ describe('the register — what the pane may and may not say', () => {
   })
 
   it('AE36: the starting sentence carries no digits and no duration word', () => {
-    // R4a taken literally. Nobody has measured a cold start, so no sentence may name one — the
-    // canvas's "about thirty seconds" and the register's "about half a minute" are both dropped.
+    // The no-duration-claim rule taken literally. Nobody has measured a cold start, so no
+    // sentence may name one — the canvas's "about thirty seconds" and the register's "about
+    // half a minute" are both dropped.
     const text = rendered({ preview: reading({ state: 'starting' }) })
 
     expect(text).not.toMatch(/\d/)

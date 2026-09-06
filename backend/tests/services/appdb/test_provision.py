@@ -394,8 +394,8 @@ async def test_an_app_role_cannot_reach_the_control_plane_database(
     # creates every database with PUBLIC holding CONNECT, so an app role could open a
     # session against `citizen_one` and read `pg_catalog` (every table name, every column
     # name, the role list). No table data — the control plane's tables are owned by `bial`
-    # with no PUBLIC grants — but a schema map is reconnaissance, and ADR-0028 signs the DSN
-    # as disclosed-by-assumption, which makes "an app role exists in the wild" the PLANNED
+    # with no PUBLIC grants — but a schema map is reconnaissance, and the DSN is treated as
+    # disclosed-by-assumption, which makes "an app role exists in the wild" the PLANNED
     # case rather than the unlikely one.
     #
     # The fix is a provisioning-time REVOKE on the control-plane database itself, not
@@ -462,7 +462,7 @@ async def test_the_app_role_owns_its_box_but_has_no_cluster_reach(
         await execute_on(dsn, "CREATE ROLE should_not_exist_bial LOGIN")
 
 
-# --- U2: the app owns `public` in its own database -----------------------------------
+# --- the app owns `public` in its own database -----------------------------------
 
 _PUBLIC_OWNER_SQL = "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'public'"
 
@@ -511,7 +511,7 @@ def _dbapi_error(sqlstate: str) -> DBAPIError:
 async def test_provision_deeds_public_schema_to_the_app_role(
     db_session: AsyncSession, salted: list[uuid.UUID]
 ) -> None:
-    # F2: without the deed step `public` is owned by `pg_database_owner`, and on Azure the app
+    # Without the deed step `public` is owned by `pg_database_owner`, and on Azure the app
     # role cannot create there — so the model falls back to a per-build-random schema. The
     # ALTER makes the app role the EXPLICIT owner, so `public` is usable deterministically.
     project_id = await _new_project(db_session)

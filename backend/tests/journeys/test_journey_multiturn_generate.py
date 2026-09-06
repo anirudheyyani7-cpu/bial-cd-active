@@ -1,4 +1,4 @@
-"""Journey: multi-turn chat on the turn engine (U10/R9) — create → three turns → reload.
+"""Journey: multi-turn chat on the turn engine — create → three turns → reload.
 
 The full server-authoritative-history story, end to end through the real routes:
 
@@ -9,7 +9,7 @@ The full server-authoritative-history story, end to end through the real routes:
   turn N's request contains every earlier question and answer, in order, none of which
   rode the HTTP body.
 * The reload read (`GET /v1/conversations/{id}`) projects the same conversation back as
-  display items that match what streamed — the R8 reload story at the journey level.
+  display items that match what streamed — the reload story at the journey level.
 
 This USED to drive the retired `POST /v1/claude` relay. The relay is gone (one turn engine,
 one send path), so the journey now drives `POST /v1/conversations/{id}/turns` + the
@@ -62,7 +62,7 @@ def _fresh_engine():
 @pytest.fixture(autouse=True)
 def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
     """A sandbox client on both seams — a turn refuses 503 `workspace_unavailable` without
-    one (R98). Inlined from `tests/api/v1/conversations/conftest.py`, which journeys cannot
+    one. Inlined from `tests/api/v1/conversations/conftest.py`, which journeys cannot
     reach; `fake_redis` rides along because binding a workspace is what makes the send
     route's reclaim preflight reachable, and that preflight reads the coordination store."""
     from src.api.v1.build_sessions.deps import sandbox_dependency, sandbox_or_none_dependency
@@ -144,7 +144,7 @@ async def test_stateless_multiturn_journey_with_reload_parity(
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id)
 
-    # --- 1. Create the conversation BEFORE the first turn (the U7 ordering) -----------
+    # --- 1. Create the conversation BEFORE the first turn -----------------------------
     conversation_id = "0198a5a0-0000-7000-8000-000000000001"  # the SPA's client mint
     created = await client.post(
         "/v1/conversations",
@@ -233,7 +233,7 @@ async def test_stateless_multiturn_journey_with_reload_parity(
     # And in ORDER: the user prompts appear exactly as the questions were asked.
     #
     # `<system-note>` parts are filtered out, and that is not a fudge — the turn engine
-    # injects U14's ephemeral workspace reminder as a user-role part on the wire and
+    # injects an ephemeral workspace reminder as a user-role part on the wire and
     # NEVER persists it. Keeping it out of this assertion is what lets the assertion say
     # what it means ("the citizen's questions, in order"); step 3 below then proves the
     # note stayed out of the durable transcript too.
@@ -247,7 +247,7 @@ async def test_stateless_multiturn_journey_with_reload_parity(
     ]
     assert prompts == questions
 
-    # --- 3. Reload: one read rebuilds the chat (R8) ------------------------------------
+    # --- 3. Reload: one read rebuilds the chat -----------------------------------------
     detail = await client.get(f"/v1/conversations/{conversation_id}", headers=headers)
     assert detail.status_code == 200
     body = detail.json()

@@ -1,8 +1,8 @@
-"""The #46 generation-time detector (plan U1): flag a generated app whose UI copy promises
+"""The generation-time detector: flag a generated app whose UI copy promises
 live/shared/real-time behaviour while NO refetch pattern exists anywhere in the workspace.
 
 The HONEST UI prompt rule (`orchestrator/prompt.py`) nudges the model to wire a refetch before
-making a liveness claim — but a prompt rule is probabilistic, and #46 is the rule the model most
+making a liveness claim — but a prompt rule is probabilistic, and this is the rule the model most
 often shirks in favour of optimistic local state. This detector is the "revisit if it recurs"
 trigger the plan asked for: a structlog WARNING at finalize (with `app_id`/`session_id`), never a
 gate, so a recurring overpromise shows up in logs instead of waiting for a user to notice stale

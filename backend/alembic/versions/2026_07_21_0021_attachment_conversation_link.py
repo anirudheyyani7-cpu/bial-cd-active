@@ -1,4 +1,4 @@
-"""link attachments to their conversation (R10 / U9)
+"""link attachments to their conversation
 
 Revision ID: 0021_attachment_conv_link
 Revises: 0020_drop_app_registry_name
@@ -6,14 +6,14 @@ Create Date: 2026-07-21
 
 `attachments` had NO link to anything but a client-minted token buried in a message's
 `parts` JSONB, so a file uploaded and never sent was reachable by no delete path and
-consumed the owner's quota forever (R10). This adds a nullable `conversation_id` FK,
+consumed the owner's quota forever. This adds a nullable `conversation_id` FK,
 populated at upload time, so an orphan reclaimer has a candidate set and the row has a
 referential backstop.
 
 The FK is `ON DELETE SET NULL`, deliberately NOT the `ON DELETE CASCADE` that
 `conversations.project_id` uses: under CASCADE, deleting a conversation would destroy
 the attachment ROW while its object-store blob survives — manufacturing exactly the
-permanent orphan U9 exists to prevent. Blob-aware cleanup stays with the
+permanent orphan this migration exists to prevent. Blob-aware cleanup stays with the
 conversation-delete service (`services/conversations/delete.py`); this FK is only a
 row-integrity backstop that NULLs a dangling link.
 
@@ -22,7 +22,7 @@ Nullable is required: existing rows have no conversation, and backfilling the li
 the reclaimer's eligibility is decided by the `parts` reference scan, not by NULL.
 
 DESTRUCTIVE + SCHEMA-ONLY ROUND-TRIP: `downgrade` drops the FK, index, and column
-(structure only — it reconstructs no link data). Hand-finalized (ADR-0013).
+(structure only — it reconstructs no link data). Hand-finalized.
 """
 
 from __future__ import annotations

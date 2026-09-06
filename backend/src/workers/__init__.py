@@ -1,4 +1,4 @@
-"""Scheduled task modules (ADR-0011).
+"""Scheduled task modules.
 
 One module per scheduled job. Each declares its task against the `src.broker` singleton, gates
 itself on its own flag — ON by default for a job that already ran unconditionally before it

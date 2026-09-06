@@ -3,8 +3,8 @@
 `BlobProperties` / `ContentSettings` only inside its own module and returns these
 common types instead.
 
-The ABC + the `@abstractmethod` set are the sanctioned storage-port pattern
-(ADR-0009): an ABC, not a Protocol, so nominal subtyping makes an IDE jump land
+The ABC + the `@abstractmethod` set are the sanctioned storage-port pattern:
+an ABC, not a Protocol, so nominal subtyping makes an IDE jump land
 on the concrete backend and an incomplete backend fails at instantiation.
 """
 
@@ -58,8 +58,8 @@ class ObjectStorage(abc.ABC):
     the concrete method, and an incomplete backend fails with a runtime `TypeError`.
 
     Provider-specific features (tagging, versioning, snapshots, block staging,
-    signed UPLOAD URLs, ranged reads) are deliberately NOT here — see the plan's
-    Scope Boundaries. Reachable only by downcasting to the concrete backend.
+    signed UPLOAD URLs, ranged reads) are deliberately not exposed on this
+    interface. Reachable only by downcasting to the concrete backend.
     """
 
     def __init__(self, *, provider: str) -> None:

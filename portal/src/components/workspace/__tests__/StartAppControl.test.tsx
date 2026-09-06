@@ -143,7 +143,7 @@ describe('R4b — a start that did not end in a running app says which way it en
 
   it('calls a failure with no server answer a timeout, not a named failure', async () => {
     // "We waited and nothing came back" is a different thing to have happened from "the server
-    // said why", and R4b asks for the difference to reach the citizen.
+    // said why" — and that difference must reach the citizen.
     api.relaunchPreview.mockRejectedValue(new TypeError('Failed to fetch'))
     const report = reportSpy()
     renderControl(START, report)

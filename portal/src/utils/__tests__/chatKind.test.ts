@@ -1,9 +1,9 @@
 /**
- * `chatKindFor` — the lookup that decides what a chat row CALLS itself and SAYS about itself
- * (U16/R73).
+ * `chatKindFor` — the lookup that decides what a chat row CALLS itself and SAYS about itself.
  *
- * Before U16 the word and completion were literals baked into this file. Now they are not —
- * `word` and `description` come from `getStoredUser()?.chat_kinds`, the U16 catalogue riding the
+ * WHY THIS EXISTS
+ * The word and completion used to be literals baked into this file. Now they are not —
+ * `word` and `description` come from `getStoredUser()?.chat_kinds`, the catalogue riding the
  * once-cached `GET /auth/me` bootstrap. The strongest proof that the sourcing is real, rather
  * than a hardcoded fallback with a bootstrap-shaped decoration on top, is to mock the bootstrap
  * with wording that does NOT match the product copy and watch `chatKindFor` return exactly that
@@ -60,7 +60,7 @@ describe('chatKindFor', () => {
   })
 
   it('keeps the icon and the pill local, unaffected by whatever the bootstrap says', () => {
-    // R-8: icon/pill are NOT part of the catalogue's shape and must not move even though the
+    // icon/pill are NOT part of the catalogue's shape and must not move even though the
     // words now do. Same kind, two catalogues, one look.
     withCatalogue(MOCK_CATALOGUE)
     const first = chatKindFor('plan')

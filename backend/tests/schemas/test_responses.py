@@ -106,8 +106,8 @@ def test_v1_router_500_default_propagates_to_every_route() -> None:
 
 
 def test_v1_router_suspension_403_default_propagates() -> None:
-    # `current_user` 403s a suspended account on every authenticated route (deps.py,
-    # R11); the router-level AUTH_403_SUSPENDED default documents it. A route with
+    # `current_user` 403s a suspended account on every authenticated route (deps.py);
+    # the router-level AUTH_403_SUSPENDED default documents it. A route with
     # its own 403 (admin's superadmin gate) keeps its declaration.
     schema = create_app().openapi()
     projects = schema["paths"]["/v1/projects"]["get"]["responses"]

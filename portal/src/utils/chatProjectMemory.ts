@@ -25,8 +25,8 @@
  * Storage access is wrapped because `sessionStorage` genuinely throws rather than degrading —
  * Safari's private mode on quota, and any embedding that blocks storage access. The defined
  * meaning of that failure here is: no memory, so the row falls back to the neutral shape it had
- * before this existed. Nothing else is affected. The documented-optional case in
- * `.claude/rules/fail-first.md`, not a swallowed error.
+ * before this existed. Nothing else is affected — this is a deliberate, documented fallback,
+ * not a swallowed error.
  */
 
 const key = (chatId: string): string => `chatProject:${chatId}`

@@ -1,4 +1,4 @@
-"""U14 — the evaluation script, exercised for ARGUMENT HANDLING and REPORT SHAPE only.
+"""The evaluation script, exercised for ARGUMENT HANDLING and REPORT SHAPE only.
 
 The script's real output is a measurement run against real bundles and live Foundry —
 that run happens outside the test suite, and nothing here asserts accuracy numbers.
@@ -265,7 +265,7 @@ def test_happy_path_emits_a_report_row_with_every_field_populated(tmp_path: Path
     assert row["cache_write_tokens"] == 205
     assert row["final_step_output_tokens"] == 80  # the LAST step alone, not the sum
 
-    # Verdicts, the production R4 downgrade, catch/miss, and routing.
+    # Verdicts, the production downgrade, catch/miss, and routing.
     assert set(row["verdicts"]) == set(CLASSIFICATION_KEYS)
     assert row["verdicts"]["financial_data"] == "yes"
     assert row["effective_verdicts"]["financial_data"] == "yes"  # evidence path is real
@@ -346,7 +346,7 @@ def test_an_unextractable_bundle_is_a_failure_row_and_the_sweep_continues(
     assert failure["head_sha"] is None
     assert failure["requests"] is None  # the model was never touched
     assert failure["verdicts"] is None
-    assert failure["would_route"] is True  # the ladder routes every run failure (R20)
+    assert failure["would_route"] is True  # the ladder routes every run failure
 
     good = runs[1]
     assert good["status"] == "complete"
@@ -414,7 +414,7 @@ def test_a_known_clean_bundle_flagged_yes_drives_the_routing_rate(tmp_path: Path
     assert runs[0]["would_route"] is True
     assert summary["known_clean_total"] == 1
     assert summary["known_clean_routed"] == 1
-    assert summary["false_positive_routing_rate"] == 1.0  # the named ASM17 figure
+    assert summary["false_positive_routing_rate"] == 1.0
 
 
 def test_scan_only_runs_without_any_model_and_reports_tier_precision(tmp_path: Path) -> None:

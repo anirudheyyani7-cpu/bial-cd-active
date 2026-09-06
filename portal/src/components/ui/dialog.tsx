@@ -48,8 +48,8 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
  * and upstream renders the overlay and the close button internally where a caller cannot
  * reach them:
  *
- *   `overlayClassName` — #158 §9 specifies a SOFTENED overlay (`bg-slate-900/15` with a 3px
- *     backdrop blur) rather than upstream's `bg-black/80`, and §12 names overriding it as the
+ *   `overlayClassName` — the design calls for a SOFTENED overlay (`bg-slate-900/15` with a 3px
+ *     backdrop blur) rather than upstream's `bg-black/80`, and overriding it here is the
  *     expected thing to do. Without this prop the only way to get there is editing the
  *     vendored default, which would change every other dialog in the product.
  *

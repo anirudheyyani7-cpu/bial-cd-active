@@ -8,8 +8,8 @@ The reconciler's own four-answer logic is pinned in `tests/services/deploy/test_
 its scheduled wrapper in `tests/workers/test_deploy_reconcile.py`. This file pins the ROUTE: who
 may call it, what the wire body says, what reaches the audit trail, and which failures are
 retryable — the same set its three siblings carry (`test_sandbox_reconcile.py`,
-`test_database_reconcile.py`, `test_storage_reconcile.py`), because `.claude/rules/testing.md`
-asks for RBAC to be tested rather than reasoned about."""
+`test_database_reconcile.py`, `test_storage_reconcile.py`), because this repo's testing
+convention asks for RBAC to be tested rather than reasoned about."""
 
 from __future__ import annotations
 

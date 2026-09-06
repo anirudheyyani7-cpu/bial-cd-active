@@ -1,4 +1,4 @@
-"""The Taskiq scheduler (ADR-0011).
+"""The Taskiq scheduler.
 
 The scheduler is only a CLOCK. On a cron tick it pushes a message onto the broker; the receiver
 picks it up and executes it. It does not run anything itself. `worker_main` owns the reason the

@@ -1,5 +1,5 @@
 /**
- * THE BOUNDARY THE CITIZEN CAN MOVE (plan 002, U7), through the real shell.
+ * THE BOUNDARY THE CITIZEN CAN MOVE, through the real shell.
  *
  * Every scenario here is about the RELATIONSHIP between two columns, so none of them is visible to
  * a test that mounts one. What this file pins is the board's four numbers, its two stops, its

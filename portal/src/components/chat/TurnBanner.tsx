@@ -1,5 +1,5 @@
 /**
- * The one banner slot above the composer (U7 / R13).
+ * The one banner slot above the composer.
  *
  * WHY A SLOT AND NOT A LIST. This plan gives the platform five things it may need to say to a
  * citizen — their app was recovered, it could not be, the workspace could not be checked, the
@@ -41,7 +41,8 @@ const AN_EMAIL_ADDRESS = /[^\s<>@]+@[^\s<>@.]+(?:\.[^\s<>@.]+)+/g
 /**
  * The sentence with its support address turned into a real `mailto:` link.
  *
- * RE-HOMED FROM `BuildProgress.tsx` (Plan D U17 deleted it) TO ITS ONE REMAINING READER. It was
+ * RE-HOMED FROM `BuildProgress.tsx` (the row that shared it was deleted) TO ITS ONE REMAINING
+ * READER. It was
  * exported from there because the at-limit row and this banner rendered the same server sentence;
  * the row is gone with the card, so this slot is the only DOM the sentence reaches and there is
  * nothing left to share it with.

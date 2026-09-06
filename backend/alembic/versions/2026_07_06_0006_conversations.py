@@ -4,12 +4,12 @@ Revision ID: 0006_conversations
 Revises: 0005_feedback
 Create Date: 2026-07-06
 
-User-scoped chat headers + messages (R14, R4). Conversation `id` is the CLIENT-MINTED id
+User-scoped chat headers + messages. Conversation `id` is the CLIENT-MINTED id
 (a builder chat's id IS the deployed appId — preserved across the migration); messages order
 by the client-minted `seq` and store the SPA content `parts[]` in JSONB `parts`. `kind` and
-`role` are native PG enums (ADR-0008), owned by this migration (explicit CREATE/DROP TYPE).
-Chains off this plan's `0005_feedback` branch; the parallel app-data branch reconciles via
-`alembic merge heads` at integration. Hand-finalized (ADR-0013).
+`role` are native PG enums, owned by this migration (explicit CREATE/DROP TYPE).
+Chains off `0005_feedback`; the parallel app-data branch reconciles via
+`alembic merge heads` at integration. Hand-finalized.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ down_revision: str | None = "0005_feedback"
 branch_labels: str | None = None
 depends_on: str | None = None
 
-# Native enums (ADR-0008) — create_type=False so THIS migration owns the lifecycle.
+# Native enums — create_type=False so THIS migration owns the lifecycle.
 conversation_kind = postgresql.ENUM(
     "planning", "assistant", "builder", name="conversation_kind", create_type=False
 )
@@ -37,9 +37,9 @@ def upgrade() -> None:
 
     op.create_table(
         "conversations",
-        # Client-minted id (not the mixin default) — preserved across the migration (R4).
+        # Client-minted id (not the mixin default) — preserved across the migration.
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), nullable=False),
-        # OwnedByUserMixin — the single-tenant ownership boundary (ADR-0004).
+        # OwnedByUserMixin — the single-tenant ownership boundary.
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("kind", conversation_kind, nullable=False),
         sa.Column("title", sa.Text(), nullable=True),

@@ -1,8 +1,8 @@
-"""The U10 turn transport, end to end: POST starts a detached turn, GET subscribes with
+"""The turn transport, end to end: POST starts a detached turn, GET subscribes with
 catch-up-snapshot-then-tail, stop is the explicit cancel, and the frame union parses with
 the callable-discriminator discipline (malformed KNOWN tag raises; unknown tag captured).
 
-Also home to the HTTP-level no-overrides kind-gating proof U8 deferred here: a Plan-kind
+Also home to the HTTP-level no-overrides kind-gating proof deferred here: a Plan-kind
 turn's model-visible tool list carries no write tools, through the REAL route + engine.
 """
 
@@ -319,7 +319,7 @@ async def test_the_acknowledgement_actually_reaches_a_subscriber(
 ) -> None:
     """★ THE DELIVERY TEST, and the one whose absence hid the bug.
 
-    U17's acknowledgement had three passing tests — emitted before any model request, replaced by
+    The acknowledgement had three passing tests — emitted before any model request, replaced by
     the first real step, never persisted — and reached NOBODY. All three asserted against the
     in-memory ring; none asserted against the stream a client actually reads.
 
@@ -469,7 +469,7 @@ async def test_model_failure_travels_in_band(
     types = [f.type for f in state.ring]
     assert "error" in types and types[-1] == "turn_ended"
 
-    # ★ R82 / U7 — ON THE TURN THAT WENT WRONG, WHAT THE CITIZEN READS IS OURS.
+    # ★ ON THE TURN THAT WENT WRONG, WHAT THE CITIZEN READS IS OURS.
     #
     # This is the half of the plain-language contract that can be asserted rather than
     # observed. The tempting test — "the composed prompt contains the audience block, therefore
@@ -513,7 +513,7 @@ async def test_cross_user_conversation_is_404_everywhere(
 async def test_plan_kind_model_sees_no_write_tools(
     client, db_session, set_chat_model, _fresh_engine
 ) -> None:
-    """The HTTP-level no-overrides gating proof (U8's deferred test): through the REAL
+    """The HTTP-level no-overrides gating proof: through the REAL
     route, engine, and toolsets, a Plan turn's model-visible tool list is exactly the read
     surface plus the plan-confirmation tool — no write_file / edit_file / insert_lines /
     declare_done.
@@ -555,7 +555,7 @@ async def test_write_mode_accepts_a_send_like_every_other_mode(
     """THE FLIP. Write used to 400 here with copy telling the user to switch modes — which was
     a real refusal for a real reason (Write had no toolset and no composable prompt) and is a
     lie now. A citizen who just built something can keep talking to it in the mode they are
-    already in, which is the whole of N6."""
+    already in."""
     from src.db.models.conversation import ChatKind
 
     user = await UserFactory.create(db_session)
@@ -597,7 +597,7 @@ async def test_a_live_build_in_this_thread_refuses_the_turn(
 async def test_a_build_in_another_thread_now_refuses_this_one_by_name(
     client, db_session, set_chat_model, _fresh_engine, building
 ) -> None:
-    """★ AE6 / R93 — AND THIS EXPECTATION IS THE OPPOSITE OF WHAT IT USED TO BE.
+    """★ AND THIS EXPECTATION IS THE OPPOSITE OF WHAT IT USED TO BE.
 
     It used to read: "per-conversation, not per-user — a planning conversation elsewhere is
     legitimate traffic, and gating it would be the over-correction." That was true while a
@@ -628,7 +628,7 @@ async def test_a_build_in_another_thread_now_refuses_this_one_by_name(
 async def test_the_refused_send_is_not_stored_and_bills_nothing(
     client, db_session, set_chat_model, _fresh_engine, building
 ) -> None:
-    """★ AE51's server half. A refusal that costs the citizen their message is a worse bug than
+    """★ A refusal that costs the citizen their message is a worse bug than
     the conflict it reports: they retype it, or they do not, and either way the platform took
     something for nothing."""
     import sqlalchemy as sa
@@ -675,14 +675,14 @@ async def test_two_plan_chats_can_both_be_open_and_only_sending_takes_the_slot(
     await _settle(_fresh_engine, second.id)
 
 
-# --- R98: no workspace service means the message is refused, not degraded ------------------
+# --- no workspace service means the message is refused, not degraded ------------------
 
 
 @pytest.mark.parametrize("kind", [ChatKind.PLAN, ChatKind.BUILD])
 async def test_no_workspace_service_refuses_the_send_identically_in_both_kinds(
     client, db_session, set_chat_model, _fresh_engine, no_workspace_service, kind
 ) -> None:
-    """★ AE53. Both kinds, one answer, said at the moment of sending.
+    """★ Both kinds, one answer, said at the moment of sending.
 
     WHAT THIS REPLACED WAS SILENCE. A turn with no sandbox service configured used to answer
     from the last SAVED copy of the app — a degradation the citizen was never told about,
@@ -738,13 +738,13 @@ def test_nothing_builds_a_saved_copy_workspace_for_a_turn() -> None:
         assert not hasattr(engine_module, retired), retired
 
 
-# --- R42a: the stored-message ceiling refuses rather than trims ----------------------------
+# --- the stored-message ceiling refuses rather than trims ----------------------------
 
 
 async def test_an_over_length_message_is_refused_at_the_boundary(
     client, db_session, set_chat_model, _fresh_engine
 ) -> None:
-    """★ AE18. Refused by the schema, before anything is claimed or stored — and REFUSED, not
+    """★ Refused by the schema, before anything is claimed or stored — and REFUSED, not
     trimmed. A message cut at a ceiling is one the citizen believes they sent whole, and the
     platform has no way to tell them otherwise afterwards."""
     import sqlalchemy as sa
@@ -856,7 +856,7 @@ async def test_a_refused_start_leaves_the_pending_plan_card_unresolved(
     # (c) the user's own sandbox is committed to ANOTHER thread → 409, card still untouched.
     # This replaces the old Write-mode 400: the refusal that remains is about the workspace
     # being busy elsewhere, never about the kind itself. `kind` is fixed at creation in real
-    # traffic (R14/R15, no route mutates it) — this direct row mutation is a TEST-ONLY shortcut
+    # traffic (no route mutates it) — this direct row mutation is a TEST-ONLY shortcut
     # to exercise the guard against a Build-kind row without driving a real transition.
     conversation = await db_session.get(Conversation, conv.id)
     assert conversation is not None
@@ -930,7 +930,7 @@ async def test_reconnect_with_cursor_resumes_tail_only_without_duplicating_text(
 async def test_active_turn_in_conversation_read_while_running(
     client, db_session, set_chat_model, _fresh_engine
 ) -> None:
-    """U6's deferred populated-while-running case: the GET reports {turnId, lastSeq} while
+    """The populated-while-running case: the GET reports {turnId, lastSeq} while
     the turn runs and null after it settles."""
     gate = asyncio.Event()
 
@@ -1033,10 +1033,10 @@ def test_build_frames_speak_camel_case_on_the_wire() -> None:
         "type": "diagnostic",
         "seq": 3,
         "source": "server",
-        # NO `title`, NO `cleanedStack` — U14 took the model's half off this frame entirely.
+        # NO `title`, NO `cleanedStack` — the model's half of this frame is gone entirely.
         # Asserted as an exact dict rather than by absence checks, which is what makes this the
         # egress test: a field re-added anywhere in the shape fails here, whatever it is named.
-        # U16 — the citizen-facing half, derived from the error class because the producer
+        # The citizen-facing half, derived from the error class because the producer
         # supplied none. It is asserted HERE, on the exact wire dict, for the reason this test
         # exists at all: the portal narrows on the camelCase key, so a snake_case spelling of
         # either field is a sentence the citizen never reads and a blank error row.
@@ -1150,7 +1150,7 @@ async def test_csrf_required_on_turn_posts(client, db_session, set_chat_model) -
     assert resp.status_code == 403
 
 
-# --- plan options over the API (U11) ------------------------------------------------------
+# --- plan options over the API ------------------------------------------------------
 
 
 _OFFERED_PLAN = "Your visitor log will list today's visitors, newest first."
@@ -1429,7 +1429,7 @@ async def test_every_other_side_effect_free_refusal_leaves_zero_rows_too(
     user_id, project_id, headers = user.id, project.id, _headers(user)
     before = await _conversation_count(db_session, user_id)
 
-    # NO WORKSPACE SERVICE (R98). The one refusal that needs the sandbox seam UNBOUND, which is why
+    # NO WORKSPACE SERVICE. The one refusal that needs the sandbox seam UNBOUND, which is why
     # it is written here rather than assumed by the suite's default fixture.
     app.dependency_overrides[sandbox_or_none_dependency] = lambda: None
     try:
@@ -1444,7 +1444,7 @@ async def test_every_other_side_effect_free_refusal_leaves_zero_rows_too(
 async def test_a_project_someone_else_owns_is_refused_and_creates_nothing(
     client, db_session, set_chat_model, fake_redis, fake_storage
 ) -> None:
-    """OWNERSHIP IS CHECKED BEFORE ANYTHING IS READ OR WRITTEN (ADR-0004), and the 404 is the same
+    """OWNERSHIP IS CHECKED BEFORE ANYTHING IS READ OR WRITTEN, and the 404 is the same
     non-leaking answer an unknown project gets — existence under another owner is not
     distinguishable from absence."""
     set_chat_model(_streaming_text("ok"))
@@ -1556,7 +1556,7 @@ async def test_a_create_block_on_a_conversation_that_already_exists_is_ignored(
 async def test_a_first_message_that_loses_the_insert_race_joins_the_winners_chat(
     client, db_session, set_chat_model, fake_redis, fake_storage, _fresh_engine, monkeypatch
 ) -> None:
-    """★ U7 — THE GENUINE RACE, AND THE ONLY ARM OF THIS ROUTE THAT RUNS AFTER SOMETHING BROKE.
+    """★ THE GENUINE RACE, AND THE ONLY ARM OF THIS ROUTE THAT RUNS AFTER SOMETHING BROKE.
 
     THE ORDINARY DOUBLE SEND NEVER GETS HERE. It is answered by the owner-scoped read at the top
     of the route — one SELECT rather than a failed INSERT — and the test above pins that fast

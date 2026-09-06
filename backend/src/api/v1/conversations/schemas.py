@@ -6,8 +6,8 @@ DOCUMENTED-ONLY: FastAPI advertises them in OpenAPI but never validates or resha
 response — the characterization tests are the byte-identical guard. `_id` needs an
 explicit alias because Pydantic treats a leading-underscore field name as private.
 
-The legacy message-append/read schemas died with their endpoints (U4's destructive reset);
-the projection read shape joins in U6.
+The legacy message-append/read schemas died with their endpoints (a destructive reset);
+the projection read shape now goes through the single history→display derivation.
 
 Net-new routes (the turn surfaces, the Build-it handoff) parse their bodies through models
 normally — only the Express-era routes keep the byte-matched JSONResponse discipline.
@@ -56,8 +56,8 @@ class ConversationListResponse(CamelModel):
 
 
 class ConversationCreateRequest(CamelModel):
-    """`POST /conversations` — create the row BEFORE the first turn (U7). The id stays
-    client-minted (`crypto.randomUUID`, the R14 model); the server validates ownership of the
+    """`POST /conversations` — create the row BEFORE the first turn. The id stays
+    client-minted (`crypto.randomUUID`); the server validates ownership of the
     parent project and makes the call idempotent per owner, so the SPA's synchronous
     mint-then-navigate flow needs no extra round trip on a retry."""
 
@@ -89,7 +89,7 @@ class ActiveTurnOut(CamelModel):
 
 
 class ConversationDetailResponse(CamelModel):
-    """Header + display projection + the U10 `activeTurn` seam — one read rebuilds the chat.
+    """Header + display projection + the `activeTurn` seam — one read rebuilds the chat.
     `projection` items are the `services/messages/projection.py` models (the single
     history→display derivation; documented here, produced there)."""
 
@@ -99,7 +99,7 @@ class ConversationDetailResponse(CamelModel):
 
 
 # ---------------------------------------------------------------------------------------
-# The U10 turn-stream frame union (one transport for chat + build activity)
+# The turn-stream frame union (one transport for chat + build activity)
 # ---------------------------------------------------------------------------------------
 #
 # Every frame carries the per-turn monotonic `seq` (the SSE `id:` cursor). The union
@@ -141,10 +141,10 @@ reads the same turn in a different order from one who never left."""
 
 
 class SnapshotFrame(CamelModel):
-    """The catch-up snapshot — always the first frame of a subscription that cannot prove
-    gap-free continuity (fresh subscribe, F5, cursor fallen out of the ring). `items` are
-    the turn's PERSISTED rows projected through the one U6 derivation. A client renders
-    snapshot state then applies the live tail from `seq`.
+    """The catch-up snapshot — always the first frame of a subscription that cannot prove gap-free
+    continuity (fresh subscribe, F5, cursor fallen out of the ring). `items` are the turn's
+    PERSISTED rows projected through the one history→display derivation. A client renders snapshot
+    state then applies the live tail from `seq`.
 
     `parts` is the in-memory tail the DB does not hold yet — the turn's prose and its steps
     in one ordered list, hidden steps included (`hidden` is a render hint, and filtering it
@@ -235,7 +235,7 @@ class TurnErrorFrame(CamelModel):
 
 
 class PlanOptionsFrame(CamelModel):
-    """The Build it / Keep refining card, live (U11). `item` is the identical shape the
+    """The Build it / Keep refining card, live. `item` is the identical shape the
     reload projection produces — resolution state always derives from the stored record."""
 
     type: Literal["plan_options"] = "plan_options"
@@ -252,7 +252,7 @@ class WorkspaceFrame(CamelModel):
     seq: int
     state: Literal["preparing", "ready", "unavailable"]
     message: str | None = None
-    # U2 — SOMETHING THE PLATFORM NEEDS THE CITIZEN TO SEE, as distinct from `message`, which
+    # SOMETHING THE PLATFORM NEEDS THE CITIZEN TO SEE, as distinct from `message`, which
     # narrates the phase this frame announces ("Getting your workspace ready…").
     #
     # The two are different kinds of speech and they belong in different places on screen, which
@@ -276,7 +276,7 @@ class PreviewFrame(CamelModel):
 
 
 class CompileFrame(CamelModel):
-    """What the app's dev server is compiling right now (R17/R18), so the preview pane can
+    """What the app's dev server is compiling right now, so the preview pane can
     cover its frame instead of letting the framework's full-screen error screen fill it.
 
     Emitted ON CHANGE, not on every poll: the watcher asks once a second for the whole turn,

@@ -1,7 +1,7 @@
 /**
- * THE PARITY CHECKLIST, ASKED OF THE NEW HOST (R52).
+ * THE PARITY CHECKLIST, ASKED OF THE NEW HOST.
  *
- * `MessageContent.test.tsx` is the checklist R52 asks someone to write and it was already written —
+ * `MessageContent.test.tsx` is the checklist this file asks someone to write and it was already written —
  * 20 cases, 43 assertions. Not one line of its sanitisation pipeline has moved through the port;
  * the one case it has lost is `compact`, whose prop went when one surface absorbed the two pages
  * that used to size their rails differently, recorded as an amendment in that file's own docblock.
@@ -96,8 +96,8 @@ describe('ChatThread — what the new host must still guarantee', () => {
   })
 
   it('adds no calc(100vh …) anywhere', () => {
-    // The only one in the repo lived at ChatPage.tsx:642 and coupled the transcript to the
-    // navbar's height. Plan A owns the height model now.
+    // The only one in the repo lived on the retired chat page and coupled the transcript to
+    // the navbar's height. The workspace shell owns the height model now.
     const { container } = mount([assistant('a1', 'hello')])
     expect(container.innerHTML).not.toMatch(/100vh/)
   })

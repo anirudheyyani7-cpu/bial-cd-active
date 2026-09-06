@@ -1,7 +1,7 @@
 /**
  * WHAT A PUBLISH STATE LOOKS LIKE AND WHAT IT SAYS — one map, two surfaces.
  *
- * ═══ WHY THIS IS ITS OWN MODULE (plan 002, U4) ═══
+ * ═══ WHY THIS IS ITS OWN MODULE ═══
  *
  * The boards give the app's status TWO renderings: an always-visible APP STATUS panel in the
  * project rail, and a chip beside the title in the toolbar row. The panel is the fuller surface
@@ -68,8 +68,9 @@ export const SECONDARY_ACTIONS: ReadonlySet<ActionKind> = new Set<ActionKind>(['
  * from a column the status read already selects: the registry row's submission and approval
  * stamps, the deployment row's head and timestamps.
  *
- * THE CITIZEN'S OWN SAVE IS NOT ONE OF THESE, and not because it is unavailable — U4 made the
- * status read return the saved head and its timestamp, and `savedRow` below renders them. It is
+ * THE CITIZEN'S OWN SAVE IS NOT ONE OF THESE, and not because it is unavailable — the
+ * status read now returns the saved head and its timestamp too, and `savedRow` below renders
+ * them. It is
  * not here because this type answers "which version is this state about", which has one answer,
  * while the saved version exists to be CONTRASTED with it. That contrast is a list rather than a
  * row, so it belongs to `provenanceRows` and the rail panel that draws them.
@@ -92,8 +93,8 @@ export interface Presentation {
  * the server adds and this map has not labelled is a COMPILE error rather than a chip with
  * no words.
  *
- * TWO STATES DELIBERATELY SHARE THE LABEL "Approved" (reconciliation R-1.8). They are the
- * same state to a citizen — their app is approved — and R38 puts the difference exactly
+ * TWO STATES DELIBERATELY SHARE THE LABEL "Approved". They are the
+ * same state to a citizen — their app is approved — and the difference is put exactly
  * where it belongs: on the button, `Publish` against `Send for review`, plus one sentence
  * each. Every other pair of states has different words, which is what makes the CLOSED
  * chip a complete answer: "Live", "Live · newer work saved" and "Live · couldn't check"
@@ -115,7 +116,7 @@ export function presentationFor(state: PublishState): Presentation {
       // described a button rather than the app, and "Only you can see it" made a privacy
       // claim nobody asked this chip to make.
       //
-      // THE PRIVACY CLAIM IS GONE (plan 002, U4). The sentence opened "Nobody else can see
+      // THE PRIVACY CLAIM IS GONE. The sentence opened "Nobody else can see
       // this yet", which is the same kind of assertion the board's own notes record being
       // retired one word earlier: "Only you can see it" described WHO CAN REACH the app,
       // "which sounds like a privacy setting, and is a claim nobody asked the chip to
@@ -163,7 +164,7 @@ export function presentationFor(state: PublishState): Presentation {
       // NO ARTBOARD. Adapted from the retired review card's approved arm with its
       // lineage promise removed: it says an administrator approved this version and that
       // pressing Publish is the next step, and it does NOT say whether that will publish
-      // or route. That is the R38 discipline, and it is not pedantry — the decision is
+      // or route. That is the discipline, and it is not pedantry — the decision is
       // taken inside the request, against a tree a `saveFirst` can move first, so no read
       // taken before the press can honestly promise either outcome.
       return {
@@ -379,7 +380,7 @@ export function versionRowData(
  *
  *   `approved_ready_to_publish` / `approved_needs_review_again` take the GREEN of "Starting up",
  *   because what they have in common with it is the platform having said yes. The difference
- *   between the two is on the button, which is where R38 puts it.
+ *   between the two is on the button.
  *
  *   `live_drift_unknown` is green like the other two live states — the app IS live, and the
  *   thing that could not be checked is in the label, not in the colour. Painting it amber would
@@ -432,7 +433,7 @@ export function lookFor(state: PublishState): StateLook {
  * THE PANEL'S PROVENANCE ROWS — what is published, what was approved, and what the citizen last
  * saved, each with its date and its short build id.
  *
- * THE SAVED ROW IS WHY U4 NEEDED A SERVER FIELD. Everything else here comes from columns the
+ * THE SAVED ROW IS WHY THE STATUS READ NEEDED A NEW SERVER FIELD. Everything else here comes from columns the
  * status read already selects; the citizen's own last save did not reach this client at all,
  * because the server spent its one metadata HEAD on the drift comparison and returned only the
  * verdict. It returns the head and its timestamp now.

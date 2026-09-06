@@ -2,7 +2,7 @@
 
 Overrides `current_user` (no live session cookie needed) and `superadmin_allowlist`
 (no global Settings mutation), then asserts the gate returns 200 for an allowlisted
-user and a plain 403 otherwise — the plan's U1 verification.
+user and a plain 403 otherwise.
 """
 
 from __future__ import annotations

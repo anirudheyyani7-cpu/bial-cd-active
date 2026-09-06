@@ -15,7 +15,7 @@ Tool bodies run concurrently and their results arrive in completion order, while
 transcript renders in part order, so a response that spoke and also read a file could put the
 two in one order live and the other order on reload. Both emitters render from the stored
 tool CALL instead, at the position the call occupies, which is the `present_plan_options`
-shape and the only placement where live order and reload order cannot disagree (R75a/R76).
+shape and the only placement where live order and reload order cannot disagree.
 
 So the body's whole job is to tell the model what happened when a call cannot be honoured.
 What reaches the screen is decided by `update_from_args`, which both emitters call — one rule,
@@ -87,7 +87,7 @@ async def tell_the_user(ctx: RunContext[Any], update: str, finished: str | None 
             "carry on working without calling this."
         )
     if finished is not None:
-        # ONE FIELD RATHER THAN A SECOND TOOL (U12). The mark and the sentence arrive together
+        # ONE FIELD RATHER THAN A SECOND TOOL. The mark and the sentence arrive together
         # — "It is in." — so splitting them would ask for two calls to report one event, and
         # two tools that differ only in shade are the overload the research warns about.
         #
@@ -109,10 +109,10 @@ async def tell_the_user(ctx: RunContext[Any], update: str, finished: str | None 
                 "`finished` out."
             )
         if not _already_marked_against(ctx.messages, agreed):
-            # R92's SECOND HALF, counted where the fact is rather than read out of a
+            # THE SECOND OF THE TWO COUNTERS, counted where the fact is rather than read out of a
             # transcript. The first mark that matches the agreed list is the observable form
             # of "they proceeded on the slice as proposed" — a fact about a tool call, which
-            # is the only kind of fact this plan lets anything act on.
+            # is the only kind of fact anything here acts on.
             await _count(HarnessCounter.FIRST_SLICE_ACCEPTED)
     return _SHOWN
 

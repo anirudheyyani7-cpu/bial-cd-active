@@ -1,53 +1,26 @@
 /**
- * AGENT ACTIVITY, DRAWN BY THE PARTS (R30–R35c).
+ * WHY THIS EXISTS
  *
- * ══ THE STRUCTURAL ARGUMENT, WHICH IS THE WHOLE POINT ══
+ * Agent activity, drawn by the parts. The pinned card this replaces rendered BY THE TURN, so it
+ * appeared even when nothing ran; this renders BY THE PARTS, so a turn with no tool-call parts
+ * renders no element at all. That makes two rules free: a turn that ran no tools shows nothing,
+ * and a group seals the moment the agent next speaks — the primitive coalesces ADJACENT parts, so
+ * a group ends when a different part type appears, with no separate seal logic anywhere.
  *
- * The pinned card this replaces was rendered BY THE TURN, so it appeared whether or not anything
- * ran — ask "who can see the visitor log?" and you got a progress bar. This is rendered BY THE
- * PARTS, so a turn with no tool-call parts renders literally no element.
+ * The design system's `tool-group` would not have worked here: its one usable variant is an empty
+ * string, and its card's proportions are not this board's. Every visible property below is
+ * authored against `ActivityAnatomy`'s own bordered-chip container; only `useScrollLock` is reused
+ * from the library directly.
  *
- * Two requirements therefore stop being rules anybody has to remember and become consequences:
- *   R35 (a turn that ran no tools shows nothing) is free — no parts, no group, no code.
- *   R32 (a group seals when the agent next speaks) is free — the primitive coalesces ADJACENT
- *        parts, so a group ends the moment a different part type appears. THERE IS NO SEAL LOGIC.
- *        A reviewer looking for it will not find it, which is why this paragraph exists.
+ * A group always renders COLLAPSED, including while it runs — a deliberate departure from the
+ * artboard's live-open panel: a running group is one collapsed row with icons accumulating, plus a
+ * quiet line beneath naming the current step. Pressing it is a glance, not a new resting state: a
+ * group opened while running collapses again once the turn ends, but one already sealed when
+ * opened stays open until closed by hand, since snapping shut on a finished receipt would be
+ * hostile rather than tidy.
  *
- * ══ WHY THIS IS NOT THE REGISTRY'S `tool-group` ══
- *
- * Porting the registry's `tool-group.aui.tsx` would have shipped nothing usable: the variant we
- * would pass, `ghost`, is LITERALLY THE EMPTY STRING, and its
- * `outline` default is a `rounded-lg border py-3` card whose proportions are not the board's. Every
- * visible property below is authored here against `ActivityAnatomy`, which is a whole artboard
- * about exactly this component.
- *
- * What the port would genuinely have brought is kept: `useScrollLock`, so expanding does not throw
- * the reader somewhere else, is imported from the library directly.
- *
- * ══ IT HAS A CONTAINER, AND THAT IS THE BOARD'S ══
- *
- * `ActivityAnatomy` is the artboard that specifies it, and it draws a bordered chip:
- * `border:1px solid #E2E8F0; background:#FCFDFD; border-radius:10px`, opening into a bordered
- * panel with a header rule. A group with no chrome at all reads as bare text sitting in the
- * transcript, with nothing to say it is a receipt rather than a sentence.
- *
- * ══ ALWAYS COLLAPSED — INCLUDING WHILE IT RUNS ══
- *
- * This AMENDS the board in place: `ActivityAnatomy` panel 2 draws a live group open, with a label
- * naming the current step inside it. A running group is instead ONE COLLAPSED ROW — icons
- * accumulating in it as steps complete — with a single quiet line beneath it naming what is
- * happening right now. Nothing expands on its own.
- *
- * PRESSING IT IS A GLANCE, NOT A NEW RESTING STATE. Opening shows the rows; pressing again closes
- * them; and a group opened WHILE RUNNING returns to collapsed by itself WHEN THE TURN ENDS, because
- * the turn it belonged to is over and the peek was about watching it. A group that was ALREADY
- * sealed when the reader opened it stays open until they close it — there is no later event to hang
- * a self-close on, and snapping shut under someone reading a finished receipt would be hostile
- * rather than tidy. Both halves are deliberate; the second is the honest limit of the first.
- *
- * R34's FAIL-OPEN IS THE ONE THING THAT OPENS ITSELF, and it fires only once the group is
- * terminal: expanding mid-turn moves what the reader is reading. Nothing is hidden when something
- * went wrong.
+ * A failure opens the group by itself, but only once it is terminal — never mid-turn, where that
+ * would move what the reader is currently reading.
  */
 import {
   ChevronDown,
@@ -78,7 +51,7 @@ import type { ActivityArgs, ActivityState } from './runtime/convertMessage'
 import { ToolActivityLine, type ToolActivityState } from './ToolActivityLine'
 
 /**
- * R35b — what a row says when the server sent no friendly label.
+ * What a row says when the server sent no friendly label.
  *
  * The canvas's wording, verbatim (`ActivityAnatomy`, board 3). Never the tool's own name: the
  * server's classifier fails closed precisely so an unrecognised command cannot reach a citizen as
@@ -87,24 +60,22 @@ import { ToolActivityLine, type ToolActivityState } from './ToolActivityLine'
 export const UNRECOGNISED_STEP = 'Working on your app'
 
 /**
- * Which messages ended on an interrupted turn (R35c).
+ * Which messages ended on an interrupted turn.
  *
  * A group cannot know this by itself — it is a fact about the TURN, carried by the durable
  * turn-terminal row — so the surface supplies it. Without it a count from a build somebody stopped
- * reads exactly like a count from one that finished, which is the specific misreading R35c names.
+ * reads exactly like a count from one that finished, which is the specific misreading this guards
+ * against.
  */
 export const InterruptedMessagesContext = createContext<ReadonlySet<string>>(new Set())
 
 /**
- * R66's SECOND ANNOUNCEMENT — what a group amounted to, the moment it sealed.
+ * What a group amounted to, announced the moment it sealed.
  *
- * It is reported from here rather than derived at the surface because this is the only place the
- * count is already right: a diagnostic joins the group as a failed row but never reaches the
- * surface's `turnSteps`, so a surface-side count would say "3 steps" about a group rendering four.
- * Two places computing the same sentence is how they come to disagree.
- *
- * The default is a no-op, so a group rendered outside a provider (every unit test of this file)
- * behaves exactly as it did.
+ * Reported from here, not derived at the surface, because this is the only place the count is
+ * already right: a diagnostic joins the group as a failed row but never reaches the surface's
+ * `turnSteps`, so a surface-side count would undercount a group with one. The default is a no-op,
+ * so a group rendered outside a provider (every unit test of this file) behaves exactly as before.
  */
 export const GroupSealedContext = createContext<(summary: string) => void>(() => {})
 
@@ -249,7 +220,7 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
     }
   }, [group.indices, parts])
 
-  // R34, as a controlled prop with the reader's own toggle winning thereafter. `null` means "the
+  // As a controlled prop with the reader's own toggle winning thereafter. `null` means "the
   // reader has not decided", which is what lets a failure open the group once WITHOUT overriding a
   // reader who has already closed it.
   const [readerOpen, setReaderOpen] = useState<boolean | null>(null)
@@ -298,7 +269,7 @@ const ActivityGroup: FC<PropsWithChildren<{ group: ThreadGroupPart }>> = ({ grou
 
   // ONCE, ON THE TRANSITION — not on mount.
   //
-  // R66 announces what just happened, so the group has to have RUN here to have anything to
+  // This announces what just happened, so the group has to have RUN here to have anything to
   // report. Firing on "not running and has steps" instead announced every historical group in the
   // transcript the moment a finished chat was opened: five past builds meant five summaries into
   // the live region, none of them about anything the reader had just done.

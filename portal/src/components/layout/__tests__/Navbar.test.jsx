@@ -1,9 +1,9 @@
 /**
- * N4 — the daily-token meter has to be BOTH live and visible.
+ * The daily-token meter has to be BOTH live and visible.
  *
- * Two halves of one regression, both introduced on this branch. F7 removed the in-rail meter on
- * the grounds that "the header already shows real usage" — but the header's badge was
- * `hidden md:flex`, so below 768px there was no usage feedback anywhere at all; and the header
+ * Two halves of one regression, both introduced on this branch. An earlier version removed the
+ * in-rail meter on the grounds that "the header already shows real usage" — but the header's
+ * badge was `hidden md:flex`, so below 768px there was no usage feedback anywhere at all; and the header
  * only ever refetched on mount, because `notifyUsageChanged` had exactly one caller in the
  * retiring relay hook and the turn transport never signalled. Between them a citizen could spend
  * their entire daily budget watching a number that never moved — or that was not on screen.
@@ -208,7 +208,7 @@ describe('the meter settles without a reload (N4)', () => {
 })
 
 /**
- * U13/P1 — the waiting count an administrator cannot miss.
+ * The waiting count an administrator cannot miss.
  *
  * The badge sits on the admin nav entry so a superadmin sees the queue WITHOUT navigating
  * into it, carries a real accessible name rather than a bare numeral, and is not even
@@ -301,14 +301,14 @@ describe('the waiting-count badge (P1)', () => {
 /**
  * The avatar menu's state machine.
  *
- * #157 A removed three of the four header dropdowns, which left a `DropdownName` union with one
- * member and a `toggle(name)` comparing it against itself; a later commit collapsed both into a
+ * An earlier change removed three of the four header dropdowns, which left a `DropdownName`
+ * union with one member and a `toggle(name)` comparing it against itself; a later commit collapsed both into a
  * boolean. Nothing in this file covered the open/close behaviour either before or after, so the
  * rewrite rested entirely on a manual browser pass. These are the three ways the menu closes.
  */
 describe('the avatar menu opens and closes (#157 A)', () => {
   // Resolved ONCE, while the menu is closed, and the node is reused afterwards. Two traps
-  // here, both of which bit during #157:
+  // here, both of which bit:
   //   - `getAllByRole('button').at(-1)` re-resolves, and once the menu is open the last
   //     button in the nav IS "Sign out" — the browser harness clicked it and logged itself
   //     out mid-run, then asserted the rest against a login page.
@@ -362,7 +362,7 @@ describe('the avatar menu opens and closes (#157 A)', () => {
 
   it('closes when Feedback opens, instead of sitting behind the modal', async () => {
     // Pre-existing gap the dropdown union had too: the Feedback button lives OUTSIDE the
-    // menu, so opening the modal left the menu rendered underneath it (#157 review).
+    // menu, so opening the modal left the menu rendered underneath it.
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
 
@@ -374,7 +374,7 @@ describe('the avatar menu opens and closes (#157 A)', () => {
 })
 
 /**
- * U15 — THE HEADLINE. A failed sign-out used to call `showToast(...)` and then
+ * THE HEADLINE. A failed sign-out used to call `showToast(...)` and then
  * `navigate('/login')` on the very next line: the navigate unmounts ProjectsPage —
  * unmounts the navbar — which OWNS the toast state, destroying the message in the same
  * tick it was created. Nobody has ever seen it, on any device. The fix hands the warning
@@ -432,7 +432,7 @@ describe('the sign-out warning outlives the navigation (U15)', () => {
 })
 
 /**
- * THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD (Plan F, U8).
+ * THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD.
  *
  * `beforeunload` cannot cover a nav link: a single-page navigation is not an unload, so leaving the
  * workspace this way used to discard unsaved work in silence.

@@ -9,9 +9,8 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 
 // A plain suggestion list, not an enforced enum — the endpoint that consumes a value
 // still accepts any positive integer up to MAX_DAILY_TOKEN_LIMIT (custom values stay
-// legal). No backend-side twin: the one that used to live in services/usage/limits.py
-// had zero consumers there and existed only to be hand-mirrored here, so it was
-// deleted rather than kept in sync by hand with nothing reading it.
+// legal). No backend-side twin: mirroring this list in services/usage/limits.py would have
+// zero consumers there and would exist only to be kept in sync by hand with nothing reading it.
 const SUGGESTED_DAILY_TOKEN_LIMITS = [250_000, 500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000]
 const CUSTOM_VALUE = 'custom'
 
@@ -324,10 +323,11 @@ export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
 
           {/* A failed background page must never silently vanish (fail-first), and it must
               never look like the whole roster is in when it isn't — shown above the table,
-              not tucked below it. Ported from `UsersLimitsPanel.tsx:613-646`. Gated on
-              `users.length > 0`: on a FIRST-page failure `isPartial` can also be true (hasMore
-              starts `true` and is never reset on failure), and the dedicated empty-error block
-              below already covers that zero-users case — without this gate both rendered at
+              not tucked below it. Ported from the partial-roster banner in
+              `UsersLimitsPanel.tsx`. Gated on `users.length > 0`: on a FIRST-page failure
+              `isPartial` can also be true (hasMore starts `true` and is never reset on
+              failure), and the dedicated empty-error block below already covers that
+              zero-users case — without this gate both rendered at
               once, and this banner's Retry was disabled forever (appliedQuery stays `null`,
               never equal to `q`). */}
           {isPartial && users.length > 0 && (

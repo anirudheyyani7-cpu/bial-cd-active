@@ -1,5 +1,5 @@
-"""U3 — the reaper ordering + reconciliation sweep (deterministic fakeredis + a fake C2
-client). Asserts the KTD-3 drifted-lock reclaim, the mark-ending-before-teardown order,
+"""The reaper ordering + reconciliation sweep (deterministic fakeredis + a fake client).
+Asserts the drifted-lock reclaim, the mark-ending-before-teardown order,
 and sweep idempotency/timer-safety."""
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ OTHER = uuid.uuid4()
 
 @pytest.fixture(autouse=True)
 def attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
-    """Every U5 copy-before-reclaim outcome this test recorded, WITHOUT touching the database.
+    """Every copy-before-reclaim outcome this test recorded, WITHOUT touching the database.
 
     AUTOUSE, AND NOT FOR CONVENIENCE. `record_durable_copy_attempt` opens its own session and
     COMMITS — it must, because the row has to land even when the reap it describes has just
@@ -69,7 +69,7 @@ def attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
 
 @pytest.fixture(autouse=True)
 def _forget_the_divert_streak() -> None:
-    """U3's refusal counter is PROCESS-LOCAL, so a divert driven here would otherwise ride into
+    """The refusal counter is PROCESS-LOCAL, so a divert driven here would otherwise ride into
     whatever test runs next in this interpreter."""
     reset_divert_streaks_for_tests()
 
@@ -156,7 +156,8 @@ async def test_a_record_naming_something_that_is_not_a_sandbox_deletes_nothing(
 
     `reap_user` rebuilds a teardown handle from the registry with `reg.get(app_name, "")` and hands
     it straight to the control plane. Whatever that record says gets deleted — and the record is
-    the least trustworthy input in the system: it is the store the whole ADR distrusts, it has no
+    the least trustworthy input in the system: it is the store this whole design distrusts, it has
+    no
     TTL, it is written by several code paths, and the reap path had no check that the name it was
     about to destroy was even a sandbox. An empty string, a corrupted write, or a `pub-` name that
     got in by any route was a delete request for something that is not ours.
@@ -204,7 +205,7 @@ async def test_reconcile_leaves_a_live_session_untouched(fake_redis: aioredis.Re
     assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=False) is False
 
 
-# --- #10/R3: the certified-dead reap-through ----------------------------------
+# --- the certified-dead reap-through ----------------------------------
 #
 # `lock_is_held AND heartbeat_is_alive` is a FACADE, not liveness: a process that died
 # mid-build leaves both lingering up to their TTLs. Whether the facade may be trusted
@@ -217,7 +218,7 @@ async def test_reconcile_leaves_a_live_session_untouched(fake_redis: aioredis.Re
 async def test_certified_dead_reaps_through_a_lingering_lock_and_heartbeat(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # THE WALKTHROUGH 409 (#10): dead session, lock + heartbeat still lingering. The
+    # THE WALKTHROUGH 409: dead session, lock + heartbeat still lingering. The
     # certified reconcile reaps the ghost and the immediately-following acquire succeeds —
     # the user is never told a build is running when nothing is.
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=True)
@@ -268,7 +269,7 @@ async def test_certification_never_overrides_an_in_process_session(
 async def test_reconcile_reclaims_drifted_lock_and_next_start_acquires(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # KTD-3 core: registry + a LIVE lock + an ABSENT heartbeat + no in-proc session.
+    # The core scenario: registry + a LIVE lock + an ABSENT heartbeat + no in-proc session.
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=False)
     client = FakeSandboxClient()
     assert await locks.lock_is_held(fake_redis, USER) is True
@@ -288,7 +289,7 @@ async def test_sweep_all_reaps_lapsed_and_is_idempotent(fake_redis: aioredis.Red
     assert (await reaper.sweep_all(fake_redis, client)).reaped == 1  # only USER
     assert await locks.read_registry(fake_redis, USER) is None
     assert await locks.read_registry(fake_redis, OTHER) is not None
-    # A second immediate sweep is a clean no-op (idempotent / timer-safe, KTD-3).
+    # A second immediate sweep is a clean no-op (idempotent / timer-safe).
     assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
 
 
@@ -313,16 +314,14 @@ async def test_reaper_teardown_failure_keeps_state_for_retry(fake_redis: aioredi
 async def test_the_scheduled_sweep_resolves_the_owning_app_id_and_the_operator_one_does_not(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """THE ASYMMETRY THAT PUTS THE F1 PATH UNDER THE U14 GATE.
-
-    `reap_user` consults `confirm_durable_copy` only when it is handed an `app_id` — that is how
-    the gate is opted out of, and reconcile-on-start opts out on purpose, because a builder is
-    standing right there about to be handed a fresh container. The scheduled sweep has nobody
-    watching it and does almost all of the deleting, so it resolves the id and is gated. The
-    operator endpoint (`POST /v1/internal/reap`) passes no map and is unchanged.
-
-    Mutation-check: drop `app_ids_by_name=app_ids_by_name` from `sweep_all`'s `reconcile_user`
-    call and the first assertion goes red — the sweep reaps exactly as it did, ungated."""
+    """THE ASYMMETRY THAT PUTS THE SCHEDULED SWEEP UNDER THE DURABLE-COPY GATE. `reap_user`
+    consults `confirm_durable_copy` only when handed an `app_id` — how the gate is opted out of.
+    Reconcile-on-start opts out on purpose (a builder is standing right there about to get a
+    fresh container); the scheduled sweep has nobody watching and does almost all of the
+    deleting, so it resolves the id and is gated. The operator endpoint (`POST /v1/internal/reap`)
+    passes no map and is unchanged. Mutation-check: drop `app_ids_by_name=app_ids_by_name` from
+    `sweep_all`'s `reconcile_user` call and the first assertion goes red — the sweep reaps exactly
+    as it did, ungated."""
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=False)
     app_id = uuid.uuid4()
     gated_with: list[uuid.UUID | None] = []
@@ -427,8 +426,8 @@ async def test_the_four_step_ordering_still_runs_when_the_record_does_name_it(
 async def test_the_janitor_is_still_refused_when_the_work_is_not_preserved(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """The name-keyed reap is not a way around U14. No recovery copy means nothing was
-    established, and nothing established never authorises a delete."""
+    """The name-keyed reap is not a way around the durable-copy gate. No recovery copy means
+    nothing was established, and nothing established never authorises a delete."""
     await _seed(fake_redis, USER, app_name=SBX)
     client = FakeSandboxClient()
 
@@ -459,11 +458,11 @@ async def test_a_failed_teardown_is_not_reported_as_a_destruction(
     assert await locks.read_registry(fake_redis, USER) is not None
 
 
-# --- U5: the janitor takes the copy too, and it is a SECOND call site -------------
+# --- The janitor takes the copy too, and it is a SECOND call site -------------
 #
 # `reap_user` and `reap_the_container_we_judged` each had their own `confirm_durable_copy` call
-# and each one only logged. A U5 test suite that exercised only `reap_user` — the obvious one,
-# since that is where the gate tests live — would leave the janitor exactly as ASM30 found it:
+# and each one only logged. A test suite that exercised only `reap_user` — the obvious one,
+# since that is where the gate tests live — would leave the janitor ungated:
 # the caller with nobody watching it, sparing the same containers pass after pass forever.
 
 
@@ -473,8 +472,8 @@ def _a_container_that_bundles(
     """A container that attaches AND answers the snapshot ladder — commit, bundle, base64.
 
     The bare `FakeSandboxClient` refuses to attach at all (no `attach_handle`), which is the right
-    default for every test above and is exactly the state that spares. U5 needs the opposite:
-    a container the reaper can genuinely take a copy out of."""
+    default for every test above and is exactly the state that spares. This scenario needs the
+    opposite: a container the reaper can genuinely take a copy out of."""
     client = FakeSandboxClient()
     client.attach_handle = SandboxHandle(
         fqdn=f"{name}.example",
@@ -500,9 +499,8 @@ def _a_container_that_bundles(
 async def test_the_janitor_takes_the_copy_before_it_destroys_what_it_judged(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """★ THE SECOND CALL SITE. The recovery copy is behind the container, so ADR-0029 §7 says take
-    one and then reclaim — and this path is the one that used to spare and log instead, on a timer,
-    with nobody reading the log.
+    """★ THE SECOND CALL SITE. The recovery copy is behind the container, so the durable-copy
+    policy says take one and then reclaim — this path used to just spare and log, unread.
 
     Deleting this test leaves the janitor's copy unproven: `test_durable_copy_gate.py` drives
     `reap_user` only, and the two functions share no code above `_take_the_copy_we_promised`.
@@ -551,22 +549,14 @@ async def test_an_orphan_with_no_copy_is_spared_with_a_record_rather_than_in_sil
 
 
 def test_the_reaper_never_binds_the_pass_record_at_module_scope() -> None:
-    """★ THE IMPORT BOUNDARY U5 HAD TO WRITE AROUND, pinned so it cannot quietly close.
-
-    `pass_history` imports `src.workers.reclamation` for the cron it derives its staleness window
-    from. A module-level `from ...pass_history import ...` in the reaper would therefore have this
-    service import the worker task module that imports it back, and would put the ORM engine
-    (built at `src.db.base` import) behind every import of `reaper` — including the cold one
-    `tests/test_import_graph.py::test_the_reaper_imports_without_the_fastapi_app` performs.
-
-    Asserted on the SOURCE, because the property is "no such import exists at module scope" and
-    there is no runtime moment at which to observe it: `tests/conftest.py` imports `src.main`
-    before anything runs, so by the time an in-process check executes every module is already in
-    `sys.modules` and the assertion is vacuous. Parsed rather than grepped, so a re-spelling
-    (`from src.services.build_sessions import pass_history`) fails here too.
-
-    Mutation check: hoist the `pass_history` import in `_take_the_copy_we_promised` to the top of
-    `reaper.py` and this goes red."""
+    """★ THE IMPORT BOUNDARY THE COPY-BEFORE-RECLAIM WORK HAD TO WRITE AROUND, pinned so it cannot
+    quietly close. `pass_history` imports `src.workers.reclamation` for its cron staleness window,
+    so a module-level `pass_history` import in the reaper would import that worker module back and
+    drag the ORM engine (built at `src.db.base` import) behind every import of `reaper`. Asserted
+    on the SOURCE via AST: an in-process check is vacuous because `conftest.py` already imports
+    `src.main` before any test runs, populating `sys.modules`; parsing (not grepping) also catches
+    a re-spelled import path. Mutation check: hoist the `pass_history` import in
+    `_take_the_copy_we_promised` to module scope."""
     source = Path(reaper.__file__).read_text(encoding="utf-8")
     for node in ast.parse(source).body:  # TOP LEVEL ONLY — a function-scoped import is the fix
         names: list[str] = []
@@ -763,7 +753,7 @@ async def test_a_sweep_that_trips_on_one_user_still_reaps_the_rest(
     assert await fake_redis.exists(registry_key(doomed)) == 1
 
 
-# --- R10 / U12: the wall-clock liveness lease --------------------------------
+# --- The wall-clock liveness lease --------------------------------
 #
 # The lock+heartbeat pair is a FACADE in both directions: a crashed builder leaves it
 # standing, and a live one loses its heartbeat 90 seconds in. The lease is the positive
@@ -782,7 +772,7 @@ async def _hold_a_lease(redis: aioredis.Redis, user: uuid.UUID) -> None:
 async def test_the_sweep_spares_a_container_whose_turn_holds_a_lease(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # ★ AE5. A claimed container mid-build, with the lock AND the heartbeat both already
+    # ★ A claimed container mid-build, with the lock AND the heartbeat both already
     # lapsed — the state every build over 90 seconds is in. Before the lease, the only thing
     # keeping the sweep off this was `live_users`, which is empty in any other process.
     await _seed(fake_redis, USER, with_lock=False, with_heartbeat=False)
@@ -981,7 +971,7 @@ def test_no_worker_module_may_certify_death() -> None:
                 )
 
 
-# --- U11 / R99: the pre-adopt window, and the one signal that can cover it ------------------
+# --- The pre-adopt window, and the one signal that can cover it ------------------
 #
 # A turn's life splits into three intervals, and the point of this section is that each needs a
 # signal that can ACTUALLY BE HELD in it — "at least one spare signal is held" is only checkable
@@ -994,7 +984,7 @@ def test_no_worker_module_may_certify_death() -> None:
 #   2. registry hash → adopt-and-seed-the-heartbeat. THIS ONE. The lock/heartbeat disjunct is an
 #      AND, so lock-held-with-no-heartbeat is reapable, and the turn's own door grants nothing
 #      across it. The starting marker spans exactly this interval.
-#   3. adopt → terminal. The R10 liveness lease, covered above and in `test_liveness_lease.py`.
+#   3. adopt → terminal. The liveness lease, covered above and in `test_liveness_lease.py`.
 
 
 async def test_the_starting_marker_spares_a_container_mid_cold_start(

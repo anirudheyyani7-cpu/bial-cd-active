@@ -1,5 +1,5 @@
 /**
- * THE PANE'S DEPARTURE, HELD OPEN LONG ENOUGH TO BE SEEN (plan 002, U6).
+ * THE PANE'S DEPARTURE, HELD OPEN LONG ENOUGH TO BE SEEN.
  *
  * `T2Sliding` is an entire artboard of this one moment, caught halfway, with an annotation that
  * says exactly what it is: "the app card is sliding out to the right and fading as it goes … a
@@ -9,9 +9,9 @@
  *
  * ═══ WHY A HOLD IS NEEDED AT ALL ═══
  *
- * The keyframes and their reduced-motion suppression have existed since this plan landed, and
- * `animate-pane-leave` was never applied to anything — because applying it changes nothing on its
- * own. The moment a surface stops declaring the pane, the column goes to zero size and
+ * The keyframes and their reduced-motion suppression already exist, and `animate-pane-leave` was
+ * never applied to anything — because applying it changes nothing on its own. The moment a
+ * surface stops declaring the pane, the column goes to zero size and
  * `visibility:hidden` in the same frame, and an element that is not rendered cannot be watched
  * fading. So the exit is a state of its own, briefly: the column keeps its size, plays the
  * keyframe, and only then collapses.

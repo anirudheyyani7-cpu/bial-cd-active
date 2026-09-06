@@ -1,9 +1,9 @@
-"""The two-tier credential detector + the widened masker (U2, plan 2026-08-19-001).
+"""The two-tier credential detector + the widened masker.
 
 The masker's own suite lives in `tests/services/orchestrator/test_errors.py` and must stay
-green untouched — this file covers the DETECTION surface (P8/R4a) and the two masking
+green untouched — this file covers the DETECTION surface and the two masking
 invariants the widening carries: nothing previously masked becomes less masked, and the
-widened family now masks quoted source literals that previously passed through (ASM2).
+widened family now masks quoted source literals that previously passed through.
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ from src.core.redaction import (
     redact_secrets,
 )
 
-# --- the wall-clock ceiling, written FIRST (the plan's binding execution note) --------------
+# --- the wall-clock ceiling, written FIRST --------------
 #
 # The ReDoS this guards against was invisible to every example-based test and to all four
-# type gates (`security-issues/redos-secret-redaction-regex-2026-07-14.md`). Same discipline
+# type gates. Same discipline
 # as the masker's `test_redaction_is_linear_on_an_adversarial_blob`: a 5s ceiling never
 # flakes on a linear scan (measured well under 1s) and fails loudly on any quadratic
 # regression, which lands in minutes, not seconds.
@@ -85,7 +85,7 @@ _SLACK_TOKEN = "xoxb-" + "2534805035-1234567890123-AbCdEfGhIjKlMnOp"
 _STRIPE_LIVE_KEY_2 = "sk_live_" + "51H8xQeLkAbCd"
 _STRIPE_LIVE_KEY_3 = "sk_live_" + "abcDEF123456"
 
-# The six shapes a login form produces (plan U2): credential-shaped NAMES everywhere, no
+# The six shapes a login form produces: credential-shaped NAMES everywhere, no
 # hardcoded credential VALUE anywhere. Tier B at most — never Tier A.
 _LOGIN_FORM_SHAPES = (
     "password: z.string().min(8),",  # validation schema (zod)
@@ -97,7 +97,7 @@ _LOGIN_FORM_SHAPES = (
 )
 
 
-# --- Tier B: credential-shaped NAME with a literal value (the shapes ASM2 proves the
+# --- Tier B: credential-shaped NAME with a literal value (the shapes that prove the
 # --- masker's own patterns miss — this scenario is the unit's whole point) ------------------
 
 
@@ -130,7 +130,7 @@ def test_url_bearer_and_connection_string_each_produce_exactly_one_hit() -> None
 
 def test_reference_values_produce_no_hit() -> None:
     # Identifier, member-access and call-expression values are not hardcoded secrets — these
-    # shapes are everywhere in ordinary generated Next.js source (ASM2's false-positive half).
+    # shapes are everywhere in ordinary generated Next.js source.
     for source in (
         "password: z.string().min(8)",
         "password={value}",
@@ -222,8 +222,8 @@ def test_input_above_the_ceiling_reports_truncation_rather_than_scanning_silentl
     front = detect_credentials('const password = "hunter2";\n' + padding)
     assert front.truncated is True
     assert len(front.hits) == 1
-    # A secret BEYOND the ceiling is unseen — the flag is what keeps that from reading as a
-    # clean no-hit (U6 routes a truncated file to the review-failed bucket on this flag).
+    # A secret BEYOND the ceiling is unseen — the flag is what keeps that from reading as a clean
+    # no-hit (the scan runner routes a truncated file to the review-failed bucket on this flag).
     beyond = detect_credentials(padding + '\nconst password = "hunter2";')
     assert beyond.truncated is True
     assert beyond.hits == ()
@@ -264,7 +264,7 @@ def test_nothing_previously_masked_becomes_less_masked() -> None:
 
 
 def test_widened_family_masks_quoted_source_literals_that_previously_passed_through() -> None:
-    # ASM2, verified: each of these produced ZERO masking before the widening.
+    # Verified: each of these produced ZERO masking before the widening.
     for raw, leaked in (
         ('const password = "hunter2";', "hunter2"),
         ("password: 's3cret',", "s3cret"),
@@ -297,7 +297,7 @@ def test_widened_masking_is_idempotent() -> None:
     assert redact_secrets(once) == once
 
 
-# --- the open-credential guard (U22's withholding decision) ------------------------------------
+# --- the open-credential guard ------------------------------------
 #
 # THE ONE FACT EVERY CASE HERE TURNS ON, because it is not visible from the shapes: the masker
 # only ever fires on a CLOSED quoted value. `_SECRET_ASSIGN_RE`'s quoted arms need the closing

@@ -1,4 +1,4 @@
-"""U5 — deleting a project destroys its database, its role, and its container (ADR-0028).
+"""Deleting a project destroys its database, its role, and its container.
 
 The ordering under test is the one the whole delete path is built around: gather handles →
 delete rows → COMMIT → `salt_the_earth` → sweep. Nothing irreversible outside PostgreSQL's
@@ -239,7 +239,7 @@ async def test_a_live_preview_connection_does_not_survive_the_delete(
 async def test_a_live_build_still_refuses_the_delete_and_leaves_the_database_alone(
     app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
 ) -> None:
-    # R9 unchanged: a held lock refuses before anything is gathered, so the database must be
+    # A held lock refuses before anything is gathered, so the database must be
     # exactly as reachable afterwards as it was before. A refusal that had already severed
     # would be a silent outage on a delete the user was told did not happen.
     from src.services.build_sessions import app_name_for
@@ -310,7 +310,7 @@ async def test_a_failed_drop_logs_an_orphan_and_still_returns_success(
     assert await db_session.get(Project, project.id) is None
     assert await _registry_row(db_session, project.id) is None
     assert any(e.get("event") == "app_database_drop_database_failed" for e in captured)
-    # Still there, and findable by name — which is exactly what the reconciler needs (U7).
+    # Still there, and findable by name — which is exactly what the reconciler needs.
     assert await _catalog(_DATABASE_EXISTS, db=record.db_name) is True
 
 
@@ -353,8 +353,8 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
 async def test_a_project_without_a_database_deletes_exactly_as_before(
     app: Any, client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # No `project_databases` row means no handles, no teardown call, and no audit row — the
-    # pre-ADR-0028 behaviour.
+    # No `project_databases` row means no handles, no teardown call, and no audit row —
+    # deletion behaves exactly as it did before project databases existed.
     user = await UserFactory.create(db_session)
     headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
     project = await ProjectFactory.create(db_session, user.id)

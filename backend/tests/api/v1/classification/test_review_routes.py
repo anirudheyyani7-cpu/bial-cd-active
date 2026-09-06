@@ -1,10 +1,11 @@
-"""The two classification review routes (U7): ensure and read, never the browser's copy.
+"""The two classification review routes: ensure and read, never the browser's copy.
 
+WHY THIS EXISTS
 The service under these routes is the REAL one with the run disarmed (`_run` records and
 returns): claim-or-return, the attempt cap and the aged-out un-wedge are the genuine
 store-backed logic — what a route test must not fake, because the routes' promises ("an
 unchanged version returns the stored answers without a run") are promises about that
-logic being REACHED — while the run itself is U6's separately-tested territory, and an
+logic being REACHED — while the run itself is separately-tested territory, and an
 inert run cannot interleave on the test's single DB session.
 
 Two assertions carry the security posture and get deliberate setups:
@@ -59,7 +60,7 @@ _V1 = "a" * 40
 _V2 = "b" * 40
 
 # Markers seeded into the INTERNAL evidence document — if any of these strings ever
-# appears in a response body, a location or a value leaked (R4/OD-B).
+# appears in a response body, a location or a value leaked.
 _SECRET_PATH = "src/lib/super-secret-auth.ts"
 _SECRET_FAMILY = "stripe_live_leak_marker"
 
@@ -162,7 +163,7 @@ def _stored_verdicts() -> dict[str, Any]:
 
 
 def _stored_evidence() -> dict[str, Any]:
-    """The INTERNAL half (R4): cited locations and scan hits, marker-laden."""
+    """The INTERNAL half: cited locations and scan hits, marker-laden."""
     return {
         "questions": {
             key: (
@@ -233,7 +234,7 @@ async def _row(db, *, app_id) -> ClassificationReview:
 async def test_a_stored_complete_review_for_the_current_version_returns_without_a_run(
     wire, client, db_session
 ) -> None:
-    """R6: re-opening the dialog for an unchanged version is a read, not a re-run."""
+    """Re-opening the dialog for an unchanged version is a read, not a re-run."""
     user, app_row = await _owner_with_app(db_session)
     await _save_bundle(wire.storage, app_row.id, head_sha=_V1)
     await _complete_row(db_session, app_id=app_row.id, user_id=user.id, head_sha=_V1)
@@ -249,7 +250,7 @@ async def test_a_stored_complete_review_for_the_current_version_returns_without_
     verdicts = body["verdicts"]
     assert verdicts["credentialsSecrets"]["verdict"] == "yes"
     assert verdicts["credentialsSecrets"]["reason"]
-    # `unanswered` survives as its own verdict, distinct from `no` (R5).
+    # `unanswered` survives as its own verdict, distinct from `no`.
     assert verdicts["healthData"]["verdict"] == "unanswered"
     assert verdicts["financialData"]["verdict"] == "no"
     assert wire.service.runs == []
@@ -283,7 +284,7 @@ async def test_a_newer_version_starts_a_run_and_reports_running_with_the_new_sta
 async def test_an_app_with_no_saved_code_is_the_nothing_to_review_state(
     wire, client, db_session
 ) -> None:
-    """R21 on both verbs: no bundle → no answers, no run, and not an error."""
+    """With no bundle, both verbs return no answers, no run, and not an error."""
     user, app_row = await _owner_with_app(db_session)
 
     for call in (client.post, client.get):
@@ -318,7 +319,7 @@ async def test_a_project_with_no_app_is_also_nothing_to_review_and_mints_nothing
 async def test_asking_again_after_a_failure_is_the_same_route_and_a_fresh_attempt(
     wire, client, db_session
 ) -> None:
-    """R19: re-requesting after a failure is THIS route again, not a separate verb —
+    """Re-requesting after a failure is THIS route again, not a separate verb —
     and it claims attempt 2 rather than returning the stored failure."""
     user, app_row = await _owner_with_app(db_session)
     await _save_bundle(wire.storage, app_row.id, head_sha=_V1)
@@ -365,8 +366,8 @@ async def test_the_attempt_cap_returns_the_stored_failure_without_a_run(
 
 
 async def test_a_burst_of_review_starts_is_rate_limited_per_user(wire, client, db_session) -> None:
-    """The review's only PER-USER spend bound. Its daily-token exemption is deliberate
-    (U15) and `MAX_MODEL_RUNS_PER_VERSION` is per VERSION — and a version costs one Save —
+    """The review's only PER-USER spend bound. Its daily-token exemption is deliberate,
+    and `MAX_MODEL_RUNS_PER_VERSION` is per VERSION — and a version costs one Save —
     so without this a save/ensure loop mints premium-model runs without limit.
 
     Refusing here cannot open the gate: it only declines to START a review, and an app
@@ -419,7 +420,7 @@ async def test_csrf_is_required_on_the_ensure_route(wire, client, db_session) ->
 async def test_a_failed_review_reads_as_its_bucket_with_six_unanswered_questions(
     wire, client, db_session
 ) -> None:
-    """R19: the failure is a bucket plus six questions handed back to the citizen —
+    """The failure is a bucket plus six questions handed back to the citizen —
     never readable as six No's, and `unanswered` is what every one of them says."""
     user, app_row = await _owner_with_app(db_session)
     await _save_bundle(wire.storage, app_row.id, head_sha=_V1)
@@ -522,8 +523,8 @@ async def test_saved_code_with_no_review_yet_reads_as_not_reviewed(
 async def test_the_read_surfaces_both_stamps_when_the_stored_review_is_stale(
     wire, client, db_session
 ) -> None:
-    """A Save landed after the review: the answer rides with its own stamp so U11 can
-    ignore it (it filters by the stamp the dialog asked for) — the read itself never
+    """A Save landed after the review: the answer rides with its own stamp so the dialog
+    can ignore it (it filters by the stamp the dialog asked for) — the read itself never
     starts the replacement run."""
     user, app_row = await _owner_with_app(db_session)
     await _complete_row(db_session, app_id=app_row.id, user_id=user.id, head_sha=_V1)
@@ -565,7 +566,7 @@ async def test_a_bundle_without_a_version_stamp_reads_as_unreadable(
 async def test_the_response_never_carries_evidence_for_any_verdict(
     wire, client, db_session
 ) -> None:
-    """R4/OD-B on the wire: the stored evidence is marker-laden, and no marker — nor
+    """On the wire: the stored evidence is marker-laden, and no marker — nor
     the admin-only fields of the verdicts document — may appear in either verb's body.
     The per-question projection is pinned to exactly {verdict, reason}."""
     user, app_row = await _owner_with_app(db_session)

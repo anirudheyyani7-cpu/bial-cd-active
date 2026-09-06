@@ -1,9 +1,11 @@
 /**
  * Forward-only cursor-list state for a keyset-paginated, searchable endpoint.
  *
+ * WHY THIS EXISTS
+ *
  * Keyset gives no total and no offset, so numbered pages are not expressible:
  * the hook holds `items` and appends. The CALLER adapts the envelope's item key
- * inside its `fetchPage`, which is how the admin roster (U10) reuses this hook
+ * inside its `fetchPage`, which is how the admin roster reuses this hook
  * even though its wire key is `users`, not `items` — it maps that into
  * `KeysetPage` before resolving, and reads its sibling `defaults` off `lastPage`.
  *

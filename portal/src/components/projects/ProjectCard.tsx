@@ -4,7 +4,7 @@
  * when the details were last updated — the same two facts the list row shows, so the two
  * views cannot describe one project differently.
  *
- * A NAME TOO LONG FOR ITS TILE gets an ellipsis AND a tooltip (§14). The 8-word cap is not
+ * A NAME TOO LONG FOR ITS TILE gets an ellipsis AND a tooltip. The 8-word cap is not
  * retroactive, so stored 120-character names are exactly the ones that clip, and the tooltip
  * is the only way to read them. Gated on the span being MEASURED as clipped, like the list's.
  *
@@ -22,7 +22,7 @@ import { Card } from '../ui/card'
 
 /**
  * The tile's name: clipped with an ellipsis, and revealed in full on hover ONLY when it is
- * really clipped (§14). Measured on the inner span rather than the button, because that is
+ * really clipped. Measured on the inner span rather than the button, because that is
  * the element `truncate` acts on — the button is as wide as the tile either way.
  *
  * The span, not the button, also keeps `overflow:hidden` off the button so its stretched
@@ -66,7 +66,7 @@ function NameButton({ name, onOpen }: { name: string; onOpen: () => void }): Rea
 }
 
 /**
- * The status pill, in the SHARED vocabulary (#158 §10).
+ * The status pill, in the SHARED vocabulary.
  *
  * The card says the same words the project page's chip does, via `appStatusLabel`. The list
  * row reads the identical helper: two views of one list must not describe the same project
@@ -101,7 +101,7 @@ export default function ProjectCard({ project, onOpen, onDelete }: ProjectCardPr
   // descendant of another interactive element. Native buttons carry keyboard activation for free
   // (Enter/Space), so no onKeyDown handler is needed.
   return (
-    // shadcn `Card` is the tile, per §12 — the surface (border, radius, background) comes
+    // shadcn `Card` is the tile — the surface (border, radius, background) comes
     // from the primitive so a grid tile here and a card anywhere else cannot drift apart.
     // The layout and hover behaviour stay local, because they belong to THIS tile.
     <Card className="group relative flex flex-col gap-3 rounded-2xl px-5 py-4 hover:border-primary/40 hover:shadow-sm transition font-manrope">

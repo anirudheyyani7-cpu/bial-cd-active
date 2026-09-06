@@ -15,10 +15,11 @@ import { useWorkspaceReport } from './workspaceChannel'
 import type { WorkspaceStateName } from './workspaceState'
 
 /**
- * The states R97 requires a Plan chat to speak for, and only those. Scoped deliberately: asserting
- * sameness across `never_built` and `not-running` too would pin wording R97 does not ask for, and
- * which R11's framing may well want different — a Plan chat has no business inviting somebody to
- * press a start control it does not render.
+ * The exact set of workspace states a Plan chat must describe in the board's own wording,
+ * and no others. Scoped deliberately: extending the same wording to `never_built` and
+ * `not-running` would lock in phrasing those states don't need, and whose copy may
+ * reasonably want to say something different — a Plan chat has no business inviting somebody
+ * to press a start control it does not render.
  */
 const SPOKEN_HERE: ReadonlySet<WorkspaceStateName> = new Set<WorkspaceStateName>([
   'starting',

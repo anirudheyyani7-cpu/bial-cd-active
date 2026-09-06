@@ -1,5 +1,4 @@
-"""The `messages` table — one row per persisted NATIVE pydantic-ai batch (U4, plan
-2026-07-22-002).
+"""The `messages` table — one row per persisted NATIVE pydantic-ai batch.
 
 Rebuilt in place by migration 0024 (destructive reset — the legacy SPA parts shape is gone).
 One row per persisted batch: a whole turn in a Plan chat, a single agent step in a Build chat
@@ -38,7 +37,7 @@ from src.db.models.conversation import ChatKind, chat_kind_enum
 
 
 class MessageEntryKind(StrEnum):
-    """What kind of batch this row holds. Native PG enum labels (ADR-0008).
+    """What kind of batch this row holds. Native PG enum labels.
 
     * `turn` — a whole Plan-chat turn (user prompt + the run's new messages).
     * `step` — one Build-chat agent step (BRAIN persists per step for crash durability).
@@ -110,7 +109,7 @@ class Message(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
         server_default=sa.text("'visible'::message_visibility"),
     )
     # Which kind of chat the batch ran under — an AUDIT stamp, and deliberately kept even
-    # though nothing under `src/` reads it for a decision any more (R53 names the per-row stamp
+    # though nothing under `src/` reads it for a decision any more (the per-row stamp is named
     # in as many words, and "what was this row written under" is cheap to keep and impossible
     # to reconstruct later). Renamed from `mode` by revision 0035 rather than reused under the
     # old name: leaving a column called `mode` behind is how a deleted vocabulary survives.

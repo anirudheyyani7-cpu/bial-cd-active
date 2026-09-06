@@ -2,10 +2,9 @@
 
 `POST /apps/{app_id}/submit` used to write the pending status; the one-writer rule for
 the queue lives in `src/services/approvals/__init__.py`. Per the repo's
-retire-a-behaviour convention
-(`docs/solutions/conventions/cleanly-removing-dead-ui-controls-2026-06-23.md`, the
-same flip `test_lifecycle.py` carries for `POST /apps/provision`), the route's tests
-become guards that it stays gone: if any of these fails, someone reinstated it.
+retire-a-behaviour convention — the same flip `test_lifecycle.py` carries for
+`POST /apps/provision` — the route's tests become guards that it stays gone: if any of
+these fails, someone reinstated it.
 
 The behaviour it carried lives in `services/approvals/submit.py`, proved at
 `tests/services/approvals/test_submit.py`.

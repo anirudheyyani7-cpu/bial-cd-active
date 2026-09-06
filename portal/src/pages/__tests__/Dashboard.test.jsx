@@ -1,11 +1,11 @@
 /**
- * The welcome page is gone — this file is its INERTNESS GUARD (#158 §7 / §16.1).
+ * The welcome page is gone — this file is its INERTNESS GUARD.
  *
  * `pages/Dashboard.tsx` was a screen whose whole purpose was a button to `/projects`. Once
  * the project list carries the three summary numbers, that hop has nothing left to do, so
  * the page was deleted and `/dashboard` became a redirect.
  *
- * §16.1 is explicit that this suite should NOT simply be deleted: a removal is only real
+ * This suite must NOT simply be deleted: a removal is only real
  * when nothing can quietly bring it back. So instead of testing a component that no longer
  * exists, this asserts the module is absent and that nothing imports it. Re-adding the page
  * fails here, and has to be argued for rather than landed beside the new landing screen.

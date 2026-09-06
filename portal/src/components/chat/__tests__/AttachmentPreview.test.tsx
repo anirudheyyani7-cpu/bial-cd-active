@@ -1,5 +1,5 @@
 /**
- * AN ATTACHMENT, OPENED OVER THE CONVERSATION (R47, R50, R52, R64).
+ * AN ATTACHMENT, OPENED OVER THE CONVERSATION.
  *
  * ══ NOTHING IS FRAMED, AND THAT IS THE PROPERTY THIS SUITE GUARDS ══
  *
@@ -21,7 +21,7 @@
  * compiler error in front of it. No fixture here can reach that branch, so no assertion here can
  * pretend to hold it.
  *
- * ══ R47 — NOTHING BUT THE READER DISMISSES IT ══
+ * ══ NOTHING BUT THE READER DISMISSES IT ══
  *
  * `open` is never derived from stream state. The transcript keeps streaming behind the dialog and
  * is not scrolled; closing returns the reader exactly where they were.

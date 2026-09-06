@@ -4,9 +4,9 @@
  * This directory is where speculative vendoring accumulates. `npx shadcn add` pulls a
  * component and its Radix dependency in one command, the component is never wired to a
  * surface, and nothing ever goes red — so it ships forever. It has now happened twice:
- * U27 removed two zero-reference primitives (see `smoke.test.tsx`), and this change
- * removed five more (avatar/skeleton/tooltip added speculatively by #170, plus
- * collapsible and dropdown-menu orphaned since #82) along with four Radix packages that
+ * an earlier pass removed two zero-reference primitives (see `smoke.test.tsx`), and this
+ * change removed five more (avatar/skeleton/tooltip added speculatively, plus
+ * collapsible and dropdown-menu long since orphaned) along with four Radix packages that
  * were direct dependencies of nothing.
  *
  * A comment mentioning a component does NOT count as reaching it — `popover.tsx` cites
@@ -69,8 +69,8 @@ describe('vendored ui primitives', () => {
     //
     // `skeleton` and `tooltip` LEFT THIS LIST, and the distinction is the whole point of
     // the guard rather than an exception to it. They were removed for having no consumer;
-    // #158 gave them one — the projects list's loading state and the row's
-    // clipped-description tooltip — so they are vendored deliberately now. What this
+    // the projects list's loading state and the row's clipped-description tooltip later
+    // gave them one, so they are vendored deliberately now. What this
     // asserts is "nothing sits here unused", not "these five names are banned forever";
     // the second test below is what actually enforces that, and it covers them too.
     const removed = ['avatar', 'collapsible', 'dropdown-menu']

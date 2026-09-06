@@ -96,24 +96,25 @@ _UNKNOWN_APP_ID = uuid.UUID(int=0)
 (a SESSION-API-side infra failure). SESSION-API reconciles the real id from its own records."""
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
-"""The per-model-step billing-session factory (C7 §6). `async_sessionmaker[AsyncSession]` satisfies
+"""The per-model-step billing-session factory. `async_sessionmaker[AsyncSession]` satisfies
 it structurally; tests bind it to the rolled-back test session."""
 
 
 class TranscriptPersistError(Exception):
-    """A per-step transcript write failed (U5). Raised INSIDE the node loop and funneled to a
+    """A per-step transcript write failed. Raised INSIDE the node loop and funneled to a
     dedicated escalation: continuing would let the workspace and the durable transcript silently
-    diverge — the exact failure mode U5 exists to delete — so the build fails loudly instead
-    (the write-before-DONE policy, generalized from the relay turn to the build step)."""
+    diverge — the exact failure mode this per-step persistence exists to prevent — so the build
+    fails loudly instead (the write-before-DONE policy, generalized from the relay turn to the
+    build step)."""
 
 
 @dataclass(frozen=True)
 class BuildSpec:
-    """What SESSION-API's run-context provider resolves for a session (KD-13): the build
+    """What SESSION-API's run-context provider resolves for a session: the build
     instruction and the app being built. Keeps `run_build` frozen at 4 params and BRAIN free of a
     direct read of SESSION-API's build-session table."""
 
-    # R3 — MULTIMODAL: a bare `str` when the turn carried no attachments, or
+    # MULTIMODAL: a bare `str` when the turn carried no attachments, or
     # `[*attachment_content, prompt_text]` when it did — each attachment first
     # as fenced text (office/csv) or `BinaryContent` (image/PDF vision), the instruction LAST.
     # That order is Anthropic's documented vision ordering (text after files), and it is what
@@ -123,19 +124,20 @@ class BuildSpec:
     # SESSION-API materializes the sequence at start (`build_sessions/attachments.py`); BRAIN just
     # hands it to `agent.iter`, which accepts `str | Sequence[UserContent]` natively. `run_build`
     # stays frozen at its 4 params — the widening is inside the run-context provider's return
-    # shape, which C7 does not freeze.
+    # shape, which is not part of that frozen contract.
     prompt: str | Sequence[str | BinaryContent]
     app_id: uuid.UUID
-    # U5 — the thread this build's transcript persists into (`entry_kind='step'` rows). None
+    # The thread this build's transcript persists into (`entry_kind='step'` rows). None
     # when the start named no conversation (an API-only caller): the build still runs, it just
-    # has no thread to write to, exactly like the outcome record. The spec SHAPE is not frozen
-    # by C7 (see the class docstring) — widening here keeps `run_build` at its 4 params.
+    # has no thread to write to, exactly like the outcome record. The spec SHAPE is not part of
+    # `run_build`'s frozen contract (see the class docstring) — widening here keeps `run_build`
+    # at its 4 params.
     conversation_id: uuid.UUID | None = None
 
 
 RunContextProvider = Callable[[uuid.UUID], Awaitable[BuildSpec]]
 """`session_id -> BuildSpec`, an owner-scoped construction-time dependency BRAIN calls once at
-entry (KD-13)."""
+entry."""
 
 
 @dataclass(frozen=True)
@@ -146,7 +148,7 @@ class _QuotaHit:
 
 @dataclass(frozen=True)
 class _Terminal:
-    """The loop's terminal decision — funneled to exactly one `ended` (KD-12). The quota numbers
+    """The loop's terminal decision — funneled to exactly one `ended`. The quota numbers
     are carried as plain ints (0 when not a quota terminal) so the funnel needs no narrowing."""
 
     kind: Literal["completed", "quota", "escalated"]
@@ -161,7 +163,7 @@ class _Terminal:
 
 class BuildOrchestrator:
     """BRAIN's agentic build engine. Constructed with its per-step billing session factory, the
-    KD-13 run-context provider, and the Foundry model (or an injected fake); `run_build` is the
+    run-context provider, and the Foundry model (or an injected fake); `run_build` is the
     frozen `RunBuild` Protocol SESSION-API awaits as a background task."""
 
     def __init__(
@@ -190,7 +192,7 @@ class BuildOrchestrator:
     ) -> BuildResult:
         emitter = ProgressEmitter(on_progress)
         app_id = _UNKNOWN_APP_ID
-        # F8/U5 — the decoupled early readiness watcher, created after `dev_start` and torn down
+        # The decoupled early readiness watcher, created after `dev_start` and torn down
         # (cancelled + awaited) on EVERY exit path BEFORE the funnel reads `emitter.last_seq`.
         watcher: asyncio.Task[None] | None = None
         try:
@@ -202,8 +204,9 @@ class BuildOrchestrator:
                     sandbox_client=sandbox_client,
                     handle=handle,
                     app_id=app_id,
-                    # The legacy C7 feed: the harness path keeps emitting per-tool steps, so the
-                    # session carries the SAME emitter the harness holds (ONE seq source, KD-12).
+                    # The legacy progress-envelope feed: the harness path keeps emitting per-tool
+                    # steps, so the session carries the SAME emitter the harness holds (ONE seq
+                    # source).
                     emitter=emitter,
                 ),
                 emitter=emitter,
@@ -228,13 +231,13 @@ class BuildOrchestrator:
                 conversation_id=spec.conversation_id,
             )
         except asyncio.CancelledError:
-            # STOP / IDLE: SESSION-API cancelled us and owns the terminal + snapshot (KD-11).
+            # STOP / IDLE: SESSION-API cancelled us and owns the terminal + snapshot.
             # Tear the watcher down first (no leaked task polling a torn-down sandbox), then unwind
             # WITHOUT emitting and return no value (the cancellation propagates).
             await _stop_watcher(watcher)
             raise
         except TranscriptPersistError:
-            # U5 — the durable transcript could not keep up with the build. Fail loudly rather
+            # The durable transcript could not keep up with the build. Fail loudly rather
             # than let the workspace and the record silently diverge (write-before-DONE).
             terminal = _escalation(
                 reason="transcript_write_failed",
@@ -255,7 +258,7 @@ class BuildOrchestrator:
             )
         except Exception:
             # An unmodeled crash still funnels to exactly one terminal — never a raised exception
-            # that strands SESSION-API's task (KD-12). Bind only non-secret context (KD-9).
+            # that strands SESSION-API's task. Bind only non-secret context.
             logger.exception(
                 "run_build_crashed",
                 session_id=str(session_id),
@@ -269,13 +272,13 @@ class BuildOrchestrator:
             )
         # Tear the watcher DOWN (cancel + await) BEFORE the funnel captures `emitter.last_seq` — a
         # watcher `preview_ready` / `preview_reconnecting` that landed after the terminal seq was
-        # read would collide with or gap the SESSION-API `ended` frame (KD-12). Runs on the normal
+        # read would collide with or gap the SESSION-API `ended` frame. Runs on the normal
         # path AND every `except` above (the CancelledError arm already tore it down + re-raised).
         await _stop_watcher(watcher)
         try:
             return await self._funnel(emitter, app_id, terminal)
         except asyncio.CancelledError:
-            # Cancelled during the funnel: SESSION-API owns the terminal on cancel (KD-11) —
+            # Cancelled during the funnel: SESSION-API owns the terminal on cancel —
             # re-raise. A cancellation landing after `escalation` / `quota` now costs only the
             # verdict, never a torn terminal: SESSION-API still emits its own `ended` from the
             # stop path, so the feed always terminates exactly once.
@@ -283,7 +286,7 @@ class BuildOrchestrator:
         except Exception:
             # The funnel is designed non-throwing (the sink swallows-and-logs, `_result` cannot
             # fail), but a truly unexpected funnel error must STILL never strand SESSION-API's task
-            # (KD-12) — fall back to a minimal failed result rather than let it escape.
+            # — fall back to a minimal failed result rather than let it escape.
             logger.exception("run_build_funnel_failed", app_id=str(app_id))
             return _result(
                 BuildSessionStatus.FAILED,
@@ -303,10 +306,10 @@ class BuildOrchestrator:
         session_id: uuid.UUID,
         conversation_id: uuid.UUID | None,
     ) -> _Terminal:
-        """The multi-run self-heal loop (KD-1). Emits intermediate `error` / `preview_ready`
+        """The multi-run self-heal loop. Emits intermediate `error` / `preview_ready`
         events and returns the terminal decision.
 
-        Only the FIRST turn's prompt can be multimodal (R3): every subsequent `turn_prompt` is a
+        Only the FIRST turn's prompt can be multimodal: every subsequent `turn_prompt` is a
         plain repair/continue string, because the attachments are already in `messages` — the
         accumulated history the next `agent.iter` run replays. Re-sending the bytes each turn
         would re-pay for them with no added context."""
@@ -314,7 +317,7 @@ class BuildOrchestrator:
         budget = SELF_HEAL_MAX_RETRIES
         turn_prompt: str | Sequence[str | BinaryContent] = prompt
         log_cursor = 0
-        # F8/U5 — the "already framed" flag now lives on `deps` (shared with the early watcher +
+        # The "already framed" flag now lives on `deps` (shared with the early watcher +
         # the warm-resume emit), not a `_run_loop` local. The between-steps path below is a
         # fallback that claims the frame only if the watcher hasn't already (a dev server that
         # served for the first time between two verify hops); the synchronous `claim_preview_frame`
@@ -338,7 +341,7 @@ class BuildOrchestrator:
                     preview_url=deps.sandbox.handle.preview_url if deps.preview_framed else None,
                 )
             deps.sandbox.done_requested = False
-            # U9 / R15 — the same mark, for the same reason, in the other loop. `selfheal` is the
+            # The same mark, for the same reason, in the other loop. `selfheal` is the
             # ONE health authority both harnesses consult precisely so a verdict cannot mean two
             # things depending on which loop built the app; a watermark only the live loop laid
             # down would leave the re-check permanently unanswerable here.
@@ -378,8 +381,8 @@ class BuildOrchestrator:
                     preview_url=outcome.preview_url or deps.sandbox.handle.preview_url,
                 )
 
-            if deps.sandbox.done_requested:  # resolve the spinner `declare_done` opened (C7 §3.1)
-                # THREE ARMS, because the verdict has three values (U6). An INDETERMINATE
+            if deps.sandbox.done_requested:  # resolve the spinner `declare_done` opened
+                # THREE ARMS, because the verdict has three values. An INDETERMINATE
                 # verdict is not a failure and must not be labelled as one: "Not working yet"
                 # over a check that could not be reached tells the citizen their app is broken
                 # on the strength of our own timeout. It resolves the spinner with a neutral
@@ -394,10 +397,10 @@ class BuildOrchestrator:
                     label, step_state = "Not working yet — fixing it.", "failed"
                 await emitter.step(name="declare_done", label=label, state=step_state)
 
-            if outcome.green and deps.sandbox.done_requested:  # objective done-gate (KD-6)
+            if outcome.green and deps.sandbox.done_requested:  # objective done-gate
                 return _Terminal(kind="completed", preview_url=outcome.preview_url)
 
-            # Not complete → a repair is needed; the flat budget bounds it (KD-7). A NOT-green
+            # Not complete → a repair is needed; the flat budget bounds it. A NOT-green
             # outcome with no tsc/crash diagnostic means the dev server never became ready within
             # the poll budget — synthesize a server error so neither the repair prompt nor a
             # budget-exhausted escalation is ever left diagnostic-free. `error is None` does NOT
@@ -441,16 +444,16 @@ class BuildOrchestrator:
                     preview_url=outcome.preview_url,
                 )
             if error is not None:
-                # U13 — a CLIENT-class report is agent input, not narrative, and the rule has to
+                # A CLIENT-class report is agent input, not narrative, and the rule has to
                 # hold in BOTH loops. `selfheal` is the single health authority precisely so a
                 # verdict cannot mean two things depending on which harness built the app; a
                 # rule only the live loop knew would be a rule with an escape hatch. The turn
                 # engine skips its own emit for the same source and for the same reason.
                 if error.source is not ErrorSource.CLIENT:
-                    await emitter.error(error)  # a repair run is coming (KD-5)
+                    await emitter.error(error)  # a repair run is coming
                 turn_prompt = build_repair_prompt(error)
             else:
-                # green but declare_done not called — nudge, not an error envelope (KD-7)
+                # green but declare_done not called — nudge, not an error envelope
                 turn_prompt = CONTINUE_PROMPT
             budget -= 1
 
@@ -463,16 +466,15 @@ class BuildOrchestrator:
         session_id: uuid.UUID,
         conversation_id: uuid.UUID | None,
     ) -> tuple[_QuotaHit | None, list[ModelMessage]]:
-        """One `agent.iter` run driven node-by-node with per-model-step metering (KD-1/KD-3)
-        and per-step transcript persistence (U5). Returns `(quota_hit, accumulated_messages)`;
-        on a quota hit the offending model request never fires and the messages are unchanged.
+        """One `agent.iter` run driven node-by-node, with per-model-step metering and per-step
+        transcript persistence. Returns `(quota_hit, accumulated_messages)`; on a quota hit the
+        offending model request never fires and the messages are unchanged.
 
         PERSISTENCE CADENCE: one `step` row per model step — `[the step's request, its
-        response]` — persisted after that step's tools have executed. A step's tool RETURNS
-        travel in the NEXT step's request (that is where the graph appends them), so a crash
-        loses at most the in-flight step and the load seam's dangling-call repair covers the
-        orphaned calls. The delta cursor starts at `len(messages)` — the prior runs' history
-        was persisted by the runs that produced it."""
+        response]` — persisted after that step's tools have executed. A crash loses at most the
+        in-flight step (its tool returns travel in the NEXT step's request, and the load seam's
+        dangling-call repair covers the orphaned calls); the delta cursor starts at
+        `len(messages)`, since the prior runs' history was already persisted."""
         quota_hit: _QuotaHit | None = None
         cut_short = False
         pending_answers: ModelRequest | None = None
@@ -484,9 +486,9 @@ class BuildOrchestrator:
             message_history=messages,
             usage_limits=UsageLimits(request_limit=MODEL_TURN_CEILING),
             # Clamp EVERY model step: cap output (else pydantic-ai's 4096 default truncates a
-            # whole-file write) and pin temperature to 0.0 for a deterministic build (KD-8).
+            # whole-file write) and pin temperature to 0.0 for a deterministic build.
             # The three cache flags put Anthropic breakpoints on the context this loop re-sends
-            # VERBATIM on every single step (R1): the system prompt and the tool definitions are
+            # VERBATIM on every single step: the system prompt and the tool definitions are
             # byte-identical across a whole build, and `anthropic_cache` (automatic) walks a
             # breakpoint forward over the message history as the run grows. 3 of Anthropic's 4
             # breakpoint slots, all at `CACHE_TTL` (see the constant for why 1h, not 5m).
@@ -520,21 +522,22 @@ class BuildOrchestrator:
                     # call's lifetime). A DB error here fails closed → escalation.
                     async with self._session_factory() as db:
                         try:
-                            await enforce_daily_limit(db, deps.user_id)  # strictly BEFORE (KD-1)
+                            # Strictly before the request fires.
+                            await enforce_daily_limit(db, deps.user_id)
                         except DailyTokenLimitExceededError as exc:
                             quota_hit = _QuotaHit(limit=exc.limit, used=exc.used)
-                            break  # the model request never fires (KD-7 graceful path)
+                            break  # the model request never fires (the graceful quota path)
                     node = await run.next(node)  # fires the model request holding NO DB connection
                     if Agent.is_call_tools_node(node):
                         # White-box trace (opt-in, BRAIN_TRACE_DIR): the ordered per-tool call
                         # record incl. read_file + raw args, which the SSE step feed omits.
                         record_tool_calls(deps.sandbox.app_id, node.model_response)
                         # Record in its OWN short session on a fresh (pre-pinged) connection AFTER
-                        # the response — per-step, strictly AFTER (KD-1); BRAIN owns the commit.
+                        # the response, strictly per-step; BRAIN owns the commit.
                         await self._record_step(deps.user_id, node.model_response.usage)
                 else:
                     node = await run.next(node)
-                    # U5 — the step's tools have now executed (their returns are in the run's
+                    # The step's tools have now executed (their returns are in the run's
                     # history), so the step is complete: persist the delta before the next
                     # model request fires.
                     persisted_from = await self._persist_step(
@@ -544,9 +547,10 @@ class BuildOrchestrator:
                         history=run.all_messages(),
                         persisted_from=persisted_from,
                     )
-                    # U18/R30 — AND `declare_done` STOPS BUYING A ROUND-TRIP HERE TOO. `node` is
-                    # already the NEXT model request; walking into it spends a full request whose
-                    # only product is a closing paragraph nothing renders. The tool's own return
+                    # Like the live turn engine, `declare_done` stops buying a round-trip here
+                    # too. `node` is already the NEXT model request; walking into it spends a
+                    # full request whose only product is a closing paragraph nothing renders.
+                    # The tool's own return
                     # text tells the model "this turn ends here and nothing further is asked of
                     # you" — and that text is SHARED, one tool body serving this harness and the
                     # Write engine both, so a cut in only one of them made the tool lie to every
@@ -569,10 +573,10 @@ class BuildOrchestrator:
                         break
             result = run.result
             if quota_hit is None and result is not None:
-                messages = result.all_messages()  # thread history into the next run (KD-1)
+                messages = result.all_messages()  # thread history into the next run
                 # White-box trace (opt-in): the full, durable message history for this run.
                 record_run_messages(deps.sandbox.app_id, messages)
-                # U5 — the run-ending response (and anything since the last complete step).
+                # The run-ending response (and anything since the last complete step).
                 await self._persist_step(
                     deps.user_id,
                     session_id=session_id,
@@ -634,7 +638,7 @@ class BuildOrchestrator:
         return len(history)
 
     async def _record_step(self, user_id: uuid.UUID, usage: RequestUsage) -> None:
-        """Fold one model step's usage into today's row in its own short session (KD-3), separate
+        """Fold one model step's usage into today's row in its own short session, separate
         from the enforce session so the model call holds no DB connection. BRAIN commits.
 
         Best-effort: a transient DB blip on this WRITE is logged and the build continues — it
@@ -707,7 +711,7 @@ class BuildOrchestrator:
         )
 
     async def _watch_preview(self, emitter: ProgressEmitter, deps: BuildDeps) -> None:
-        """The DECOUPLED early readiness watcher (F8/U5). A managed task, created just after
+        """The DECOUPLED early readiness watcher. A managed task, created just after
         `dev_start` and cancelled + awaited by `run_build` before the terminal funnel. It owns two
         framing transitions the between-runs `verify()` cadence is too coarse for:
 
@@ -718,7 +722,7 @@ class BuildOrchestrator:
             emit is seq-safe because `ProgressEmitter._emit` fixes `seq` with no await before the
             sink, and the manager buffers synchronously (see progress.py).
           * DEV-PROCESS CRASH — after the frame, a `running=False` edge means the dev process died.
-            Note `ready` is NOT a proxy for that any more: U6 made it `_dev_is_serving()`, which
+            Note `ready` is NOT a proxy for that any more: it now means `_dev_is_serving()`, which
             consults no child state at all, precisely so a server the agent started itself still
             reports ready with `running=False`. That is why the arm below tests `not
             status.running` EXPLICITLY, and why it is ordered after the `status.ready` arm — a
@@ -787,7 +791,7 @@ async def _frame_the_preview(
     *,
     preview_url: str,
 ) -> None:
-    """THE one door onto `preview_ready` for this whole module (U3, R3).
+    """THE one door onto `preview_ready` for this whole module.
 
     Four sites used to emit it — the warm-resume, verify's fallback, and the watcher's two arms
     — and a warm request added to three of them is a warm request that one path silently skips.
@@ -795,7 +799,7 @@ async def _frame_the_preview(
     of the module rather than a habit of whoever edits it next.
 
     Warming cannot fail the frame: `someone_has_to_go_first` swallows everything and returns a
-    status nobody here reads (R6). It cannot COST the frame either, which is what the `finally`
+    status nobody here reads. It cannot COST the frame either, which is what the `finally`
     is for: the callers reach here having already burned the one-shot `claim_preview_frame()`
     guard, so a cancellation landing inside the (up to 8s) warm request would leave the frame
     claimed forever and never emitted — and `_stop_watcher` cancels this watcher at every
@@ -815,7 +819,8 @@ async def _frame_the_preview(
 async def _mark_now_in_the_container(sandbox_client: SandboxClient, handle: SandboxHandle) -> None:
     """`integrity.stamp_the_watermark`, through a function-scoped import for the package cycle
     documented on `_has_this_app_ever_been_built` below. Best-effort: an unstamped watermark makes
-    U9's question unanswerable, which the verdict reads as today's behaviour."""
+    the has-this-app-ever-been-built check unanswerable, which the verdict reads as today's
+    behaviour."""
     from src.services.build_sessions.integrity import stamp_the_watermark
 
     await stamp_the_watermark(sandbox_client, handle)
@@ -835,11 +840,10 @@ async def _has_this_app_ever_been_built(app_id: uuid.UUID) -> bool:
 
 async def _stop_watcher(task: asyncio.Task[None] | None) -> None:
     """Cancel + AWAIT the early readiness watcher so its teardown COMPLETES before the funnel reads
-    `emitter.last_seq` (KD-12) — a watcher `preview_ready` / `preview_reconnecting` that landed
+    `emitter.last_seq` — a watcher `preview_ready` / `preview_reconnecting` that landed
     after the terminal seq was captured would collide with or gap the SESSION-API `ended` frame.
-    Awaiting
-    (not fire-and-forget) is what guarantees no task is left polling a torn-down sandbox and no
-    unretrieved-exception warning at exit (`.claude/rules/fail-first.md`). The watcher's own
+    Awaiting (not fire-and-forget) is what guarantees no task is left polling a torn-down sandbox
+    and no unretrieved-exception warning at exit. The watcher's own
     `CancelledError` is suppressed; any caller-level cancellation still propagates."""
     if task is None:
         return

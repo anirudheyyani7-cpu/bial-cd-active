@@ -1,5 +1,5 @@
 /**
- * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT (U9).
+ * THE ONE-WORKSPACE RULE, ASKED AT SUBMIT.
  *
  * ═══ THE DEFECT, IN ONE SENTENCE ═══
  *
@@ -236,7 +236,7 @@ describe('a project with nothing built yet — the first message anybody sends',
   })
 
   it('★ still asks the one-workspace question first, even with nothing built', async () => {
-    // Issue #161's own reproduction is a submit in a project that has never been built, so the
+    // This test's own reproduction is a submit in a project that has never been built, so the
     // 404 mapping must not become a way past the gate: the server refuses a held workspace ABOVE
     // its snapshot gate, and that refusal still stops the address changing.
     api.relaunchPreview.mockRejectedValue(heldBy())
@@ -376,7 +376,7 @@ describe('transferring', () => {
   })
 
   it('★ narrates the start too, then hands the telling over to the chat itself', async () => {
-    // R9 asks every transition to narrate itself, and the start is the longest of them: the
+    // The rule asks every transition to narrate itself, and the start is the longest of them: the
     // dialog stays up across it saying so, rather than spinning. It stops there on purpose —
     // opening the chat unmounts the surface that publishes this dialog, so the sequence ends
     // where the destination begins narrating itself.
@@ -408,7 +408,7 @@ describe('transferring', () => {
   })
 
   it('★ carries the FILES across the hand-over too, not just the words (plan 002, U5)', async () => {
-    // U5's verification is that "a refused send never loses a message, and a hand-over never eats
+    // This test's claim is that "a refused send never loses a message, and a hand-over never eats
     // an attachment". The refused half was pinned; the files were not — and they are the half most
     // easily lost, because they live only as decoded bytes in a composer the hand-over is about to
     // navigate away from. Removing `pendingAttachments` from the navigation's state passed every

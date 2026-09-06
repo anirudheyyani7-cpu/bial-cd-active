@@ -1,16 +1,13 @@
-"""U13 — the app's own client-error report: the ingest route, the health verdict, the agent
-channel, and the inertness of all of it on every user-facing surface (R17 runtime half, AE11).
+"""The app's own client-error report: the ingest route, the health verdict, the agent
+channel, and the inertness of all of it on every user-facing surface.
 
-Three layers, because the unit has three claims and they fail independently:
+Three layers, because the unit has three claims and they fail independently: the ROUTE parks a
+report from the owning user and refuses everything else (CSRF, cross-user, volume); the VERDICT
+stops being green because of a parked report — the completion claim is gated on `green AND
+done_requested`, so a not-green verify is structurally a claim that cannot be made; and the AGENT
+gets the report's text, wrapped in a data-only frame, while the USER gets none of it.
 
-* the ROUTE parks a report from the owning user and refuses everything else (CSRF, cross-user,
-  volume);
-* the VERDICT stops being green because of a parked report, which is the whole of AE11 — the
-  completion claim is gated on `green AND done_requested`, so a not-green verify is structurally
-  a claim that cannot be made;
-* the AGENT gets the report's text, wrapped in a data-only frame, and the USER gets none of it.
-
-Every assert-absence check here is paired with a liveness assertion in the same test. Asserting
+Every assert-absence check here is paired with a liveness assertion in the same test: asserting
 "the report is not in X" also passes when nothing produced X at all, which would make this whole
 file green over a feature that never ran.
 """
@@ -150,7 +147,7 @@ async def test_report_without_a_stack_is_accepted(
 async def test_report_for_another_users_project_is_404_not_403(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """ADR-0004. 403 would confirm the project exists, which is precisely the probe a non-leaking
+    """403 would confirm the project exists, which is precisely the probe a non-leaking
     404 refuses — and steering another user's build is what the predicate prevents. The report is
     addressed BY PROJECT and parked BY APP, so this also pins that the hop between the two stays
     owner-scoped: a leak here would let one user drive another user's self-heal loop."""
@@ -331,12 +328,12 @@ async def test_a_late_report_does_not_resurrect_a_finished_turn(
 
 
 # =============================================================================
-# The health verdict — AE11
+# The health verdict
 # =============================================================================
 
 
 async def test_a_reported_crash_makes_a_server_clean_verify_not_green() -> None:
-    """AE11. The app returns 200 and crashes in the browser before rendering: `tsc` is clean, the
+    """The app returns 200 and crashes in the browser before rendering: `tsc` is clean, the
     dev server is ready, the log tail is quiet. Without the report this verify is green, and green
     plus the model's `declare_done` is exactly the conjunction that prints a completion claim."""
     fake = FakeSandbox()
@@ -401,7 +398,7 @@ async def _client_error_from_a_report(**report: str) -> BuildError:
 
 
 async def test_the_report_reaches_the_agent_in_a_data_only_frame() -> None:
-    """R17's "reaches the agent through the same channel": the report becomes a `BuildError` and
+    """The report reaches the agent through the same channel: it becomes a `BuildError` and
     that `BuildError` becomes the next run's repair prompt, exactly as a tsc failure does — but
     fenced, and preceded by a statement of what the fenced block is."""
     error = await _client_error_from_a_report(**_A_CRASH)
@@ -500,7 +497,7 @@ async def test_no_user_facing_frame_carries_any_part_of_the_report() -> None:
     `tests/services/turns/test_write_turn.py::test_a_client_class_error_repairs_the_app_without_narrating_it`.
     This test asserts the layer beneath: that even a surface which DID render a client-class
     `BuildError` could not leak the report, because no field that egresses carries it. The
-    `BuildError` serialization is not hypothetical either — it is what the legacy C7
+    `BuildError` serialization is not hypothetical either — it is what the legacy
     `escalation.last_error` and `BuildResult.error` envelopes still carry."""
     secret_ish = "at RecordsTable (app/records/page.tsx:41:19)"
     error = await _client_error_from_a_report(
@@ -508,7 +505,7 @@ async def test_no_user_facing_frame_carries_any_part_of_the_report() -> None:
     )
 
     # THE FRAME CANNOT BE HANDED THE REPORT ANY MORE — `title` and `cleaned_stack` are not
-    # fields on it (U14). This construction used to pass both, which is precisely what made the
+    # fields on it. This construction used to pass both, which is precisely what made the
     # absence assertions below worth writing; they are now guarding a shape that has nowhere to
     # put the payload rather than a redactor that has to get it right.
     frame = DiagnosticFrame(seq=1, source=error.source)
@@ -529,7 +526,7 @@ async def test_no_user_facing_frame_carries_any_part_of_the_report() -> None:
     # Without these, every assertion above would also pass on a `BuildError` never built.
     #
     # The title and the empty stack are asserted on the ERROR rather than on the frame, because
-    # the frame no longer has either field (U14) — which is the stronger version of the same
+    # the frame no longer has either field — which is the stronger version of the same
     # claim and the reason the assertions moved rather than went.
     assert frame.source == ErrorSource.CLIENT
     assert frame.user_message.strip() and frame.user_action.strip()

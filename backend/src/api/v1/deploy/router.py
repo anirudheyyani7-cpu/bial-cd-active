@@ -1,51 +1,28 @@
-"""One-click deploy — the citizen-facing control surface, plus the admin kill-switch (#113).
+"""One-click deploy — the citizen-facing control surface, plus the admin kill-switch.
+
+WHY THIS EXISTS
 
 `POST /v1/projects/{id}/deploy` answers with one of TWO statuses, and the difference is the
-whole point of the gate below: **202** when a deploy actually started — the work is detached
-and the client polls `GET /v1/projects/{id}/deployment` — and **200** when the request was
-ROUTED into the admin queue instead, where nothing was started and there is nothing to poll
-(`_route_to_review` sets it). Naming only the 202 would read as a promise the route does not
-make on every path.
-
-The 202 is not a style choice: a deploy runs for minutes and the edge gateway times out at
-twenty seconds, so anything that waits for the result is a guaranteed 504 on a deploy that is
-in fact going fine.
+whole point of the gate: **202** when a deploy actually started (the work is detached and
+the client polls `GET /v1/projects/{id}/deployment`) and **200** when the request was ROUTED
+into the admin queue instead, where nothing was started and there is nothing to poll. Naming
+only the 202 would read as a promise the route does not make on every path. The 202 is not a
+style choice: a deploy runs for minutes and the edge gateway times out at twenty seconds.
 
 THE PUBLISH GATE IS A PRECEDENCE LADDER, AND THIS IS WHERE THE TWO LINEAGES JOIN.
-`deploy_project` resolves the shipping commit, reads the platform's own stored review of
-it, merges that with the citizen's declaration (stricter-of per question), and lands on
-exactly one of four outcomes, in precedence order. The ladder is PROSE plus
-`# --- rule N ---` markers in `deploy_project`'s body; there is no `_LADDER` constant. The
-four: refuse (disabled / already waiting), PUBLISH (an
-administrator approved exactly this version for self-publishing — R17 — or nothing
-weighted merged Yes — R14), DEFER to the pipeline's own re-check (this request saved
-first, R13), or ROUTE the app into the admin approve queue through the approvals submit
-service (R15a's one route in). THE INVARIANT ON THAT LAST OUTCOME (see the route): a routed
-deploy leaves the app in the queue at exactly the version examined, and publishes
-nothing. That holds on BOTH sides of the 202 — a deferred deploy whose
-in-pipeline re-check finds something new routes the same way, minutes after the request
-returned, and settles the deployment row FAILED with `routed_for_review` rather than
-publishing. `mark-deployed` stays guarded on the runbook lineage; approval of a
-`self_publish` submission is consumed HERE, by the citizen publishing it themselves.
+`deploy_project` resolves the shipping commit, reads the platform's own stored review of it,
+merges that with the citizen's declaration (stricter-of per question), and lands on exactly
+one of four outcomes in precedence order: refuse, PUBLISH, DEFER to the pipeline's own
+re-check, or ROUTE into the admin approve queue. The ladder is PROSE plus `# --- rule N ---`
+markers in `deploy_project`'s body; there is no `_LADDER` constant. THE INVARIANT ON THAT
+LAST OUTCOME: a routed deploy leaves the app in the queue at exactly the version examined,
+and publishes nothing — on BOTH sides of the 202. `mark-deployed` stays on the runbook
+lineage; approval of a `self_publish` submission is consumed HERE, by the citizen.
 
-NO AUTHENTICATION ON THE PUBLISHED APP. Deliberately out of scope for this feature, and
-worth stating plainly: until that lands, anyone who has the URL can open any deployed app.
-The app's `ingress` is `external` (`deploy/config.py`), reachable outside the Container
-Apps environment — whether the managed environment's own VNet integration further
-restricts that to the corporate network is UNCONFIRMED (see the comment on `config.py`'s
-`ingress` field for how to check). Until confirmed, treat a deployed app as reachable on
-the public internet, not just from inside the corporate network. `unpublish` is the first
-real answer to "take it down now" short of destroying the citizen's project or app.
-
-TWO ROUTERS IN ONE FILE, AND TWO NAMESPACES. `router` (prefix `/projects`) is the
-citizen-facing pair above; `admin_router` (prefix `/admin/apps`) is the superadmin-only
-`unpublish` lever, kept in this file rather than `admin/router.py` because that file is
-being edited by two other in-flight branches — mirrors `admin/router.py`'s own two-router
-shape (`router` + `users_router`). Which FILE the code lives in and which URL it answers on
-are independent decisions here: the lever sits under `/v1/admin/*` with every other
-superadmin route regardless of the module it was convenient to write it in. Both are
-registered separately in `api/v1/router.py`.
-"""
+NO AUTHENTICATION ON THE PUBLISHED APP, deliberately out of scope: until that lands, anyone
+with the URL can open any deployed app. `ingress` is `external` (`deploy/config.py`); whether
+the managed environment's VNet integration restricts that to the corporate network is
+UNCONFIRMED, so treat a deployed app as reachable on the public internet."""
 
 from __future__ import annotations
 
@@ -121,7 +98,7 @@ _log = structlog.get_logger()
 
 router = APIRouter(prefix="/projects", tags=["deploy"])
 
-# Separate router for the admin app-lever (#113), keyed on app_id like every other
+# Separate router for the admin app-lever, keyed on app_id like every other
 # superadmin action (admin/router.py's `/{app_id}/disable`, `/{app_id}/enable`, …) rather
 # than this file's own citizen-facing `/projects/{project_id}/...` convention — an admin
 # operates on an app, not a project they own. Lives here rather than in admin/router.py
@@ -141,11 +118,17 @@ router = APIRouter(prefix="/projects", tags=["deploy"])
 # admin client is built entirely on `/api/admin/apps/*` (portal/src/utils/appRegistryApi.ts)
 # and the edge rewrites `/api/X` -> `/v1/X` blindly, so this prefix is what a follow-up
 # admin button already expects.
+# TWO ROUTERS IN ONE FILE, AND TWO NAMESPACES. `router` above is the citizen-facing pair;
+# this one carries the superadmin-only `unpublish` lever — mirroring `admin/router.py`'s own
+# two-router shape. Which FILE the code lives in and which URL it answers on are independent
+# decisions here: the lever sits under `/v1/admin/*` with every other superadmin route
+# regardless of the module it was convenient to write it in. Both are registered separately
+# in `api/v1/router.py`.
 admin_router = APIRouter(prefix="/admin/apps", tags=["admin"])
 
 _UNAVAILABLE = "Deploying is not switched on for this environment. Please tell an administrator."
 _BUILD_IN_FLIGHT = "Your app is being built right now. Wait for that to finish, then deploy."
-# ASM21: with storage down, the queue AND the pipeline are equally out of reach (both read
+# With storage down, the queue AND the pipeline are equally out of reach (both read
 # the same bundle) — so this is honest for every branch, and retrying settles it.
 _STORAGE_DOWN = "Publishing isn't possible right now. Please try again in a moment."
 _NOTHING_TO_DEPLOY = "There is nothing to deploy yet — build something and save it first."
@@ -226,66 +209,56 @@ async def deploy_project(
     body: DeployRequest,
     response: Response,
 ) -> DeployStartedResponse | DeployRoutedResponse:
-    """Publish, or route to a person — THE PRECEDENCE LADDER. Returns 202 with the
-    id to poll when the pipeline started, 200 with the routed outcome when the app went
-    to the admin queue instead.
+    """Publish, or route to a person — THE PRECEDENCE LADDER. Returns 202 with the id to poll
+    when the pipeline started, 200 with the routed outcome when the app went to the admin queue.
 
-    Every cell of the state table resolves to exactly one branch, evaluated in order
-    against `H`, the commit about to ship (resolved from the snapshot blob's metadata
-    stamp AFTER the optional save below — the decision must be about the version that
-    will actually leave):
-
-      1.  disabled                                     -> refuse
-      2.  pending                                      -> refuse: waiting (R15b)
-      3.  approved AND approved pin == H
-            AND lineage == self_publish                -> PUBLISH  (R17; P5 makes
-                                                          pre-feature approvals inert)
-      3a. THIS request saved first AND the stored
-            review is stamped a commit other than H    -> DEFER to the pipeline's
-                                                          re-check (R13, U10)
-      4.  the stored review for H anything other than
-            genuinely COMPLETE (absent, stale, still
-            running, aged out, failed, or complete-
-            but-flagged-partial)                       -> ROUTE    (R20)
-      5.  rejected                                     -> ROUTE    (P4 — sticky,
-                                                          whatever a fresh review says)
-      6.  any weighted category merges to Yes          -> ROUTE    (R9)
-      7.  otherwise                                    -> PUBLISH  (R14)
-
-    Rule 3 sits ABOVE rule 6 deliberately: the review keeps returning the same Yes for
-    the same code, so without the override a flagged app would route forever and the
-    flow would never terminate. Rule 3a is narrow on purpose — only a save THIS request
-    performed defers, and rules 1, 2 and 5 are status checks evaluated before that save,
-    so a disabled, pending or rejected app never reaches the pipeline by that door. Rule
-    4 says COMPLETE (status, the runner's own completeness signal, AND the age ceiling)
-    because a review still running is neither absent nor failed — falling through to
-    rule 6 there would publish on the citizen's word alone, the exact bypass this ladder
-    exists to close, reachable by answering six questions faster than the review lands.
-
-    THE GATE READS THE STORED REVIEW, NEVER THE BROWSER'S COPY (R12): the request schema
-    has no review field, unknown body keys are dropped at the boundary, and both answer
-    sets plus the merge outcome are computed right here, server-side.
-
-    THE SAVE RUNS BEFORE THE GATE, ON PURPOSE (R13). The ladder's version-dependent rules
-    must run against the post-save H, and saving is what the citizen explicitly asked for
-    on that path — so "a refused deploy changes nothing" is NOT the invariant here. The one
-    that holds: a ROUTED deploy leaves the app in the queue at exactly the version
-    examined, and publishes nothing; the plain REFUSALS (rules 1 and 2) are decided before
-    the save and change nothing.
-
-    AND A 202 IS NOT A PROMISE TO PUBLISH. On rule 3a the decision is deliberately
-    unfinished when this route answers: the pipeline reviews the version it extracted and
-    may route it into the queue instead of shipping it, long after the response left. The
-    replacement invariant above is written to cover that case unchanged — the app ends up
-    in the queue at exactly the version examined, and nothing is published — but a caller
-    must not read 202 as "this will go live", only as "the id to watch".
-
-    UNSAVED WORK IS REFUSED BY DEFAULT. A deploy ships the last SAVED version, so quietly
-    deploying while the workspace is ahead of it would publish something the citizen never
-    asked for and give them no way to tell. `saveFirst` is the explicit "save and deploy"
-    they opted into. `dirty` is TRI-STATE and unknown is not dirty: with no live workspace
-    there is nothing to compare against, and the saved version is the only version.
-    """
+    A 202 IS NOT A PROMISE TO PUBLISH — read it as "the id to watch". UNSAVED WORK IS REFUSED BY
+    DEFAULT: a deploy ships the last SAVED version, and `saveFirst` is the explicit "save and
+    deploy" the citizen opts into. `dirty` is TRI-STATE and unknown is not dirty: with no live
+    workspace there is nothing to compare against, and the saved version is the only version."""
+    # Every cell of the state table resolves to exactly one branch, evaluated in order against
+    # `H`, the commit about to ship (resolved from the snapshot blob's metadata stamp AFTER the
+    # optional save below — the decision must be about the version that will actually leave):
+    #
+    #   1.  disabled                                     -> refuse
+    #   2.  pending                                      -> refuse: waiting
+    #   3.  approved AND approved pin == H
+    #         AND lineage == self_publish                -> PUBLISH  (pre-feature approvals
+    #                                                       are inert here)
+    #   3a. THIS request saved first AND the stored
+    #         review is stamped a commit other than H    -> DEFER to the pipeline's re-check
+    #   4.  the stored review for H anything other than
+    #         genuinely COMPLETE (absent, stale, still
+    #         running, aged out, failed, or complete-
+    #         but-flagged-partial)                       -> ROUTE
+    #   5.  rejected                                     -> ROUTE    (sticky, whatever a fresh
+    #                                                       review says)
+    #   6.  any weighted category merges to Yes          -> ROUTE
+    #   7.  otherwise                                    -> PUBLISH
+    #
+    # Rule 3 sits ABOVE rule 6 deliberately: the review keeps returning the same Yes for the same
+    # code, so without the override a flagged app would route forever and the flow would never
+    # terminate. Rule 3a is narrow on purpose — only a save THIS request performed defers, and
+    # rules 1, 2 and 5 are status checks evaluated before that save, so a disabled, pending or
+    # rejected app never reaches the pipeline by that door. Rule 4 says COMPLETE (status, the
+    # runner's own completeness signal, AND the age ceiling) because a review still running is
+    # neither absent nor failed — falling through to rule 6 there would publish on the citizen's
+    # word alone, the exact bypass this ladder exists to close, reachable by answering six
+    # questions faster than the review lands.
+    #
+    # THE GATE READS THE STORED REVIEW, NEVER THE BROWSER'S COPY: the request schema has no
+    # review field, unknown body keys are dropped at the boundary, and both answer sets plus the
+    # merge outcome are computed right here, server-side.
+    #
+    # THE SAVE RUNS BEFORE THE GATE, ON PURPOSE. The ladder's version-dependent rules must run
+    # against the post-save H, and saving is what the citizen explicitly asked for on that path —
+    # so "a refused deploy changes nothing" is NOT the invariant here. The one that holds: a
+    # ROUTED deploy leaves the app in the queue at exactly the version examined, and publishes
+    # nothing; the plain REFUSALS (rules 1 and 2) are decided before the save and change nothing.
+    #
+    # On rule 3a the decision is deliberately unfinished when this route answers: the pipeline
+    # reviews the version it extracted and may route it into the queue instead of shipping it,
+    # long after the response left. The invariant above covers that case unchanged.
     await owned_project_or_404(db, user.id, project_id)
 
     # The full registry row, not `deploy_target`'s two-column projection: the ladder
@@ -308,7 +281,7 @@ async def deploy_project(
         raise AppApiError(status.HTTP_409_CONFLICT, _NOTHING_TO_DEPLOY, code=FAIL_NO_SNAPSHOT)
 
     flags = body.answers.classification_flags()
-    # ASM15: the citizen's explanation passes through the shared redactor before it is
+    # The citizen's explanation passes through the shared redactor before it is
     # stored anywhere — it lands in the same records the review's own text is kept clean of.
     notes = (body.answers.notes or "").strip()
     explanation = redact_secrets(notes) if notes else None
@@ -328,7 +301,7 @@ async def deploy_project(
         raise AppApiError(status.HTTP_409_CONFLICT, _DISABLED_MSG, code="app_disabled")
 
     if app_row.status is AppStatus.PENDING:
-        # R15b's structured 409: the state, the submitted version, and the rejection
+        # The structured 409: the state, the submitted version, and the rejection
         # note when one exists — everything both citizen surfaces need to render the
         # waiting state without a second call.
         pending = {
@@ -376,7 +349,7 @@ async def deploy_project(
         conflict_code="build_in_flight",
     )
 
-    # The gate runs AFTER this, deliberately (R13): the version-dependent rules must run
+    # The gate runs AFTER this, deliberately: the version-dependent rules must run
     # against the post-save H. `resolved.saved` is rule 3a's "this request saved first"
     # fact; `resolved.head_sha` is the commit the resolution landed on.
     resolved = await _resolve_unsaved_work(
@@ -387,8 +360,8 @@ async def deploy_project(
     # Storage is the one dependency EVERY remaining branch needs — the queue copy and
     # the pipeline read the same bundle, so with it down publishing and routing are
     # equally unavailable and nobody is stranded behind a gate that works while the
-    # pipeline doesn't (ASM21). The deploy service, by contrast, is checked only where
-    # a branch actually starts the pipeline (ASM10 — routing must work without it).
+    # pipeline doesn't. The deploy service, by contrast, is checked only where
+    # a branch actually starts the pipeline — routing must work without it.
     if storage is None:
         raise AppApiError(
             status.HTTP_503_SERVICE_UNAVAILABLE, _STORAGE_DOWN, code="storage_unavailable"
@@ -413,23 +386,23 @@ async def deploy_project(
         raise AppApiError(status.HTTP_409_CONFLICT, _SNAPSHOT_MOVED_MSG, code="snapshot_moved")
 
     # THE STORED REVIEW, read through the same service the review routes resolve — by
-    # app, situated against H by `gate.review_at_head`. Never a browser-supplied copy (R12).
+    # app, situated against H by `gate.review_at_head`. Never a browser-supplied copy.
     readout = await reviews.read(db, app_id=app_row.id)
     review: ReviewAtHead = review_at_head(readout, head_sha)
 
     # Both answer sets and the merge outcome, computed server-side inside this request —
     # the portal's local copy drives affordances and never decides. The merge runs on
-    # every branch below (not just rule 6) because R22 requires the record of EVERY
-    # decision to carry the effective answers and the differences.
+    # every branch below (not just rule 6) because the record of EVERY
+    # decision must carry the effective answers and the differences.
     merged = merge_questions(merge_inputs(flags, review))
     declaration = declaration_document(
         head_sha=head_sha, citizen=flags, explanation=explanation, review=review, merged=merged
     )
     score = total_weight(flags)
 
-    # --- rule 3: the approval override (R17) -------------------------------------------
+    # --- rule 3: the approval override -------------------------------------------
     # The pinned commit must equal H and the lineage must be self_publish — which is what
-    # makes approvals predating this feature inert here (P5): the 0030 backfill marked
+    # makes approvals predating this feature inert here: the 0030 backfill marked
     # them runbook, and a runbook approval authorises the manual go-live runbook only.
     if (
         app_row.status is AppStatus.APPROVED
@@ -451,7 +424,7 @@ async def deploy_project(
             rule="approved_override",
         )
 
-    # ASM22/R10: the explanation is obliged exactly when the MERGED answers would route
+    # The explanation is obliged exactly when the MERGED answers would route
     # (a Public-Data-only Yes carries no weight and needs none; an approved app already
     # answered it — rule 3 sits above). A 422, not a scoring refusal: an unexplained
     # weighted Yes is an INCOMPLETE submission, not a rejected one — and it is not a gate
@@ -468,7 +441,7 @@ async def deploy_project(
     # category only the RE-CHECK raises is not in `merged` at request time.
     # `explanation_owed`, NOT `any_weighted_yes`: the two came apart when a dispute the
     # citizen has no surface for became a routing reason. A Tier A hit the review
-    # overruled, or a Yes R4 discarded, both route — but the form showed the review
+    # overruled, or a Yes the review discarded, both route — but the form showed the review
     # answering No on that category, so demanding an explanation would refuse the citizen
     # over a fact nothing has told them, and no answer they could type would satisfy it.
     # Routing still keys off the full weighted Yes below; only the OBLIGATION narrows.
@@ -489,7 +462,7 @@ async def deploy_project(
             },
         )
 
-    # --- rule 3a: the save-and-publish defer (R13) ---------------------------------------
+    # --- rule 3a: the save-and-publish defer ---------------------------------------
     # Narrow on purpose: only a save THIS request performed, only when a stored review
     # exists stamped some other commit, and never for a rejected app (rule 5's status was
     # read above). Without this branch rule 4 would route every single save-and-publish,
@@ -529,7 +502,7 @@ async def deploy_project(
             extra={"staleReviewSha": readout.review.head_sha},
         )
 
-    # --- rule 4: no genuinely-COMPLETE review for H -> ROUTE, whatever was answered (R20)
+    # --- rule 4: no genuinely-COMPLETE review for H -> ROUTE, whatever was answered
     if not review.complete:
         return await _route_to_review(
             db,
@@ -543,7 +516,7 @@ async def deploy_project(
             response=response,
         )
 
-    # --- rule 5: a rejection is sticky (P4) — an administrator lifts it, a re-roll never
+    # --- rule 5: a rejection is sticky — an administrator lifts it, a re-roll never
     if rejected:
         return await _route_to_review(
             db,
@@ -557,7 +530,7 @@ async def deploy_project(
             response=response,
         )
 
-    # --- rule 6: any weighted category merged to Yes -> ROUTE (R9) -----------------------
+    # --- rule 6: any weighted category merged to Yes -> ROUTE -----------------------
     if merged.any_weighted_yes:
         return await _route_to_review(
             db,
@@ -571,7 +544,7 @@ async def deploy_project(
             response=response,
         )
 
-    # --- rule 7: nothing weighted from either side -> PUBLISH, unattended (R14) ----------
+    # --- rule 7: nothing weighted from either side -> PUBLISH, unattended ----------
     return await _start_pipeline(
         db,
         service=service,
@@ -591,14 +564,10 @@ async def deploy_project(
 class _ResolvedWork:
     """What the unsaved-work resolution settled on.
 
-    `saved` is ladder rule 3a's "this request saved first" fact, which must mean a real
-    write — `saveFirst` on an already-clean workspace saves nothing and defers nothing.
-
-    `head_sha` is THE COMMIT THE RESOLUTION RESOLVED TO: the one the save landed
-    at, or the one the workspace was already level with when it performed none. It is a
-    second, independent reading of the same tree the ladder's H comes from — the save's
-    own return value and the container/bundle comparison, against the snapshot blob's
-    metadata stamp. `None` means the resolution has no opinion (no sandbox runtime at
+    `saved` is ladder rule 3a's "this request saved first" fact, which must mean a real write —
+    `saveFirst` on an already-clean workspace saves nothing and defers nothing. `head_sha` is
+    THE COMMIT THE RESOLUTION RESOLVED TO: the one the save landed at, or the one the workspace
+    was already level with. `None` means the resolution has no opinion (no sandbox runtime at
     all, or a save whose head could not be read), which is not a disagreement."""
 
     saved: bool
@@ -657,15 +626,14 @@ async def _resolve_unsaved_work(
 
 
 async def _shipping_head(storage: ObjectStorage, app_id: uuid.UUID) -> str | None:
-    """H — the commit this request is about to ship, from the snapshot blob's metadata
-    stamp. One `head()`, never an extraction: the classification routes settled that
-    reading (the extract helper downloads the whole bundle before consulting its cache),
-    and the pipeline re-derives the real head from the tree anyway.
+    """H — the commit this request is about to ship, from the snapshot blob's metadata stamp.
 
-    None means the saved bundle predates the stamp. That is not fatal here and must not
-    be: it simply means no review can be matched to it, so rule 3 cannot fire and rule 4
-    routes — the fail-safe direction. A store that will NOT answer is the documented 503,
-    never "no stamp": unknown must not read as a state (ASM21)."""
+    One `head()`, never an extraction: the extract helper downloads the whole bundle before
+    consulting its cache, and the pipeline re-derives the real head from the tree anyway. None
+    means the saved bundle predates the stamp — not fatal, and it must not be: no review can be
+    matched to it, so rule 3 cannot fire and rule 4 routes, the fail-safe direction. A store
+    that will NOT answer is the documented 503, never "no stamp": unknown must not read as a
+    state."""
     try:
         meta = await storage.head(snapshot_key(app_id))
     except StorageError as exc:
@@ -695,14 +663,13 @@ async def _route_to_review(
 ) -> DeployRoutedResponse:
     """ROUTE: submit this exact version into the admin queue and tell the citizen so.
 
-    Audit-then-commit is the shipped gate's shape and it is kept: the submit service is
-    commit-less, so its guarded UPDATE, its own `submit` row and this gate's decision
-    record all land in ONE transaction — the app cannot end up pending with no record of
-    why, nor recorded as routed without actually being in the queue.
-
-    200, not an error status: the platform did exactly what it promised. The citizen's
-    publish surfaces render this as an informational state and must never paint the red
-    failure badge over it."""
+    200, not an error status: the platform did exactly what it promised. The citizen's publish
+    surfaces render this as an informational state and must never paint the red failure badge
+    over it."""
+    # Audit-then-commit is the shipped gate's shape and it is kept: the submit service is
+    # commit-less, so its guarded UPDATE, its own `submit` row and this gate's decision record all
+    # land in ONE transaction — the app cannot end up pending with no record of why, nor recorded
+    # as routed without actually being in the queue.
     receipt = await submit_app_for_review(
         db,
         storage,
@@ -768,22 +735,17 @@ async def _start_pipeline(
 ) -> DeployStartedResponse:
     """PUBLISH (or DEFER): start the pipeline and hand back the id to poll.
 
-    THE UNCONFIGURED-DEPLOY 503 LIVES HERE, not at the top of the route (ASM10). At the top
-    it would shut the door before the ladder ran — stranding exactly the citizens ASM10 says
-    are not stranded, since routing needs object storage and the queue, never the deploy
-    service. Here, immediately before the pipeline starts, every ROUTE branch completes
-    without it.
-
-    `expected_commit_sha` IS H, ON EVERY BRANCH, not just the deferring one: the
-    pipeline extracts the mutable snapshot, and between this claim and that extraction
-    another save can land. Handing it the commit the gate decided about — and failing the
-    deploy closed when the tree turns out to be a different one — is what makes "what was
-    approved is what is running" provable rather than assumed. `None` (a saved bundle
-    predating the stamp) asserts nothing, which is the honest reading of an unknown.
-
-    `recheck` is rule 3a's alone: it carries the commit the citizen's answers were written
-    about and the declaration that stands as the baseline for "did this version raise
-    anything new"."""
+    `expected_commit_sha` IS H, ON EVERY BRANCH, not just the deferring one: the pipeline
+    extracts the mutable snapshot, and between this claim and that extraction another save can
+    land. `None` (a saved bundle predating the stamp) asserts nothing, which is the honest
+    reading of an unknown."""
+    # THE UNCONFIGURED-DEPLOY 503 LIVES HERE, not at the top of the route. At the top it would
+    # shut the door before the ladder ran — stranding exactly the citizens routing must never
+    # strand, since routing needs object storage and the queue, never the deploy service. Here,
+    # immediately before the pipeline starts, every ROUTE branch completes without it.
+    #
+    # Pinning H and failing the deploy closed when the tree turns out to be a different one is
+    # what makes "what was approved is what is running" provable rather than assumed.
     if service is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _UNAVAILABLE)
     try:
@@ -814,7 +776,7 @@ async def _start_pipeline(
         declaration=declaration,
         extra={
             **detail,
-            # What was declared, on the gated action itself (ADR-0005). The deployment row
+            # What was declared, on the gated action itself. The deployment row
             # holds the same facts, but audit outlives it: an app deleted after a bad
             # deploy takes its `deployments` rows with it via CASCADE, and the declaration
             # that authorised the publish is exactly what a later review needs.
@@ -890,27 +852,25 @@ async def _saved_version_for_publish_state(
     storage: ObjectStorage | None, app_id: uuid.UUID
 ) -> _SavedVersion:
     """The one object-store read for the publish-state chip: the same metadata `head()`
-    `_shipping_head` above and `classification/router.py`'s `_saved_version` already
-    take, copied deliberately and NOT the whole-bundle read
-    `build_sessions/manager._saved_head` uses to answer the same question (it `get`s the whole
-    snapshot and parses its header) — that
-    distinction (a small header vs. the app's entire git bundle pulled through the API
-    process, on a route a client polls on mount, on focus and after every publish) is
-    the unit's whole cost argument.
+    `_shipping_head` and `classification/router.py`'s `_saved_version` already take.
 
-    A NAMED DEPARTURE FROM ASM21, HERE ONLY: both `_shipping_head` above and
-    `classification`'s reader turn a `StorageError` into a 503, and they are right to —
-    each is about to ACT on the bundle it names. This read never acts on anything, and
-    this endpoint is the ONLY publishing surface in the product, so a storage blip
-    answering "is there newer work" must not blank the rest of the response — the
-    status, the approval block, the rejection note, the address — over a question that
-    was only ever a hint. So a raise here is caught and folds into `None`, same as an
-    unconfigured store (`storage is None`, the supported dev/test posture this whole
-    route already accommodates) and same as a bundle saved before the metadata stamp
-    existed: all three are "cannot tell", which `compute_publish_state` reads as
-    `live_drift_unknown`, never as "up to date". If a later reader "fixes" this back to
-    match its two neighbours, that is the regression — the difference is deliberate, and
-    the reason for it lives here, beside the code."""
+    Deliberately NOT the whole-bundle read `build_sessions/manager._saved_head` uses to answer
+    the same question. A small header versus the app's entire git bundle pulled through the API
+    process, on a route a client polls on mount, on focus and after every publish, is this
+    unit's whole cost argument."""
+    # A NAMED DEPARTURE FROM THE GENERAL STORAGE-DOWN RULE, HERE ONLY: both `_shipping_head` and
+    # `classification`'s reader turn a `StorageError` into a 503, and they are right to — each is
+    # about to ACT on the bundle it names. This read never acts on anything, and this endpoint is
+    # the ONLY publishing surface in the product, so a storage blip answering "is there newer
+    # work" must not blank the rest of the response (the status, the approval block, the rejection
+    # note, the address) over a question that was only ever a hint.
+    #
+    # So a raise here is caught and folds into `None`, same as an unconfigured store
+    # (`storage is None`, the supported dev/test posture this route already accommodates) and same
+    # as a bundle saved before the metadata stamp existed: all three are "cannot tell", which
+    # `compute_publish_state` reads as `live_drift_unknown`, never as "up to date". If a later
+    # reader "fixes" this back to match its two neighbours, that is the regression — the
+    # difference is deliberate, and the reason for it lives here, beside the code.
     if storage is None:
         return _NOTHING_SAVED
     try:
@@ -924,7 +884,7 @@ async def _saved_version_for_publish_state(
         # the rail's row says "YOUR LATEST", so it must name the version the citizen
         # chose to keep, never one the platform wrote on their behalf. Reading the newer
         # of the two would report work as SAVED that they never saved, which is the same
-        # promotion-by-the-back-door KTD-5e exists to prevent.
+        # promotion-by-the-back-door this rule exists to prevent.
         meta = await storage.head(snapshot_key(app_id))
     except StorageError:
         _log.warning("publish_state_saved_head_unavailable", app_id=str(app_id))
@@ -954,44 +914,35 @@ async def latest_deployment(
     """The latest deploy attempt for this project — what the client polls.
 
     An app that has never been deployed is a NORMAL state, not a 404: the answer is an empty
-    envelope, exactly as `save-state` answers for a project with no workspace.
-
-    IT ALSO CARRIES THE APP'S APPROVAL STATE (U12), and that is not scope creep. The two
-    citizen publish surfaces poll this one response through one hook; the toolbar one has
-    no app id to make a second, app-scoped call with, and a status card that reads its own
-    lifecycle once on mount goes stale the moment the publish it is watching routes into
-    the queue. One response, one poll lifetime, two surfaces that cannot disagree.
-
-    The FULL registry row, not `deploy_target`'s two-column projection, which carries neither
-    the approval pin nor the rejection note this response returns.
-
-    IT DOES NOT NEED THE DEPLOY PIPELINE, and must not start requiring one. Every field it
-    returns is a committed row — the registry row for the approval half, the deployments
-    row for the rest — so refusing without `DEPLOY__*` would 503 a request whose complete
-    answer is sitting in the database. That cost lands on the person least able to diagnose
-    it: the publish ladder deliberately ROUTES without a pipeline (ASM10 — a routed app
-    needs a human, not a container), so an app can be sent to an administrator, be rejected
-    with a note written specifically for its developer, and that developer's approval card
-    would render empty, because the only call that carries approval state refused to answer.
-    The gate works; the answer never arrives.
-
-    Publishing is where the pipeline is genuinely required, and `deploy_project` still
-    refuses there — checked once a branch actually needs it, which is the same rule this
-    now follows.
-
-    `publish_state` is computed from the two rows above PLUS exactly one object-store
-    metadata HEAD (`_saved_version_for_publish_state`) — never a download, and never a
-    second query. An unconfigured store reads the same as one that raised, so the paragraph
-    above still holds with the chip added: this endpoint needs nothing but the database.
-
-    THAT SAME HEAD IS SPENT TWICE, NOT ONCE. The metadata read already happening for
-    `publish_state` carries the citizen's saved commit and the store's last-modified on
-    that bundle, and rather than being discarded both reach the wire
-    as `saved_head`/`saved_at`, which is what lets the workspace rail draw its "YOUR
-    LATEST" row on a project whose CONTAINER IS STOPPED — no sandbox dependency is
-    declared on this route, so there is nothing here that could wake one, and that is
-    the property the row depends on. `save-state` cannot answer it: that read attaches
-    to a container first, so it is silent in exactly the reclaimed case the row is for."""
+    envelope, exactly as `save-state` answers for a project with no workspace. The response also
+    carries the app's APPROVAL STATE and the citizen's saved commit/time, so one poll lifetime
+    feeds both publish surfaces and the workspace rail. It needs nothing but the database plus a
+    single object-store metadata HEAD — never a download, never a second query, and no sandbox."""
+    # IT ALSO CARRIES THE APP'S APPROVAL STATE, and that is not scope creep. The two citizen
+    # publish surfaces poll this one response through one hook; the toolbar one has no app id to
+    # make a second, app-scoped call with, and a status card that reads its own lifecycle once on
+    # mount goes stale the moment the publish it is watching routes into the queue. One response,
+    # one poll lifetime, two surfaces that cannot disagree. It reads the FULL registry row, not
+    # `deploy_target`'s two-column projection, which carries neither the approval pin nor the
+    # rejection note.
+    #
+    # IT DOES NOT NEED THE DEPLOY PIPELINE, and must not start requiring one. Every field it
+    # returns is a committed row, so refusing without `DEPLOY__*` would 503 a request whose
+    # complete answer is sitting in the database. That cost lands on the person least able to
+    # diagnose it: the publish ladder deliberately ROUTES without a pipeline (a routed app needs a
+    # human, not a container), so an app can be sent to an administrator, be rejected with a note
+    # written specifically for its developer, and that developer's approval card would render
+    # empty. The gate works; the answer never arrives. Publishing is where the pipeline is
+    # genuinely required, and `deploy_project` still refuses there.
+    #
+    # THAT SAME HEAD IS SPENT TWICE, NOT ONCE. The metadata read already happening for
+    # `publish_state` carries the citizen's saved commit and the store's last-modified on that
+    # bundle, and rather than being discarded both reach the wire as `saved_head`/`saved_at` —
+    # which is what lets the workspace rail draw its "YOUR LATEST" row on a project whose
+    # CONTAINER IS STOPPED. No sandbox dependency is declared on this route, so there is nothing
+    # here that could wake one, and that is the property the row depends on. `save-state` cannot
+    # answer it: that read attaches to a container first, so it is silent in exactly the reclaimed
+    # case the row is for. An unconfigured store reads the same as one that raised.
     await owned_project_or_404(db, user.id, project_id)
 
     app_row = (
@@ -1078,94 +1029,83 @@ async def unpublish(
     db: DbSession,
     remover: OptionalPublishedAppRemover,
 ) -> UnpublishResponse:
-    """THE admin kill-switch (#113). Takes the published container down; leaves the app row,
-    its per-project database and its Blob container completely untouched — a later Deploy
-    brings it back at the same URL, because the container name is a pure function of the
-    immutable app id and nothing about unpublishing constrains a future deployment row.
+    """THE admin kill-switch. Takes the published container down; leaves the app row, its
+    per-project database and its Blob container completely untouched — a later Deploy brings it
+    back at the same URL, because the container name is a pure function of the immutable app id.
 
-    NOT the citizen-facing case, and no submit-for-review lineage is touched — this is a
-    separate, admin-only lever, same posture as `admin/router.py`'s `disable`.
-
-    AN OPERATOR CONVENIENCE, NOT AN ENFORCEMENT LEVER, and the distinction matters against a
-    hostile app. Nothing in `deploy_project` consults `unpublished_at` or `AppRegistry.status`,
-    so the owner can republish at the same URL one click later. That is the right default for
-    the case this exists for — an app misbehaving by accident, taken down while it is fixed —
-    but it means this is NOT the answer to a compromised or data-leaking app. `disable` is:
-    it fails closed by severing the database. Enforcement is deliberately left to #113's
-    follow-up rather than smuggled in here.
-
-    THE ACCOUNTABILITY ROW IS COMMITTED BEFORE AZURE IS CALLED, the opposite of `disable`'s
-    ordering, and the inversion is deliberate rather than inherited. `disable` audits first so
-    a failing side effect ROLLS THE AUDIT BACK — its side effect is a local `ALTER ROLE` that
-    either lands in milliseconds or raises. This lever's side effect is an ARM long-running
-    delete bounded at `provision_timeout_s` (300s) behind an edge gateway that gives up at
-    twenty (see this module's docstring). The failure mode is therefore not "the side effect
-    raised" but "this request never returns" — and a request that never returns cannot audit
-    anything on its way out. So the trail is made durable FIRST: after that commit, the fact
-    that a named superadmin pulled this lever on this app survives a 504, a worker recycle,
-    and an ARM call that lands ten minutes later. What it deliberately does NOT claim is that
-    the container is gone — `await_lro` raises on expiry precisely because the outcome is
-    unknown, and an audit row asserting an outcome nobody observed would be worse than none.
-
-    Committing there also RELEASES THE DB CONNECTION for the duration of the ARM call, rather
-    than holding one idle-in-transaction for up to five minutes per concurrent admin.
-
-    TWO AUDIT ACTIONS, and every request that is about to touch Azure writes the first before
-    it does:
-      `unpublish`             — an admin exercised the lever. One row per request that reached
-                                the sweep, so two admins racing the same incident leave two
-                                rows, correctly attributed, which is the point.
-      `unpublish:unconfirmed` — the sweep came back empty, so this request never observed the
-                                container go away. Written after the attempt row, mirroring the
-                                two `publish_gate` refusals at the top of `deploy_project`
-                                (`rule="disabled"` and `rule="pending"`): audit the outcome,
-                                commit, then raise. That is the shape being copied.
-                                NOT `:failed` — see the sweep branch.
-    A successful unpublish therefore writes ONE row, not two: the pre-ARM row already carries
-    the whole ADR-0005 payload (who, what, which, when), and "it worked" is already durable in
-    `unpublished_at` and the `app_unpublished` log line. One `unpublish` row with no
-    `:unconfirmed` sibling and `unpublished_at` still NULL reads as "attempted, outcome
-    unknown" — which is exactly what a 504 leaves behind, and exactly what `await_lro` can
-    honestly prove. Paths that mutate nothing write nothing (the 404, both 409s, the
-    already-down 200), matching this codebase's own rule that a no-op admin request is not an
-    audited action.
-
-    ORDER MATTERS, same discipline as `disable`: the unconfigured-publishing check goes first
-    because it costs no query and an environment with `DEPLOY__*` unset has nothing to tear
-    down; the in-flight check next, because letting an unpublish through while a deploy is
-    running would race that deploy's own `create_or_update` — a moment later the "removed"
-    container could simply reappear, silently undoing the admin's action. That check is
-    check-then-act: a deploy can still start between it and the sweep, so the 409 NARROWS the
-    window rather than closing it. It is a refusal to act on a state already known to be
-    changing, not a guarantee about the state at the moment the sweep lands.
-
-    THE ROW TO STAMP IS THE NEWEST ONE, NOT THE NEWEST SUCCEEDED ONE. The pipeline creates the
-    container app at step 5 and only then awaits the revision, so an attempt that settles
-    FAILED at step 6 leaves `pub-<app_id>` running, externally addressable, holding the app's
-    database URL and Blob SAS, and billing. Resolving through the newest SUCCEEDED row would
-    answer "never published" while exactly that container served traffic — and on a
-    succeeded-then-unpublished-then-failed history it would take the already-down early return
-    and leave the re-created container up. `latest_for_app` closes both. A missing row is still
-    a safe 409: the container is only ever created by a pipeline that owns a deployment row,
-    and rows leave only by CASCADE with the app itself (a 404 here), so no row provably means
-    no container.
-
-    IDEMPOTENT: if the newest attempt is already stamped, this returns 200 with the existing
-    state and never touches Azure again — a repeat click cannot fail.
-
-    FAILS LOUD, NOT BEST-EFFORT: `sweep_published_apps` is reused exactly as it exists
-    (best-effort, never-raising) rather than duplicating a second delete path, but its
-    return count is read back here — 0 swept means this request never observed the delete
-    succeed, and `unpublished_at` is deliberately NOT written in that case. The count is a
-    weak signal in BOTH directions, and the route is written to over-claim in neither: a
-    non-zero count means "no error" rather than "something was deleted", because `delete_app`
-    no-ops on an absent container and still counts; a zero means "not observed" rather than
-    "failed", because the sweep collapses a terminal `AcaError` and an `AcaTransientError`
-    from ceiling expiry into the same number. Both readings are the right ones for a lever
-    whose job is to guarantee absence rather than to prove authorship of it. Retrying is safe
-    either way, because `AcaPublishedApps.delete_app` is independently idempotent — a partial
-    failure never leaves the row and reality permanently disagreeing.
-    """
+    IDEMPOTENT: an already-stamped attempt returns 200 and never touches Azure again. AN OPERATOR
+    CONVENIENCE, NOT AN ENFORCEMENT LEVER — nothing in `deploy_project` consults `unpublished_at`
+    or `AppRegistry.status`, so the owner republishes one click later. Against a compromised or
+    data-leaking app the answer is `disable`, which fails CLOSED by severing the database."""
+    # NOT the citizen-facing case, and no submit-for-review lineage is touched — a separate,
+    # admin-only lever, same posture as `admin/router.py`'s `disable`. The convenience/enforcement
+    # distinction matters against a hostile app: the right default here is an app misbehaving by
+    # accident, taken down while it is fixed. Enforcement is deliberately left to a follow-up
+    # rather than smuggled in here.
+    #
+    # THE ACCOUNTABILITY ROW IS COMMITTED BEFORE AZURE IS CALLED, the opposite of `disable`'s
+    # ordering, and the inversion is deliberate rather than inherited. `disable` audits first so a
+    # failing side effect ROLLS THE AUDIT BACK — its side effect is a local `ALTER ROLE` that
+    # either lands in milliseconds or raises. This lever's side effect is an ARM long-running
+    # delete bounded at `provision_timeout_s` (300s) behind an edge gateway that gives up at
+    # twenty. The failure mode is therefore not "the side effect raised" but "this request never
+    # returns" — and a request that never returns cannot audit anything on its way out. So the
+    # trail is made durable FIRST: after that commit, the fact that a named superadmin pulled this
+    # lever on this app survives a 504, a worker recycle, and an ARM call that lands ten minutes
+    # later. What it deliberately does NOT claim is that the container is gone — `await_lro`
+    # raises on expiry precisely because the outcome is unknown, and an audit row asserting an
+    # outcome nobody observed would be worse than none. Committing there also RELEASES THE DB
+    # CONNECTION for the duration of the ARM call, rather than holding one idle-in-transaction for
+    # up to five minutes per concurrent admin.
+    #
+    # TWO AUDIT ACTIONS, and every request about to touch Azure writes the first before it does:
+    #   `unpublish`             — an admin exercised the lever. One row per request that reached
+    #                             the sweep, so two admins racing the same incident leave two rows,
+    #                             correctly attributed, which is the point.
+    #   `unpublish:unconfirmed` — the sweep came back empty, so this request never observed the
+    #                             container go away. Written after the attempt row, mirroring the
+    #                             two `publish_gate` refusals at the top of `deploy_project`
+    #                             (`rule="disabled"` and `rule="pending"`): audit the outcome,
+    #                             commit, then raise. NOT `:failed` — see the sweep branch.
+    # A successful unpublish therefore writes ONE row, not two: the pre-ARM row already carries the
+    # whole gated-action audit payload (who, what, which, when), and "it worked" is already durable
+    # in `unpublished_at` and the `app_unpublished` log line. One `unpublish` row with no
+    # `:unconfirmed` sibling and `unpublished_at` still NULL reads as "attempted, outcome unknown"
+    # — exactly what a 504 leaves behind, and exactly what `await_lro` can honestly prove. Paths
+    # that mutate nothing write nothing (the 404, both 409s, the already-down 200), matching this
+    # codebase's rule that a no-op admin request is not an audited action.
+    #
+    # ORDER MATTERS, same discipline as `disable`: the unconfigured-publishing check goes first
+    # because it costs no query and an environment with `DEPLOY__*` unset has nothing to tear down;
+    # the in-flight check next, because letting an unpublish through while a deploy is running
+    # would race that deploy's own `create_or_update` — a moment later the "removed" container
+    # could simply reappear, silently undoing the admin's action. That check is check-then-act: a
+    # deploy can still start between it and the sweep, so the 409 NARROWS the window rather than
+    # closing it. It is a refusal to act on a state already known to be changing, not a guarantee
+    # about the state at the moment the sweep lands.
+    #
+    # THE ROW TO STAMP IS THE NEWEST ONE, NOT THE NEWEST SUCCEEDED ONE. The pipeline creates the
+    # container app at step 5 and only then awaits the revision, so an attempt that settles FAILED
+    # at step 6 leaves `pub-<app_id>` running, externally addressable, holding the app's database
+    # URL and Blob SAS, and billing. Resolving through the newest SUCCEEDED row would answer "never
+    # published" while exactly that container served traffic — and on a
+    # succeeded-then-unpublished-then-failed history it would take the already-down early return
+    # and leave the re-created container up. `latest_for_app` closes both. A missing row is still a
+    # safe 409: the container is only ever created by a pipeline that owns a deployment row, and
+    # rows leave only by CASCADE with the app itself (a 404 here), so no row provably means no
+    # container.
+    #
+    # FAILS LOUD, NOT BEST-EFFORT: `sweep_published_apps` is reused exactly as it exists
+    # (best-effort, never-raising) rather than duplicating a second delete path, but its return
+    # count is read back here — 0 swept means this request never observed the delete succeed, and
+    # `unpublished_at` is deliberately NOT written in that case. The count is a weak signal in BOTH
+    # directions, and the route over-claims in neither: a non-zero count means "no error" rather
+    # than "something was deleted", because `delete_app` no-ops on an absent container and still
+    # counts; a zero means "not observed" rather than "failed", because the sweep collapses a
+    # terminal `AcaError` and an `AcaTransientError` from ceiling expiry into the same number. Both
+    # readings are right for a lever whose job is to guarantee absence rather than prove authorship
+    # of it. Retrying is safe either way, because `AcaPublishedApps.delete_app` is independently
+    # idempotent — a partial failure never leaves the row and reality permanently disagreeing.
     # First, and before any query: an environment with `DEPLOY__*` unset has no publish plane
     # at all. Without this the `None` flows into `sweep_published_apps`, which re-resolves the
     # singleton, catches `DeployNotConfiguredError` and returns 0 — landing in the

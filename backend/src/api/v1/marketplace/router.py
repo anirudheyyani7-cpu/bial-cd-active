@@ -3,13 +3,13 @@
 THE ONE READ THAT DELIBERATELY DROPS THE `user_id` PREDICATE — the deviation the v1
 router's isolation rule points here to find. An enterprise platform where no app is a
 private document, reading a read-only, non-personal catalog, authenticated but not
-admin-gated; recorded beside the code it governs because ADR-0004 has no file to amend.
-Because the predicate is absent, the exposure surface is pinned in `MarketplaceEntry`
-and this module SELECTs those columns explicitly rather than returning ORM rows.
+admin-gated; recorded beside the code it governs because the platform's isolation
+rule has no other file to amend. Because the predicate is absent, the exposure surface
+is pinned in `MarketplaceEntry` and this module SELECTs those columns explicitly rather
+than returning ORM rows.
 
 Membership is DERIVED, never stored: an app is listed while it has a live deployment.
-Pagination is by offset, one of the two deviations `pagination.py` names.
-"""
+Pagination is by offset, one of the two deviations `pagination.py` names."""
 
 from __future__ import annotations
 

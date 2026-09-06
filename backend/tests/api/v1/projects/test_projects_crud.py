@@ -1012,7 +1012,7 @@ async def test_a_live_session_in_another_project_does_not_block_this_delete(
     # per user means a bare `lock_is_held(redis, user_id)` would 409 this delete because the
     # SAME user happens to be building something else.
     # Mutation check: drop the `app_id=` argument at the call site and this goes red while every
-    # other U8 test stays green.
+    # other live-build-session-lock test in this section stays green.
     headers, user, project_b, app_b = await _project_with_app(db_session)
     project_a = await ProjectFactory.create(db_session, user.id)
     app_a = await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project_a.id)

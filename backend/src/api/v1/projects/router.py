@@ -140,12 +140,11 @@ async def _serving_now(db: DbSession, app_id: uuid.UUID | None) -> bool:
     """Is this ONE app live right now?
 
     The single-row form of the list's collapse, reading the SAME `live_app_ids` definition
-    rather than re-deriving it — the drift `liveness.py` exists to prevent is not only
-    between surfaces, it is between the list and the detail view of the same project.
-
-    `None` means the project has no app at all, which is a confirmed False rather than an
-    unknown: nothing can be serving.
-    """
+    rather than re-deriving it. `None` means the project has no app at all, which is a
+    confirmed False rather than an unknown: nothing can be serving."""
+    # Re-deriving liveness here instead of reading the shared collapse is the drift
+    # `liveness.py` exists to prevent — not only between surfaces, but between the list and
+    # the detail view of the same project.
     if app_id is None:
         return False
     live = live_app_ids().subquery()
@@ -154,21 +153,19 @@ async def _serving_now(db: DbSession, app_id: uuid.UUID | None) -> bool:
 
 @router.post("", status_code=status.HTTP_201_CREATED, responses=error_responses(AUTH_401))
 async def create_project(body: ProjectCreate, user: CurrentUser, db: DbSession) -> ProjectResponse:
-    """Create a project owned by the caller, then provision its own database (ADR-0028).
+    """Create a project owned by the caller, then provision its own database.
 
-    `name` is stripped/bounded and an empty/whitespace `description` is normalized to NULL
-    at the schema boundary (KD-8).
-
-    The provision runs AFTER the commit and is BEST-EFFORT, both deliberately.
-    After, because `ensure_project_database` commits its own claim and its own terminal
-    marker — running it first would commit this request's half-built transaction.
-    Best-effort, because a substrate hiccup must never strand or 500 a project the user
-    already owns: the response is a normal 201 and the next build's lazy ensure
-    (`provision_app_database`) re-runs the idempotent sequence.
-
-    The app row is NOT minted here — it stays lazily created at first build, so a fresh
-    project still reports `appId: null` (`test_app_discovery_null_for_fresh_project…`).
-    """
+    `name` is stripped/bounded and an empty/whitespace `description` is normalized to NULL at
+    the schema boundary. The database provision is best-effort: a substrate hiccup still
+    answers a normal 201, and the project is usable."""
+    # The app row is NOT minted here — it stays lazily created at first build, so a fresh
+    # project still reports `appId: null` (`test_app_discovery_null_for_fresh_project…`).
+    #
+    # The provision runs AFTER the commit and is BEST-EFFORT, both deliberately. After,
+    # because `ensure_project_database` commits its own claim and its own terminal marker —
+    # running it first would commit this request's half-built transaction. Best-effort,
+    # because a substrate hiccup must never strand or 500 a project the user already owns:
+    # the next build's lazy ensure (`provision_app_database`) re-runs the idempotent sequence.
     project = Project(user_id=user.id, name=body.name, description=body.description)
     db.add(project)
     await db.flush()
@@ -183,19 +180,17 @@ async def create_project(body: ProjectCreate, user: CurrentUser, db: DbSession) 
 
 
 async def _provision_database_or_shrug(db: DbSession, project_id: uuid.UUID) -> None:
-    """Provision the project's database; on failure log and carry on (never 500).
-
-    Resolved inside the body rather than through a `Depends`, which would be solved before
-    this route's first statement: an unconfigured or unreachable substrate would then 500 a
-    create that in fact succeeded.
-
-    Only the exception TYPE is logged, never its message: a failing `CREATE ROLE` surfaces
-    as a SQLAlchemy `DBAPIError` whose string carries the offending `[SQL: ...]` — which
-    for that one statement contains the role's password literal.
-    """
+    """Provision the project's database; on failure log and carry on (never 500)."""
+    # Resolved inside the body rather than through a `Depends`, which would be solved before
+    # this route's first statement: an unconfigured or unreachable substrate would then 500 a
+    # create that in fact succeeded.
+    #
+    # Only the exception TYPE is logged, never its message: a failing `CREATE ROLE` surfaces
+    # as a SQLAlchemy `DBAPIError` whose string carries the offending `[SQL: ...]` — which
+    # for that one statement contains the role's password literal.
     try:
         await ensure_project_database(db, project_id)
-    except Exception as exc:  # noqa: BLE001 — degraded state, not a failed create (R4)
+    except Exception as exc:  # noqa: BLE001 — degraded state, not a failed create
         logger.warning(
             "project_database_provision_failed",
             project_id=str(project_id),
@@ -218,34 +213,29 @@ async def list_projects(
     q: SearchQuery = None,
 ) -> ProjectListResponse:
     """One NUMBERED page of the caller's projects, newest-first, optionally filtered by a
-    case-insensitive name/description substring (R6).
+    case-insensitive name/description substring.
 
-    IT PAGES BY OFFSET, and `pagination.py` says the platform does not. #158 §2 specifies
-    numbered pages and a rows-per-page selector — `Showing 1-8 of 12`, `Page 1 of 2` — and
-    neither is expressible without a `total`, which keyset deliberately does not provide.
-
-    THE MARKETPLACE'S ARGUMENT DOES NOT TRANSFER, and reaching for it would be the quiet
-    kind of wrong. That one reads: "KD-1's keyset rule protects a list you are writing to,
-    this catalog is read-only and small". This list is written to — `create` and `delete`
-    both act on it, and under `ORDER BY id DESC` a new project lands at position 0, which is
-    the worst case for OFFSET rather than a benign one.
-
-    What makes it acceptable here is different and narrower: the list is OWNER-SCOPED and
-    effectively SINGLE-WRITER. Every row is `WHERE user_id = :me`, and the only person who
-    inserts or deletes rows in it is the person reading it. So the skew KD-1 guards against
-    — a busy shared table shifting under a stranger's page walk — is here a citizen with two
-    tabs open, creating a project in one while paging in the other. That is a real window
-    and it is bounded by one person's own actions, which is a different risk from the one
-    the rule was written for.
-
-    `total` is a SEPARATE READ from the page under READ COMMITTED, not one snapshot, so a
-    create landing between them can make the count and the rows disagree for one render.
-    The client is expected to say something true when they do, rather than assert either
-    number over the other.
-
-    A page past the end returns an empty `items` with the real `total`, not a 404: paging
-    past the end while a project is deleted elsewhere is ordinary, not an error.
-    """
+    `total` is read separately from the page, so a create landing between the two reads can
+    make the count and the rows disagree for one render; say something true when they do
+    rather than asserting either number. A page past the end is an empty `items` with the
+    real `total`, not a 404."""
+    # IT PAGES BY OFFSET, and `pagination.py` says the platform does not. Numbered pages and
+    # a rows-per-page selector — `Showing 1-8 of 12`, `Page 1 of 2` — are the product
+    # requirement, and neither is expressible without a `total`, which keyset does not provide.
+    #
+    # THE MARKETPLACE'S ARGUMENT DOES NOT TRANSFER, and reaching for it would be the quiet kind
+    # of wrong. That one reads: "the keyset rule protects a list you are writing to, this
+    # catalog is read-only and small". This list IS written to — create and delete both act on
+    # it, and under `ORDER BY id DESC` a new project lands at position 0, the worst case for
+    # OFFSET rather than a benign one.
+    #
+    # What makes OFFSET acceptable here is narrower: the list is OWNER-SCOPED and effectively
+    # SINGLE-WRITER. Every row is `WHERE user_id = :me`, and the only person inserting or
+    # deleting rows in it is the person reading it. The skew the keyset rule guards against — a
+    # busy shared table shifting under a stranger's page walk — is here one citizen with two
+    # tabs open. A real window, but bounded by one person's own actions.
+    #
+    # The `total`/page split is under READ COMMITTED, two reads and not one snapshot.
     page = clean_page(page)
     search = clean_search(q)
     limit = clean_limit(limit)
@@ -254,7 +244,7 @@ async def list_projects(
     # projects listed.
     # ONE JOIN, not one request per row. The status column needs to know whether each app is
     # SERVING, and "live = deployed / published, with a url" is a deployment fact rather than
-    # a lifecycle one (#158). `PublishStatusChip` gets it from `getDeployment(projectId)`,
+    # a lifecycle one. `PublishStatusChip` gets it from `getDeployment(projectId)`,
     # which is fine for one project page and is an N-way fan-out on a list — so the list
     # reads the same definition set-wise instead, via the shared `live_app_ids` collapse.
     # SCOPED to this owner, and the scoping happens INSIDE the collapse: an
@@ -283,7 +273,7 @@ async def list_projects(
         )
     # THE COUNT DOES NOT NEED EITHER JOIN, and carrying them was the other half of the same
     # cost: neither can change how many rows match. `AppRegistry.project_id` is unique
-    # (`uq_app_registry_project`, KD-4 — one app per project), and `live.c.app_id` is unique
+    # (`uq_app_registry_project` — one app per project), and `live.c.app_id` is unique
     # per collapse, so a project row survives an outer join to either exactly once. The count
     # runs over the SAME predicate as the page (owner + search), just without the columns
     # that predicate does not need — a total computed over a different predicate is the
@@ -316,20 +306,18 @@ async def list_projects(
 
 @router.get("/counts", responses=error_responses(AUTH_401))
 async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsResponse:
-    """The three numbers above the project list (#158 §1).
-
-    DECLARED BEFORE `/{project_id}`, and that ordering is load-bearing: FastAPI matches in
-    declaration order, so a `/counts` registered after the parameterised route would be
-    swallowed by it and answer 422 on a UUID parse instead.
+    """The three numbers above the project list.
 
     These are the citizen's OWN projects; `/admin/apps/counts` is the across-owners count, so
-    the two answer different questions and are not each other's cross-check.
-
-    Three aggregates over one owner's rows, no row projection and no per-app probing. The
-    liveness half reads the SHARED `live_app_ids` collapse, which is the whole reason this
-    is not three ad-hoc queries: the list's status column reads the same definition, so
-    "3 in production" above a list showing two live apps is not expressible.
-    """
+    the two answer different questions and are not each other's cross-check."""
+    # DECLARED BEFORE `/{project_id}`, and that ordering is load-bearing: FastAPI matches in
+    # declaration order, so a `/counts` registered after the parameterised route would be
+    # swallowed by it and answer 422 on a UUID parse instead.
+    #
+    # Three aggregates over one owner's rows, no row projection and no per-app probing. The
+    # liveness half reads the SHARED `live_app_ids` collapse, which is the whole reason this is
+    # not three ad-hoc queries: the list's status column reads the same definition, so
+    # "3 in production" above a list showing two live apps is not expressible.
     # SCOPED to this owner inside the collapse, for the same reason as `list_projects` — see
     # `live_app_ids`'s docstring.
     live = live_app_ids(owner_user_id=user.id).subquery()
@@ -374,11 +362,11 @@ async def project_counts(user: CurrentUser, db: DbSession) -> ProjectCountsRespo
 async def get_project(project_id: uuid.UUID, user: CurrentUser, db: DbSession) -> ProjectResponse:
     project = await owned_project_or_404(db, user.id, project_id)
     app_id, app_status = await _project_app(db, user.id, project.id)
-    # N7 — the ONE surface that offers Relaunch, so the one that pays for the head-check.
+    # This is the ONE surface that offers Relaunch, so the one that pays for the head-check.
     # No app row means no bundle can exist, and that is a CONFIRMED absent rather than an
     # unknown: skipping the store call here is an answer, not an omission.
     #
-    # `restorable_presence`, NOT `snapshot_presence` (R18): the saved bundle alone missed the
+    # `restorable_presence`, NOT `snapshot_presence`: the saved bundle alone missed the
     # builder who worked for an hour and never pressed Save, and told them their project had
     # nothing to restore while the platform sat on their entire workspace. This is also the
     # exact predicate `preview-state` answers with, so a cold page load and the 45-second poll
@@ -422,9 +410,9 @@ async def patch_project(
     return _to_response(project, app_id, app_status, is_serving=await _serving_now(db, app_id))
 
 
-# Names the LIVE SESSION as the reason and the action that clears it (R9/D4: refuse, never
+# Names the LIVE SESSION as the reason and the action that clears it: refuse, never
 # force — forcing would destroy every file change since the last snapshot, and snapshots are
-# written only at finalize, so the user would get no signal their work was unsaved).
+# written only at finalize, so the user would get no signal their work was unsaved.
 _BUILD_LIVE_DELETE_MSG = (
     "A build session is still running for this project — end it before deleting."
 )
@@ -450,35 +438,37 @@ async def delete_project(
 ) -> OkResponse:
     """Cascade-delete the project and every child it owns.
 
-    IT TAKES A BODY, which is unusual for DELETE and worth naming. #158 §13.2 requires the
-    person deleting to state WHY, in 5-50 words, and a 50-word reason does not belong in a
-    query string. RFC 9110 says content on a DELETE has no defined semantics, and httpx
-    declines to offer `json=` on `.delete()` for that reason — tests use `.request("DELETE",
-    ...)`. nginx and the container ingress both forward the body, and the portal is the only
-    client, so this is safe here; it is recorded rather than assumed. The alternative, a
-    `POST /{id}/delete` matching `disable`/`unpublish`, is a bigger contract change than
-    adding a required field to the route that already exists. Rows are deleted inside the
-    transaction and committed; object-store blobs AND each app's per-app Blob container are swept
-    only AFTER commit, best-effort, so a rolled-back delete never destroys a blob/container a
-    restored row still points at (KD-3). The two sweeps hit two different stores (KTD-7).
-
-    The submissions prefixes are re-enumerated AFTER the commit and folded into the sweep list
-    (R8/R12), so a bundle written between the cascade's pre-commit gather and the commit is
-    still swept instead of surviving under an app id whose row is gone. The narrower residual —
-    a write landing after that re-walk — is NOT closed here; see `delete_project_cascade`.
-
-    A live build session for THIS project's app refuses the delete (409, R9) rather than
-    racing it. The guard is app-scoped, so a build in one project never blocks the delete of
-    another. It does NOT cover a relaunched preview, which holds no lock by design — that
-    container keeps serving after the delete; see `api/v1/live_build.py` for the open gap.
-    That gap is exactly why the project's own database is torn down with `salt_the_earth`
-    (sever, then `DROP DATABASE ... WITH (FORCE)`): a preview or a deployed container can
-    still be holding live connections at delete time, and the force-drop — not the guard —
-    is what guarantees they stop reading. It runs post-commit and never raises: the rows are
-    already gone, so a failed drop is a logged orphan for the reconciler, never a 500 on a
-    delete that in fact succeeded."""
+    Requires a body stating WHY, in 5-50 words, which is recorded as a tombstone. Rows are
+    deleted inside the transaction and committed; object-store blobs, each app's per-app Blob
+    container, and the project's own PostgreSQL database are torn down only AFTER the commit,
+    best-effort. A live build session for THIS project's app refuses the delete with 409
+    rather than racing it."""
+    # IT TAKES A BODY, which is unusual for DELETE and worth naming. A 50-word reason does not
+    # belong in a query string. RFC 9110 says content on a DELETE has no defined semantics, and
+    # httpx declines to offer `json=` on `.delete()` for that reason — tests use
+    # `.request("DELETE", ...)`. nginx and the container ingress both forward the body, and the
+    # portal is the only client, so this is safe here; it is recorded rather than assumed. The
+    # alternative, a `POST /{id}/delete` matching `disable`/`unpublish`, is a bigger contract
+    # change than adding a required field to the route that already exists.
+    #
+    # Post-commit sweeping is what makes a rolled-back delete safe: it never destroys a
+    # blob/container a restored row still points at. The two sweeps hit two different stores.
+    # The submissions prefixes are re-enumerated AFTER the commit and folded into the sweep
+    # list, so a bundle written between the cascade's pre-commit gather and the commit is still
+    # swept instead of surviving under an app id whose row is gone. The narrower residual — a
+    # write landing after that re-walk — is NOT closed here; see `delete_project_cascade`.
+    #
+    # The 409 guard is app-scoped, so a build in one project never blocks the delete of
+    # another. It does NOT cover a relaunched preview, which holds no lock by design — that
+    # container keeps serving after the delete; see `api/v1/live_build.py` for the open gap.
+    # That gap is exactly why the project's own database is torn down with `salt_the_earth`
+    # (sever, then `DROP DATABASE ... WITH (FORCE)`): a preview or a deployed container can
+    # still be holding live connections at delete time, and the force-drop — not the guard — is
+    # what guarantees they stop reading. It runs post-commit and never raises: the rows are
+    # already gone, so a failed drop is a logged orphan for the reconciler, never a 500 on a
+    # delete that in fact succeeded.
     project = await owned_project_or_404(db, user.id, project_id)
-    # THE TOMBSTONE, written before the cascade removes what it describes (#158 §13.3).
+    # THE TOMBSTONE, written before the cascade removes what it describes.
     # Inside the caller's transaction, so a rolled-back delete leaves no record of a
     # deletion that did not happen — and a committed one always has its reason.
     #
@@ -508,7 +498,7 @@ async def delete_project(
         )
     # The database handles, as plain scalars, BEFORE the cascade: deleting the project
     # cascades its `project_databases` row away, so post-commit there is nothing left to
-    # read them from — the same reason `app_container_ids` are plain UUIDs (KD-8).
+    # read them from — the same reason `app_container_ids` are plain UUIDs.
     handles = await teardown_handles(db, project.id)
     # Captured before the cascade, for the same reason as the chat count: `handles` is read
     # from a row the cascade deletes.
@@ -549,7 +539,7 @@ async def delete_project(
             resource_id=str(project_id),
         )
         if handles is not None:
-            # NAMES only (D11) — never the DSN. `appId` is what makes this project-scoped
+            # NAMES only — never the DSN. `appId` is what makes this project-scoped
             # row visible in the app's audit drawer (`admin.read_audit` matches on it); an
             # app-less project simply has no app to file it under.
             detail: dict[str, str] = {"dbName": handles.db_name, "roleName": handles.role_name}
@@ -590,7 +580,7 @@ async def delete_project(
         await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name)
     # Post-commit, pre-sweep: re-walk the submission prefixes so the sweep list reflects the
     # store as it is NOW. `app_container_ids` are plain UUIDs captured pre-commit, so reading
-    # them here triggers no `expire_on_commit` lazy I/O (KD-8). Dedup preserves order and keeps
+    # them here triggers no `expire_on_commit` lazy I/O. Dedup preserves order and keeps
     # the pre-commit list in play even if the re-walk fails (it logs rather than raising).
     resweep = await resweep_submission_prefixes(storage, cleanup.app_container_ids)
     await sweep_blobs(storage, list(dict.fromkeys([*cleanup.blob_keys, *resweep])))
@@ -618,11 +608,11 @@ async def delete_project(
 async def generate_description(
     project_id: uuid.UUID, user: CurrentUser, db: DbSession, model: ModelDep
 ) -> ProjectResponse | JSONResponse:
-    """Generate (or revise) the project description from its app's code (KD-5). Reads the
-    project's ONE app's `current_code` (KD-4/9); a fresh project (no app / NULL code) is a
-    409 "nothing to generate from yet". Bills against the daily gate like a chat turn (Q5);
-    if a description already exists it is fed in so generation revises it (R19). The result
-    is length-capped (KD-8) and stored on the project."""
+    """Generate (or revise) the project description from its app's code. Reads the
+    project's ONE app's `current_code`; a fresh project (no app / NULL code) is a
+    409 "nothing to generate from yet". Bills against the daily gate like a chat turn;
+    if a description already exists it is fed in so generation revises it. The result
+    is length-capped and stored on the project."""
     project = await owned_project_or_404(db, user.id, project_id)
     if model is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
@@ -638,7 +628,7 @@ async def generate_description(
             status.HTTP_409_CONFLICT, "Nothing to generate from yet — build the app first."
         )
 
-    # Bills like a normal turn (Q5): gate BEFORE the model call, 429 with the 5-key body.
+    # Bills like a normal turn: gate BEFORE the model call, 429 with the 5-key body.
     try:
         await enforce_daily_limit(db, user.id)
     except DailyTokenLimitExceededError as exc:

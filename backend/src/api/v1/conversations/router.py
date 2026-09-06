@@ -64,7 +64,7 @@ async def _json_object_body(request: Request) -> dict[str, Any]:
 
     Coercing an unparseable / non-object body to `{}` turns a lost write into a cheerful
     success: a truncated builder auto-save would PATCH nothing and still answer `200 {ok:true}`.
-    Parse once at the boundary instead (`.claude/rules/fail-first.md`)."""
+    Parse once at the boundary instead."""
     try:
         body: Any = await request.json()
     except (ValueError, TypeError):  # fmt: skip  # ruff py314 strips parens
@@ -153,7 +153,8 @@ async def create_conversation(
     minted, then streams. Idempotent per owner: re-POSTing the same id with the
     same parentage answers 200 with the existing header (a retry, a second tab), while an id
     that exists under ANYONE else or under different parentage is a 409 — one arm, one
-    message, so existence under another owner is not distinguishable (ADR-0004)."""
+    message, so existence under another owner is never distinguishable from a parentage
+    conflict, matching the platform's single-tenant, owner-scoped isolation rule."""
     existing = await db.get(Conversation, body.id)
     if existing is None:
         project = await owned_project_or_404(db, user.id, body.project_id)

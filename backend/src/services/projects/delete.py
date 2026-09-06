@@ -1,33 +1,23 @@
 """Rollback-safe project cascade delete.
 
-Deleting a project must take its ONE app (its code + files) and ALL its conversations
-(every kind, plus their attachments) with it — through the real per-child cleanup, not
-a bare DB `ON DELETE CASCADE`, which would orphan object-store blobs (a DB cascade never
-reaches the store). This service does the deletes the rollback-safe way:
+WHY THIS EXISTS
+
+Deleting a project must take its ONE app (code + files) and ALL its conversations (every
+kind, plus their attachments) with it through the real per-child cleanup, not a bare DB
+`ON DELETE CASCADE` — a DB cascade never reaches the object store, so it would orphan every
+blob. The ordering here is the whole point:
 
   1. Enumerate the project's children **owner-scoped** (`WHERE project_id = … AND
      user_id = …`) — that enumeration IS the ownership boundary, because the app-purge
      cores are keyed by id with no `user_id` predicate.
-  2. GATHER every object-store key to sweep (each app's snapshot bundle + conversation
-     attachment blobs + deck-PDF siblings) while the rows still resolve them.
-  3. DELETE all rows (apps, conversations, the project) INSIDE the caller's transaction.
-  4. Return the gathered keys. The caller commits, then RE-ENUMERATES each app's
-     `submissions/{app_id}/` prefix (`resweep_submission_prefixes`) and best-effort sweeps
-     the union of both lists.
+  2. GATHER every object-store key to sweep while the rows still resolve them.
+  3. DELETE all rows INSIDE the caller's transaction.
+  4. Return the gathered keys; the caller commits, re-enumerates each app's
+     `submissions/{app_id}/` prefix, and sweeps the union.
 
-Because blobs are swept only AFTER the caller commits, a mid-cascade DB error rolls the
-whole thing back without having destroyed a single blob a restored row still points at
-(the rollback-safety guarantee). We deliberately do NOT call `nuke_app` here: it sweeps
-blobs INLINE before dropping the app row, which is the exact ordering this service exists to
-avoid — so we gather the app's snapshot key, then delete the row, with the commit boundary in
-between.
-
-Step 4's re-enumeration is there because the step-2 gather necessarily runs BEFORE the
-authorizing commit, so a submission bundle written into the prefix in between would be swept
-by nothing and reachable by no query (its app row is gone). The post-commit re-walk makes the
-sweep list reflect the store as it is at sweep time. It lives in the caller, not here, because
-the commit boundary does — this service is commit-less by contract.
-"""
+Blobs are swept only AFTER the caller commits, so a mid-cascade DB error rolls back without
+having destroyed a blob a restored row still points at. `nuke_app` is deliberately NOT used:
+it sweeps blobs INLINE before dropping the app row, the exact ordering this service avoids."""
 
 from __future__ import annotations
 
@@ -69,33 +59,17 @@ class ProjectCascadeCleanup:
 async def delete_project_cascade(
     db: AsyncSession, project: Project, storage: ObjectStorage, *, user_id: uuid.UUID
 ) -> ProjectCascadeCleanup:
-    """Delete a project and every child it owns INSIDE the caller's transaction, returning the
-    object-store cleanup to sweep AFTER the caller commits. Commit-less and owner-scoped by
-    `user_id` — enumeration by `(project_id, user_id)` is the ownership boundary (the app-purge
-    cores carry no `user_id` predicate).
-
-    `storage` is used ONLY to ENUMERATE each app's `submissions/{app_id}/` prefix (a paginated
-    walk) — never to delete; the sweep stays the caller's post-commit job. A `StorageError`
-    during that gather deliberately RAISES so the whole delete rolls back with nothing destroyed
-    and the caller retries — swallowing it would commit the row deletes and silently strand
-    citizen source (possibly holding a secret) in the store forever.
-
-    This gather runs BEFORE the caller's commit, so it cannot see a bundle written after it.
-    The caller closes most of that gap by re-walking the same prefixes AFTER the commit
-    (`resweep_submission_prefixes`) and sweeping the union.
-
-    RESIDUAL WINDOW — surfaced, not closed. The re-walk shrinks the race to writes landing
-    after it; it does not eliminate it. `submit` puts its bundle BEFORE the guarded UPDATE
-    that authorizes it (`approvals.submit`) and this delete takes no submit interlock, so
-    a bundle written after the re-walk stays under `submissions/{app_id}/` with no row. Nothing
-    reclaims it automatically: the reconciling sweep is REPORT-ONLY on that prefix until the
-    submission-bundle retention policy (D7) is decided, so the bundle shows up in an operator's
-    report and an operator reclaims it. Closure waits on D7. This is the same deliberately
-    accepted orphan `approvals.submit` already books when its guarded UPDATE refuses after the
-    copy lands — a bounded, reported leak, not a new class of one."""
+    """Delete a project and every child it owns inside the caller's transaction; return the
+    object-store cleanup to sweep after the caller commits. Commit-less and owner-scoped by
+    `user_id`. `storage` only enumerates each app's submission-bundle prefix — never deletes; a
+    `StorageError` here re-raises, because swallowing it would commit the row deletes and strand
+    citizen source — possibly holding a secret — in the store forever. The caller re-walks the
+    same prefixes after commit. RESIDUAL WINDOW — surfaced, not closed: the re-walk
+    does not eliminate it, only narrows it — a bundle landing after it sits under its prefix
+    with no owning row until the retention policy (D7) is decided, and is only ever reported."""
     blob_keys: list[str] = []
 
-    # Apps (one per project today, but enumerate defensively). Gather each app's C4 snapshot
+    # Apps (one per project today, but enumerate defensively). Gather each app's snapshot
     # bundle key + every immutable submission bundle under its prefix BEFORE dropping the row,
     # then delete the row (the app's own children cascade at the DB level; only the
     # object-store blobs + the per-app container need sweeping here). The project's OWN
@@ -164,17 +138,16 @@ async def resweep_submission_prefixes(
     commit, returning the keys to fold into the post-commit sweep.
 
     The cascade's own gather runs pre-commit and so cannot see a bundle written between that
-    walk and the commit; this second walk does. It is the CALLER's job — and lives outside
-    `delete_project_cascade` — because the commit boundary is the caller's (`delete_project`),
-    and the cascade is commit-less by contract.
-
-    Best-effort, the exact opposite posture to the pre-commit gather: the rows are already
-    committed-deleted, so a raised `StorageError` here would 500 a delete that in fact
-    succeeded. Every failure is logged and the remaining prefixes are still walked; the
-    pre-commit list the caller already holds is swept regardless. Mirrors `sweep_blobs`'
-    deliberately broad guard — transport-level errors escape the `StorageError` hierarchy.
-
-    See `delete_project_cascade` for the residual window this does NOT close."""
+    walk and the commit; this second walk does. See `delete_project_cascade` for the residual
+    window this does NOT close."""
+    # This lives in the CALLER, not in `delete_project_cascade`, because the commit boundary
+    # is the caller's (`delete_project`) and the cascade is commit-less by contract.
+    #
+    # Best-effort, the exact opposite posture to the pre-commit gather: the rows are already
+    # committed-deleted, so a raised `StorageError` here would 500 a delete that in fact
+    # succeeded. Every failure is logged and the remaining prefixes are still walked; the
+    # pre-commit list the caller already holds is swept regardless. The guard is deliberately
+    # broad, mirroring `sweep_blobs` — transport-level errors escape the `StorageError` hierarchy.
     keys: list[str] = []
     for app_id in app_ids:
         try:

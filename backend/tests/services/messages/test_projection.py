@@ -1727,6 +1727,131 @@ async def test_the_terminal_reads_through_the_banners_own_vocabulary(db_session)
     assert expected == "completed"
 
 
+async def test_a_stopped_turn_carries_the_reason_it_stored_and_not_only_the_terminal(
+    db_session,
+) -> None:
+    """★ #186. The row has always stored the reason; the item used to keep it.
+
+    `_write_turn_terminal` writes `meta["reason"] = state.end_reason` on every arm, so the fact
+    was durable the whole time — but `TurnTerminalItem` exposed `terminal` alone, which handed a
+    reloading client STRICTLY LESS than the live `TurnEndedFrame` gives a subscribed one. That
+    asymmetry is the bug: a client that must choose a sentence chooses it from the reason, so a
+    reload could only ever print the generic line for the terminal, over an ending that had a
+    name recorded beside it.
+
+    ASSERTED AS A PAIR, deliberately. `terminal` alone was already green before this change and
+    would stay green if `reason` were dropped again tomorrow; only reading both off one item
+    fails when the finer half goes missing."""
+    user, _, conversation = await _thread(db_session)
+    await _terminal_row(db_session, user, conversation, status="stopped", reason="stopped_by_user")
+
+    items = project_rows(await _rows(db_session, user, conversation))
+    terminals = [i for i in items if isinstance(i, TurnTerminalItem)]
+
+    assert len(terminals) == 1
+    assert (terminals[0].terminal, terminals[0].reason) == ("stopped", "stopped_by_user")
+
+
+async def test_the_reason_survives_the_terminals_own_coarseness(db_session) -> None:
+    """The case that proves the reason is worth carrying rather than deriving.
+
+    `_banner_kind` reads status before reason, so every named graceful end that finishes
+    `failed` — a spent daily limit, an exhausted self-heal budget, a workspace put back from the
+    last saved copy — arrives with the SAME terminal as a genuine crash. `terminal` therefore
+    cannot distinguish "you used up your day" from "something broke", and a client with only
+    `terminal` has no honest option but the generic failure sentence.
+
+    Sharpening `_banner_kind` is the wrong fix and stays rejected (see
+    `test_the_terminal_reads_through_the_banners_own_vocabulary`: it is the build banner's
+    mapping too, and a second vocabulary for one fact is the worse trade). Carrying the reason
+    beside it is the right one — the finer answer was never lost, only withheld."""
+    for reason in ("quota_exceeded", "self_heal_budget_exhausted", "workspace_restored"):
+        user, _, conversation = await _thread(db_session)
+        await _terminal_row(db_session, user, conversation, status="failed", reason=reason)
+        terminals = [
+            i
+            for i in project_rows(await _rows(db_session, user, conversation))
+            if isinstance(i, TurnTerminalItem)
+        ]
+        # The coarse half is unchanged — this widens the item, it does not re-map it…
+        assert [i.terminal for i in terminals] == ["failed"], reason
+        # …and the fine half is what the client actually renders its sentence from.
+        assert [i.reason for i in terminals] == [reason], reason
+
+
+async def test_a_turn_that_ended_with_no_named_reason_reports_no_reason(db_session) -> None:
+    """`None` is a real answer here, not a gap to paper over.
+
+    A plain completion and an unexpected exception both end with `state.end_reason` unset, and a
+    client reading `None` falls back to the neutral sentence for the terminal it was given. A
+    placeholder — an empty string, the terminal's own word echoed into the field — would be a
+    cause nobody recorded, and the client cannot tell an invented one from a stored one.
+
+    THE THIRD ROW IS THE UNTYPED-META CASE. `meta` is JSON the projection does not validate, so
+    a reason that is not a string is not a reason: it narrows to `None` rather than reaching a
+    client as a number to look up in a copy table."""
+    for status, stored, expected in (
+        ("completed", None, None),
+        ("failed", None, None),
+        ("failed", 42, None),
+    ):
+        user, _, conversation = await _thread(db_session)
+        await append_batch(
+            db_session,
+            user_id=user.id,
+            conversation_id=conversation.id,
+            messages=[],
+            entry_kind=MessageEntryKind.SYSTEM_EVENT,
+            kind=ChatKind.BUILD,
+            visibility=MessageVisibility.HIDDEN,
+            meta={
+                "kind": TURN_TERMINAL_KIND,
+                "turnId": "01a0587b-0000-7000-8000-000000000002",
+                "status": status,
+                "reason": stored,
+            },
+        )
+        terminals = [
+            i
+            for i in project_rows(await _rows(db_session, user, conversation))
+            if isinstance(i, TurnTerminalItem)
+        ]
+        assert [i.reason for i in terminals] == [expected], (status, stored)
+
+
+async def test_a_row_written_before_the_reason_was_stored_still_projects(db_session) -> None:
+    """A meta with no `reason` KEY AT ALL — the rows already in the database.
+
+    Widening an item over stored history is where a required field bites: every turn-terminal
+    row written before `_write_turn_terminal` carried a reason has no such key, and a projection
+    that raised on them would take down the whole transcript rather than the one item. The
+    default is what keeps those turns readable, and it reads as the honest "no reason recorded"
+    rather than as an invented one."""
+    user, _, conversation = await _thread(db_session)
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=[],
+        entry_kind=MessageEntryKind.SYSTEM_EVENT,
+        kind=ChatKind.BUILD,
+        visibility=MessageVisibility.HIDDEN,
+        meta={
+            "kind": TURN_TERMINAL_KIND,
+            "turnId": "01a0587c-0000-7000-8000-000000000003",
+            "status": "stopped",
+        },
+    )
+
+    terminals = [
+        i
+        for i in project_rows(await _rows(db_session, user, conversation))
+        if isinstance(i, TurnTerminalItem)
+    ]
+    assert len(terminals) == 1
+    assert terminals[0].reason is None
+
+
 async def test_a_turn_killed_by_a_restart_leaves_no_terminal_and_reads_as_unfinished(
     db_session,
 ) -> None:

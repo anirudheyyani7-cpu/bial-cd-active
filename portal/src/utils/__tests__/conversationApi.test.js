@@ -9,6 +9,7 @@ import {
   deriveTitle,
 } from '../conversationApi'
 import { toStepItem } from '../turnStreamApi'
+import { OUTCOME_COPY, outcomeSummary } from '../messageTypes'
 
 // authFetch deps injection — no real token/network.
 const deps = (fetchImpl) => ({ fetchImpl, getToken: () => 'tok', refresh: vi.fn() })
@@ -196,13 +197,34 @@ describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () 
     expect(messages[0].parts[0]).toEqual({ type: 'text', text: 'hello' })
   })
 
-  it('stays silent for turn_terminal, which is KNOWN and deliberately draws nothing', () => {
-    // The distinction the arm exists to draw. "We decided this renders nothing" and "we have
-    // never heard of this" are different facts, and only the second is a bug — collapsing them
-    // would train everyone to ignore the report.
+  it('stays silent for a COMPLETED turn_terminal, which is KNOWN and deliberately draws nothing', () => {
+    // ★ THE MUTANT'S TEST. #186 narrowed this silence to completed terminals; it did not remove
+    // it, and the difference is the whole design. `_write_turn_terminal` writes one of these
+    // rows for EVERY turn of BOTH kinds, unconditionally — so a `turn_terminal` arm that drew
+    // whatever it was handed would stamp "Build finished." after every single exchange in every
+    // chat, including a Plan conversation that never built anything. Make the arm render
+    // unconditionally and this goes red; that is the guard.
+    //
+    // The distinction the fallback arm exists to draw rides along: "we decided this renders
+    // nothing" and "we have never heard of this" are different facts, and only the second is a
+    // bug — collapsing them would train everyone to ignore the report.
     const onUnknown = vi.fn()
     const messages = messagesFromProjection(
-      [{ type: 'turn_terminal', seq: 3, status: 'completed' }],
+      [{ type: 'turn_terminal', seq: 3, turnId: 't1', terminal: 'completed', reason: null }],
+      onUnknown,
+    )
+
+    expect(onUnknown).not.toHaveBeenCalled()
+    expect(messages).toEqual([])
+  })
+
+  it('stays silent for a terminal word it does not recognise, without reporting it', () => {
+    // The same degradation rule the banner mapping follows: a client behind its server says
+    // LESS, never something invented. And it is still a known arm, so it is not a bug report —
+    // the item reached a branch that decided about it.
+    const onUnknown = vi.fn()
+    const messages = messagesFromProjection(
+      [{ type: 'turn_terminal', seq: 3, turnId: 't1', terminal: 'evaporated', reason: null }],
       onUnknown,
     )
 
@@ -467,5 +489,145 @@ describe('one reply is one message (the copy-control guard)', () => {
     ])
     expect(messages).toHaveLength(1)
     expect(messages[0].parts).toHaveLength(2)
+  })
+})
+
+describe('messagesFromProjection — a stopped turn still looks stopped after a reload (#186)', () => {
+  // A stopped build used to say NOTHING once the page was refreshed. Live, the surface writes a
+  // sentence the moment the turn ends; the durable `turn_terminal` row is the only record of that
+  // ending (a turn writes no build-outcome part on purpose — that would render the same ending
+  // twice) and it drew nothing at all. So a citizen coming back to a build they had stopped found
+  // a transcript that simply trailed off.
+
+  /** What a turn terminal looks like on the wire, in the shape the projection sends it. */
+  const terminalItem = (terminal, reason) => ({
+    type: 'turn_terminal',
+    seq: 7,
+    turnId: '01a05879-5345-73b6-b795-47767884ea4c',
+    terminal,
+    reason,
+  })
+
+  /** The sentence a RELOAD produces — read off the real projection mapping. */
+  const reloaded = (terminal, reason) => {
+    const messages = messagesFromProjection([terminalItem(terminal, reason)])
+    if (messages.length === 0) return null
+    expect(messages).toHaveLength(1)
+    expect(messages[0].role).toBe('assistant')
+    expect(messages[0].parts).toHaveLength(1)
+    expect(messages[0].parts[0].type).toBe('text')
+    return messages[0].parts[0].text
+  }
+
+  /**
+   * The sentence the LIVE path produces, derived the way the live path derives it.
+   *
+   * This is `ConversationSurface`'s `announceTerminal` verbatim — `status: sink.terminal ===
+   * 'completed' ? 'ended' : sink.terminal`, then the shared table. It is here so the assertions
+   * below can compare the two DERIVATIONS rather than compare each of them to a string literal:
+   * two tests that each pin their own copy of the expected sentence both stay green while the
+   * paths drift apart, which is exactly the failure
+   * `docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`
+   * records — fixing one emitter only changed WHEN the wrong text appeared.
+   */
+  const live = (terminal, reason) =>
+    outcomeSummary({ status: terminal === 'completed' ? 'ended' : terminal, reason })
+
+  it('renders the stored stop, where it used to render nothing', () => {
+    const messages = messagesFromProjection([terminalItem('stopped', 'stopped_by_user')])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts[0].text).toBe('You stopped this build before it finished.')
+    // …and the sentence is the citizen's, not the machine's: the token that used to be printed
+    // at people is nowhere in it.
+    expect(messages[0].parts[0].text).not.toMatch(/stopped_by_user/)
+  })
+
+  it('says the same thing after a reload as it said live, for every reason in the table', () => {
+    // ★ THE EQUALITY, and it is asserted as an equality on purpose. The two paths reach the
+    // sentence by different routes — live maps `sink.terminal` with a ternary, reload maps
+    // `item.terminal` through `bannerStatus` — and this is the only assertion that goes red when
+    // those two mappings stop agreeing. Driven off `OUTCOME_COPY` itself, so a reason added to
+    // the table tomorrow is covered by this test the day it lands.
+    const reasons = [...Object.keys(OUTCOME_COPY), null, 'a_reason_no_client_has_heard_of']
+    expect(reasons.length).toBeGreaterThan(5)
+
+    for (const reason of reasons) {
+      for (const terminal of ['failed', 'stopped']) {
+        expect([terminal, reason, reloaded(terminal, reason)]).toEqual([
+          terminal,
+          reason,
+          live(terminal, reason),
+        ])
+      }
+    }
+  })
+
+  it('reads a quota terminal as the stop it is, exactly as the live path would', () => {
+    // `quota` exists in the stored vocabulary but never on the live sink, so it is pinned here
+    // rather than in the loop above: both mappings land it on `stopped`, which is what makes the
+    // sentence match a stop rather than a failure.
+    expect(reloaded('quota', 'quota_exceeded')).toBe(live('stopped', 'quota_exceeded'))
+    expect(reloaded('quota', 'quota_exceeded')).toBe('The build stopped: you reached your daily limit.')
+  })
+
+  it('discriminates: the table is doing work, not returning one sentence for everything', () => {
+    // The anti-false-pass guard for the equality above. If `outcomeSummary` collapsed to a single
+    // string, every assertion in this file would pass and say nothing — so the distinctness of
+    // what the reload renders is asserted directly.
+    const rendered = Object.keys(OUTCOME_COPY).map((reason) => reloaded('stopped', reason))
+    expect(new Set(rendered).size).toBe(rendered.length)
+    expect(rendered.every((text) => typeof text === 'string' && text.length > 0)).toBe(true)
+  })
+
+  it('falls back to the neutral sentence rather than printing the machine token', () => {
+    // Every `reason` on this wire is a machine token — `sandbox_unavailable`,
+    // `wall_clock_deadline_exceeded` — and none of them is prose. An unlisted one gets the
+    // neutral line for its terminal; interpolating it is the defect this replaced.
+    const text = reloaded('failed', 'wall_clock_deadline_exceeded')
+    expect(text).toBe('The build failed.')
+    expect(text).not.toMatch(/wall_clock_deadline_exceeded/)
+  })
+
+  it('preserves the absence signal: a turn with no terminal row says nothing about how it ended', () => {
+    // ENDED-UNKNOWN IS THE ABSENCE OF THE ITEM, by the server's design — a turn killed by a
+    // restart never reaches the write, so there is no row and no `unknown` member to fake one.
+    // The reload path must not invent an ending for a turn that never recorded one.
+    const messages = messagesFromProjection([
+      { type: 'user_text', seq: 1, text: 'add a chart' },
+      { type: 'assistant_text', seq: 2, text: 'Working on it…' },
+    ])
+
+    // LIVENESS FIRST — the transcript still renders, so the absence below is an absence of the
+    // outcome sentence and not of everything.
+    expect(messages).toHaveLength(2)
+    expect(messages[1].parts[0].text).toBe('Working on it…')
+    const everything = messages.flatMap((m) => m.parts.map((p) => p.text ?? ''))
+    for (const sentence of Object.values(OUTCOME_COPY)) {
+      expect(everything).not.toContain(sentence)
+    }
+    expect(everything).not.toContain('The build failed.')
+    expect(everything).not.toContain('This build was stopped before it finished.')
+  })
+
+  it('is its own message, so a reply is not swallowed into the outcome or vice versa', () => {
+    // It seals the open reply the same way a banner does. Appended to the reply instead, the
+    // outcome sentence would land inside the assistant bubble's activity group and the copy
+    // control would hand back the platform's words as part of the model's answer.
+    const messages = messagesFromProjection([
+      { type: 'assistant_text', seq: 1, text: 'Starting.' },
+      terminalItem('stopped', 'stopped_by_user'),
+      { type: 'assistant_text', seq: 8, text: 'Anything else?' },
+    ])
+
+    expect(messages.map((m) => m.parts.map((p) => p.type))).toEqual([['text'], ['text'], ['text']])
+    expect(messages.map((m) => m.parts[0].text)).toEqual([
+      'Starting.',
+      'You stopped this build before it finished.',
+      'Anything else?',
+    ])
+    // Distinct keys, since one row can project several items and React silently corrupts a list
+    // with duplicates.
+    expect(new Set(messages.map((m) => m.id)).size).toBe(3)
   })
 })

@@ -216,6 +216,24 @@ class TurnTerminalItem(CamelModel):
     of the same stored meta. Two spellings of "the turn stopped" is how a client ends up with
     two states for one fact.
 
+    `reason` TRAVELS BESIDE IT, and it is the half this item used to withhold (#186). The row
+    has always stored it — `_write_turn_terminal` writes `meta["reason"] = state.end_reason` —
+    but only `terminal` came out, so a reload was handed strictly LESS than the live
+    `TurnEndedFrame`, which carries both. That is what made a stopped turn unreadable after a
+    refresh: `_banner_kind` reads status before reason, so every named graceful end collapses
+    into `failed` here, and `failed` alone cannot say whether a citizen pressed Stop, spent
+    their day's limit or had their workspace put back. The sentence a client renders is chosen
+    from the reason; without it the client can only print a generic failure over something that
+    did not fail. Coarsening `terminal` was the deliberate trade (see
+    `test_the_terminal_reads_through_the_banners_own_vocabulary`) and this is the other side of
+    it: the finer answer is not lost, it is carried.
+
+    IT IS A MACHINE TOKEN AND NEVER PROSE — `stopped_by_user`, `quota_exceeded`,
+    `workspace_restored`, `self_heal_budget_exhausted` — so it is a key to look up, never a
+    string to show. `None` for a turn that ended with no named reason (a plain completion, an
+    unexpected exception), and that absence is meaningful too: it is what makes a client fall
+    back to the neutral sentence for its `terminal` instead of naming a cause nobody recorded.
+
     ENDED-UNKNOWN IS THE ABSENCE OF THIS ITEM, deliberately — there is no `unknown` member. A
     turn killed by a restart writes no row at all, because the process that would have written
     it is gone; a consumer that finds a turn's rows with no terminal among them knows the turn
@@ -226,6 +244,7 @@ class TurnTerminalItem(CamelModel):
     seq: int
     turn_id: str
     terminal: Literal["completed", "failed", "stopped", "quota"]
+    reason: str | None = None
 
 
 class BannerItem(CamelModel):
@@ -1076,8 +1095,18 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
                 # that reason.
                 turn_id = meta.get("turnId")
                 if isinstance(turn_id, str):
+                    # THE REASON COMES OUT WITH THE TERMINAL, from the same meta, in one
+                    # construction — see the item's docstring for why withholding it left a
+                    # reloaded stop unreadable (#186). Narrowed rather than cast: `meta` is
+                    # untyped JSON, and a non-string reason is no reason at all.
+                    reason = meta.get("reason")
                     items.append(
-                        TurnTerminalItem(seq=row.seq, turn_id=turn_id, terminal=_banner_kind(meta))
+                        TurnTerminalItem(
+                            seq=row.seq,
+                            turn_id=turn_id,
+                            terminal=_banner_kind(meta),
+                            reason=reason if isinstance(reason, str) else None,
+                        )
                     )
                 continue
             if row.visibility is MessageVisibility.HIDDEN:

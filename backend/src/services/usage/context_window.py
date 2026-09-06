@@ -89,8 +89,16 @@ IT IS FLAT, NOT PER-PAGE, BY DECISION (D4). Per-page charging would need a page 
 on the attachment row, which the platform does not store; more to the point, the owner asked for
 one number. So the number is sized to the LONGEST DOCUMENT THE PLATFORM WILL ADMIT: the upload
 route refuses anything over `attachments/router.MAX_PDF_PAGES` (30) pages, and a page measured
-~2,514 tokens. A flat charge sized to the cap cannot under-count an admitted file, which is the
-only direction that hurts — under-counting is what lets an over-long conversation past the guard.
+~2,514 tokens. Under-counting is the only direction that hurts — it is what lets an over-long
+conversation past the guard.
+
+THE ROUNDING, STATED RATHER THAN GLOSSED: 30 × 2,514 is 75,420, and this is 75,000. So a
+worst-case document — thirty pages, every one as dense as the measured average — is under-charged
+by **420 tokens, 0.6%**. This docblock used to say a charge sized to the cap "cannot under-count
+an admitted file"; that is an absolute, and it was false by those 420 tokens (round-4 review).
+The gap is immaterial against the 8,000-token system-prompt reserve and it is deliberate — a
+round number the owner asked for beats 75,420 by enough to be worth 0.6% — but it is a rounding,
+not an impossibility, and the test below permits it EXPLICITLY rather than by accident.
 
 THE TWO NUMBERS ARE ONE DECISION. Raising the page cap without raising this re-opens the hole
 exactly; raising this without raising the cap merely refuses conversations that would have fit.

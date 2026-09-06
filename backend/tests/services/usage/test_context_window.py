@@ -207,9 +207,19 @@ def test_the_document_charge_covers_the_longest_document_the_platform_admits() -
     The upload cap admits at most `MAX_PDF_PAGES` pages; a page measured ~2,514 tokens. A
     charge below that product would leave an ADMITTED document under-counted, which is exactly
     the hole #194 describes — so raising the page cap without raising the charge is the
-    regression this test refuses."""
+    regression this test refuses.
+
+    THE 1% IS A REAL ALLOWANCE, NOT A FUDGE FACTOR, and saying so is the point of this
+    paragraph. 30 × 2,514 = 75,420 and the charge is 75,000, so the bound below is not
+    "comfortably satisfied" — it is satisfied BY the tolerance, and a reader who assumed the
+    charge covered the product exactly would be wrong by 420 tokens. That shortfall is 0.6%
+    against an 8,000-token reserve and is accepted deliberately in favour of a round number;
+    `NOMINAL_PDF_TOKENS`' own docblock carries the reasoning. What this still refuses is the
+    regression that matters: move `MAX_PDF_PAGES` up and the product outruns the tolerance."""
     measured_tokens_per_page = 2_514
 
+    # `* 0.99` — see the paragraph above. Tightening this to `>= product` is a deliberate
+    # decision to raise the charge, not a cleanup.
     assert NOMINAL_PDF_TOKENS >= MAX_PDF_PAGES * measured_tokens_per_page * 0.99
     # And not wildly above it either: an over-charge refuses conversations that would fit.
     assert NOMINAL_PDF_TOKENS <= MAX_PDF_PAGES * measured_tokens_per_page * 1.2

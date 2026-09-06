@@ -750,6 +750,35 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // The anchor arm (d) failed on, so its Retry can re-ask the same question. A ref, not state:
   // `gateCheck` is what the render reads, and this is only the argument that goes with it.
   const gateRetryRef = useRef<{ activeId: string; sessionId: string } | null>(null)
+  // THE URL THE WORKSPACE'S OWN START CONTROL JUST PRODUCED, and whether a press is in flight.
+  // Hoisted to sit beside the stamp below rather than beside the address resolution that reads it:
+  // the stamp's guard has to know whether this surface is still holding a URL some OTHER project's
+  // start produced, and a guard that could not see it would re-label that URL with the project now
+  // on screen. See `onStarted` at the publish block far below for what fills it.
+  const [startedPreviewUrl, setStartedPreviewUrl] = useState<string | null>(null)
+  const [startPending, setStartPending] = useState(false)
+  // A CHAT LOADED COLD CLAIMS THE OPEN PROJECT'S WORKSPACE (#192).
+  //
+  // The stamp gates EVERY project-scoped arm of the address, and until now only two things ever
+  // wrote it: a reattach that adopts a live build, and the pane's start control reporting one
+  // (`onStarted`, whose own comment records this trap). A hard load — a bookmark, an F5, a browser
+  // restart — has neither, so this surface read the project's preview state, told the reader their
+  // app was running, and then refused to point the pane at the very URL that read had handed it.
+  //
+  // WHY THE CLAIM IS HONEST, AND WHY THE GUARD IS THE WHOLE OF IT. One instance of this component
+  // survives a project switch, so an unconditional stamp would hand project A's live session, the
+  // error left by A's failed attempt, and the URL A's start produced to project B — `showSession`,
+  // `buildActive`, `urgentText` and the relaunched arm all read this ref. So the claim is made only
+  // while this surface holds NOTHING attributed to another project: no session id, no error from an
+  // attempt that failed, no URL from a start. In that state the stamp moves exactly one thing — the
+  // project arm, whose input is a read keyed on the open project by construction — because every
+  // other gate it opens has nothing to say.
+  //
+  // Assigned during render, like the refs above and for the reason the block below gives: a gate
+  // that depends on declaration order is one reorder away from silently opening.
+  if (projectId && session.sessionId === null && session.error === null && startedPreviewUrl === null) {
+    sessionProjectRef.current = projectId
+  }
   // The session's surfaces render only while viewing a chat of ITS project (it is project-scoped).
   // `error` comes from an attempt that FAILED (the reset leaves sessionId null), so it gates on the
   // project stamp alone; the live surfaces also require a sessionId.
@@ -1025,11 +1054,14 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   /**
    * RE-ATTACH to a BUILD that is still running (the reload-mid-build clause).
    *
-   * `buildActive` is derived from `sessionProjectRef`, which nothing stamps until this surface
-   * adopts a session or the pane's start control reports one (`onStarted`, below) — so on a fresh
-   * mount NOTHING knows a build is in flight and the one gate is simply absent, exactly in the
-   * window it matters most. (`handleRelaunch` was a third stamper until it went with the relaunch
-   * chain; it could not have fired, being wired to a pane callback nobody reads.) The transcript knows: the
+   * `buildActive` is derived from `sessionProjectRef`, which on a fresh mount is stamped by
+   * nothing that knows about a BUILD. Three things stamp it now — this reattach, the pane's start
+   * control (`onStarted`, below), and #192's cold-load claim, which fires only while the surface
+   * holds no session, no error and no started URL and exists purely so the preview resolver's
+   * project arm can be trusted on a hard load. None of the three implies a build is in flight, so
+   * on a fresh mount NOTHING knows one is, and the gate is simply absent exactly in the window it
+   * matters most. (`handleRelaunch` was a fourth stamper until it went with the relaunch chain; it
+   * could not have fired, being wired to a pane callback nobody reads.) The transcript knows: the
    * projection emits a `build_in_progress` part (carrying its session id) for a build that began
    * and whose outcome never landed. Stamp the session's chat/project from it and let
    * `session.reattach` settle the three cases it already handles — still live (subscribe +
@@ -2215,11 +2247,18 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   //
   // `buildActive` still reads the session's own status, so Stop and the delete-gate never light up
   // on a relaunch, which has no build lifecycle at all.
-  // The URL the workspace's own start control just produced — see `onStarted` at the publish
-  // block below for why this arm needs a second producer at all. Declared here rather than beside
-  // the poll's epoch because the address resolution reads it, and that runs further up.
-  const [startedPreviewUrl, setStartedPreviewUrl] = useState<string | null>(null)
-  const [startPending, setStartPending] = useState(false)
+  // THE PREVIEW POLL'S ANSWER, LABELLED WITH THE PROJECT IT DESCRIBES. Declared here rather than
+  // beside the effect that fills it (far below) because the address resolution reads it now, and
+  // that runs further up.
+  //
+  // THE LABEL IS NOT CEREMONY. This state outlives a project switch by one commit — the effect
+  // below drops it, and effects run after the commit — so the first render at a new project would
+  // otherwise hand the resolver the PREVIOUS project's live URL with the stamp above already
+  // re-pointed at the project now on screen: one commit of another project's app in this project's
+  // pane. Read through the label, a stale answer is simply not visible — here, or in the four other
+  // places `previewState` speaks for the workspace.
+  const [polledPreview, setPolledPreview] = useState<{ projectId: string; state: PreviewState } | null>(null)
+  const previewState = polledPreview?.projectId === projectId ? polledPreview.state : null
   const address = resolvePreviewAddress({
     turnPreviewUrl: turnPreview.url,
     turnStatus: turnBuildStatus,
@@ -2234,7 +2273,16 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // the build before it. Demoting it to the project arm — ranked last — puts a stale session URL
     // in front of the app they pressed a button to bring up.
     relaunchedUrl: startedPreviewUrl,
-    projectPreviewUrl: null,
+    // THE ARM A HARD LOAD ARRIVES ON (#192). Fed from the preview-state read this surface already
+    // makes, exactly as the project surface feeds it: `alive` is the one state whose `previewUrl`
+    // the wire's own contract calls framable, and every other state resolves to no address rather
+    // than to a guess. Ranked last, so it can never displace a live turn's preview, a restore the
+    // citizen just pressed for, or the live session's own URL.
+    //
+    // It was `null` here on the grounds that this surface's poll only ever ran over an ALREADY
+    // framed URL — which stopped being true when the poll was widened to ask with no frame at all,
+    // and left the headline and the pane disagreeing on every reload of a chat whose app is up.
+    projectPreviewUrl: previewState?.state === 'alive' ? previewState.previewUrl : null,
     sessionUrl: session.previewUrl,
     sessionStatus: session.status,
     sessionId: session.sessionId,
@@ -2332,35 +2380,50 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   const workspaceLostRef = useRef(false)
   standingClaimRef.current = standingClaimId
   workspaceLostRef.current = workspaceLost
-  const [previewState, setPreviewState] = useState<PreviewState | null>(null)
-  // U22 — WHAT MAKES A VERDICT STALE, written as a dependency list rather than left implicit.
+  // U22 — WHAT MAKES A VERDICT STALE, written as ONE dependency rather than left implicit.
   //
   // Stopping the poll on a settled "gone" is two lines (below). The actual work is this: the
   // moment the timer no longer re-asks, a verdict is only as true as the last thing that
-  // invalidated it — and a restored container REUSES THE SAME PREVIEW URL byte for byte, so
-  // `framedPreviewUrl` alone never changes and the effect never re-runs. That left
-  // "Preview unavailable" painted over a live app, permanently, with the 45-second tick (the
-  // thing being removed) as its only corrective.
+  // invalidated it — and a restored container REUSES THE SAME PREVIEW URL byte for byte, so an
+  // effect keyed on the framed URL would never re-run. That left "Preview unavailable" painted
+  // over a live app, permanently, with the 45-second tick (the thing being removed) as its only
+  // corrective.
   //
-  // So the workspace lifecycle is named here as an input: a workspace being PREPARED, a
-  // preview declared READY, or a relaunch in flight all mean the same thing — a restore
-  // outranks whatever the last poll decided. A change in any of them re-runs the effect,
-  // which drops the stale verdict and asks again from scratch.
+  // So the workspace lifecycle is an input: a workspace being PREPARED, a preview declared READY,
+  // or a press that starts an app all mean the same thing — a restore outranks whatever the last
+  // poll decided. Any of them drops the stale verdict and asks again from scratch.
   //
-  // Scoped to THIS chat/project (`turnNarrativeIsThisChat`, `sessionProjectMatches`) like every
-  // other cross-surface read on this page: a sibling chat's build says nothing about this
-  // project's container.
+  // Scoped to THIS chat/project (`turnNarrativeIsThisChat`) like every other cross-surface read on
+  // this page: a sibling chat's build says nothing about this project's container.
   //
-  // `previewProbeEpoch` is the third input and it is not derived from anything: a start CLICK is a
-  // synchronous fact, and an in-flight flag around an awaited POST can be collapsed into a single
-  // commit by React's batching, so an invalidation that could only be spelled as "the flag changed"
-  // is one a fast enough server erases. A counter cannot be batched away — the value the effect
-  // sees is always different from the one before it. (There was a fourth input, `restoreInFlight`,
-  // reading the session hook's `relaunching`; it went with that flag, which had no producer. The
-  // counter is what actually carried this, and it is bumped from every press that starts an app.)
+  // ═══ THEY ARE FOLDED INTO THE COUNTER, NOT LISTED BESIDE IT (#192) ═══
+  //
+  // The address this surface publishes now includes the project arm, which is fed from THIS
+  // effect's own answer. So the framed URL is downstream of the probe, and listing it as an input
+  // would make the effect tear itself down on every successful poll — its first statement is
+  // `setPolledPreview(null)`, so the address would flap and the requests would be unbounded. It is
+  // gone from the dependency list, and it is the ONLY thing that went: the two lifecycle signals
+  // are load-bearing (see above) and are folded into the counter instead, so the effect keys on
+  // `[projectId, previewProbeEpoch]` — the same shape the project surface's own poll uses — with
+  // one channel through which everything invalidates it.
+  //
+  // A COUNTER, because a start CLICK is a synchronous fact and an in-flight flag around an awaited
+  // POST can be collapsed into a single commit by React's batching — an invalidation spelled as
+  // "the flag changed" is one a fast enough server erases. A counter cannot be batched away: the
+  // value the effect sees is always different from the one before it. The fold is written as the
+  // documented adjust-state-during-render pattern rather than as an effect of its own, so the bump
+  // lands on the SAME commit that carries the signal; a bumping effect would leave one commit with
+  // the stale verdict still on screen, which is exactly what "drops the stale verdict AT the
+  // invalidation" forbids.
   const workspaceSignal = turnNarrativeIsThisChat ? (turnWorkspace?.state ?? null) : null
   const previewSignal = turnNarrativeIsThisChat ? turnPreview.state : null
   const [previewProbeEpoch, setPreviewProbeEpoch] = useState(0)
+  const probeInvalidation = `${workspaceSignal ?? ''}\u0000${previewSignal ?? ''}`
+  const [lastProbeInvalidation, setLastProbeInvalidation] = useState(probeInvalidation)
+  if (lastProbeInvalidation !== probeInvalidation) {
+    setLastProbeInvalidation(probeInvalidation)
+    setPreviewProbeEpoch((n) => n + 1)
+  }
   useEffect(() => {
     // IT ASKS WITH NO FRAME NOW, and that is a deliberate widening (Plan F, U4).
     //
@@ -2380,18 +2443,18 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // cache read, no container call), and the terminal rule below still stops the timer on a
     // settled answer.
     if (!projectId) {
-      setPreviewState(null)
+      setPolledPreview(null)
       return undefined
     }
     // Every re-run is an invalidation event by construction (see the dependency list): the
     // previous answer described a workspace that has since moved, so it is dropped rather than
     // left on screen to be contradicted by the frame loading underneath it.
-    setPreviewState(null)
+    setPolledPreview(null)
     let live = true
     // TABBING BACK FIRES TWO PROBES, and `live` alone cannot tell them apart. `visibilitychange`
     // and `focus` both land on the same gesture, and the interval can be mid-flight underneath
     // them — so up to three requests are in the air at once, all with `live === true`, and they
-    // settle in whatever order the network decides. The slowest one wins the `setPreviewState`,
+    // settle in whatever order the network decides. The slowest one wins the `setPolledPreview`,
     // which is the one place this pane must not be wrong: a stale `asleep` painted over a fresh
     // `alive` tells somebody their workspace is gone while it is running in front of them.
     //
@@ -2421,7 +2484,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
         // preview off screen, and it must not wipe a "gone" the user is already reading
         // either. It is recorded only when nothing has been decided yet, because "we could
         // not check" is a real thing to say when it is the only thing we know.
-        setPreviewState((prev) => (state.state === 'unknown' && prev ? prev : state))
+        setPolledPreview((prev) => (state.state === 'unknown' && prev ? prev : { projectId, state }))
         // R16/R17 — A TERMINAL ANSWER ENDS THE POLL. `asleep` / `slot_taken` / `never_built`
         // are settled facts about a workspace: nothing that could change them happens without
         // one of this effect's inputs changing first, so re-asking every 45 seconds forever
@@ -2498,7 +2561,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       window.removeEventListener('focus', onVisible)
       stopAsking()
     }
-  }, [projectId, framedPreviewUrl, workspaceSignal, previewSignal, previewProbeEpoch])
+  }, [projectId, previewProbeEpoch])
 
   // R18 — CAN THE SERVER PUT THIS APP BACK? Three sources, newest-and-most-certain first:
   //

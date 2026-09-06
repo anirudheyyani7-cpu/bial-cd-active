@@ -28,6 +28,11 @@ from fastapi.responses import JSONResponse
 
 from src.api.deps import CurrentUser, DbSession
 from src.api.v1.attachments.schemas import UploadResponse
+
+# The one media type admitted and charged as a document. Imported rather than re-spelled:
+# `_shared.resolve_binaries` is what decides a stored ref IS a document, so a second copy here
+# could drift from the definition the send route actually enforces.
+from src.api.v1.conversations._shared import PDF_MEDIA_TYPE
 from src.core.errors import AppApiError
 from src.db.models.attachment import MAX_ATTACHMENT_NAME, Attachment
 from src.db.models.conversation import Conversation
@@ -69,7 +74,6 @@ ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024
 ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
 _BODY_LIMIT_BYTES = 6 * 1024 * 1024
 
-PDF_MEDIA_TYPE: Final = "application/pdf"
 
 MAX_PDF_PAGES: Final = 30
 """How long a document may be, in pages, and the byte cap above cannot express it.

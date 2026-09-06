@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from pydantic import AfterValidator, AnyUrl, Field, UrlConstraints
 
 from src.db.models.app_registry import MAX_DEPLOYED_URL, ApprovalRoute, AppStatus
+from src.db.models.worker_pass import PassOutcome
 from src.schemas import CamelModel
 
 
@@ -484,7 +485,10 @@ class ReclamationReportResponse(CamelModel):
     #: keeps it in the server-side log (`.claude/rules/security.md`).
     #:
     #: Both null when no pass has ever been recorded, which pairs with `reclamationStale: true`.
-    last_pass_outcome: str | None = None
+    #: THE WORKER'S OWN ENUM rather than a re-spelled `str`, the same call
+    #: `BuildCompilePart.state` makes: a `StrEnum` has an identical wire shape, and a second
+    #: copy of the member list is a copy that can drift from the value the producer holds.
+    last_pass_outcome: PassOutcome | None = None
     last_pass_detail: str | None = None
 
 

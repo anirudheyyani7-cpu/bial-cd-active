@@ -465,16 +465,25 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
 }
 
 /**
- * WHY A TAKE-BACK STOPPED, in the server's own words wherever it gave any.
+ * DID THE SERVER ANSWER, AND WHAT DID IT SAY? — the one question both callers below ask.
  *
- * Same discipline as `outcomeFor` below, and for the same reason: an `ApiError` means the server
- * answered and named something — including `handOverWorkspace`'s two-minute ceiling sentence, which
- * is authored there and reaches the pane unedited. Anything else is an aborted fetch, a dropped
- * socket or a body that would not parse, none of which is prose anybody wrote for a citizen.
+ * An `ApiError` carrying a message means the server answered and named something, including
+ * `handOverWorkspace`'s two-minute ceiling sentence, which is authored there and reaches the pane
+ * unedited. Anything else — an aborted fetch, a dropped socket, a body that would not parse — is
+ * not prose anybody wrote for a citizen, so it is `null` and the caller says its own thing.
+ *
+ * One function rather than two, because the two callers used to make this judgement separately
+ * with identical code, and "what counts as the server having answered" is exactly the kind of rule
+ * that drifts when it is stated twice. What they still decide for themselves is what to SAY when
+ * the answer is `null` — and those two sentences are deliberately different (R4b).
  */
+function serverMessage(err: unknown): string | null {
+  return err instanceof ApiError && err.message ? err.message : null
+}
+
+/** WHY A TAKE-BACK STOPPED, in the server's own words wherever it gave any. */
 function reasonFor(err: unknown): string {
-  if (err instanceof ApiError && err.message) return err.message
-  return 'Nothing came back, so we could not tell what happened.'
+  return serverMessage(err) ?? 'Nothing came back, so we could not tell what happened.'
 }
 
 /**
@@ -484,11 +493,8 @@ function reasonFor(err: unknown): string {
  * "we waited and nothing came back" is a different sentence from "the server said why".
  */
 function outcomeFor(err: unknown): StartOutcome {
-  // An `ApiError` means the server answered and said something. Anything else — an aborted fetch,
-  // a network failure, a body that would not parse — means nothing came back, which is a different
-  // sentence and a different thing to have happened.
-  if (err instanceof ApiError && err.message) return { kind: 'failed', reason: err.message }
-  return { kind: 'timed-out' }
+  const reason = serverMessage(err)
+  return reason === null ? { kind: 'timed-out' } : { kind: 'failed', reason }
 }
 
 interface ControlProps {

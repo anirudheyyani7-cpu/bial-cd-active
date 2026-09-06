@@ -54,7 +54,7 @@ import type { TurnFrame, PlanOptionsItem, StepItem, DiagnosticFrame, StreamOutco
 import { contextState } from '../../utils/contextLimits'
 import { atLimitSendState, narrativeEnvelopes, turnPhase } from '../../utils/turnNarrative'
 import type { TurnNarrative } from '../../utils/turnNarrative'
-import { fetchSaveState, saveProject, handOverWorkspace, asReclaimBlocked, fetchPreviewState, fetchCompileState, checkWorkspace } from '../../utils/buildSessionApi'
+import { fetchSaveState, saveProject, handOverWorkspace, asReclaimBlocked, fetchPreviewState, fetchCompileState, checkWorkspace, samePreviewState } from '../../utils/buildSessionApi'
 import type { HandoverStep, ReclaimBlocked, PreviewState } from '../../utils/buildSessionApi'
 import { resolvePlanOptions } from '../../utils/turnStreamApi'
 import { wireMessageFromParts, buildUserParts, partsToText, countAttachments, releaseUploadedAttachments } from '../../utils/attachmentStore'
@@ -2531,7 +2531,17 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
         // preview off screen, and it must not wipe a "gone" the user is already reading
         // either. It is recorded only when nothing has been decided yet, because "we could
         // not check" is a real thing to say when it is the only thing we know.
-        setPolledPreview((prev) => (state.state === 'unknown' && prev ? prev : { projectId, state }))
+        // AND AN UNCHANGED ANSWER KEEPS ITS OLD OBJECT. `fetchPreviewState` parses a fresh object
+        // every tick, so replacing unconditionally re-renders this whole surface — message list,
+        // composer and toolbar — for a reading nobody's screen can tell apart from the one already
+        // up. `useWorkspaceState` has guarded this since it was written; the guard was never ported
+        // here, and #203's accelerated cadence turned that from one wasted render every 45 seconds
+        // into one every 3, through exactly the window a citizen is watching their app come up.
+        setPolledPreview((prev) => {
+          if (state.state === 'unknown' && prev) return prev
+          if (prev && prev.projectId === projectId && samePreviewState(prev.state, state)) return prev
+          return { projectId, state }
+        })
         // R16/R17 — A TERMINAL ANSWER ENDS THE POLL. `asleep` / `slot_taken` / `never_built`
         // are settled facts about a workspace: nothing that could change them happens without
         // one of this effect's inputs changing first, so re-asking every 45 seconds forever

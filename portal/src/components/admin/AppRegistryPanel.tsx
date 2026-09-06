@@ -10,6 +10,7 @@ import {
 import type { RegistryApp, AppStatus, AuditEvent } from '../../utils/appRegistryApi'
 import { ApiError } from '../../utils/apiError'
 import WaitingCountBadge from './WaitingCountBadge'
+import { relativeTimeVerbose } from '../../utils/relativeTime'
 import { readDeclaration, shortSha, MIN_REJECTION_NOTE } from './declaration'
 import type { ReadDeclaration } from './declaration'
 import { auditLabel } from './auditLabels'
@@ -39,24 +40,6 @@ const fmtWhen = (iso: string | null): string => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
-const MINUTE = 60
-const HOUR = 60 * MINUTE
-const DAY = 24 * HOUR
-/** How long a submission has been WAITING, in the coarsest unit that still reads as a
- *  duration ("43 days ago"). The pending list is ordered oldest-submission-first, so the
- *  queue already encodes age in a row's POSITION — this is the part position cannot say:
- *  how deep the backlog actually is. Callers hand this a timestamp `fmtWhen` has already
- *  vouched for, which is why there is no null arm here: age-from-null would be 56 years
- *  since the epoch, the same "1/1/1970" lie in a different unit. */
-const fmtAge = (iso: string): string => {
-  const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
-  if (secs < MINUTE) return 'just now'
-  const unit = (n: number, name: string): string => `${n} ${name}${n === 1 ? '' : 's'} ago`
-  if (secs < HOUR) return unit(Math.floor(secs / MINUTE), 'minute')
-  if (secs < DAY) return unit(Math.floor(secs / HOUR), 'hour')
-  return unit(Math.floor(secs / DAY), 'day')
-}
-
 /** The queue's Submitted cell: the visible age, with the exact moment riding underneath
  *  as a `title` and a machine-readable `datetime`. `fmtWhen` owns the one question that
  *  decides whether an age exists at all — a row whose submittedAt is missing or
@@ -64,7 +47,7 @@ const fmtAge = (iso: string): string => {
 function SubmittedCell({ iso }: { iso: string | null }) {
   const exact = fmtWhen(iso)
   if (iso === null || exact === '—') return <>—</>
-  return <time dateTime={iso} title={exact}>{fmtAge(iso)}</time>
+  return <time dateTime={iso} title={exact}>{relativeTimeVerbose(iso)}</time>
 }
 
 // Advisory on-disk size of the app's own database (ADR-0028). Null is a real value —

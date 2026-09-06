@@ -21,12 +21,17 @@
  * THE MUTANT THIS FILE EXISTS FOR: drop `!accelerated` from either gate in the probe and the first
  * scenario below goes red.
  *
+ * AND ONE COST THAT IS NOT A REQUEST. Ticking thirteen times as often also re-renders this surface
+ * thirteen times as often, unless an answer that has not changed is allowed to keep its old object.
+ * The second describe below owns that half of the bill and carries its own reasoning.
+ *
  * WHY THE CADENCES ARE IMPORTED RATHER THAN MIRRORED, unlike `ConversationSurface-poll.test.tsx`.
  * That file mirrors `PREVIEW_PROBE_MS` so a change to it is a deliberate edit there; this file's
  * subject is the RELATIONSHIP between the two cadences, not either number, so mirroring both would
  * make a legitimate re-tuning look like a bug here instead of the deliberate edit it is.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { Profiler } from 'react'
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import {
@@ -86,13 +91,24 @@ vi.mock('../../utils/turnStreamApi', async (orig) => ({
 
 import ConversationSurface from '../../components/chat/ConversationSurface'
 
+/** EVERY COMMIT THE SURFACE MADE, counted. A `Profiler` rather than a mocked child, because the
+ *  subject is the WHOLE surface — message list, composer and toolbar — and no single child stands
+ *  for all three: `RailOutlet` is memoised with no props, so nothing above the surface can inflate
+ *  this, and nothing below it can hide a re-render from it either. */
+let surfaceCommits = 0
+const countSurfaceCommit = () => { surfaceCommits += 1 }
+
 function renderThread(chatId = 'thread-1') {
   const fake = new FakeEventSource(chatId)
   const deps = { client: makeClient(h), eventSourceFactory: () => fake }
   return render(
     <MemoryRouter initialEntries={[`/chat/${chatId}`]}>
       <Routes>
-        {inWorkspace(<Route path="/chat/:chatId" element={<ConversationSurface projectId="p1" buildSessionDeps={deps} />} />)}
+        {inWorkspace(<Route path="/chat/:chatId" element={
+          <Profiler id="surface" onRender={countSurfaceCommit}>
+            <ConversationSurface projectId="p1" buildSessionDeps={deps} />
+          </Profiler>
+        } />)}
       </Routes>
     </MemoryRouter>,
   )
@@ -172,6 +188,7 @@ async function watchingAStart() {
 
 beforeEach(() => {
   framedSeen.length = 0
+  surfaceCommits = 0
   vi.clearAllMocks()
   Element.prototype.scrollIntoView = vi.fn()
   primeClient(h)
@@ -252,6 +269,66 @@ describe('the chat surface asks faster while a workspace is starting (#203)', ()
 
     expect(h.fetchPreviewState.mock.calls.length).toBe(reads + 1)
     expect(framedSeen.slice(commits)).not.toContain(null)
+    expect(framedUrl()).toBe(PREVIEW_URL)
+  })
+})
+
+/**
+ * THE OTHER HALF OF THE ACCELERATION'S BILL — the one nobody sends a request for.
+ *
+ * `fetchPreviewState` PARSES A FRESH OBJECT EVERY TICK, so a poll that records its answer
+ * unconditionally hands this surface a new `polledPreview` identity three seconds apart forever,
+ * and React re-renders the whole thing — transcript, composer, toolbar — for a reading nobody's
+ * screen can tell apart from the one already up. `useWorkspaceState` has compared the FIELDS
+ * before recording since it was written; the chat surface's copy of the same poll never did, and
+ * #203 turned that from one wasted render every forty-five seconds into one every three, straight
+ * through the window a citizen sits watching their app come up.
+ *
+ * THE MUTANT THIS EXISTS FOR: collapse the recorder back to
+ * `setPolledPreview((prev) => (state.state === 'unknown' && prev ? prev : { projectId, state }))`
+ * and the first assertion below counts one commit per tick instead of none.
+ *
+ * WHY THE ANSWERS ARE FRESH OBJECTS AND NOT ONE SHARED ONE. A `mockResolvedValue` hands back the
+ * same reference every call, which `samePreviewState`'s `a === b` would satisfy on its own — the
+ * test would pass over a guard that only ever compares identities, which is precisely the guard
+ * the wire cannot use. A new object per read is what the parser really does, so it is what this
+ * asks the guard to survive.
+ */
+describe('an unchanged reading re-renders nothing (#203)', () => {
+  it('four accelerated ticks saying the same thing cost zero renders — and a changed one still lands', async () => {
+    await watchingAStart()
+    // Fresh, field-identical objects from here on. See the docblock.
+    h.fetchPreviewState.mockImplementation(async () => preview('starting'))
+
+    // DRAIN THE ONE-SHOTS FIRST. The turn that just ended leaves `useBuildSession`'s "still
+    // working" overlay on a 4s timer of its own (`ITERATION_QUIET_MS`), and its commit belongs to
+    // that turn, not to the poll. Counting through it would measure the wrong thing — and would
+    // pass a mutant by exactly the margin it hid.
+    await act(async () => { await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * 2 + 1) })
+    const reads = h.fetchPreviewState.mock.calls.length
+    surfaceCommits = 0
+
+    // ONE TICK PER `act`, deliberately. Four ticks inside a single `act` are one React commit —
+    // the batcher collapses them — so a poll re-rendering on every single tick would present
+    // itself here as one render and slip through at four-to-one odds. Flushed one at a time, the
+    // count is what it says it is.
+    for (let tick = 0; tick < 4; tick += 1) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS + 1) })
+    }
+
+    // LIVENESS FIRST, so the zero below is a poll that ran four times and decided nothing had
+    // changed — not a poll that quietly stopped, and not a surface that stopped rendering at all.
+    expect(h.fetchPreviewState.mock.calls.length).toBe(reads + 4)
+    expect(screen.getByText('Getting your app ready.')).toBeTruthy()
+    expect(surfaceCommits).toBe(0)
+
+    // AND THE SURFACE IS STILL LISTENING. A genuinely different answer re-renders it AND reaches
+    // the screen: the wait sentence goes and the app is framed.
+    h.fetchPreviewState.mockImplementation(async () => preview('alive'))
+    await act(async () => { await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS + 1) })
+
+    expect(surfaceCommits).toBeGreaterThan(0)
+    expect(screen.queryByText('Getting your app ready.')).toBeNull()
     expect(framedUrl()).toBe(PREVIEW_URL)
   })
 })

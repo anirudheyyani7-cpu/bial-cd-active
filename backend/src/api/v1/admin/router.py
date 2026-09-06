@@ -112,7 +112,7 @@ from src.db.models.project_database import ProjectDatabase
 from src.db.models.token_usage import TokenUsage, TokenUsageKind
 from src.db.models.user import User
 from src.db.models.user_limit import UserLimit
-from src.db.models.worker_pass import WorkerPass
+from src.db.models.worker_pass import PassOutcome, WorkerPass
 from src.schemas import ADMIN_AUTH, AUTH_401, ErrorEnvelope, OkResponse, error_responses
 from src.services.appdb.engine import get_maintenance_engine
 from src.services.appdb.errors import AppDatabaseUnconfiguredError
@@ -1387,7 +1387,7 @@ async def reconcile_sandboxes(
     raise coordination_is_gone()
 
 
-async def _what_the_worker_actually_did(db: DbSession) -> tuple[str | None, str | None]:
+async def _what_the_worker_actually_did(db: DbSession) -> tuple[PassOutcome | None, str | None]:
     """The newest reclamation pass's `(outcome, detail)`, or `(None, None)` if none was ever run.
 
     THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD (`#190`). It is the API
@@ -1413,9 +1413,9 @@ async def _what_the_worker_actually_did(db: DbSession) -> tuple[str | None, str 
     ).one_or_none()
     if row is None:
         return None, None
-    # `.value`, not `str(...)`: `PassOutcome` is a `StrEnum`, so both render the same today — and
-    # a future plain `Enum` would silently start serialising as `PassOutcome.OK`.
-    return row.outcome.value, row.detail
+    # The member itself: the response model is typed `PassOutcome`, so pydantic owns the wire
+    # rendering and a future change to the enum's base class cannot silently re-spell it here.
+    return row.outcome, row.detail
 
 
 @router.post(

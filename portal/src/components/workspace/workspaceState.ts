@@ -130,6 +130,16 @@ export function isTerminalReading(preview: Pick<PreviewState, 'state' | 'restora
  * minutes late. Reading an elapsed budget as a statement about the container is the precise
  * mistake in `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-
  * 2026-08-02.md`, where a timeout was read as a death certificate and destroyed unsaved work.
+ *
+ * ═══ AND IT STOPS ON A CLOCK, NOT ON A TALLY OF ANSWERS WE LIKED ═══
+ *
+ * The bound is only a ceiling if EVERY read spends from it — including the ones that came back with
+ * nothing. `fetchPreviewState` throws on any non-2xx and on a dropped connection, and for as long as
+ * only `nextProbeCadence` could advance the count, a workspace that reached `starting` and then hit
+ * a 500, an expired session or a dead network was asked every three seconds FOR THE LIFE OF THE
+ * TAB — twenty requests a minute, on both surfaces, with the 40-read bound that exists to prevent
+ * exactly that never advancing a single step. {@link spendProbeCadence} is the other half, and both
+ * polls call it from their `catch`.
  */
 export const STARTING_PROBE_MS = 3_000
 
@@ -174,6 +184,46 @@ export const BACKGROUND_CADENCE: ProbeCadence = { delayMs: PREVIEW_PROBE_MS, fas
 export function nextProbeCadence(answer: PreviewLifeState, held: ProbeCadence): ProbeCadence {
   if (answer !== 'starting' && answer !== 'unknown') return BACKGROUND_CADENCE
   if (answer === 'unknown' && held.fastReads === 0) return BACKGROUND_CADENCE
+  return spendOpenWindow(held)
+}
+
+/**
+ * A READ THAT NEVER PRODUCED AN ANSWER — a 500, a dropped connection, an expired session — and what
+ * it costs the accelerated window.
+ *
+ * ═══ IT SPENDS, AND IT DECIDES NOTHING. THAT ASYMMETRY IS THE WHOLE RULE ═══
+ *
+ * SPENDS, because {@link STARTING_PROBE_LIMIT} is meant as a ceiling on how long anybody may be
+ * polled at three seconds, and a budget only successful reads draw from is no ceiling at all: an
+ * endpoint erroring from the first tick pinned both polls at 3s forever, which is the bug this
+ * exists to close.
+ *
+ * DECIDES NOTHING, because a failed read is not evidence about the workspace. It cannot tell you
+ * whether the container is still coming up, and ending the window on it — or worse, letting it
+ * reclassify the reading — would be reading a failure to ask as an answer. That is the same move as
+ * `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02.md`,
+ * where an elapsed readiness budget was read as a death certificate and destroyed unsaved work. So
+ * three things it deliberately does NOT do: it does not open a window (a poll that has never seen
+ * `starting` must not be accelerated by a broken server — `fastReads === 0` stays at background),
+ * it does not close one early (the remaining fast reads are still owed to a start that may yet land
+ * the moment the endpoint recovers), and it does not touch the reading, which stays whatever the
+ * last real answer made it.
+ *
+ * The consequence, stated plainly: a start that goes dark is polled fast for the SAME 120 seconds a
+ * start that keeps answering `starting` gets, and then both fall back to 45s with the pane still
+ * saying a start is happening — because it still is, as far as anyone here knows.
+ */
+export function spendProbeCadence(held: ProbeCadence): ProbeCadence {
+  if (held.fastReads === 0) return BACKGROUND_CADENCE
+  return spendOpenWindow(held)
+}
+
+/**
+ * One read off an OPEN window: fast until the bound, the background delay past it, and the count
+ * never rewinds — so a window cannot be re-opened by spending from it. Whether a window is open at
+ * all is the caller's question; this only draws from one.
+ */
+function spendOpenWindow(held: ProbeCadence): ProbeCadence {
   if (held.fastReads >= STARTING_PROBE_LIMIT) {
     return { delayMs: PREVIEW_PROBE_MS, fastReads: held.fastReads }
   }

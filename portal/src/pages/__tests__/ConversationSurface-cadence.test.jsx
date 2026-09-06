@@ -38,7 +38,7 @@ import {
   FakeEventSource, makeClient, primeClient, waitForGateOpen,
   T_STEP, T_WORKSPACE, T_PREVIEW, T_BUILD_END, T_DELTA, PREVIEW_URL, inWorkspace,
 } from './_builderSession.jsx'
-import { PREVIEW_PROBE_MS, STARTING_PROBE_MS } from '../../components/workspace/workspaceState'
+import { PREVIEW_PROBE_MS, STARTING_PROBE_LIMIT, STARTING_PROBE_MS } from '../../components/workspace/workspaceState'
 
 const h = vi.hoisted(() => ({
   loadBuilds: vi.fn(), getBuild: vi.fn(),
@@ -248,6 +248,41 @@ describe('the chat surface asks faster while a workspace is starting (#203)', ()
     // Quiet because it is slow, not because it is dead.
     await act(async () => { await vi.advanceTimersByTimeAsync(PREVIEW_PROBE_MS) })
     expect(h.fetchPreviewState.mock.calls.length).toBe(settled + 1)
+  })
+
+  it('★ a start that goes dark is bounded too — a failed probe SPENDS from the window', async () => {
+    // THE OTHER HALF OF THE BOUND. `fetchPreviewState` throws on any non-2xx and on a dropped
+    // connection, and for as long as only the success path could advance `fastReads`, a workspace
+    // that reached `starting` and then began erroring was probed every three seconds for the life
+    // of the tab — twenty requests a minute, from the chat route as well as the project one, with
+    // the 40-read ceiling that exists to stop a hung start never moving. `spendProbeCadence` in
+    // the `catch` is the fix; this counts the reads it is supposed to stop.
+    await watchingAStart()
+    const before = h.fetchPreviewState.mock.calls.length
+    h.fetchPreviewState.mockRejectedValue(new Error('500 from preview-state'))
+
+    // Comfortably past the bound. The ceiling is on ELAPSED fast polling, so however the ticks
+    // land against this window, no more than the bound may ride it.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * (STARTING_PROBE_LIMIT + 2))
+    })
+    const spent = h.fetchPreviewState.mock.calls.length
+    expect(spent).toBeGreaterThan(before) // liveness: the fast timer really was running
+    expect(spent - before).toBeLessThanOrEqual(STARTING_PROBE_LIMIT)
+
+    // AND THE FAST TIMER IS GONE. Ten more accelerated intervals of the same broken endpoint buy
+    // nothing at all — this is the assertion the unfixed probe cannot pass.
+    await act(async () => { await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * 10) })
+    expect(h.fetchPreviewState.mock.calls.length).toBe(spent)
+
+    // NOTHING WAS RECLASSIFIED ON THE WAY. Forty failures say nothing about a container, so the
+    // pane still says a start is happening — no "we could not check", no "gone", no retry verb.
+    expect(screen.getByText('Getting your app ready.')).toBeTruthy()
+    expect(screen.queryByText(/we could not check/i)).toBeNull()
+
+    // ABSENCE PAIRED WITH LIVENESS: quiet because it is slow, not because it died.
+    await act(async () => { await vi.advanceTimersByTimeAsync(PREVIEW_PROBE_MS) })
+    expect(h.fetchPreviewState.mock.calls.length).toBeGreaterThan(spent)
   })
 
   it('changes cadence WITHOUT re-running the effect, so the pane never blinks (#192 stays fixed)', async () => {

@@ -34,6 +34,7 @@ const {
   STARTING_PROBE_LIMIT,
   STARTING_PROBE_MS,
   nextProbeCadence,
+  spendProbeCadence,
 } = await import('../workspaceState')
 
 function reading(over: Partial<PreviewState> = {}): PreviewState {
@@ -408,6 +409,58 @@ describe('nextProbeCadence — what opens a window, what closes it, what spends 
   })
 })
 
+/**
+ * ★ THE HALF OF THE BOUND THAT WAS NEVER SPENT — a read that came back with NOTHING.
+ *
+ * `nextProbeCadence` is only reachable from the success path, and `fetchPreviewState` throws on any
+ * non-2xx and on a dropped connection. So the 120-second bound was a ceiling on SUCCESSFUL reads:
+ * a workspace that reached `starting` and then met a 500, an expired session or a dead network was
+ * asked every three seconds FOR THE LIFE OF THE TAB, on both surfaces, with the counter that exists
+ * to stop a hung start never moving a step.
+ *
+ * THE RULE THESE PIN, and the asymmetry is the whole of it: a failed read SPENDS from the window
+ * and DECIDES nothing. It cannot say whether the container is still coming up, so ending the window
+ * on it — or reclassifying the reading — would be reading a failure to ask as an answer, which is
+ * the death-certificate mistake in
+ * `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02.md`.
+ */
+describe('spendProbeCadence — what a read that never answered costs the window', () => {
+  it('never opens one: a broken server does not buy an acceleration nothing earned', () => {
+    expect(spendProbeCadence(BACKGROUND_CADENCE)).toEqual(BACKGROUND_CADENCE)
+  })
+
+  it('spends from an open window WITHOUT closing it', () => {
+    // The remaining fast reads are still owed to a start that may land the moment the endpoint
+    // recovers. Giving up on the first error would put the pane back on a 45-second wait over a
+    // sentence that still says a start is happening — #203's bug, restored by one 500.
+    const spent = spendProbeCadence({ delayMs: STARTING_PROBE_MS, fastReads: 1 })
+    expect(spent).toEqual({ delayMs: STARTING_PROBE_MS, fastReads: 2 })
+  })
+
+  it('falls back at the bound and never counts past it', () => {
+    const exhausted = spendProbeCadence({
+      delayMs: STARTING_PROBE_MS,
+      fastReads: STARTING_PROBE_LIMIT,
+    })
+    expect(exhausted.delayMs).toBe(PREVIEW_PROBE_MS)
+    expect(exhausted.fastReads).toBe(STARTING_PROBE_LIMIT)
+  })
+
+  it('an unbroken run of failures spends the window in exactly the bound and then stops', () => {
+    // TERMINATION, PROVED RATHER THAN ASSUMED — the property the whole finding is about. The loop
+    // is capped well above the bound so a cadence that never gives up fails as a wrong NUMBER
+    // rather than as a hung test nobody can read.
+    let cadence = nextProbeCadence('starting', BACKGROUND_CADENCE)
+    let readsMade = 1
+    while (cadence.delayMs === STARTING_PROBE_MS && readsMade < STARTING_PROBE_LIMIT * 3) {
+      cadence = spendProbeCadence(cadence)
+      readsMade += 1
+    }
+    expect(cadence.delayMs).toBe(PREVIEW_PROBE_MS)
+    expect(readsMade).toBe(STARTING_PROBE_LIMIT + 1)
+  })
+})
+
 describe('what an unreadable answer may and may not do', () => {
   it('an `unknown` after a decided `asleep` leaves the decided value in place', async () => {
     // A blip must not pull a running app off screen, and it must not wipe a settled answer
@@ -436,6 +489,114 @@ describe('what an unreadable answer may and may not do', () => {
     })
 
     expect(result.current.state.name).toBe('starting')
+  })
+
+  it('★ a start that goes dark still spends the window — an erroring endpoint is BOUNDED', async () => {
+    // THE FINDING, AT THE HOOK. The mount read opens the accelerated window and every read after it
+    // is a 500 — the shape of an expired session, a restarted API, or a gateway that fell over. The
+    // bound existed for exactly this, and could not reach it: `nextProbeCadence` was the only thing
+    // that could advance `fastReads`, and it lives on the success path, so this tab asked every
+    // three seconds forever — twenty requests a minute, for as long as it stayed open.
+    const MINE = 'proj-goes-dark'
+    let reads = 0
+    api.fetchPreviewState.mockImplementation(async (id: string) => {
+      if (id !== MINE) return reading()
+      reads += 1
+      if (reads === 1) return reading({ state: 'starting' })
+      throw new Error('500 from preview-state')
+    })
+
+    const { result } = mount(MINE)
+    await waitFor(() => expect(reads).toBe(1))
+
+    // THE READ COUNT OVER THE WINDOW, not just the state at the end of it — and the window is
+    // deliberately FIVE accelerated intervals longer than the bound, so the NUMBER is what fails
+    // when a failed read spends nothing: the mount read plus exactly the bound, every one of the
+    // latter a failure, and then silence for the rest of the window.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * (STARTING_PROBE_LIMIT + 5))
+    })
+    expect(reads).toBe(1 + STARTING_PROBE_LIMIT)
+    const spent = reads
+
+    // Past it, eight more accelerated intervals buy nothing — the fast timer is gone…
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * 8)
+    })
+    expect(reads).toBe(spent)
+
+    // …AND NOTHING WAS RECLASSIFIED ON THE WAY. Not `could-not-read`, not gone, not a retry verb: a
+    // string of failures is not evidence about a container, and the last thing anybody actually
+    // told us is that a start is happening. The reading underneath is untouched too.
+    expect(result.current.state.name).toBe('starting')
+    expect(result.current.state.action).toBeNull()
+    expect(result.current.preview?.state).toBe('starting')
+
+    // ABSENCE PAIRED WITH LIVENESS: quiet because it is slow, not because it died. The background
+    // poll is still there to correct the pane the moment the endpoint answers again.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PREVIEW_PROBE_MS)
+    })
+    expect(reads).toBeGreaterThan(spent)
+  })
+
+  it('★ failures alone never buy an accelerated window nothing earned', async () => {
+    // Erroring from the very first read: nothing has ever said `starting`, so there is no window to
+    // spend and no reason to go fast. The mutation this pins is a `catch` that OPENS one — which
+    // would put every project screen behind a flaky endpoint on a three-second poll.
+    const MINE = 'proj-never-answered'
+    let reads = 0
+    api.fetchPreviewState.mockImplementation(async (id: string) => {
+      if (id !== MINE) return reading()
+      reads += 1
+      throw new Error('500 from preview-state')
+    })
+
+    const { result } = mount(MINE)
+    await waitFor(() => expect(reads).toBe(1))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * 10)
+    })
+    expect(reads).toBe(1)
+    expect(result.current.state.name).toBe('could-not-read')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PREVIEW_PROBE_MS)
+    })
+    expect(reads).toBeGreaterThan(1)
+  })
+
+  it('★ a failure after a settled answer does not resurrect the poll that correctly stopped', async () => {
+    // The visibility backstop stays live after the timer stops, by design — it is the one read a
+    // settled workspace can still make. Its failure must not re-arm the interval: a poll that gave
+    // up on `asleep` plus a decided `restorable` has heard everything there is to hear, and a
+    // rescheduling `catch` would have a broken endpoint start it up again.
+    const MINE = 'proj-settled'
+    let answering = true
+    let reads = 0
+    api.fetchPreviewState.mockImplementation(async (id: string) => {
+      if (id !== MINE) return reading()
+      reads += 1
+      if (answering) return reading({ state: 'asleep', restorable: true })
+      throw new Error('500 from preview-state')
+    })
+
+    const { result } = mount(MINE)
+    await waitFor(() => expect(result.current.state.name).toBe('not-running'))
+
+    answering = false
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await settle()
+    const spent = reads
+    expect(spent).toBeGreaterThan(1) // liveness: the backstop really did fire, and really did fail
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PREVIEW_PROBE_MS * 3)
+    })
+    expect(reads).toBe(spent)
   })
 
   it('records "could not read" when it is the ONLY thing we know', async () => {

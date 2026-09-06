@@ -22,6 +22,7 @@ import {
   STARTING_PROBE_MS,
   nextProbeCadence,
   resolveWorkspaceState,
+  spendProbeCadence,
 } from '../workspace/workspaceState'
 import type { ProbeCadence, StartOutcome } from '../workspace/workspaceState'
 import {
@@ -2617,6 +2618,21 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       } catch {
         // A probe that could not answer says NOTHING. Painting "gone" on a network blip would
         // pull a working preview off screen — the same over-claiming this fix exists to remove.
+        //
+        // IT DOES STILL SPEND FROM THE ACCELERATED WINDOW, though. `fetchPreviewState` throws on
+        // any non-2xx and on a dropped connection, so while only the success path could advance
+        // the count, a workspace that reached `starting` and then started erroring was probed
+        // every three seconds for the life of the tab — twenty requests a minute, with the bound
+        // that exists to stop a hung start never moving. `spendProbeCadence` draws from the window
+        // without deciding anything about the workspace; see its own note for why that asymmetry
+        // is the point.
+        //
+        // The guards mirror the success path's, plus `timer === null` — a poll a settled answer
+        // has already stopped must not be resurrected by a failure. `keepAsking` only: nothing
+        // that failed to ask is ever terminal.
+        if (!live || generation !== latestProbe || timer === null) return
+        cadence = spendProbeCadence(cadence)
+        keepAsking()
       }
     }
     // KEPT LIVE EVEN AFTER THE TIMER STOPS, deliberately. These fire on a deliberate human act

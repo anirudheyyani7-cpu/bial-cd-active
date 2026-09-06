@@ -39,6 +39,10 @@
  * blank its reading on every re-run, a pane that flickers through "we could not check" and, since
  * #192, unframes an app that is running.
  *
+ * A READ THAT THREW SPENDS FROM THE WINDOW TOO — see `spendProbeCadence`, and the `catch` below.
+ * The bound is a ceiling on elapsed fast-polling, not a tally of answers we managed to get, or an
+ * endpoint that starts erroring mid-start buys an unbounded 3-second poll for the life of the tab.
+ *
  * AN ACCELERATED READ ASKS THE PREVIEW STATE AND NOTHING ELSE. `fetchSaveState` is two `git`
  * executions inside the container and it fires on the tick that first sees `alive` — which, in an
  * accelerated window, is a container that came up seconds ago and is still restoring its snapshot
@@ -67,6 +71,7 @@ import {
   isTerminalReading,
   nextProbeCadence,
   resolveWorkspaceState,
+  spendProbeCadence,
   type ProbeCadence,
   type StartOutcome,
   type WorkspaceState,
@@ -231,6 +236,20 @@ export function useWorkspaceState({
         // A read that could not answer SAYS NOTHING. Painting "gone" on a network blip is the
         // over-claiming this whole shape exists to remove, and the timer is left running so the
         // next tick can correct it.
+        //
+        // BUT IT STILL SPENDS FROM THE ACCELERATED WINDOW. Until it did, the 120-second bound was
+        // a ceiling on SUCCESSFUL reads only, so a workspace that reached `starting` and then began
+        // erroring was asked every three seconds for the life of the tab — the exact hang the bound
+        // exists to prevent, reachable by a 500. See `spendProbeCadence` for why it may spend
+        // without deciding anything.
+        //
+        // GUARDED THE SAME WAY THE SUCCESS PATH IS, plus one of its own. A superseded read must not
+        // move the cadence a newer one already set, and `timer === null` is a poll a settled answer
+        // already stopped — re-arming it here would let a failing endpoint resurrect a poll that
+        // had correctly given up. `keepAsking` and nothing else: a failure is never terminal.
+        if (!live || generation !== latest || timer === null) return
+        cadence = spendProbeCadence(cadence)
+        keepAsking()
       }
     }
 

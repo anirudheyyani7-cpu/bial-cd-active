@@ -25,10 +25,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.models.user_limit import UserLimit
 from src.services.usage.gate import effective_daily_limit
 
-# Context guardrails (Express `limits.js`) — the SPA per-conversation warn/stop thresholds.
-MODEL_CONTEXT_WINDOW = 200_000
-DEFAULT_CONTEXT_SOFT = 150_000
-DEFAULT_CONTEXT_HARD = 200_000
+# Context guardrails — the per-conversation warn/stop thresholds.
+#
+# THE WINDOW IS MEASURED, NOT READ OFF A PAGE. `1_000_000` is the figure the deployment itself
+# named when it refused an oversized prompt through the exact production chain
+# (`AsyncAnthropicFoundry` → `AnthropicProvider` → `AnthropicModel` → pydantic-ai `Agent`)
+# against `claude-opus-4-7` on `bial-genai-vibecoding2`: `prompt is too long: 1963668 tokens >
+# 1000000 maximum`, reproduced twice by
+# `.vulcan/token-usage-probe/probe_overflow_refusal_shape.py`.
+# The `200_000` it replaces was inherited from the Express prototype and was never checked
+# against this deployment — it made the per-chat ceiling five times smaller than what the
+# platform actually serves.
+#
+# IT IS A CLAMP, WHICH IS WHY IT MOVES WITH THE CEILING. `effective_context` caps `hard` at this
+# number, so raising the ceiling and leaving the window behind makes the new ceiling silently
+# inert. And it is the boundary an administrator's number is validated against, so it must be
+# what the provider will actually serve rather than what we hope it will.
+MODEL_CONTEXT_WINDOW = 1_000_000
+# The ceiling sits at HALF the served window, deliberately. It is the number a citizen's chat is
+# refused at, not the number the provider breaks at, and leaving that much headroom means a
+# conversation is ended by our own guardrail — with a sentence that tells them what to do — long
+# before it can hit a provider error we cannot phrase.
+DEFAULT_CONTEXT_SOFT = 375_000
+DEFAULT_CONTEXT_HARD = 500_000
 
 SYSTEM_PROMPT_RESERVE: Final = 8_000
 """What a run costs before the citizen has typed anything — the per-run system prompt and the

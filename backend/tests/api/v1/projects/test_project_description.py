@@ -17,10 +17,12 @@ from sqlalchemy import delete, select
 
 from src.config import settings
 from src.db.models.project import Project
-from src.db.models.token_usage import TokenUsage
+from src.db.models.token_usage import TokenUsage, TokenUsageKind
 from src.db.models.user_limit import UserLimit
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.usage.gate import record_usage
+from src.services.projects import describe
+from src.services.usage.gate import record_usage, usage_today
+from src.services.usage.limits import MODEL_CONTEXT_WINDOW
 from tests.factories import (
     AppRegistryFactory,
     ProjectFactory,
@@ -154,23 +156,60 @@ async def test_generated_result_is_length_capped(client, db_session, set_chat_mo
     assert len(resp.json()["description"]) == 2000  # capped at MAX_PROJECT_DESCRIPTION
 
 
-async def test_generation_bills_usage(client, db_session, set_chat_model) -> None:
-    # Generation is a normal billed turn (Q5): a successful run MUST fold its tokens into
-    # today's usage — dropping record_usage would otherwise keep the suite green.
-    set_chat_model(TestModel(custom_output_text="Billed description."))
+async def test_generation_is_metered_against_the_citizen_but_not_billed_to_them(
+    client, db_session, set_chat_model
+) -> None:
+    """★ R14, AND BOTH HALVES ARE THE TEST. The platform reasons about the citizen's code
+    because they pressed "generate a description", not because they asked for tokens — so the
+    spend is RECORDED against them (it stays attributable, and an operator can see what the
+    feature costs) and does NOT come out of the day's allowance they build with.
+
+    It writes under `review`, the kind `gate._used_today` does not read — the same carve-out the
+    pre-publish classification review already uses, reached through the same `kind` parameter
+    rather than a second mechanism.
+
+    THE CONTROL AT THE END IS LOAD-BEARING. Without it this test passes just as well against a
+    daily meter that reads nothing at all; with it, the only thing that can explain the two
+    numbers is the kind on the row."""
+    set_chat_model(TestModel(custom_output_text="Metered description."))
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id)
     await AppRegistryFactory.create(
         db_session, user_id=user.id, project_id=project.id, current_code=_CODE
     )
+    before = (await usage_today(db_session, user.id)).used
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
+
+    # Recorded: a row exists, it carries real tokens, and it is the citizen's own.
     row = await db_session.scalar(select(TokenUsage).where(TokenUsage.user_id == user.id))
-    assert row is not None  # a usage row was written for the turn
-    # The billable total is input + output (cache is already inside input_tokens).
-    total = row.input_tokens + row.output_tokens
-    assert total > 0
+    assert row is not None
+    assert row.input_tokens + row.output_tokens > 0
+    # …under the kind the gate does not count. Drop the `kind=` argument in `describe.py` and
+    # this line goes red, then so does the next one.
+    assert row.kind is TokenUsageKind.REVIEW
+
+    # Not billed: the number the daily gate compares against a cap has not moved.
+    assert (await usage_today(db_session, user.id)).used == before
+
+    # THE CONTROL: an ordinary build turn's spend still moves it, unchanged.
+    await record_usage(db_session, user.id, input_tokens=1_000, output_tokens=100)
+    assert (await usage_today(db_session, user.id)).used > before
+
+
+def test_the_code_budget_is_an_absolute_number_not_a_share_of_the_window() -> None:
+    """★ THE MUTANT THIS FILE HAD NO GUARD FOR (R11b). The budget used to be
+    `MODEL_CONTEXT_WINDOW * 3`, so correcting the window from 200,000 to the 1,000,000 the
+    deployment actually serves would have handed this generator FIVE TIMES more source — a cost
+    and latency change nobody decided, in a feature that writes two to four sentences.
+
+    So the number is pinned as a number, and the first assertion goes red the moment anyone
+    re-derives it. The second is the subtler guard: it fails whenever the budget once again
+    happens to EQUAL the window times three — the coincidence that let the derivation look
+    harmless for as long as it did, and the state a revert of the window would restore."""
+    assert describe._CODE_CHAR_BUDGET == 600_000
+    assert describe._CODE_CHAR_BUDGET != MODEL_CONTEXT_WINDOW * 3
 
 
 async def test_blank_generation_clears_to_null_not_empty_string(

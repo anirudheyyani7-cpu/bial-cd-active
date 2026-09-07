@@ -40,7 +40,12 @@ from src.services.usage.context_window import (
     enforce_context_limit,
 )
 from src.services.usage.gate import weighted_spend
-from src.services.usage.limits import DEFAULT_CONTEXT_HARD
+from src.services.usage.limits import (
+    CONTEXT_HARD_FLOOR,
+    DEFAULT_CONTEXT_HARD,
+    DEFAULT_CONTEXT_SOFT,
+    MODEL_CONTEXT_WINDOW,
+)
 from tests.factories import UserFactory
 
 
@@ -97,6 +102,44 @@ async def test_a_measured_conversation_well_inside_the_ceiling_is_admitted(db_se
     history: list[ModelMessage] = [_typed("hello"), _served(12_000)]
 
     assert await _refusal(db_session, user.id, history) is None
+
+
+async def test_a_conversation_the_old_ceiling_would_have_refused_is_now_admitted(
+    db_session,
+) -> None:
+    """★ THE RAISE, ASSERTED AS THE ONE THING A CITIZEN NOTICES (R11).
+
+    300,000 tokens sits between the ceiling this platform used to enforce (200,000, inherited
+    from the Express prototype and never checked against this deployment) and the one it
+    enforces now. That conversation was refused; it is served. Nothing else about the check
+    changed — the number it compares against did.
+
+    MUTATION: put `DEFAULT_CONTEXT_HARD` back to 200,000 and this goes red. Move it without
+    `MODEL_CONTEXT_WINDOW` and it goes red too, because the clamp in `effective_context` would
+    hold the ceiling down at the old window and the raise would be silently inert."""
+    user = await _user_with_ceiling(db_session)
+    history: list[ModelMessage] = [_typed("carry on"), _served(300_000)]
+
+    assert await _refusal(db_session, user.id, history) is None
+
+    # The boundary still exists — it moved, it did not disappear.
+    over: list[ModelMessage] = [_typed("carry on"), _served(DEFAULT_CONTEXT_HARD + 1)]
+    exc = await _refusal(db_session, user.id, over)
+    assert exc is not None
+    assert exc.hard_limit == DEFAULT_CONTEXT_HARD
+
+
+def test_the_ceiling_leaves_headroom_inside_the_window_the_deployment_serves() -> None:
+    """The two numbers that must not cross, and the direction they must not cross in.
+
+    `MODEL_CONTEXT_WINDOW` is what the provider itself named when it refused an oversized
+    prompt (`prompt is too long: 1963668 tokens > 1000000 maximum`, measured through the
+    production chain by `.vulcan/token-usage-probe/probe_overflow_refusal_shape.py`). The
+    default ceiling has to stay inside it, or `effective_context` clamps the default down and
+    the number an administrator reads in the panel is not the number they get. The warning has
+    to stay under the ceiling, or a citizen is warned for the first time in the same breath as
+    the refusal."""
+    assert DEFAULT_CONTEXT_SOFT < DEFAULT_CONTEXT_HARD <= MODEL_CONTEXT_WINDOW
 
 
 # --- the number is the provider's, and nothing else ---------------------------------------
@@ -229,6 +272,30 @@ async def test_the_administrators_ceiling_is_what_decides(db_session) -> None:
     exc = await _refusal(db_session, capped.id, measured)
     assert exc is not None
     assert exc.hard_limit == 20_000
+
+
+async def test_a_stored_ceiling_below_the_floor_still_opens_a_chat(db_session) -> None:
+    """AN ADMINISTRATOR MUST NOT BE ABLE TO LOCK A CITIZEN OUT, and the read-time clamp is the
+    half of that promise which reaches people the write-time validator never saw.
+
+    A ceiling of 1,000 is stored — written before the PATCH validator refused such a value.
+    `effective_context` clamps it up to `CONTEXT_HARD_FLOOR`, so this person's chats still open
+    and their second message still sends. Drop the `max(CONTEXT_HARD_FLOOR, ...)` from
+    `effective_context` and the first assertion goes red: every conversation they own, including
+    an empty one, is refused on the turn after the provider first reports it.
+
+    Note which limit this is. The floor is a floor on the per-conversation CEILING — not on the
+    daily token quota, which is a different lever in `gate.py` with a different lifetime."""
+    user = await _user_with_ceiling(db_session, ceiling=1_000)
+    inside: list[ModelMessage] = [_typed("hello"), _served(CONTEXT_HARD_FLOOR - 1)]
+
+    assert await _refusal(db_session, user.id, inside) is None
+
+    # Clamped UP to the floor, not up to the default: the administrator's intent to cap this
+    # person tightly survives, it is merely stopped short of locking them out.
+    exc = await _refusal(db_session, user.id, [_typed("hello"), _served(CONTEXT_HARD_FLOOR)])
+    assert exc is not None
+    assert exc.hard_limit == CONTEXT_HARD_FLOOR
 
 
 @pytest.mark.parametrize(

@@ -45,9 +45,14 @@ import type { ProfileLimits } from './auth'
 export const SYSTEM_PROMPT_RESERVE = 8_000
 
 /** Twins of `limits.DEFAULT_CONTEXT_SOFT` / `DEFAULT_CONTEXT_HARD`, used only when a session
- *  predates the profile carrying them. */
-export const DEFAULT_CONTEXT_SOFT = 150_000
-export const DEFAULT_CONTEXT_HARD = 200_000
+ *  predates the profile carrying them.
+ *
+ *  They moved with the server's, from 150,000/200,000, when the per-chat ceiling was corrected
+ *  against the window the deployment actually serves (1,000,000, measured off its own refusal).
+ *  A stale copy here does not refuse anything — the server owns the wall — but it would have an
+ *  older session warned at a threshold nobody set, well before the chat is anywhere near long. */
+export const DEFAULT_CONTEXT_SOFT = 375_000
+export const DEFAULT_CONTEXT_HARD = 500_000
 
 // `Number.isInteger` is typed `(x: unknown) => boolean` rather than a predicate, so it does not
 // narrow. This wraps the identical runtime check in a real one.

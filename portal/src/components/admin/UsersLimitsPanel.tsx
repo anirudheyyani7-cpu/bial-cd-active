@@ -30,7 +30,14 @@ import { SYSTEM_PROMPT_RESERVE } from '../../utils/contextLimits'
 // stopped enforcing anything either. Both halves are now correct: the server refuses a turn
 // past the per-conversation max (`enforce_context_limit`, a 413 the citizen reads a sentence
 // from), and the browser's own warning at the soft threshold is the friendly guard.
-const MODEL_CONTEXT_WINDOW = 200_000
+//
+// HAND-KEPT TWIN of `limits.MODEL_CONTEXT_WINDOW`; move one and move the other, in the same
+// commit. This copy is what the form VALIDATES against, so a stale one refuses a
+// per-conversation max the server would have accepted and tells the administrator the model
+// cannot do something it demonstrably does. The value is measured rather than quoted — the
+// deployment named it in its own refusal, `prompt is too long: 1963668 tokens > 1000000
+// maximum` (`.vulcan/token-usage-probe/probe_overflow_refusal_shape.py`).
+const MODEL_CONTEXT_WINDOW = 1_000_000
 // The lowest per-conversation max that still leaves a usable chat, mirroring the server's
 // `CONTEXT_HARD_FLOOR`.
 //

@@ -74,14 +74,14 @@ async def test_me_response_exposes_no_secret_fields(client, db_session) -> None:
 
 
 async def test_me_limits_default_when_no_override(client, db_session) -> None:
-    """No UserLimit row → the profile carries the global defaults (daily cap + 150k/200k)."""
+    """No UserLimit row → the profile carries the global defaults (daily cap + 375k/500k)."""
     user = await UserFactory.create(db_session)
     jwt = mint_session_jwt(user.id, user.token_version, _TTL)
     resp = await client.get("/v1/auth/me", headers=_cookie(jwt))
     limits = resp.json()["limits"]
     assert limits["dailyTokenLimit"] == settings.DAILY_TOKEN_LIMIT
-    assert limits["contextSoftLimit"] == 150_000
-    assert limits["contextHardLimit"] == 200_000
+    assert limits["contextSoftLimit"] == 375_000
+    assert limits["contextHardLimit"] == 500_000
 
 
 async def test_me_limits_reflect_per_user_override(client, db_session) -> None:

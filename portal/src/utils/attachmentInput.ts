@@ -178,12 +178,14 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
 /**
  * A DOCUMENT LIMIT, NOT A TOKEN LIMIT, and the distinction is the whole reason this exists (#194).
  *
- * A PDF is charged a flat 75,000 tokens because that is what the largest admissible one can really
- * cost, so three of them exceed the context ceiling before a word is typed. Left to the token gate,
- * the citizen would be told to "start a new chat" — advice that does not work, because the new chat
- * refuses the identical message. The server already refuses the third document at `resolve_binaries`
- * with its own sentence; this is the same refusal one step earlier, so the composer does not accept
- * a message it knows will bounce.
+ * NOTHING PRICES A DOCUMENT UP FRONT, and the arithmetic that used to stand here — a flat nominal
+ * per PDF, three of them over the ceiling before a word is typed — is deleted rather than
+ * recomputed, exactly as it is on the server. There is no estimate on either side any more: the
+ * window is measured from what the provider reports for a completed turn. Left to that gate, a
+ * message too big to serve comes back as "start a new chat" — advice that does not work, because
+ * the new chat refuses the identical message. The server already refuses the third document at
+ * `resolve_binaries` with its own sentence; this is the same refusal one step earlier, so the
+ * composer does not accept a message it knows will bounce.
  *
  * MIRRORS `backend/src/api/v1/conversations/_shared.py` — `MAX_PDF_BLOCKS` and
  * `TOO_MANY_DOCUMENTS_MSG`. The server is the trust boundary and keeps its own check; if these two

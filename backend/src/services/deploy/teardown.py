@@ -49,24 +49,35 @@ SWEPT_EVENT = "published_app_swept"
 
 async def sweep_published_apps(
     app_ids: Iterable[uuid.UUID], *, client: PublishedAppRemover | None = None
-) -> int:
-    """Delete the published container app for each id. Returns how many were removed.
+) -> list[uuid.UUID]:
+    """Delete the published container app for each id. Returns the ids that SURVIVED.
+
+    IT ANSWERS WITH SURVIVORS, LIKE ITS SIBLINGS, and that is the whole of the difference from
+    the count it used to return. Four teardown arms on the delete path hand back what they could
+    not destroy; this one handed back a number, so its caller had to re-derive whether publishing
+    was configured at all (a fact this function already answers internally) and, on a short
+    count, name EVERY id as a survivor. The audit row that records what outlived a delete is
+    supposed to be attributable — naming an app that was in fact deleted is worse than naming
+    none, because it sends an operator after something that is not there.
+
+    An empty list therefore means "nothing survived", including on a deployment with publishing
+    switched off, where nothing was ever published.
 
     `client` is injectable so a test can assert on the delete without reaching Azure; the
-    default resolves the process singleton, and a deployment with publishing switched off
-    simply has nothing to sweep."""
+    default resolves the process singleton."""
     ids = list(app_ids)
     if not ids:
-        return 0
+        return []
 
     if client is None:
         try:
             client = get_published_apps()
         except DeployNotConfiguredError:
             # Publishing is off on this deployment, so nothing was ever published.
-            return 0
+            return []
 
     swept = 0
+    survived: list[uuid.UUID] = []
     for app_id in ids:
         try:
             await client.delete_app(app_id=app_id)
@@ -82,6 +93,7 @@ async def sweep_published_apps(
                 reason="the container app could not be deleted",
                 exc_info=True,
             )
+            survived.append(app_id)
     if swept:
         _log.info(SWEPT_EVENT, count=swept)
-    return swept
+    return survived

@@ -407,23 +407,48 @@ export interface WorkspaceState {
  * them, so this is exact — and it is what lets a poll that keeps returning the same answer stop
  * waking the surfaces rendering it.
  */
+/**
+ * ONE COMPARISON PER FIELD, KEYED BY THE FIELD — so a new member of `WorkspaceState` that nobody
+ * compares is a COMPILE error here, not a test failure somewhere else.
+ *
+ * This used to be an `&&` chain, and its own docblock admitted the hazard: an implementer who
+ * added a field and forgot it "fails a test rather than passing a compile". That is exactly
+ * backwards for the cell this guards — `sameReport` delegates to it and the report's subscriber
+ * is the whole shell, so a field it does not compare is a field the pane never re-renders for.
+ * The failure is silent, and it is one someone has to already suspect to go looking for.
+ *
+ * `Required<WorkspaceState>` is what does the work: mapping over it makes every key mandatory in
+ * this record, including the ones that are optional in the state itself, so omitting an entry is
+ * `TS2741` AT THE RECORD — where the person adding the field is standing.
+ *
+ * `?? null` / `?? false` on the optional members because an omitted field and an explicit null
+ * are the same claim and must compare equal: otherwise a hand-built value and the map's own would
+ * look like two different states to the cell.
+ */
+const STATE_FIELD_EQ: {
+  [K in keyof Required<WorkspaceState>]: (a: WorkspaceState[K], b: WorkspaceState[K]) => boolean
+} = {
+  name: (a, b) => a === b,
+  headline: (a, b) => a === b,
+  detail: (a, b) => a === b,
+  note: (a, b) => (a ?? null) === (b ?? null),
+  busy: (a, b) => (a ?? false) === (b ?? false),
+  action: (a, b) => sameAction(a, b),
+  secondAction: (a, b) => sameAction(a ?? null, b ?? null),
+}
+
+/** The field names the comparator covers — the test's totality pin reads this rather than a
+ *  second hand-kept list, so the two cannot drift apart. */
+export const WORKSPACE_STATE_FIELDS = Object.keys(STATE_FIELD_EQ).sort()
+
 export const sameWorkspaceState = (a: WorkspaceState, b: WorkspaceState): boolean =>
   a === b ||
-  (a.name === b.name &&
-    a.headline === b.headline &&
-    a.detail === b.detail &&
-    // `?? null` because the two new fields are optional in the TYPE (see `WorkspaceState`), so an
-    // omitted one and an explicit `null` are the same claim and must compare equal — otherwise a
-    // hand-built value and the map's own would look like two different states to the cell.
-    (a.note ?? null) === (b.note ?? null) &&
-    // AND THE WAIT'S OWN FLAG, on the same rule and for a sharper reason. This comparator is what
-    // `sameReport` delegates to, and the report cell it guards is the one whose subscriber is the
-    // whole shell — so a field it does not compare is a field the pane never re-renders for. Two
-    // states that differ only in `busy` are two different things to say, and `AppPane.test.tsx`
-    // asserts that changing it alone moves the pane.
-    (a.busy ?? false) === (b.busy ?? false) &&
-    sameAction(a.action, b.action) &&
-    sameAction(a.secondAction ?? null, b.secondAction ?? null))
+  (Object.keys(STATE_FIELD_EQ) as Array<keyof Required<WorkspaceState>>).every((key) =>
+    // The indexed access is sound — `key` ranges over exactly the keys of the record — but
+    // TypeScript cannot correlate the two lookups through a generic index, so each side is read
+    // once and handed to the field's own comparator.
+    (STATE_FIELD_EQ[key] as (x: unknown, y: unknown) => boolean)(a[key], b[key]),
+  )
 
 const sameAction = (a: WorkspaceAction | null, b: WorkspaceAction | null): boolean =>
   a === b ||

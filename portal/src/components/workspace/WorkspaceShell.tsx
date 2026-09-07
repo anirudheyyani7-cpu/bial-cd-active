@@ -50,7 +50,7 @@ import AppPane from './AppPane'
 import RailResizeHandle from './RailResizeHandle'
 import WorkspaceToolbar from './WorkspaceToolbar'
 import { clampRailWidth, openingWidth, readRailWidth, writeRailWidth } from './railWidth'
-import { recallProjectsSearch } from '../../utils/projectsListMemory'
+import { projectsListHref } from '../../utils/projectsListMemory'
 import type { DeviceName } from './devices'
 import { WORKSPACE_RAIL_ID } from './railId'
 import { HIDDEN_BUT_MOUNTED } from './hiddenSubtree'
@@ -322,7 +322,7 @@ function ShellFrame() {
     const to =
       mode === 'conversation' && heading.projectId
         ? `/projects/${heading.projectId}`
-        : `/projects${recallProjectsSearch()}`
+        : projectsListHref()
     guard(() => navigate(to))
   }, [guard, navigate, mode, heading.projectId])
 

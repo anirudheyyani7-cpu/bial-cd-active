@@ -3,8 +3,17 @@
 THE WRITE HALF IS HALF GONE. `write_build_started` — the hidden `build_started` marker — went
 with `SessionManager.start`, its only caller, when the start route was deleted; so did
 `transcript_head_seq`, which existed to capture that marker's `startedSeq`. `write_build_outcome`
-STAYS: it is called from `_record_outcome`, which the live `stop` path still reaches through
-`_end` -> `_finalize`. Two consequences to know rather than rediscover. (1) No new `build_started`
+STAYS, but read the next sentence before trusting it: the live `stop` path does reach
+`_record_outcome` through `_end` -> `_finalize`, and `_record_outcome` then returns immediately
+on `if session.conversation_id is None`. Nothing in `src/` sets that field — the one production
+`BuildSession(...)` omits it, and the only assignment in the repository is a test fixture whose
+own docstring says it builds a shape production cannot produce. **So the CALL is reachable and
+the BODY is not.** The function is kept rather than deleted because the `{sessionId}` routes it
+belongs to are kept (they read `build_outcome` rows already in the production database), and
+cutting the writer while keeping that reader is the half-state this deletion deliberately
+avoided. Treat it as parked, not as live.
+
+Two consequences to know rather than rediscover. (1) No new `build_started`
 rows are written, so `projection._closed_sessions()` has nothing to close and the projection's
 `BuildInProgressItem` arm now serves only rows already in the database. (2) A build that runs as
 an ordinary Write chat turn records its ending as a `turn_terminal` row instead, which is the

@@ -1296,7 +1296,7 @@ async def unpublish(
     # guarded UPDATE, not `row.unpublished_at`, remains the authority on who won the race.
     await db.commit()
 
-    if await sweep_published_apps([app_id], client=remover) == 0:
+    if await sweep_published_apps([app_id], client=remover):
         # UNCONFIRMED, NOT FAILED, and the distinction is the same one this route's audit
         # discipline is built on. `sweep_published_apps` collapses every exception into a
         # count, so a zero means "we did not observe a success" — which covers a terminal

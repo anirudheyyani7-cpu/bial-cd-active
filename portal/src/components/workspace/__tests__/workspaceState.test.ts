@@ -19,6 +19,7 @@ import {
   isTerminalReading,
   resolveWorkspaceState,
   sameWorkspaceState,
+  WORKSPACE_STATE_FIELDS,
   type WorkspaceInputs,
   type WorkspaceState,
 } from '../workspaceState'
@@ -538,7 +539,11 @@ describe('the properties that hold across every input', () => {
     // that arm and of nothing else. Nine of the ten arms could have dropped a key with the suite
     // green. The inputs below reach all ten; `expectedNames` is asserted too, so an input that
     // stops reaching its arm fails loudly rather than quietly shrinking the coverage.
-    const KEYS = ['action', 'busy', 'detail', 'headline', 'name', 'note', 'secondAction']
+    // ★ READ FROM THE COMPARATOR, not hand-kept beside it. This used to be a second literal list,
+    // so adding a field meant editing four places and only three of them were forced. The
+    // comparator is now an exhaustive keyed record — omitting a field is a COMPILE error there —
+    // and this reads its keys, so the two lists cannot drift apart at all.
+    const KEYS = WORKSPACE_STATE_FIELDS
 
     const arms: Array<[string, WorkspaceState]> = [
       ['running', resolve({ preview: reading({ state: 'alive', alive: true }) })],

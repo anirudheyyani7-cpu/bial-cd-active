@@ -191,14 +191,13 @@ def _live_catalog(search: str | None) -> tuple[sa.Select[Any], type[Deployment]]
     auth dependency. (An earlier draft of this docstring said `unpublish` was the only lever
     and undersold it; that was wrong, and it is corrected here rather than left to mislead.)
 
-    THE HALF OF #163 THAT IS NOT DONE, because reading this paragraph as "solved" would
-    mislead an operator mid-incident: getting an app back OUT of DISABLED. `enable` returns
-    DISABLED -> APPROVED guarded on `approved_submission_id IS NOT NULL`, which a
-    self-published app never has, so a switched-off DRAFT stays switched off until `enable`
-    learns to restore what the app WAS. What that must NOT be is DISABLED in
-    `STATUS_TRANSITIONS[DRAFT]` — `apps/router.py::withdraw` reads that same row and is
-    citizen-facing, so it would let an app's OWNER undo an admin kill switch. The remedy is a
-    remembered pre-disable status plus a multi-armed `enable`, and it is still a lifecycle
+    GETTING AN APP BACK OUT OF DISABLED IS NOW DONE, and this paragraph used to say it was not.
+    `enable` no longer resolves to the literal APPROVED — which on a never-approved app invented
+    an approval nobody gave, and stranded a switched-off DRAFT permanently. It restores the
+    status the app HELD, from `app_registry.previous_status`, through its own guarded UPDATE.
+    What that deliberately is NOT is DISABLED in `STATUS_TRANSITIONS[DRAFT]`:
+    `apps/router.py::withdraw` reads that same row and is citizen-facing, so widening it would
+    let an app's OWNER undo an admin kill switch. That row is untouched. Still a lifecycle
     decision rather than a predicate change — which is why none of it is in this query.
 
     SUSPENDED OWNERS are a decision, not an accident of the `User` join: an already-published

@@ -827,34 +827,6 @@ describe('★ taking the workspace back (#196)', () => {
     await act(async () => { hold.settle(); await Promise.resolve() })
   })
 
-  it('★ ONE hand-over question at a time — the shell\'s wins, and this one is HELD not dropped (R44, #187)', async () => {
-    // The two dialogs are the SAME component mounted from two places, so they are visually
-    // identical: with both up, a citizen answers whichever is on top believing it is the one
-    // they opened, and "Switch anyway" on the shell's lets the refused send through — starting
-    // the build the take-back exists to avoid.
-    const pane = await askTheQuestion()
-
-    // The shell's question arrives while this one is up. Exactly one is on screen after it.
-    act(() => {
-      pane.channel.reclaim.set({
-        blocked: { projectId: 'pB', projectName: 'Roster', dirty: false, building: false, agentWorking: false },
-        startingProjectName: 'Roster',
-        resolve: async () => {},
-        cancel: () => {},
-        step: null,
-      })
-    })
-    expect(screen.queryAllByRole('dialog')).toHaveLength(0)
-    // LIVENESS: the pane is still mounted and still holding, so the absence above is the
-    // precedence rule firing rather than a component that unmounted.
-    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('held-by-another-project')
-
-    // ★ HELD, NOT DROPPED. When the shell's clears, this one returns with its question intact —
-    // a citizen who pressed take back is never silently ignored.
-    act(() => pane.channel.reclaim.set(null))
-    expect(await screen.findByRole('dialog')).toBeTruthy()
-  })
-
   it('the pane itself is a polite region, mounted before it has anything to say and on arms with no buttons', () => {
     // ★ CORRECTED (U8, `#197`). This asserted the region was `takeBack().parentElement` — the ROW
     // THE TWO CONTROLS SIT IN — which was true and was the defect: the region lived inside the

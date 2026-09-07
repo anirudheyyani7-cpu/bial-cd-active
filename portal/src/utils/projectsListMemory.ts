@@ -45,3 +45,14 @@ export function rememberProjectsSearch(search: string): void {
     // No memory this session. Route-back links fall back to the bare list, exactly as before.
   }
 }
+
+/**
+ * The projects-list address, carrying whatever page/search/page-size the citizen last had.
+ *
+ * Two callers assembled `` `/projects${recallProjectsSearch()}` `` independently — the workspace
+ * back control and the navbar brand. That is a route name and a concatenation rule spelled twice,
+ * and nothing fails if only one is edited. One export instead.
+ */
+export function projectsListHref(): string {
+  return `/projects${recallProjectsSearch()}`
+}

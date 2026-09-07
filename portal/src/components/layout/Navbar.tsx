@@ -11,7 +11,7 @@ import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import type { UsageToday } from '../../utils/usage'
 import { revokeAllAttachmentUrls } from '../../utils/attachmentApi'
 import { fetchAppStatusCounts } from '../../utils/appRegistryApi'
-import { recallProjectsSearch, rememberProjectsSearch } from '../../utils/projectsListMemory'
+import { projectsListHref, rememberProjectsSearch } from '../../utils/projectsListMemory'
 import WaitingCountBadge from '../admin/WaitingCountBadge'
 import FeedbackModal from '../FeedbackModal'
 import BIALLogo from '../BIALLogo'
@@ -203,7 +203,7 @@ export default function Navbar() {
               to="/projects"
               onClick={(e) => {
                 e.preventDefault()
-                exit(() => navigate(`/projects${recallProjectsSearch()}`))
+                exit(() => navigate(projectsListHref()))
               }}
               className="flex items-center whitespace-nowrap"
             >

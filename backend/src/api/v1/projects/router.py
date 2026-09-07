@@ -866,16 +866,18 @@ async def delete_project(
     # that names the running container, and the sandbox reaper cannot see it (it sweeps the
     # Redis registry, which a published app is never written to).
     #
-    # THE COUNT IS THE SIGNAL, not a survivor list: `sweep_published_apps` answers how many it
-    # removed, and `unpublish` depends on that shape. Short of the id count means one did not
-    # go — but ONLY when publishing is configured at all, since the helper also answers 0 when
-    # `DEPLOY__*` is unset, where nothing was ever published and nothing survived. A project
-    # owns exactly one app (KD-4), so naming the id list here names the container precisely;
-    # the per-id detail is on the alarm the helper itself raised.
+    # IT ANSWERS WITH SURVIVORS, like every other arm on this path. It used to answer with a
+    # COUNT, which made this block guess: short of the id count meant "one did not go", so it
+    # named EVERY id as a survivor — and it had to re-read `settings.deploy` first, because a
+    # count of zero also meant "publishing is switched off and nothing was ever published".
+    # Both problems were the return type's. An audit row that names an app which was in fact
+    # deleted is worse than one that names none: it sends an operator after something that is
+    # not there. The per-id detail is on the alarm the helper itself raised.
+    # Read once and handed to the registry sweep below, which needs the config itself.
     published_config = settings.deploy
-    swept = await sweep_published_apps(cleanup.app_container_ids)
-    if published_config is not None and swept < len(cleanup.app_container_ids):
-        survivors.extend(("published_app", str(i)) for i in cleanup.app_container_ids)
+    survivors.extend(
+        ("published_app", str(i)) for i in await sweep_published_apps(cleanup.app_container_ids)
+    )
     # ...and the image the published container was built from. Deleting a project must not
     # leave the citizen's compiled source sitting in the registry under a name nothing in the
     # database points at any more (#184, R1/R6). Derived, never stored — see `registry_delete`.

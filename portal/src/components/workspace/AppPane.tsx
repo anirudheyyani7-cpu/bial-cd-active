@@ -84,7 +84,6 @@ import {
   useWorkspaceAddress,
   useWorkspaceHeading,
   useWorkspacePaneVisible,
-  useWorkspaceReclaim,
   useWorkspaceReport,
 } from './workspaceChannel'
 import type { WorkspaceStateName } from './workspaceState'
@@ -165,9 +164,6 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   // it is holding, and a pane that outlives a navigation would otherwise carry one project's
   // dialog and busy flag onto the next.
   const takeBack = useTakeBack(report)
-  // The shell's hand-over question, if one is up. See the render site below: exactly one of the
-  // two identical dialogs is on screen at a time, and the one with a parked send behind it wins.
-  const reclaim = useWorkspaceReclaim()
   // THE APP THE CITIZEN IS TRYING TO OPEN — issue `#161`'s framing half, which the dialog leads
   // with. Published by the routes (`ProjectPage` / `ChatRoute`), not by the surfaces, so it is read
   // from the channel rather than derived here. `null` before a project's own fetch lands, and the
@@ -342,21 +338,7 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           AND THE HANDLERS ARE PASSED THROUGH RATHER THAN WRAPPED. The dialog's `run()` turns any
           rejection into its own alert and stays up; every ending of `resolve` resolves, and the
           pane behind is what reports. */}
-      {/* ═══ ONE HAND-OVER QUESTION AT A TIME (R44, `#187`) ═══
-          This dialog and the shell's are LITERALLY THE SAME COMPONENT mounted from two places —
-          the shell's from a send the platform refused, this one from the citizen pressing take
-          back. They are visually identical, so with both up the citizen answers whichever is on
-          top believing it is the one they opened, and "Switch anyway" on the shell's lets the
-          refused send through — starting the very build the take-back exists to avoid.
-
-          THE SHELL'S WINS, and the direction is not arbitrary: a reclaim on the channel has a
-          PENDING PROMISE behind it — the send is parked waiting for an answer — so refusing to
-          render it would strand that send forever. The take-back has no such debt.
-
-          AND THIS HOLDS THE QUESTION RATHER THAN DROPPING IT. `takeBack.asking` stays set; only
-          the render waits. When the reclaim clears, this dialog appears with its question intact,
-          so a citizen who pressed take back is never silently ignored. */}
-      {takeBack.asking && reclaim === null && (
+      {takeBack.asking && (
         <ReclaimWorkspaceDialog
           key={takeBack.asking.projectId}
           blocked={takeBack.asking}

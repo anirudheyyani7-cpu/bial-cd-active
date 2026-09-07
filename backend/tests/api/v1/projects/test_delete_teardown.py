@@ -1154,9 +1154,10 @@ async def test_the_reap_displaces_nothing_that_the_delete_already_did(
     fake_storage.objects[snapshot_key(app_row.id)] = b"# v2 git bundle"
     published: list[uuid.UUID] = []
 
-    async def _record_published(app_ids: Any) -> int:
+    async def _record_published(app_ids: Any) -> list[uuid.UUID]:
+        # Returns SURVIVORS, matching the helper — an empty list is "all of them went".
         published.extend(app_ids)
-        return len(published)
+        return []
 
     monkeypatch.setattr(projects_router, "sweep_published_apps", _record_published)
     sandbox = FakeSandboxClient()

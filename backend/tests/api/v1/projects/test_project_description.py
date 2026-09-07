@@ -403,11 +403,42 @@ async def test_a_burst_of_generations_is_rate_limited_per_user(
     ]
 
     assert codes[-1] == 429
-    assert 429 not in codes[:-1]  # only the one over the line
+    assert codes[:-1] == [200] * DESCRIPTION_RATE_LIMIT  # every admitted call really generated
     # The refusal is the LIMITER's envelope, not the daily gate's 5-key body — the two
     # 429s on this route are different shapes and the schema documents both.
     over = await client.post(url, headers=headers)
     assert "error" in over.json() and "message" in over.json()["error"]
+
+
+async def test_a_refusal_that_spends_nothing_does_not_burn_the_bound(
+    client, db_session, set_chat_model
+) -> None:
+    """★ THE BOUND IS ON GENERATIONS, NOT ON ATTEMPTS, and the difference is a citizen locked
+    out of a working button for a quarter of an hour.
+
+    The commonest refusal on this route is the 409 for a project with nothing built yet — a
+    fresh project, the state every project starts in. Charged at the door (a FastAPI dependency
+    runs before the body), six of those would exhaust the window before the citizen had an app
+    at all; they would then build one, press Generate, and be told to wait, over six requests
+    that never reached the model and cost nothing."""
+    set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
+    headers, user = await _auth(db_session)
+    empty = await ProjectFactory.create(db_session, user.id)  # no app: every press is a 409
+
+    for _ in range(DESCRIPTION_RATE_LIMIT + 2):
+        refused = await client.post(
+            f"/v1/projects/{empty.id}/description:generate", headers=headers
+        )
+        assert refused.status_code == 409  # LIVENESS: these really are the non-spending arm
+
+    ready = await ProjectFactory.create(db_session, user.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=ready.id, current_code=_CODE
+    )
+
+    resp = await client.post(f"/v1/projects/{ready.id}/description:generate", headers=headers)
+
+    assert resp.status_code == 200
 
 
 async def test_the_generation_limiter_is_per_user_not_global(

@@ -152,7 +152,15 @@ def test_the_description_column_round_trips() -> None:
         _toggle_0037("down")
         assert _COLUMN not in _columns()
     finally:
-        _toggle_0037("up")
+        # IDEMPOTENT, because this `finally` runs on the failure path too. A bare
+        # `_toggle_0037("up")` on a body that failed BEFORE the downgrade landed re-adds a
+        # column that is already there — and `DuplicateColumn` from the cleanup replaces the
+        # assertion error that actually explains what went wrong. Worse, a run that dies
+        # between the two leaves the schema and `alembic_version` disagreeing, and nothing in
+        # the suite repairs that: every later test on this database then fails for a reason
+        # that has nothing to do with it.
+        if _COLUMN not in _columns():
+            _toggle_0037("up")
 
     assert _COLUMN in _columns()
 

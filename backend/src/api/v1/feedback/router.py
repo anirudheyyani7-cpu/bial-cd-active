@@ -27,8 +27,6 @@ from src.services.ratelimit import rate_limit
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
-# The raw-parse route takes a JSON body FastAPI never sees (no Pydantic param), so its
-# request shape is documented explicitly from the model — without enabling the 422 path.
 _REQUEST_BODY_DOC = raw_body_doc(FeedbackRequest)
 
 # Message byte cap (UTF-8, on the trimmed value) — Express `MAX_FEEDBACK_CHARS`.

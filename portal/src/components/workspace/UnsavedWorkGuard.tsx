@@ -147,9 +147,9 @@ interface DialogProps {
 }
 
 /**
- * HAND-ROLLED, MATCHING `ReclaimWorkspaceDialog` (the docblock used to claim otherwise): has
- * `aria-modal`/`aria-labelledby`, Escape/overlay-click to stay (inert mid-save), initial focus
- * on Stay — but no focus trap or scroll lock, so Tab can walk out into the page behind it.
+ * HAND-ROLLED, MATCHING `ReclaimWorkspaceDialog`: has `aria-modal`/`aria-labelledby`,
+ * Escape/overlay-click to stay (inert mid-save), initial focus on Stay — but no focus trap or
+ * scroll lock, so Tab can walk out into the page behind it.
  * Worth closing, since this is the last guard on someone's unsaved work; `components/ui/dialog.tsx`
  * (Radix, see `AttachmentPreview.tsx`) is the upgrade path, left separate so this change doesn't
  * also move real behaviour. `ReclaimWorkspaceDialog` stays the copy/focus-park pattern either way.

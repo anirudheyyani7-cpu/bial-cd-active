@@ -391,7 +391,7 @@ def _persistable_messages(new_messages: list[ModelMessage]) -> list[ModelMessage
 
 
 # NOTHING HERE READS THE AGENT'S PROSE TO DECIDE PRODUCT STATE, and this is where three things
-# that did used to live.
+# used to live.
 #
 # `_looks_plan_shaped` counted list items and looked for a trailing `?` to decide whether the
 # model had written a plan. When it said yes and no tool call had been made, a FORCED RETRY

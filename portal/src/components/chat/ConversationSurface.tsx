@@ -1051,13 +1051,6 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       })
   }
 
-  /**
-   * THE TURN TERMINAL, for every path that has one. Clears the streaming flag ONLY if this
-   * chat still owns it — a turn terminating after the user switched to a sibling chat must not
-   * open send over a reply still running there. Also signals the usage meter (else the header's
-   * token count only moves on page load); fired HERE, not per call site, because every
-   * terminal — including failed/stopped, which are billed too — routes through this function.
-   */
   /** After every turn — a turn that wrote files is exactly when the answer changes, and the
    *  user should see Save light up without having to guess or reload. */
   const settleSaveState = useCallback(
@@ -1077,6 +1070,13 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     buildLockRef.current?.release(activeId)
   }, [])
 
+  /**
+   * THE TURN TERMINAL, for every path that has one. Clears the streaming flag ONLY if this
+   * chat still owns it — a turn terminating after the user switched to a sibling chat must not
+   * open send over a reply still running there. Also signals the usage meter (else the header's
+   * token count only moves on page load); fired HERE, not per call site, because every
+   * terminal — including failed/stopped, which are billed too — routes through this function.
+   */
   const endGenerating = useCallback(
     (activeId: string) => {
       setGeneratingChatId((prev) => (prev === activeId ? null : prev))

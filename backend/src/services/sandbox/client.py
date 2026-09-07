@@ -141,9 +141,9 @@ _PROBE_MAX_ATTEMPTS: Final = 4
 _PROBE_START_SECONDS: Final = 0.5
 _PROBE_MAX_SECONDS: Final = 4.0
 
-# The restore transport: the base64'd git bundle is written into the
-# workspace, decoded, and unbundled onto the fresh container's disk, then `npm install`
-# reconciles the dynamic deps the snapshotted lockfile added on top of the pre-baked base.
+# The restore transport: the base64'd git bundle is written into the workspace, decoded, and
+# unbundled onto the fresh container's disk, then `npm install` reconciles the dynamic deps
+# the snapshotted lockfile added on top of the pre-baked base.
 # The baked node_modules survives `checkout -q -f` (there is NO `git clean`),
 # so this is a DELTA install, not a full reinstall — `npm install` (not `npm ci`, which
 # would wipe node_modules and defeat the baked base's speed). A non-zero install aborts the

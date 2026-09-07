@@ -293,13 +293,6 @@ export interface ParsedChunk {
   sawDone: boolean
 }
 
-/**
- * Split accumulated SSE text into complete frames + the carry remainder. A block without
- * its terminating blank line stays in `rest` untouched — a frame torn across chunks
- * reassembles on the next call. Malformed JSON in a data line throws (a KNOWN-shape
- * corruption must never be silently dropped); unknown frame `type`s parse fine and are
- * left to the caller.
- */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -377,14 +370,6 @@ function toProjectionItems(value: unknown): ProjectionItem[] {
   return items
 }
 
-/**
- * Parse-don't-validate at the wire boundary (the `buildSessionEvents.ts::toProgressEnvelope`
- * precedent): every KNOWN frame is narrowed field by field before its object is built — a
- * blanket `as TurnFrame` cast once let a `step` frame missing `item` reach consumers as
- * `undefined` and throw at render time, inside a stream reader, reading as a dropped
- * connection. Unknown `type`s keep the spread and surface verbatim, so streams stay
- * forward-extensible; returning null drops the frame.
- */
 function asWorkspaceState(value: unknown): 'preparing' | 'ready' | 'unavailable' | null {
   return value === 'preparing' || value === 'ready' || value === 'unavailable' ? value : null
 }
@@ -393,6 +378,14 @@ function asPreviewState(value: unknown): 'ready' | 'reconnecting' | null {
   return value === 'ready' || value === 'reconnecting' ? value : null
 }
 
+/**
+ * Parse-don't-validate at the wire boundary (the `buildSessionEvents.ts::toProgressEnvelope`
+ * precedent): every KNOWN frame is narrowed field by field before its object is built — a
+ * blanket `as TurnFrame` cast once let a `step` frame missing `item` reach consumers as
+ * `undefined` and throw at render time, inside a stream reader, reading as a dropped
+ * connection. Unknown `type`s keep the spread and surface verbatim, so streams stay
+ * forward-extensible; returning null drops the frame.
+ */
 function toTurnFrame(parsed: unknown): TurnFrame | null {
   if (!isRecord(parsed) || typeof parsed.type !== 'string') return null
   const seq = typeof parsed.seq === 'number' ? parsed.seq : 0
@@ -525,6 +518,13 @@ function toTurnFrame(parsed: unknown): TurnFrame | null {
   }
 }
 
+/**
+ * Split accumulated SSE text into complete frames + the carry remainder. A block without
+ * its terminating blank line stays in `rest` untouched — a frame torn across chunks
+ * reassembles on the next call. Malformed JSON in a data line throws (a KNOWN-shape
+ * corruption must never be silently dropped); unknown frame `type`s parse fine and are
+ * left to the caller.
+ */
 export function parseSseText(buffer: string): ParsedChunk {
   const frames: TurnFrame[] = []
   let sawDone = false

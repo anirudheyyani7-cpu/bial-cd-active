@@ -204,8 +204,8 @@ describe('LivePreview — status-driven visuals, all five statuses', () => {
   it('the "still working" overlay shows only while a LIVE preview keeps receiving activity', () => {
     const { container, rerender } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating />)
     // The copy is "Still working…", not "Still iterating…": "iterate" is a developer's word
-        // for a loop, and a citizen reading it beside their app has no way to tell whether it
-        // describes progress or a fault. Same overlay, same condition, plain language.
+    // for a loop, and a citizen reading it beside their app has no way to tell whether it
+    // describes progress or a fault. Same overlay, same condition, plain language.
     expect(container.textContent).toMatch(/still working/i)
     rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating={false} />)
     expect(container.textContent).not.toMatch(/still working/i)

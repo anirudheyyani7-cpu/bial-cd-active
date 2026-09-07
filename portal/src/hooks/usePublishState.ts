@@ -1,7 +1,6 @@
 /**
  * The publish read and the publish request, behind one lifetime — everything the chip needs
- * to say where an app stands and to act on it. Renamed from `useDeployment`; unchanged except
- * three derived values retired because the server now computes the one state they guessed at.
+ * to say where an app stands and to act on it.
  *
  * The approval lifecycle rides the same status response, because a surface with no app id
  * (the builder, pre-submit) can show nothing else.

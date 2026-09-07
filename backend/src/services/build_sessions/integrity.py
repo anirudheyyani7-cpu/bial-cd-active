@@ -516,9 +516,9 @@ class IntegrityVerdict:
     #: finished app with the repository deleted out from under it. Gating the quarantine write
     #: on `content_empty` would therefore do two bad things at once: skip the write on EVERY
     #: reversion (since `REVERTED` requires `content_empty` by construction, so the write would
-    #: be unreachable code), and skip it precisely in the case
-    #: where the working tree is the only surviving copy of the user's app. Quarantine unless we
-    #: positively know there is nothing to quarantine.
+    #: be unreachable code), and skip it precisely in the case where the working tree is the
+    #: only surviving copy of the user's app. Quarantine unless we positively know there is
+    #: nothing to quarantine.
     provably_bare: bool = False
     #: The container's HEAD at the moment of the verdict, for the alarm payload.
     head: str | None = None

@@ -64,10 +64,7 @@ export interface FilePartOffice {
   text: string
   truncated: boolean
   /** Human-readable truncation detail for the chip tooltip; only set when
-   * `truncated` is true. Added converting attachmentStore.ts — flagged as
-   * missing when this file was first written (Step 1), before
-   * attachmentStore.js's real construction site (`buildUserParts`) was
-   * traced. */
+   * `truncated` is true. */
   truncationNote?: string
 }
 

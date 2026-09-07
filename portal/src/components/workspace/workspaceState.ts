@@ -635,13 +635,6 @@ function atRest(preview: PreviewState, projectHasSavedBuild: boolean | null): Wo
 }
 
 /**
- * THE ONE HONEST ANSWER TO A QUESTION NOBODY MANAGED TO ASK.
- *
- * Reached from an `unknown` read and from having no read at all. Says nothing about the
- * container, promises nothing about the work, and offers the only verb that is safe against a
- * signal we could not interpret.
- */
-/**
  * THE NO-INVENTED-DURATIONS RULE, TAKEN LITERALLY: this says what is happening and names no number,
  * because nobody has measured one. The canvas's "about thirty seconds" and the register's "about
  * half a minute" are both dropped; a duration arrives from a measured constant or not at all.
@@ -660,6 +653,13 @@ function gettingReady(): WorkspaceState {
   }
 }
 
+/**
+ * THE ONE HONEST ANSWER TO A QUESTION NOBODY MANAGED TO ASK.
+ *
+ * Reached from an `unknown` read and from having no read at all. Says nothing about the
+ * container, promises nothing about the work, and offers the only verb that is safe against a
+ * signal we could not interpret.
+ */
 function couldNotRead(): WorkspaceState {
   return {
     name: 'could-not-read',

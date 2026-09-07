@@ -183,10 +183,9 @@ async def _take_the_copy_we_promised(
     # IMPORTED HERE, NOT AT MODULE SCOPE, and the reason is weight rather than a cycle. There is
     # no import cycle — `src.workers.reclamation` imports the reaper function-scoped, so nothing
     # closes a loop at module-import time. The weight is real: `pass_history` reaches
-    # `src.db.base`, which BUILDS
-    # THE ORM ENGINE at import, so a module-level bind puts that (and `src.broker`, by way of
-    # `src.workers.reclamation`) behind every import of the reaper — including the cold one
-    # `test_the_reaper_imports_without_the_fastapi_app` performs.
+    # `src.db.base`, which BUILDS THE ORM ENGINE at import, so a module-level bind puts that
+    # (and `src.broker`, by way of `src.workers.reclamation`) behind every import of the reaper
+    # — including the cold one `test_the_reaper_imports_without_the_fastapi_app` performs.
     from src.services.build_sessions.pass_history import (
         CopyAttempt,
         record_durable_copy_attempt,

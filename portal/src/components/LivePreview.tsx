@@ -126,11 +126,6 @@ const IDLE_BROKEN_TEXT =
 const STOPPED_RUNNING_TEXT =
   'Your app stopped running and needs to be brought back. Send a message and we\u2019ll restore it.'
 
-/** The headline for a pane whose container is not serving this project.
- *
- *  NONE OF THESE IS AN ERROR. "Preview unavailable" describes a platform fault; a reclaimed
- *  workspace is a sleeping workspace whose work is on durable storage, and the next prompt
- *  brings it back. */
 /** The three states that mean "no container is serving this project" — `alive` and `unknown` are
  *  pointedly excluded, and so is `starting`: a start already under way is the opposite of
  *  gone, and the server's own action mapping groups it with `alive` as "nothing to
@@ -139,6 +134,11 @@ const STOPPED_RUNNING_TEXT =
  *  same union instead of each asserting it with a cast. */
 type GoneState = Exclude<PreviewLifeState, 'alive' | 'unknown' | 'starting'>
 
+/** The headline for a pane whose container is not serving this project.
+ *
+ *  NONE OF THESE IS AN ERROR. "Preview unavailable" describes a platform fault; a reclaimed
+ *  workspace is a sleeping workspace whose work is on durable storage, and the next prompt
+ *  brings it back. */
 const GONE_TITLE: Record<GoneState, string> = {
   asleep: 'Your workspace is asleep',
   slot_taken: 'Another project has your workspace',

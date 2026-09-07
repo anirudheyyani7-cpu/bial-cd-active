@@ -493,8 +493,6 @@ async def test_a_build_that_wrote_nothing_fails_instead_of_reporting_success(
     The copy must say plainly that nothing was built, and must not claim the work is saved —
     there is no auto-save, and here there is not even any work to save. Mutation-check:
     restore the bare `return` in the mutation guard and `status == "completed"` goes red."""
-    # Mutation-check: restore the bare `return` in the mutation guard and this goes red on `status
-    # == "completed"`.
     engine = _fresh_engine
     user, project, conv = await _write_conversation(db_session, "wt13@rvaiglobal.com")
     manager, client = SessionManager(), FakeSandboxClient()

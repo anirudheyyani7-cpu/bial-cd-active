@@ -637,5 +637,5 @@ async def append_batch(
     )
 
 
-# THE MODE-SWITCH MARKER IS GONE. A chat's kind is
-# fixed at creation now, so there are no mode boundaries for a marker to name.
+# THE MODE-SWITCH MARKER IS GONE. A chat's kind is fixed at creation now, so there are no mode
+# boundaries for a marker to name.

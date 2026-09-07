@@ -267,12 +267,11 @@ class VerifyOutcome:
     # WHICH check could not be answered, on an INDETERMINATE verdict — `None` on every other.
     #
     # THE THREE ARE NOT THE SAME KIND OF SILENCE. A serving probe that never came back, or a
-    # baseline with no root commit to compare against, describes an app that is up and
-    # answering: "we could not confirm this change went in" is true of it. A READINESS budget
-    # that ran out describes an app that is not serving at
-    # all — and once patience is spent, thirty seconds of not coming up, three times over, has
-    # stopped being our impatience and become a fact about the app. Telling that citizen their
-    # app "looks like it's running" would be a new false claim.
+    # baseline with no root commit to compare against, describes an app that is up and answering:
+    # "we could not confirm this change went in" is true of it. A READINESS budget that ran out
+    # describes an app that is not serving at all — and once patience is spent, thirty seconds of
+    # not coming up, three times over, has stopped being our impatience and become a fact about the
+    # app. Telling that citizen their app "looks like it's running" would be a new false claim.
     unanswered: Unanswered | None = None
     # The browser crash reports this pass consumed. Carried on the outcome so `verify` can hand
     # them to a later pass rather than letting a discarded one take them to the grave — see
@@ -628,11 +627,10 @@ async def _verify_once(
     # CARRIED, not merely drained. `drain_client_errors` is destructive and `verify` may run this
     # more than once — for its INDETERMINATE patience and for the stale-log-evidence re-check — so
     # a report consumed by a pass that is then discarded is gone from the pass that actually
-    # decides. That is a
-    # browser crash flipping the verdict from UNHEALTHY to HEALTHY between two looks at the same
-    # app: a false green, reintroduced by the fix for a different one.
-    # "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER,
-    # never about each attempt at it.
+    # decides. That is a browser crash flipping the verdict from UNHEALTHY to HEALTHY between two
+    # looks at the same app: a false green, reintroduced by the fix for a different one.
+    # "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER, never
+    # about each attempt at it.
     client_reports = [*carried_reports, *drain_client_errors(handle.app_name)]
     # Only a CRASH gates the verdict — see `NON_FATAL_CLIENT_SOURCES`. Both lists are kept: the
     # fatal ones decide, the full set is what the agent gets to read when they decide red.
@@ -663,10 +661,9 @@ async def _verify_once(
         rests_on_log_evidence = dev_ready
     elif dev_died and not dev_ready:
         # NOT re-checkable, and that distinction is the whole safety of the stale-log-evidence
-        # re-check. A crash MARKER is
-        # re-produced by requesting the route again, so a second pass can tell a stale one from a
-        # current one. A dead child's last words cannot be: nothing re-emits them, so a re-check
-        # would read an empty window and call the death fixed.
+        # re-check. A crash MARKER is re-produced by requesting the route again, so a second pass
+        # can tell a stale one from a current one. A dead child's last words cannot be: nothing
+        # re-emits them, so a re-check would read an empty window and call the death fixed.
         state = HealthState.UNHEALTHY
         error = dev_died_error(
             exit_code=status.exit_code,

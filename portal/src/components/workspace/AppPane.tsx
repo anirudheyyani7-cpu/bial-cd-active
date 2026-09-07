@@ -115,13 +115,6 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   // host — the two must not disagree about whether they are still on their way out.
   const leaving = usePaneLeaving(visible)
 
-  /**
-   * MOVE FOCUS BACK TO THE RAIL, and do it by focusing the region rather than hunting for its
-   * first control. A `tabindex="-1"` container is programmatically focusable without joining the
-   * tab order, so the next Tab continues from the rail's top — which is what a person escaping the
-   * frame actually wants. Querying for "the first button" would break the moment the rail's first
-   * element is not one.
-   */
   // THE STATES THAT MEAN NOTHING IS SERVING, and therefore that a held address is stale.
   //
   // `could-not-read` is deliberately absent: a read that decided nothing must not retire a frame
@@ -131,6 +124,13 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   // A STATUS WITH NO URL IS THE LOADING STATE, not an empty pane — see the docblock.
   const frameIt = !stale && (address.url !== null || address.status !== null)
 
+  /**
+   * MOVE FOCUS BACK TO THE RAIL, and do it by focusing the region rather than hunting for its
+   * first control. A `tabindex="-1"` container is programmatically focusable without joining the
+   * tab order, so the next Tab continues from the rail's top — which is what a person escaping the
+   * frame actually wants. Querying for "the first button" would break the moment the rail's first
+   * element is not one.
+   */
   const skipPastTheApp = useCallback(() => {
     const rail = document.getElementById(WORKSPACE_RAIL_ID)
     if (!rail) return

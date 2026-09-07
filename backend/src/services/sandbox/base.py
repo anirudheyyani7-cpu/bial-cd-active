@@ -555,8 +555,8 @@ class SandboxClient(abc.ABC):
     ) -> SandboxHandle:
         """Provision a BRAND-NEW container for `user_id`. `app_env` is the app's injected
         environment, every name in it chosen to survive the supervisor's child-env scrub
-        allowlist;
-        what belongs in it is `manager._resolve_sandbox`'s to decide.
+        allowlist; what belongs in it is `manager._resolve_sandbox`'s to decide.
+
         Returns a handle with `ready=False`. The caller MUST already hold the Redis
         one-per-user lock. Transient provisioning errors retried with capped
         exponential backoff."""

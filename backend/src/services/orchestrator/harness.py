@@ -538,17 +538,16 @@ class BuildOrchestrator:
                         history=run.all_messages(),
                         persisted_from=persisted_from,
                     )
-                    # Like the live turn engine, `declare_done` stops buying a round-trip here
-                    # too. `node` is already the NEXT model request; walking into it spends a
-                    # full request whose only product is a closing paragraph nothing renders.
-                    # The tool's own return
-                    # text tells the model "this turn ends here and nothing further is asked of
-                    # you" — and that text is SHARED, one tool body serving this harness and the
-                    # Write engine both, so a cut in only one of them made the tool lie to every
-                    # legacy-harness build and then charge it for the sentence it had just
-                    # promised not to ask for. The verdict still decides whether the build is
-                    # over (`_run_loop`'s done-gate is untouched), and a red one re-enters with
-                    # the repair prompt exactly as before.
+                    # Like the live turn engine, `declare_done` stops buying a round-trip here too.
+                    # `node` is already the NEXT model request; walking into it spends a full
+                    # request whose only product is a closing paragraph nothing renders. The tool's
+                    # own return text tells the model "this turn ends here and nothing further is
+                    # asked of you" — and that text is SHARED, one tool body serving this harness
+                    # and the Write engine both, so a cut in only one of them made the tool lie to
+                    # every legacy-harness build and then charge it for the sentence it had just
+                    # promised not to ask for. The verdict still decides whether the build is over
+                    # (`_run_loop`'s done-gate is untouched), and a red one re-enters with the
+                    # repair prompt exactly as before.
                     #
                     # THE PENDING REQUEST IS TAKEN OFF THE NODE ON THE WAY OUT, and it has to be.
                     # A `ModelRequestNode` carries the tool ANSWERS and only appends them to the

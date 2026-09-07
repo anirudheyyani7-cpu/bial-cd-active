@@ -173,9 +173,8 @@ def _coordination_is_gone() -> AppApiError:
     # the body — which for these routes is a refusal, not a pass.
     #
     # Same user-facing copy: from the caller's side "not configured yet" and "not answering" are
-    # the same unavailable service, and the difference is an internal detail the caller is
-    # not owed. Unreachable in production, where the settings gate requires
-    # Redis.
+    # the same unavailable service, and the difference is an internal detail the caller is not
+    # owed. Unreachable in production, where the settings gate requires Redis.
     return coordination_is_gone()
 
 
@@ -674,9 +673,9 @@ class SaveStateResponse(CamelModel):
     app_id: str | None = None
     dirty: bool | None = None
     container_head: str | None = None
-    # When the platform last autosaved. Lets the UI offer unsaved work back
-    # after a reclaim instead of quietly forgetting it. Never a substitute for the user's own
-    # save — `savedHead` is still the only thing a relaunch restores.
+    # When the platform last autosaved. Lets the UI offer unsaved work back after a reclaim
+    # instead of quietly forgetting it. Never a substitute for the user's own save —
+    # `savedHead` is still the only thing a relaunch restores.
     recovery_at: datetime | None = None
     saved_head: str | None = None
 

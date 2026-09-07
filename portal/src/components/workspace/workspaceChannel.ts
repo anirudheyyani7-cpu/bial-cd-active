@@ -370,8 +370,9 @@ export function createWorkspaceChannel(): WorkspaceChannel {
  * `null` outside a shell, and that is not an error condition.
  *
  * Every publisher below no-ops when there is no channel, because the surfaces are mounted without
- * a shell in fifteen existing test suites and could legitimately be rendered anywhere. A surface that cannot reach a pane simply does not get one; it must never
- * throw, because the thing it would take down is the conversation.
+ * a shell in fifteen existing test suites and could legitimately be rendered anywhere. A surface
+ * that cannot reach a pane simply does not get one; it must never throw, because the thing it
+ * would take down is the conversation.
  */
 const WorkspaceChannelContext = createContext<WorkspaceChannel | null>(null)
 

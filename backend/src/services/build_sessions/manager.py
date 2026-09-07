@@ -2282,10 +2282,10 @@ class SessionManager:
                 # arm below.
                 attached = False
                 # The cold-start latency clock, and its two instants are named because the
-                # plausible choices
-                # differ by tens of seconds. It starts when the RESTORE ARM IS ENTERED (below,
-                # in the `NoLiveSandboxError` handler — the attach attempt has just failed and
-                # the platform has decided to restore) and stops when `wait_ready` returns.
+                # plausible choices differ by tens of seconds. It starts when the RESTORE ARM IS
+                # ENTERED (below, in the `NoLiveSandboxError` handler — the attach attempt has
+                # just failed and the platform has decided to restore) and stops when
+                # `wait_ready` returns.
                 # Everything before that first instant — the slot check, the reclaim refusal, the
                 # lock wait, app resolution, the snapshot gate, the commit, the attach attempt
                 # itself — is OUTSIDE the number, because none of it is a citizen waiting for a
@@ -2400,18 +2400,17 @@ class SessionManager:
                 # `restore_from_snapshot` returns a ready=False handle; without dev_start +
                 # wait_ready the fresh preview URL 404s. This is the step restore omits.
                 #
-                # On the ATTACH arm it is an optimization instead, and it is NOT
-                # unconditionally idempotent — so it fails open (ambiguity denies). The
-                # supervisor answers
+                # On the ATTACH arm it is an optimization instead, and it is NOT unconditionally
+                # idempotent — so it fails open (ambiguity denies). The supervisor answers
                 # `/dev/start` with TWO different 409s (`sandbox/supervisor/app.py`): the
                 # owned-child one reports `running=True` and the client folds it into the
-                # already-running sentinel, but the UNOWNED-SERVER one — the dev port is
-                # serving while `_Dev.proc` is dead, which is exactly what the agent leaves
-                # behind when it starts its own server through the open-sandbox `run_command`
-                # surface — reports `running=False` and the client raises `SandboxError`.
-                # Unguarded that would land in compensation, i.e. we would destroy a container
-                # for the sin of already serving the page we came to show. `wait_ready` below
-                # is the real gate either way, and it answers from the server that is up.
+                # already-running sentinel, but the UNOWNED-SERVER one — the dev port is serving
+                # while `_Dev.proc` is dead, which is exactly what the agent leaves behind when
+                # it starts its own server through the open-sandbox `run_command` surface —
+                # reports `running=False` and the client raises `SandboxError`. Unguarded that
+                # would land in compensation, i.e. we would destroy a container for the sin of
+                # already serving the page we came to show. `wait_ready` below is the real gate
+                # either way, and it answers from the server that is up.
                 # Flipped to False only by the attach arm's fail-open readiness path below; it
                 # rides out on the response so the pane can label a preview that is framable but
                 # not yet serving, instead of being told "ready" and framing a hang.

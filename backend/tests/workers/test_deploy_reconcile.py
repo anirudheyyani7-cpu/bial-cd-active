@@ -196,9 +196,8 @@ async def test_the_log_line_carries_counts_and_nothing_identifying(
 async def test_a_pass_that_resolves_nothing_still_logs(
     monkeypatch: pytest.MonkeyPatch, db_session: Any, on_duty: None
 ) -> None:
-    """Silence is how an out-of-process worker dies unnoticed. A completed pass is the liveness
-    signal, so "nothing to do" must be distinguishable from "nothing
-    ran"."""
+    """Silence is how an out-of-process worker dies unnoticed. A completed pass is the
+    liveness signal, so "nothing to do" must be distinguishable from "nothing ran"."""
     _wire(monkeypatch, db_session, _Arm(fqdn=None))
 
     with capture_logs() as logs:

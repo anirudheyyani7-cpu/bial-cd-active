@@ -62,23 +62,6 @@ function normalizeHeader(doc: unknown): ConversationHeader | null {
   }
 }
 
-/**
- * Server projection items → the in-memory message shape the pages render
- * ({id, role, parts, seq}). The reload read returns DISPLAY ITEMS derived
- * server-side from the native transcript, not raw message docs.
- *
- * Every projection item type is rendered, including the turn terminal's arm, which draws
- * conditionally rather than always:
- *   - `user_text` / `assistant_text` — plain chat bubbles;
- *   - `banner` — the build outcome (stored sentence + the `type:'build'` part the
- *     builder page's renderer draws);
- *   - `step` — a stored friendly agent step (hidden steps skipped, as the live feed does);
- *   - `build_in_progress` — the durable anchor for a build with no recorded outcome;
- *   - `plan_options` — the Build it / Keep refining card, carried with its STORED
- *     resolution state so live and reload agree;
- *   - `turn_terminal` — the durable record of HOW a turn ended, rendered as the outcome
- *     sentence when the ending needs explaining and silent when it does not (see its arm).
- */
 /** The raw projection item shapes read here — one union discriminated on `type`, kept LOCAL
  * (not exported) since this is the server-projection wire shape, not the message-parts shape
  * (`messageTypes.ts`) it maps into. UNCHECKED (pre-migration behavior): asserted per
@@ -134,6 +117,22 @@ function bannerStatus(banner: unknown): BuildOutcomeStatus {
 }
 
 /**
+ * Server projection items → the in-memory message shape the pages render
+ * ({id, role, parts, seq}). The reload read returns DISPLAY ITEMS derived
+ * server-side from the native transcript, not raw message docs.
+ *
+ * Every projection item type is rendered, including the turn terminal's arm, which draws
+ * conditionally rather than always:
+ *   - `user_text` / `assistant_text` — plain chat bubbles;
+ *   - `banner` — the build outcome (stored sentence + the `type:'build'` part the
+ *     builder page's renderer draws);
+ *   - `step` — a stored friendly agent step (hidden steps skipped, as the live feed does);
+ *   - `build_in_progress` — the durable anchor for a build with no recorded outcome;
+ *   - `plan_options` — the Build it / Keep refining card, carried with its STORED
+ *     resolution state so live and reload agree;
+ *   - `turn_terminal` — the durable record of HOW a turn ended, rendered as the outcome
+ *     sentence when the ending needs explaining and silent when it does not (see its arm).
+ *
  * @param onUnknown Injected so a test can assert the surfaced item rather than scrape the console.
  *   A parameter with a default rather than module state: every existing call site is unchanged and
  *   two tests running in parallel cannot see each other's handler.

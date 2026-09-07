@@ -359,8 +359,7 @@ async def test_the_explanation_is_obliged_by_the_merged_answers_not_the_citizens
 ) -> None:
     """The sharp edge of aligning the explanation requirement to routing: an all-No citizen
     declaration whose REVIEW raises a weighted Yes still needs an explanation, because that merged
-    set is
-    what routes. Nothing about the citizen's own answers could have predicted it."""
+    set is what routes. Nothing about the citizen's own answers could have predicted it."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     await _seed_review(
         db_session, app_id=app_row.id, user_id=user.id, verdicts=_verdicts(health_data="yes")

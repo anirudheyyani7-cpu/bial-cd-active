@@ -733,8 +733,6 @@ export async function fetchPreviewState(
   }
 }
 
-/** Is there unsaved work? Compared by COMMIT server-side, so it survives a reload and a
- *  second tab — neither of which a local dirty flag would. */
 /**
  * What is the app compiling right now — for a tab with NO LIVE TURN.
  *
@@ -797,6 +795,8 @@ export async function checkWorkspace(
   }
 }
 
+/** Is there unsaved work? Compared by COMMIT server-side, so it survives a reload and a
+ *  second tab — neither of which a local dirty flag would. */
 export async function fetchSaveState(
   projectId: string,
   deps: AuthFetchDeps = {},

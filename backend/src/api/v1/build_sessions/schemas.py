@@ -88,9 +88,8 @@ RELAUNCH_PREVIEW_STAY_SECONDS = 1800  # 30 min
 #
 # The TTL is MANDATORY, not a default. The registry hash's own missing TTL is exactly the
 # mistake a lease must not repeat: one that never expires is a container that can never be
-# reclaimed. It also bounds a lease abandoned by a process
-# that died mid-renewal, and it is the ceiling the fail-closed read compares against, so a
-# bad clock cannot buy a millennium.
+# reclaimed. It also bounds a lease abandoned by a process that died mid-renewal, and it is
+# the ceiling the fail-closed read compares against, so a bad clock cannot buy a millennium.
 #
 # 120 s over a 30 s cadence = three missed renewals of head-room, the same shape as
 # HEARTBEAT_TTL_SECONDS over HEARTBEAT_CADENCE_SECONDS. Head-room is the point: a cadence
@@ -417,14 +416,14 @@ class ErrorSource(enum.StrEnum):
     TSC = "tsc"  # `tsc` typecheck failure, read over the supervisor's /exec.
     NEXT_BUILD = "next_build"  # `next build` failure, read over the supervisor's /exec.
     SERVER = "server"  # dev-server stderr, read over the supervisor's /dev/logs.
-    # The browser client-error arm. Its REPORT stays agent-only (see
-    # `agent_only_detail`): it still reaches the agent channel (`build_repair_prompt` acts on
-    # it, a repair run follows) and the health verdict (`outcome.error` carries it unchanged),
-    # but both current emit sites — `turns/engine.py` and `orchestrator/harness.py` — skip the
-    # `DiagnosticFrame` emit for this source on purpose, so it is NOT rendered to the citizen
-    # today. It still gets a real citizen-facing sentence + action in `errors.user_facing`
-    # (not a placeholder), so that if this ever gets rendered, the copy already
-    # speaks product language rather than a JS stack trace.
+    # The browser client-error arm. Its REPORT stays agent-only (see `agent_only_detail`): it
+    # still reaches the agent channel (`build_repair_prompt` acts on it, a repair run follows)
+    # and the health verdict (`outcome.error` carries it unchanged), but both current emit
+    # sites — `turns/engine.py` and `orchestrator/harness.py` — skip the `DiagnosticFrame`
+    # emit for this source on purpose, so it is NOT rendered to the citizen today. It still
+    # gets a real citizen-facing sentence + action in `errors.user_facing` (not a
+    # placeholder), so that if this ever gets rendered, the copy already speaks product
+    # language rather than a JS stack trace.
     CLIENT = "client"
 
 
@@ -642,10 +641,10 @@ class ParkedTree(CamelModel):
 class ParkedTreesResponse(CamelModel):
     """`POST /v1/build-sessions/internal/apps/{app_id}/parked` → 200.
 
-    THE TREES WOULD OTHERWISE BE WRITE-ONLY: no reader, no retention, no
-    runbook. In a false-`REVERTED` case those objects hold the only copy of a citizen's newest
-    work — so it must not reproduce
-    it. Newest first, because the useful one is almost always the last one."""
+    THE TREES WOULD OTHERWISE BE WRITE-ONLY: no reader, no retention, no runbook. In a
+    false-`REVERTED` case those objects hold the only copy of a citizen's newest work, so this
+    response must not reproduce that write-only shape. Newest first, because the useful one is
+    almost always the last one."""
 
     trees: list[ParkedTree]
 

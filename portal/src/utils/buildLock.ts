@@ -38,8 +38,7 @@ export interface BuildLock {
   /**
    * Advisory claim. Announces this conversation's build to other tabs and returns null,
    * or the claim that blocks it. NOT the enforcement boundary — the server `start`'s 409 is
-   * authoritative;
-   * a stale/lost claim here never blocks the real start.
+   * authoritative; a stale/lost claim here never blocks the real start.
    */
   acquire(projectId: string, conversationId: string): BuildClaim | null
   /** Advisory release of this conversation's claim, if it holds one (the server owns the real lock). */

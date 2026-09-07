@@ -105,19 +105,17 @@ router = APIRouter(prefix="/projects", tags=["deploy"])
 # because that file is being edited by two other in-flight branches; mirrors
 # admin/router.py's own two-router-per-file shape (`router` + `users_router`).
 #
-# THE PREFIX IS `/admin/apps`, NOT `/apps`, AND THE FILE IT LIVES IN DOES NOT GET A VOTE.
-# Keeping the code out of admin/router.py avoids a merge conflict; that is never a reason
-# to change the URL. Every
-# superadmin-gated app lever in this codebase answers on `/v1/admin/apps/{app_id}/...`
-# (`admin/router.py`'s `APIRouter(prefix="/admin/apps", ...)`), while `/v1/apps/*` is the
-# citizen surface (`apps/router.py`'s `APIRouter(prefix="/apps", ...)`),
-# where every route is `user_id`-scoped and a cross-user id is a non-leaking 404. Mounting
-# an admin lever there would give that prefix two different authorization contracts, hide
-# it from any gateway/WAF/log filter keyed on `/v1/admin`, and split it off in OpenAPI —
-# and URLs are public contract, so moving it afterwards is a breaking change. The portal's
-# admin client is built entirely on `/api/admin/apps/*` (portal/src/utils/appRegistryApi.ts)
-# and the edge rewrites `/api/X` -> `/v1/X` blindly, so this prefix is what a follow-up
-# admin button already expects.
+# THE PREFIX IS `/admin/apps`, NOT `/apps`, AND THE FILE IT LIVES IN DOES NOT GET A VOTE. Keeping
+# the code out of admin/router.py avoids a merge conflict; that is never a reason to change the
+# URL. Every superadmin-gated app lever in this codebase answers on `/v1/admin/apps/{app_id}/...`
+# (`admin/router.py`'s `APIRouter(prefix="/admin/apps", ...)`), while `/v1/apps/*` is the citizen
+# surface (`apps/router.py`'s `APIRouter(prefix="/apps", ...)`), where every route is
+# `user_id`-scoped and a cross-user id is a non-leaking 404. Mounting an admin lever there would
+# give that prefix two different authorization contracts, hide it from any gateway/WAF/log filter
+# keyed on `/v1/admin`, and split it off in OpenAPI — and URLs are public contract, so moving it
+# afterwards is a breaking change. The portal's admin client is built entirely on
+# `/api/admin/apps/*` (portal/src/utils/appRegistryApi.ts) and the edge rewrites `/api/X` ->
+# `/v1/X` blindly, so this prefix is what a follow-up admin button already expects.
 # TWO ROUTERS IN ONE FILE, AND TWO NAMESPACES. `router` above is the citizen-facing pair;
 # this one carries the superadmin-only `unpublish` lever — mirroring `admin/router.py`'s own
 # two-router shape. Which FILE the code lives in and which URL it answers on are independent

@@ -215,16 +215,66 @@ there, and each was false in the way a prompt is worst at: confidently, on every
 
 `compose_kind_prompt` chooses; `test_mode_prompts.py` asserts what each kind gets."""
 
+NARRATION_EXAMPLES = """\
+HOW YOUR MESSAGES SOUND — everything you write reaches the person who asked for this app, in the \
+order you write it, and the short lines you write between two pieces of work reach them just as \
+they are. Here is the same moment, written twice.
+
+Starting a piece of work
+  Instead of: "Scaffolding the stops route and wiring a Drizzle schema for it."
+  Write: "I'm building the shuttle stops page now — you'll be able to add a stop and see them \
+all in one list."
+
+Carrying on mid-turn — the quick note to yourself is the one that slips out
+  Instead of: "Layout has Toaster already. The build should be clean."
+  Write: "The stops list is on the page. Next I'll add the form for putting a new stop in."
+
+When something goes wrong
+  Instead of: "tsc failed — pickup time is a text column and the form posts a number."
+  Write: "The pickup times weren't saving in the right format. I've fixed that and I'm carrying \
+on."
+
+Each of them does the same thing: it says what the user can now do, or what just became true \
+for their app, and leaves the machinery out."""
+"""R32 — the audience contract shown rather than stated, and it goes FIRST in every prompt.
+
+WHY EXAMPLES AND WHY HERE. `NARRATION_VOICE` states the contract well and has been ignored twice
+in production, both times mid-turn: 2,397 words of paths and framework nouns on the 2026-08-18
+demo, and one terse aside — "Layout has Toaster already. The build should be clean." — as the
+first thing a citizen read on an ordinary successful build (#185). The second is the shape this
+block is aimed at: not a monologue under stress, but a half-thought between two tool calls, which
+reads as a note to yourself and lands in someone's chat. A rule the model has to apply to its own
+next sentence is harder to follow than a sentence it can pattern-match against, so the three
+contrast pairs cover the three moments it has actually failed at — the opening, the gap between
+two steps, and the recovery from an error.
+
+IT LEADS THE COMPOSED PROMPT ON PURPOSE, and that placement is the unit. `NARRATION_VOICE` is
+some 530 words in on a Plan prompt, 570 on a Build one and 1,460 on the harness arm — behind the
+portal description, the data rules and (on the harness) the whole working-rules head. The two
+sites that compose a prompt (`mode_prompts._base` and `orchestrator.prompt.BUILD_SYSTEM_PROMPT`)
+therefore name THIS block before anything else, and the voice block's closing sentence points
+back at it. Moving it down the prompt is the regression to watch for.
+
+NO TEST ASSERTS IT IS PRESENT, deliberately (D13). "The composed prompt contains the examples" is
+the exact assertion that let the August leak ship green through 3,300 tests: it proves the
+instruction was written, which nobody doubted, and says nothing about what the model then wrote.
+`test_voice_channel.py::test_the_word_prompt_appears_in_no_claim_that_the_contract_holds` is the
+guard against that habit coming back. This is verified the way the leak was found — by reading
+real output — and a later prompt edit that undoes it is an accepted, stated risk."""
+
 NARRATION_VOICE = """\
 TALKING TO THE USER — your messages are read by the person who asked for this app and is going \
 to use it, so write them the way you would talk to that colleague. Say it in plain, everyday \
 words, about the app they use. Keep the how-it's-built details behind the scenes — the file and \
 folder names, the commands you run, the libraries and frameworks you reach for, and the raw text \
-your tools print all belong to the work itself. Hold the same register when something goes \
+your tools print all belong to the work itself. That holds for the shortest lines as much as the \
+long ones: there is no note-to-self channel here, so a half-thought you jot between two steps \
+arrives in their chat exactly as you wrote it. Hold the same register when something goes \
 wrong: say what is not working yet in terms of the app, say what you are doing about it, and \
 carry on — a setback you recovered from is one plain sentence. The work itself is recorded step \
 by step as you do it, so the technical account already exists; what you write here is what the \
-user reads."""
+user reads. The examples at the top of this prompt are what all of that sounds like in \
+practice."""
 """R79/R80/R81 — the audience contract. ONE statement of how the agent talks to the user, and
 every chat kind inherits it.
 
@@ -244,6 +294,14 @@ deleted the length caps beside it. It does not tell the agent which words it may
 long it may write; it tells it who is reading. Two live incidents came from taking it out —
 a build wrote 2,397 words of file paths and framework concepts to a citizen who had asked for
 an app — so it stays as written.
+
+THE SHORT-LINES CLAUSE IS #185's, and it is the one sentence this block was missing. Both prior
+readings of "your messages" took it to mean the things the agent addresses to the user — so a
+terse aside between two tool calls ("Layout has Toaster already") did not feel like a message at
+all, and went out unedited as the first thing the citizen read. There is no channel that swallows
+it any more (the `pending_text` drop was removed for throwing away every explanation between the
+receipts along with the jargon), so the prompt has to say that plainly. `NARRATION_EXAMPLES`
+shows the same case; this states it.
 
 NAMED BY TWO COMPOSITION SITES, EMITTED ONCE EACH. `mode_prompts._base()` carries it into both
 composed chat prompts; `BUILD_SYSTEM_PROMPT` names it separately because it cannot call `_base`
@@ -270,7 +328,9 @@ the cross-package edge this module exists to avoid."""
 # HEAD ends before DATA INTEGRITY (which BASE carries once in mode composition) and TAIL
 # resumes after it; `BUILD_SYSTEM_PROMPT` reassembles all three byte-identically.
 # THE AUDIENCE CONTRACT (`NARRATION_VOICE`) IS NOT HERE — it is kind-blind, and the two sites
-# that name it are `mode_prompts._base()` and `BUILD_SYSTEM_PROMPT`. TAIL used to carry a
+# that name it are `mode_prompts._base()` and `BUILD_SYSTEM_PROMPT`. Its examples
+# (`NARRATION_EXAMPLES`) are named at those same two sites and must LEAD each prompt, which is a
+# second reason neither belongs in a block that lands this far down. TAIL used to carry a
 # per-kind sentence about message LENGTH beside it; that sentence and its planning twin are
 # gone, along with the closing-message vocabulary rule, because a prompt that tells the agent
 # how long it may write and which words it may not use is deciding what a citizen is allowed to

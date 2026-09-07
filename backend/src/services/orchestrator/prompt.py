@@ -38,6 +38,9 @@ from src.core.prompt_blocks import (
     DATA_INTEGRITY_RULES as DATA_INTEGRITY_RULES,
 )
 from src.core.prompt_blocks import (
+    NARRATION_EXAMPLES as NARRATION_EXAMPLES,
+)
+from src.core.prompt_blocks import (
     NARRATION_VOICE as NARRATION_VOICE,
 )
 from src.core.prompt_blocks import (
@@ -45,6 +48,8 @@ from src.core.prompt_blocks import (
 )
 
 BUILD_SYSTEM_PROMPT = f"""\
+{NARRATION_EXAMPLES}
+
 {WRITE_IDENTITY}
 
 {BUILD_WORKING_RULES_HEAD}
@@ -64,6 +69,12 @@ cannot call, because `_base(context, kind)` needs a `PromptContext` the standalo
 source for. Lifting the block out of `BUILD_WORKING_RULES_TAIL` without this line would have
 deleted the audience contract from a live prompt and reinstated the 2026-08-18 defect that
 produced it.
+
+IT LEADS WITH `NARRATION_EXAMPLES` FOR THE SAME REASON, one step further on (R32 / #185). The
+contract being present was never the problem; being buried behind the whole working-rules block
+was. `mode_prompts._base()` puts the examples at the front of both chat prompts and this line is
+their only route into the harness arm, so the two Write prompts still open on the same three
+sentences. Reordering this f-string so anything precedes them is the regression.
 
 IT ALSO OVER-STATES ITS OWN TOOL SURFACE, and that is known rather than accidental. `TAIL` carries
 `WRITE_TOOL_SURFACE`, a snapshot of what the CHAT Build arm registers (twelve tools), while

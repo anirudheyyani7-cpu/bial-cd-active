@@ -46,6 +46,7 @@ from src.core.prompt_blocks import (
     DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY,
     FIRST_SLICE_RULE,
     KEEP_PLANNING_LABEL,
+    NARRATION_EXAMPLES,
     NARRATION_VOICE,
     PORTAL_SURFACES,
     WRITE_IDENTITY,
@@ -65,9 +66,15 @@ class PromptContext:
 
 
 def _base(context: PromptContext, kind: ChatKind) -> str:
-    """BASE — identity, project grounding, the truthful portal self-description (R5), and the
-    one cross-mode safety block. Shared by every kind so each wording exists exactly once
-    (pattern 6; U1's and R5's single sources).
+    """BASE — the voice examples, identity, project grounding, the truthful portal
+    self-description (R5), and the one cross-mode safety block. Shared by every kind so each
+    wording exists exactly once (pattern 6; U1's and R5's single sources).
+
+    THE EXAMPLES COME BEFORE THE IDENTITY SENTENCE, which is the whole of R32 (#185). The
+    audience contract has never been missing from this prompt; what it lacked was a position and
+    a pair of sentences to match against. `NARRATION_VOICE` still states the rule where it always
+    has, some 530 words in — this is the same contract shown first, in three pairs the model
+    reads before it writes anything. Anything inserted above it takes that away.
 
     THE ONE THING BASE VARIES BY KIND, and it is not a second wording — it is the SAME
     `DATA_INTEGRITY_RULES` string with two clauses dropped. Both clauses describe Build-only
@@ -93,7 +100,7 @@ def _base(context: PromptContext, kind: ChatKind) -> str:
         else DATA_INTEGRITY_RULES_WITHOUT_THE_WRITE_MACHINERY
     )
     return (
-        f"{identity}\n\n{PORTAL_SURFACES}\n\n{integrity}\n\n"
+        f"{NARRATION_EXAMPLES}\n\n{identity}\n\n{PORTAL_SURFACES}\n\n{integrity}\n\n"
         f"{NARRATION_VOICE}\n\n{FIRST_SLICE_RULE}"
     )
 
@@ -178,7 +185,11 @@ stay so: `_base(context)` names it for every kind now, so adding it here would p
 voice rule twice in a composed Build prompt while the standalone build prompt printed it once —
 the two build prompts drifting in the one dimension the shared blocks exist to keep identical.
 A test counts it at exactly one in the composed prompt, and that count is the guard against the
-deletion this block has already suffered twice."""
+deletion this block has already suffered twice.
+
+`NARRATION_EXAMPLES` is ABSENT for a third reason on top of that one: `_base()` names it, and it
+has to lead the composed prompt. Naming it in a segment would put a second copy six hundred words
+down — the position is the point, and a copy in the middle quietly cancels it."""
 
 
 # --- THE PER-TURN RESTATEMENT IS GONE, and nothing replaced it (R17) ------------------

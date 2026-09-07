@@ -15,9 +15,13 @@
  * as `ProjectDescriptionEditor`" — but that file implements a real container-level focus trap
  * and this one did not: there was no trap at all, and Escape was wired only to the `<input>`'s
  * own `onKeyDown`, so tabbing to Cancel or Save and pressing it did nothing (round-4 review).
- * Radix gives the trap, Escape from anywhere inside, `role="dialog"`, and focus restored to the
- * pencil that opened it — which survives a rename, so no `onCloseAutoFocus` override is needed
- * here the way the delete dialog needs one.
+ * Radix gives the trap, Escape from anywhere inside, `role="dialog"` — and focus back on the
+ * pencil that opened it, which survives a rename. That last one was NOT free, and the docblock
+ * used to claim it was: Radix's restore runs in `FocusScope`'s cleanup, and this dialog is
+ * rendered conditionally, so `onClose()` deletes the whole subtree in the same commit and the
+ * restore never runs. Measured in a browser, Escape left `document.activeElement` on the body
+ * with the pencil still connected. The backstop that fixes it lives in the vendored `dialog.tsx`,
+ * once, for all five dialogs — see `useFocusBackstop` there.
  *
  * IT CARRIES THE 8-WORD CAP (#158 §14), because §14's rule is "both entry points, or neither".
  * The server refuses a 9-word name on PATCH exactly as it does on POST, so a rename without a

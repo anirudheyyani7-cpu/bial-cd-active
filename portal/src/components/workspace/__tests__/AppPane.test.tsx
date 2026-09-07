@@ -999,25 +999,43 @@ describe('★ the wait counter measures the wait, it does not count its own tick
   // start and comes back was told a number minutes short of the truth.
   const starting = () => reportFor(reading(), null, true)
 
-  beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
+  // THE CLOCK IS DRIVEN BY HAND, because the counter reads `performance.now()` — monotonic, so
+  // an NTP correction cannot make the wait count backwards — and `vi.setSystemTime` moves only
+  // the Date clock. Holding the reading here is also what lets the throttled-tab case exist at
+  // all: real time has to advance while the interval does NOT fire, which no timer API models.
+  let clock = 0
+  beforeEach(() => {
+    clock = 0
+    vi.useFakeTimers()
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  /** Advance real time AND fire the interval, the ordinary case. */
+  const tick = (ms: number) => {
+    clock += ms
+    vi.advanceTimersByTime(ms)
+  }
 
   it('starts at zero and advances with the clock', () => {
     renderPane((c) => c.workspace.set(starting()))
     expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('0s so far')
 
-    act(() => { vi.advanceTimersByTime(3_000) })
+    act(() => { tick(3_000) })
     expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('3s so far')
   })
 
   it('★ tells the truth after a throttled tab has swallowed most of the ticks', () => {
     renderPane((c) => c.workspace.set(starting()))
-    act(() => { vi.advanceTimersByTime(3_000) })
+    act(() => { tick(3_000) })
 
     // The tab goes to the background: real time keeps passing, the interval does not fire.
     // Then it comes forward and gets ONE tick.
-    act(() => { vi.setSystemTime(Date.now() + 117_000) })
-    act(() => { vi.advanceTimersByTime(1_000) })
+    act(() => { clock += 117_000 })
+    act(() => { tick(1_000) })
 
     // 121 seconds of wall clock, 5 firings. The number is the wait, not the firings.
     expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('2m 01s so far')

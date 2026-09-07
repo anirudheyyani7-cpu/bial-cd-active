@@ -483,8 +483,15 @@ function ElapsedSinceTheWaitBegan() {
     // wait that really took two minutes, which is the single thing this line exists to be
     // honest about. Reading the clock makes the throttling a refresh-rate question instead of
     // an accuracy one: the number may be stale by up to a tick, but it is never wrong.
-    const began = Date.now()
-    const tick = setInterval(() => setSeconds(Math.floor((Date.now() - began) / 1_000)), 1_000)
+    // `performance.now()`, NOT `Date.now()`: monotonic, so an NTP correction or somebody
+    // changing the system clock mid-wait cannot make this count backwards or jump. It keeps
+    // the property the change is for — it advances while the tab is hidden, which is exactly
+    // what the throttled interval does not.
+    const began = performance.now()
+    const tick = setInterval(
+      () => setSeconds(Math.floor((performance.now() - began) / 1_000)),
+      1_000,
+    )
     return () => clearInterval(tick)
   }, [])
   return (

@@ -99,10 +99,21 @@ describe('★ a closed dialog never leaves a keyboard on the document body', () 
     await waitFor(() => expect(screen.queryByText('The dialog')).toBeNull())
     // LIVENESS: the opener really did leave, so this is the detached case and not the first one.
     expect(screen.queryByRole('button', { name: 'Open it' })).toBeNull()
-    landmark.focus()
 
+    // NOBODY MOVES FOCUS HERE, and that is what makes this test about the guard. An earlier
+    // version focused the landmark BEFORE the backstop's frame, which meant `activeElement` was
+    // already something other than the body — so the `landed === body` short-circuit alone
+    // skipped the restore and the `isConnected` check was never the thing being proved. Verified
+    // by re-implementing the cleanup without the guard: that version passed too.
+    //
+    // Left alone, focus falls to the body when the opener unmounts, the backstop wakes, finds
+    // its opener detached, and must decline. If it did not, `activeElement` would become the
+    // removed node's — which in a browser is a silent no-op and in jsdom is a focus on nothing.
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-    expect(document.activeElement).toBe(landmark)
+    expect(document.activeElement).toBe(document.body)
+    // …and the page's own landmark is still there to be reached, rather than the page having
+    // been left in some other state by the attempt.
+    expect(landmark.isConnected).toBe(true)
   })
 })
 

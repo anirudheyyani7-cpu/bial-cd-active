@@ -172,18 +172,18 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     // same answer. A start that brings a new app up changes `framedUrl`, which is what re-asks.
     let live = true
     fetchCompileState(project.id)
+      // IN FRONT OF THE HANDLER, not after it. Behind it, the same `.catch` that covers the
+      // (impossible) fetch rejection would also swallow anything the state update threw —
+      // a real error in this component silently becoming nothing. Here it covers exactly the
+      // promise it is about, and `unknown` is the right substitute: it is what the client
+      // itself answers for anything unreadable, and it HOLDS whatever cover is showing.
+      .catch(() => 'unknown' as const)
       .then((verdict) => {
         // The answer describes the workspace this effect was armed for. A late reply after a
         // teardown, a project switch or a restart would otherwise land on a different app.
         if (live) setCompileState(verdict)
       })
-      // THE CLIENT PROMISES NOT TO THROW; THIS DOES NOT DEPEND ON THE PROMISE. A bare `void` on
-      // the chain leaves a rejection with nowhere to go — an unhandled rejection in the shell,
-      // which under a test runner is an error the suite reports beside otherwise-green tests and
-      // in a browser is a console error nobody owns. HOLDING is the correct answer anyway: it is
-      // exactly what `unknown` and `null` do, so a rejection lands on the same behaviour the
-      // client's own swallow produces, rather than on a second failure.
-      .catch(() => {})
+
     return () => {
       live = false
     }

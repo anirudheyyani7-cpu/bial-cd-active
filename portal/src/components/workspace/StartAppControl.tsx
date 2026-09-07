@@ -322,8 +322,15 @@ export interface TakeBack {
  * and its `resolve` awaits `retry()` — `fireRelayTurn(rawText, …)` for a refused send. Routing the
  * take-back through it would mean confirming the hand-over SENDS the message the citizen is holding
  * in the composer as a build instruction, and a refused send already holding the slot would swallow
- * the take-back's refusal outright. The take-back owns its own dialog and its own closure, and the
- * two never meet.
+ * the take-back's refusal outright. The take-back owns its own dialog and its own closure.
+ *
+ * THEY CAN BOTH BE ON SCREEN, and this used to claim "the two never meet". They do: the pane's
+ * take-back dialog and the surface's own reclaim dialog are mounted by different owners
+ * (`AppPane` and `WorkspaceShell`) and neither suppresses the other. Suppressing the pane's was
+ * tried and REVERTED — a citizen who answers the send's identical dialog thereby starts a build,
+ * which is the exact harm the take-back exists to avoid. So what is true is narrower and worth
+ * saying precisely: they never share the reclaim SLOT, so neither can swallow the other's
+ * refusal. Two dialogs is a presentation problem; one swallowed refusal is a lost answer.
  *
  * ═══ WHAT `mounted` GUARDS, AND WHAT IT DELIBERATELY DOES NOT ═══
  *

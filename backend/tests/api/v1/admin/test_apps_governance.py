@@ -453,6 +453,96 @@ async def test_enable_guard_rejects_non_disabled(client, db_session) -> None:
     assert resp.status_code == 409
 
 
+# --- what the app WAS, remembered across the kill switch (U31, R42, #163) ---------------
+
+
+@pytest.mark.parametrize("source", [AppStatus.DRAFT, AppStatus.REJECTED])
+async def test_switching_off_and_back_on_returns_the_app_to_what_it_was(
+    client, db_session, source: AppStatus
+) -> None:
+    """AE8/R42: a rejected app comes back REJECTED and a draft comes back DRAFT.
+
+    Enable used to resolve to the literal APPROVED. On an app that was never approved that
+    invents an approval nobody gave — and once the artifact-pin guard refuses a row with no
+    pin, it instead strands the app in DISABLED with no lever left. `previous_status` is the
+    memory that makes the return trip honest.
+    """
+    app = await _app(db_session, status=source)
+    headers = await _admin(db_session)
+
+    off = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    assert off.json()["status"] == "disabled"
+    killed = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(killed)
+    assert killed.previous_status is source  # written from the row, inside the guarded UPDATE
+
+    on = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    assert on.status_code == 200
+    assert on.json()["status"] == source.value  # the response says where it actually landed
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is source
+    assert fresh.approved_submission_id is None  # no approval was invented on the way back
+    # The memory describes a switched-off app; a stale one on a live row is a fact waiting
+    # to be misread.
+    assert fresh.previous_status is None
+    # ADR-0005: both gated actions leave their trail.
+    actions = await _audited_actions(db_session, app.id)
+    assert "disable" in actions and "enable" in actions
+
+
+async def test_an_approved_app_still_checks_its_approved_submission_on_the_way_back(
+    client, db_session
+) -> None:
+    """The artifact-pin guard rides on the APPROVED arm only, and it still bites there.
+
+    An approved-status row with no `approved_submission_id` is the approved-with-no-artifact
+    state the schema otherwise prevents (D13). Re-enabling one would resurrect it, so the
+    guard refuses — and because it is scoped to the approved arm, the draft and rejected
+    restores above (which have no pin and are not supposed to) sail past it.
+    """
+    app = await _app(db_session, status=AppStatus.APPROVED, approved_submission_id=None)
+    headers = await _admin(db_session)
+    assert (
+        await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    ).status_code == 200
+
+    resp = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    assert resp.status_code == 409
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED  # refused, and still contained
+    assert fresh.previous_status is AppStatus.APPROVED  # the memory survives a refused enable
+
+
+async def test_an_app_disabled_before_the_column_existed_re_enables_to_approved(
+    client, db_session
+) -> None:
+    """A NULL `previous_status` is a PRE-COLUMN ROW, not an error.
+
+    Migration 0038 backfilled every already-disabled row to `approved` — the status the code
+    it replaced resolved them to — and `enable` reads a NULL the same way as the backstop, for
+    a row inserted by hand during an incident or one the backfill could not reach. Simulated
+    by nulling the column on a DISABLED row, which is exactly the shape 0038 found.
+    """
+    sid = uuid.uuid4()
+    app = await _app(
+        db_session,
+        status=AppStatus.DISABLED,
+        approved_submission_id=sid,
+        approved_commit_sha=_SHA,
+        previous_status=None,
+    )
+    headers = await _admin(db_session)
+
+    resp = await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.APPROVED
+
+
 # --- the queue projection (R15/R16) -----------------------------------------------
 
 

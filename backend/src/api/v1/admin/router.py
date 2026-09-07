@@ -102,6 +102,7 @@ from src.db.models.app_registry import (
     AppRegistry,
     ApprovalRoute,
     AppStatus,
+    app_status_enum,
 )
 from src.db.models.attachment import Attachment
 from src.db.models.audit import AuditLog
@@ -278,6 +279,20 @@ async def _transition(
         .returning(AppRegistry.id)
     )
     return result.first() is not None
+
+
+# WHERE A RE-ENABLE LANDS (R42, #163) — the status `disable` remembered, or APPROVED when
+# there is nothing remembered. Used TWICE inside `enable`'s one UPDATE, as the SET target and
+# inside the guard that decides which arm the artifact-pin check applies to, so it is written
+# once: two copies of this expression that drifted would silently apply the approved arm's
+# guard to a draft, or skip it on an approved app.
+#
+# A NULL IS A PRE-COLUMN ROW, NOT AN ERROR. Migration 0038 backfilled every already-disabled
+# row to `approved` — the status the code before it resolved them to — and this COALESCE is
+# the same answer given a second time, for a row the backfill could not reach.
+_RESTORE_TARGET = sa.func.coalesce(
+    AppRegistry.previous_status, sa.literal(AppStatus.APPROVED, app_status_enum)
+)
 
 
 # The `db:*` levers all act on a PROJECT-scoped resource (the database is keyed by project,
@@ -732,10 +747,18 @@ async def disable(
     NOT severed here, deliberately and per the runbook: the app's deploy Blob SAS (see
     `mint_deploy_credential`). Revoking that means deleting the container's stored access
     policy, which is an operator step — do not read this response as "the files are locked".
+
+    IT REMEMBERS WHAT THE APP WAS (R42), and that is what makes `enable` honest now that this
+    reaches three statuses instead of one. `previous_status = AppRegistry.status` is a
+    COLUMN reference, not `app.status` read a moment ago in Python: PostgreSQL evaluates an
+    UPDATE's SET expressions against the row's pre-update values, so the remembered status is
+    read from the very row this statement is guarding, inside the same statement. Reading it
+    off the ORM object would open a window in which the row's status changed between the load
+    and the update, and the memory would be a lie the return trip could not detect.
     """
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
-    if not await _transition(db, app_id, AppStatus.DISABLED):
+    if not await _transition(db, app_id, AppStatus.DISABLED, previous_status=AppRegistry.status):
         raise AppApiError(409, _NOT_DISABLABLE)
     await append_audit(
         db, actor_id=admin.id, action="disable", resource_type="app", resource_id=str(app_id)
@@ -788,7 +811,43 @@ async def enable(
     leaving the role `NOLOGIN` would hand back an app that serves pages and cannot read a
     row. The restore sits INSIDE the guarded path for the same reason the sever does: the
     two 409s below are the approve gate, and a refused enable must not re-open a database
-    the kill switch closed."""
+    the kill switch closed.
+
+    IT PUTS THE APP BACK WHERE IT WAS, not where APPROVED would be (R42, #163). `disable`
+    reaches DRAFT and REJECTED apps as well as approved ones, so resolving every re-enable
+    to the literal APPROVED would invent an approval nobody gave — and the artifact-pin
+    guard below would instead have stranded those apps in DISABLED with no way out. The
+    target is read from `previous_status`, the memory `disable` wrote.
+
+    NOT THROUGH `_transition`, and this is the point of the hand-written UPDATE below.
+    That helper derives its source set from the TARGET (`status.in_(STATUS_TRANSITIONS[
+    target])`), so restoring to draft or rejected through it would need DISABLED added to
+    `STATUS_TRANSITIONS[DRAFT]` — and `apps/router.py::withdraw` is CITIZEN-facing and
+    reads that same row with only an ownership predicate, so widening it would let the
+    OWNER of an app an administrator switched off walk it straight back to draft.
+    Containment turned into a bypass. Reaching for `_transition` is the obvious move (both
+    `disable` and `approve` use it), which is exactly why this says so.
+
+    ONE STATEMENT, THREE ARMS, and the guards ride where they belong:
+
+    * SOURCE — `status == DISABLED`, written out rather than borrowed from the transition
+      table. It is the same load-bearing entry guard the early return above states in
+      Python: `→approved` legally accepts PENDING, so without it an enable could promote a
+      pending app past the approve gate that pins the reviewed artifact. Both are kept —
+      the Python one so the ordinary refusal reads cleanly, this one so the refusal is
+      atomic against a concurrent transition.
+    * TARGET — `COALESCE(previous_status, 'approved')`. The NULL is a pre-column row (see
+      migration 0038): APPROVED is what the code this replaces resolved such a row to, so
+      a row that predates the column re-enables exactly as it would have yesterday.
+    * ARTIFACT PIN — `approved_submission_id IS NOT NULL`, ON THE APPROVED ARM ONLY. It
+      exists to stop a re-enable resurrecting an approved-with-no-artifact row (the D13
+      state the schema otherwise prevents); a draft or rejected app has no pin and is not
+      supposed to, so applying it to every arm would refuse every restore this unit exists
+      to make possible.
+
+    `previous_status` is cleared on the way out: the memory describes a switched-off app,
+    and a stale one on a live row is a fact waiting to be misread.
+    """
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     # Load-bearing guard: →approved also permits `pending`, so without this an enable
@@ -796,13 +855,22 @@ async def enable(
     # artifact). Approve reaches APPROVED only from PENDING; enable only from DISABLED.
     if app.status is not AppStatus.DISABLED:
         raise AppApiError(409, "Only a disabled app can be re-enabled.")
-    # Artifact-pin guard: re-enabling restores APPROVED, so it must never resurrect a
-    # legacy DISABLED row the migration spared with a NULL approved pin (the D13 state
-    # the schema otherwise prevents) — approved-with-no-artifact. A DISABLED row with no
-    # pin updates zero rows → the same 409.
-    if not await _transition(
-        db, app_id, AppStatus.APPROVED, AppRegistry.approved_submission_id.is_not(None)
-    ):
+    restored_status = (
+        await db.execute(
+            sa.update(AppRegistry)
+            .where(
+                AppRegistry.id == app_id,
+                AppRegistry.status == AppStatus.DISABLED,
+                sa.or_(
+                    _RESTORE_TARGET != AppStatus.APPROVED,
+                    AppRegistry.approved_submission_id.is_not(None),
+                ),
+            )
+            .values(status=_RESTORE_TARGET, previous_status=None)
+            .returning(AppRegistry.status)
+        )
+    ).scalar_one_or_none()
+    if restored_status is None:
         raise AppApiError(409, "Only a disabled app can be re-enabled.")
     await append_audit(
         db, actor_id=admin.id, action="enable", resource_type="app", resource_id=str(app_id)
@@ -827,7 +895,11 @@ async def enable(
             detail=_db_detail(app_id, handles),
         )
     await db.commit()
-    return AdminAppStatusResponse(app_id=app_id, status=AppStatus.APPROVED)
+    # The status the UPDATE actually wrote, read back through RETURNING rather than
+    # restated here: the response is the one place an administrator learns WHERE the app
+    # landed, and a switched-off draft that came back as a draft must not be reported as
+    # approved.
+    return AdminAppStatusResponse(app_id=app_id, status=restored_status)
 
 
 # Minutes-scale (deliberately far under the ABC's 7-day ceiling): long enough for an
@@ -1939,16 +2011,19 @@ async def set_user_limits(
             raise AppApiError(400, "contextHardLimit cannot exceed the model context window.")
         # THE FLOOR, AND THE ADMINISTRATOR IS TOLD THE NUMBER. Below it the context gate
         # refuses every conversation that person opens — including a brand-new empty one,
-        # because the gate charges the system-prompt reserve before it counts a word — and the
-        # refusal they read tells them to start a new chat, which also fails. A form that
-        # accepted the number and silently locked someone out is the defect; naming the lowest
-        # usable value is the whole fix at this end. The read-time clamp in `effective_context`
-        # is the other end, for the people a value stored before this validator already reached.
+        # because every run spends `SYSTEM_PROMPT_RESERVE` on its system prompt and tool schemas
+        # before the citizen has typed a word, and the provider counts that in the very first
+        # turn it reports — so their SECOND message is refused in every chat they own, whatever
+        # they wrote in the first, and the refusal they read tells them to start a new chat,
+        # which also fails. A form that accepted the number and silently locked someone out is
+        # the defect; naming the lowest usable value is the whole fix at this end. The read-time
+        # clamp in `effective_context` is the other end, for the people a value stored before
+        # this validator already reached.
         if hard < CONTEXT_HARD_FLOOR:
             raise AppApiError(
                 400,
-                f"contextHardLimit cannot be below {CONTEXT_HARD_FLOOR}. Under that, every "
-                "chat this person opens is refused before they have typed anything.",
+                f"contextHardLimit cannot be below {CONTEXT_HARD_FLOOR}. Under that, this "
+                "person cannot get past the first message in any chat they open.",
             )
     soft, hard = changes.get("context_soft_limit"), changes.get("context_hard_limit")
     if soft is not None and hard is not None and soft >= hard:

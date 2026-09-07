@@ -49,6 +49,24 @@ from src.db.models.app_registry import AppRegistry, AppStatus, mint_app_key
 from src.services.projects import owned_project_or_404
 from src.services.sandbox import SandboxNotConfiguredError
 
+# THE SWITCHED-OFF REFUSAL, in one place because two surfaces say it (R41a, #163): the gate
+# below, and the pre-read in `api/v1/conversations/turns.py` that lets a citizen read this
+# sentence at the moment of sending rather than meet it as a dead turn. The pre-read is a
+# MESSAGE, not a second enforcement point — remove it and the platform still refuses here.
+#
+# NO REMEDY IS OFFERED because the citizen has none: only an administrator can undo this, and
+# suggesting a retry would send them round a loop that cannot end. It matches the switched-off
+# copy the workspace rail already renders, and neither sentence mentions publishing — a
+# never-published draft can be switched off too, and telling its owner that nothing can be
+# published tells them nothing about why their workspace will not start.
+APP_SWITCHED_OFF = (
+    "An administrator switched this app off. You cannot make changes to it until they "
+    "switch it back on."
+)
+# Machine-readable so the browser can tell this from the workspace CONFLICTS that share its
+# status family — different cause, and this one has no remedy to retry.
+APP_SWITCHED_OFF_CODE = "app_switched_off"
+
 
 async def resolve_app_for_project(
     db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID
@@ -56,7 +74,34 @@ async def resolve_app_for_project(
     """Resolve the project's ONE app (mint on first build, reuse thereafter) and return its
     id. Owner-scoped (ADR-0004). The CALLER owns the commit (U5). The upsert still mints
     `app_key` on insert — the key is read back by `GET /apps/{id}/status`, not by callers
-    of this function."""
+    of this function.
+
+    THIS IS WHERE A SWITCHED-OFF APP STOPS (R41a, #163), and it is the ONE place it stops.
+    Every door into a container comes through here, and there are exactly two of them:
+    `relaunch_preview` — the explicit start control the citizen presses — and
+    `ensure_sandbox`, which `services/turns/engine.py` routes EVERY turn kind through, Ask,
+    Plan and Build alike. So one status check closes both, and there is no second enforcement
+    point to keep in step with this one. (There was a third, `_start_locked`, behind the
+    orphaned `POST /v1/build-sessions`; the legacy build stack was deleted, taking it with it.
+    Grep `await resolve_app_for_project` before adding a caller — a new one inherits this
+    refusal, which is the point, and must not be written to route around it.)
+
+    SAVE IS DELIBERATELY NOT GATED, and that omission is load-bearing rather than an
+    oversight. `save_project_snapshot` reads its app id through `_existing_app_id`, never
+    through this function, so it is structurally out of reach of this refusal — and it must
+    stay that way. Save is the only thing that writes a citizen's work to durable storage
+    and containers are ephemeral (the reaper destroys idle ones), so refusing it in the one
+    window where it matters — an administrator flips the switch while the owner holds
+    unsaved work in a live container — permanently destroys that work. The accepted trade is
+    that a disabled app's snapshot may advance by one commit: nothing consumes it, because
+    publish still refuses (`deploy/router.py`), approval pins a submission rather than the
+    saved head, and the app is off the live roster and out of the catalog.
+
+    THE STATUS IS READ FROM THE UPSERT'S OWN `RETURNING`, not from a SELECT before it. A
+    read-then-upsert would decide on a status the row had already stopped holding; this
+    decides on the row the statement actually touched. On the refusal path the `updated_at`
+    bump the DO-UPDATE made is never committed — the caller owns the commit and every one of
+    them raises straight past it, with `get_db` rolling the request transaction back."""
     project = await owned_project_or_404(db, user_id, project_id)
     # The frozen one-app-per-project upsert (KTD-6): a first build INSERTs + mints the
     # key; a repeat DO-UPDATEs (bumps `updated_at`) and returns the SAME row + original
@@ -75,19 +120,25 @@ async def resolve_app_for_project(
             set_={"updated_at": sa.func.now()},
             where=(AppRegistry.user_id == user_id),
         )
-        .returning(AppRegistry.id)
+        .returning(AppRegistry.id, AppRegistry.status)
     )
     try:
-        app_id: uuid.UUID | None = (await db.execute(upsert)).scalar_one_or_none()
+        resolved = (await db.execute(upsert)).first()
     except IntegrityError as exc:
         # The project was deleted between the owner check and this INSERT — the loser of
         # that race gets the same non-leaking 404, not a 500.
         if "app_registry_project_id_fkey" in str(exc.orig):
             raise AppApiError(404, "Project not found.") from exc
         raise
-    if app_id is None:
+    if resolved is None:
         # The project's app belongs to another user — fail closed rather than touch it.
         raise AppApiError(409, "Project app is owned by another user.")
+    app_id: uuid.UUID = resolved.id
+    app_status: AppStatus = resolved.status
+    # THE GATE. A fresh INSERT returns DRAFT, so this can only ever fire on a row that was
+    # already there and already switched off.
+    if app_status is AppStatus.DISABLED:
+        raise AppApiError(409, APP_SWITCHED_OFF, code=APP_SWITCHED_OFF_CODE)
     return app_id
 
 

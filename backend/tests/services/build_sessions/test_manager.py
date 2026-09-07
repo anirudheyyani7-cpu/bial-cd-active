@@ -30,11 +30,16 @@ from src.api.v1.build_sessions.schemas import (
     StepEvent,
 )
 from src.config import settings
-from src.db.models.app_registry import AppRegistry
+from src.core.errors import AppApiError
+from src.db.models.app_registry import AppRegistry, AppStatus
 from src.db.models.attachment import Attachment
 from src.db.models.conversation import ChatKind
 from src.db.models.user import User
-from src.services.build_sessions.appdata import build_app_env, resolve_app_for_project
+from src.services.build_sessions.appdata import (
+    APP_SWITCHED_OFF_CODE,
+    build_app_env,
+    resolve_app_for_project,
+)
 from src.services.build_sessions.attachments import BuildAttachmentError
 from src.services.build_sessions.locks import (
     LockUnavailableError,
@@ -3000,3 +3005,123 @@ async def test_a_residual_lock_does_not_409_the_recovery_button(
 
     assert relaunched.preview_url == live.preview_url
     assert client.restored == [] and client.torn_down == []  # still the fast attach arm
+
+
+# --- the switched-off app: both doors refuse, and Save does not (U31, R41a, #163) ---------
+#
+# THE REFUSAL ITSELF IS ASSERTED IN `test_appdata.py`, at `resolve_app_for_project` — the
+# site that makes the decision. What these pin is the CALL GRAPH the decision relies on:
+# that both doors into a container really do come through that one function, so there is no
+# third door quietly holding a copy of the check. Plus the one thing that must NOT be
+# refused.
+
+
+async def _a_switched_off_app(
+    db: AsyncSession, user: User, project_id: uuid.UUID, store: FakeStorage
+) -> uuid.UUID:
+    """A project whose app an administrator has switched off, with a saved bundle behind it
+    (so `relaunch_preview` reaches the resolve rather than stopping at the snapshot gate)."""
+    app_id, _ = await _seed_app_with_bundle(db, user, project_id, store)
+    await db.execute(
+        sa.update(AppRegistry).where(AppRegistry.id == app_id).values(status=AppStatus.DISABLED)
+    )
+    await db.commit()
+    return app_id
+
+
+async def test_a_turn_of_any_kind_is_refused_while_the_app_is_switched_off(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """`ensure_sandbox` is the door EVERY turn kind uses — Ask, Plan and Build alike, since
+    `services/turns/engine.py` routes all of them through it — so this one refusal is the
+    whole of "sending a turn is refused while switched off"."""
+    user, project_id = await _mk(db_session, "off-turn@rvaiglobal.com")
+    await _a_switched_off_app(db_session, user, project_id, fake_storage)
+    manager = SessionManager()
+    client = FakeSandboxClient()
+
+    with pytest.raises(AppApiError) as exc:
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.code == APP_SWITCHED_OFF_CODE
+    # FAILS CLOSED: nothing allocated, nothing left holding the user's one slot.
+    assert client.provisioned == [] and client.restored == []
+    assert await lock_is_held(fake_redis, user.id) is False
+    assert manager.active_session_for(user.id) is None
+
+
+async def test_starting_the_sandbox_is_refused_while_the_app_is_switched_off(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """`relaunch_preview` is the EXPLICIT START CONTROL — the button the citizen presses to
+    bring their workspace up — and the second of the two doors. It has a saved bundle, so the
+    refusal below is the status gate and not the snapshot gate answering for it."""
+    user, project_id = await _mk(db_session, "off-relaunch@rvaiglobal.com")
+    await _a_switched_off_app(db_session, user, project_id, fake_storage)
+    manager = SessionManager()
+    client = _RelaunchRecorder()
+
+    with pytest.raises(AppApiError) as exc:
+        await manager.relaunch_preview(db_session, user, project_id, client)
+
+    assert exc.value.status_code == 409
+    assert client.restored == [] and client.provisioned == []
+    assert await lock_is_held(fake_redis, user.id) is False
+
+
+async def test_save_still_succeeds_while_the_app_is_switched_off(
+    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
+) -> None:
+    """★ SAVE IS NOT GATED, AND THIS TEST IS HERE TO STOP SOMEONE "FINISHING THE JOB".
+
+    If you are reading this because the switched-off enforcement looks incomplete: it is not.
+    Save is deliberately outside it. `save_project_snapshot` is the only thing that writes a
+    citizen's work to durable storage and containers are ephemeral — the reaper destroys idle
+    ones — so refusing a save in the one window where it matters (an administrator flips the
+    switch while the owner holds unsaved work in a live container) does not contain anything.
+    It PERMANENTLY DESTROYS that work. That is the same harm
+    `_refuse_if_reclaim_would_destroy_work` exists to prevent.
+
+    The accepted trade is that a disabled app's saved bundle may advance by one commit, and
+    nothing consumes it: publish still refuses, approval pins a submission rather than the
+    saved head, and the app is off the live roster and out of the catalog.
+
+    Structurally this holds because Save reads its app id through `_existing_app_id`, never
+    through `resolve_app_for_project` — so wiring the gate into Save would take a deliberate
+    edit. Making that edit turns this test red.
+    """
+    user, project_id = await _mk(db_session, "off-save@rvaiglobal.com")
+    app_id = await _a_switched_off_app(db_session, user, project_id, fake_storage)
+    manager = SessionManager()
+    client = FakeSandboxClient()
+    # A live container to save FROM — the state the harm above describes: the switch was
+    # flipped while the owner's workspace was still up with unsaved work in it.
+    client.attach_handle = SandboxHandle(
+        fqdn="live.example",
+        token="tok",
+        app_name=app_name_for(app_id),
+        preview_url="https://live.example/",
+        ready=True,
+    )
+    await fake_redis.hset(
+        registry_key(user.id),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: app_name_for(app_id),
+            REGISTRY_FIELD_FQDN: "live.example",
+            REGISTRY_FIELD_TOKEN_REF: "ref",
+            REGISTRY_FIELD_CREATED_AT: "2026-09-07T00:00:00+00:00",
+            REGISTRY_FIELD_STATE: REGISTRY_STATE_READY,
+        },
+    )
+
+    outcome = await manager.save_project_snapshot(
+        db_session, user, project_id, sandbox_client=client
+    )
+
+    assert outcome.app_id == app_id
+    # THE WORK REACHED DURABLE STORAGE. Not "no exception was raised" — a refusal that
+    # returned quietly would pass that, and the citizen's work would still be gone.
+    assert snapshot_key(app_id) in fake_storage.objects

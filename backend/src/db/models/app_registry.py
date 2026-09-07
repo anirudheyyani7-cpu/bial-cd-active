@@ -197,6 +197,25 @@ class AppRegistry(UUIDv7PrimaryKeyMixin, OwnedByUserMixin, TimestampMixin, Base)
         app_status_enum, server_default=AppStatus.DRAFT.value, nullable=False
     )
 
+    # WHAT THE APP WAS BEFORE THE KILL SWITCH (#163, R42). `disable` writes the pre-disable
+    # status here — from the column itself, inside the same guarded UPDATE, so it can never
+    # record a status the row had stopped holding — and `enable` restores from it.
+    #
+    # IT EXISTS BECAUSE `disable` NOW REACHES DRAFT AND REJECTED APPS. Enable used to resolve
+    # to the literal APPROVED, which on a never-approved app invents an approval nobody gave;
+    # with the widened source set above, a switched-off draft would either be promoted past
+    # the review gate or stranded in DISABLED forever. Neither is acceptable, and the obvious
+    # repair — widening the DRAFT row so `disabled → draft` becomes a legal transition — is
+    # the citizen-facing bypass the STATUS_TRANSITIONS comment forbids. So the target is
+    # remembered rather than derived.
+    #
+    # NULL IS A REAL STATE, TWICE OVER, AND NEITHER IS AN ERROR: an app that is not switched
+    # off has nothing to remember (`enable` clears this on the way back out), and a row that
+    # was already DISABLED before this column existed has nothing to have remembered —
+    # migration 0038 backfills those to `approved`, and `enable` reads a NULL as `approved`
+    # for the same reason, because that is what the code before it resolved them to.
+    previous_status: Mapped[AppStatus | None] = mapped_column(app_status_enum, nullable=True)
+
     # Code continuity's original store (KD-9, R21) — same shape as the retired
     # `conversations.code`'s `{current: {source, entry, ...}}`. IT HAS NO WRITER ANY MORE:
     # the seed-on-open / write-back-on-build pair this was built for died with the

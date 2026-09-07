@@ -157,40 +157,23 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
 }
 
 /**
- * A DOCUMENT LIMIT, NOT A TOKEN LIMIT, and the distinction is the whole reason this exists.
+ * THE PER-DOCUMENT LIMIT IS GONE (#214 R7c), and its server twin with it.
  *
- * NOTHING PRICES A DOCUMENT UP FRONT, and the arithmetic that used to stand here — a flat nominal
- * per PDF, three of them over the ceiling before a word is typed — is deleted rather than
- * recomputed, exactly as it is on the server. There is no estimate on either side any more: the
- * window is measured from what the provider reports for a completed turn. Left to that gate, a
- * message too big to serve comes back as "start a new chat" — advice that does not work, because
- * the new chat refuses the identical message. The server already refuses the third document at
- * `resolve_binaries` with its own sentence; this is the same refusal one step earlier, so the
- * composer does not accept a message it knows will bounce.
+ * It was two, and it existed because a document was charged a flat figure sized to the page
+ * cap, so three could not fit one message. The limit bought the citizen a sentence naming it
+ * instead of a context refusal telling them to start a new chat, which then refuses the
+ * identical message (#194). Nothing prices a document up front any more on either side: the
+ * window is measured from what the provider reports for a completed turn.
  *
- * MIRRORS `backend/src/api/v1/conversations/_shared.py` — `MAX_PDF_BLOCKS` and
- * `TOO_MANY_DOCUMENTS_MSG`. The server is the trust boundary and keeps its own check; if these two
- * ever disagree the server wins and the citizen sees its sentence instead. Raising the page cap
- * makes this stricter, not looser.
+ * It goes because a citizen attaching five files should not have to know which of them the
+ * platform considers expensive. `MAX_FILES_PER_MESSAGE` is now the only per-message count, and
+ * it covers every format. The page cap and the flat charge — the actual protections — are
+ * unchanged and still must not move independently of each other.
  *
- * Counted PER MESSAGE, not per conversation: the charge is per attached block on the send, and
- * `MAX_ATTACHMENTS_PER_CONVERSATION` above answers the different, cumulative question.
+ * What replaced the guarantee is not another count: a message the conversation cannot hold is
+ * refused on the room it needs, before it is sent, which is what the removed limit was really
+ * standing in for.
  */
-export const MAX_PDF_ATTACHMENTS_PER_MESSAGE = 2
-export const TOO_MANY_DOCUMENTS_MESSAGE =
-  `You can send up to ${MAX_PDF_ATTACHMENTS_PER_MESSAGE} documents in one message. Take one out and send again.`
-
-/** How many of a pending list are PDFs. Only `mediaType` is read, so a ref list works too. */
-export function countPdfAttachments(list: readonly { mediaType?: string }[] = []): number {
-  return list.filter((a) => a?.mediaType === 'application/pdf').length
-}
-
-export function validatePdfPerMessageCap(list: readonly { mediaType?: string }[] = []): AttachmentValidationResult {
-  if (countPdfAttachments(list) > MAX_PDF_ATTACHMENTS_PER_MESSAGE) {
-    return { error: TOO_MANY_DOCUMENTS_MESSAGE }
-  }
-  return { ok: true }
-}
 
 /** Read a File as raw base64 (stripping the `data:<type>;base64,` prefix). */
 export function fileToBase64(file: File): Promise<string> {

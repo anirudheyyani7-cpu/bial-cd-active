@@ -11,10 +11,6 @@ import {
   MAX_TEXT_BYTES_PER_CONVERSATION,
   MAX_FILES_PER_MESSAGE,
   MAX_ATTACHMENTS_PER_CONVERSATION,
-  validatePdfPerMessageCap,
-  countPdfAttachments,
-  MAX_PDF_ATTACHMENTS_PER_MESSAGE,
-  TOO_MANY_DOCUMENTS_MESSAGE,
 } from '../attachmentInput'
 
 // validateAttachmentFiles only reads name/type/size, so plain objects suffice
@@ -148,48 +144,6 @@ describe('validateConversationAttachmentCap', () => {
   })
 })
 
-describe('validatePdfPerMessageCap (#194 — the DOCUMENT limit)', () => {
-  const pdf = (id) => ({ id, name: `${id}.pdf`, mediaType: 'application/pdf', size: 1024, base64: '' })
-  const png = (id) => ({ id, name: `${id}.png`, mediaType: 'image/png', size: 1024, base64: '' })
-  const csv = (id) => ({ id, name: `${id}.csv`, mediaType: 'text/csv', size: 128, base64: '' })
-
-  it('accepts up to the cap and rejects the one past it', () => {
-    expect(validatePdfPerMessageCap([])).toEqual({ ok: true })
-    expect(validatePdfPerMessageCap([pdf('a')])).toEqual({ ok: true })
-    expect(validatePdfPerMessageCap([pdf('a'), pdf('b')])).toEqual({ ok: true })
-    expect(validatePdfPerMessageCap([pdf('a'), pdf('b'), pdf('c')]).error).toBe(TOO_MANY_DOCUMENTS_MESSAGE)
-  })
-
-  it('counts DOCUMENTS, not attachments — images and text never trip it', () => {
-    // The whole point of the flat PDF charge is that it does not apply to the other kinds. Eight
-    // images cost 1,600 each and must still send; a cap that counted attachments would refuse them.
-    expect(validatePdfPerMessageCap([png('a'), png('b'), png('c'), png('d'), csv('e')])).toEqual({ ok: true })
-    expect(validatePdfPerMessageCap([pdf('a'), pdf('b'), png('c'), csv('d')])).toEqual({ ok: true })
-    expect(countPdfAttachments([pdf('a'), png('b'), pdf('c')])).toBe(2)
-  })
-
-  it('names the DOCUMENT limit and never tells the citizen to start a new chat', () => {
-    // A new chat refuses the identical message, so that advice is a dead end. This is the whole
-    // reason the refusal is separate from the token gate's.
-    const res = validatePdfPerMessageCap([pdf('a'), pdf('b'), pdf('c')])
-    expect(res.error).toMatch(/documents in one message/i)
-    expect(res.error).not.toMatch(/new chat/i)
-    expect(res.error).not.toMatch(/token|context|limit of \d+ attachments/i)
-  })
-
-  it('agrees with the server, which is the trust boundary', () => {
-    // Mirrors backend/src/api/v1/conversations/_shared.py: MAX_PDF_BLOCKS + TOO_MANY_DOCUMENTS_MSG.
-    expect(MAX_PDF_ATTACHMENTS_PER_MESSAGE).toBe(2)
-    expect(TOO_MANY_DOCUMENTS_MESSAGE).toBe(
-      'You can send up to 2 documents in one message. Take one out and send again.',
-    )
-  })
-
-  it('tolerates a list whose entries carry no mediaType', () => {
-    expect(countPdfAttachments([{}, { mediaType: undefined }])).toBe(0)
-    expect(validatePdfPerMessageCap([{}])).toEqual({ ok: true })
-  })
-})
 
 describe('fileToBase64', () => {
   it('reads a Blob as raw base64 (data: prefix stripped)', async () => {

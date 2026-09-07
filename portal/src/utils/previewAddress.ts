@@ -42,8 +42,8 @@
  *
  * ═══ WHAT THIS MODULE WILL NOT DO ═══
  *
- * It is PURE — identities and raw signals in, an address and a status out. No hooks, no fetches,
- * no refs (a ref's current value is passed as an argument, never read in here). It returns `null`
+ * It is PURE — identities and raw signals in, an address, a status and its liveness out. No hooks,
+ * no fetches, no refs (a ref's current value is passed as an argument, never read in here). It returns `null`
  * for the address when no source qualifies: it never invents a fallback and it never widens a
  * scope to produce one. A pane framing nothing is a correct answer; a pane framing the wrong app
  * is not.
@@ -113,6 +113,17 @@ export interface PreviewAddressInputs {
   projectPreviewUrl: string | null
   /** THE PROJECT PREDICATE. Do the project-scoped signals above belong to the OPEN project? */
   sessionBelongsToOpenProject: boolean
+  /**
+   * The legacy C3 session ended, and ended as a SUCCESS — so its container was pardoned and the
+   * session's own URL is still being served.
+   *
+   * A SEPARATE INPUT RATHER THAN A READING OF `sessionStatus`, because `ended` alone does not say
+   * how: a session torn down by a stop or a failure is `ended` too, and treating those as live
+   * would keep framing a URL nobody is answering. The end REASON lives on the session hook, so it
+   * travels in here as its own predicate rather than being re-derived — the same discipline the
+   * two scoping predicates above follow.
+   */
+  sessionEndedCompleted: boolean
 
   // ── transcript-derived ────────────────────────────────────────────────────────────────────
   /**
@@ -132,6 +143,23 @@ export interface PreviewAddress {
    * the idle state, and it must never be read as a terminal.
    */
   status: BuildSessionStatus | null
+  /**
+   * IS A CONTAINER STILL SERVING WHAT `url` NAMES? The whole of what `completedLive` used to be,
+   * renamed to the question it actually answers and moved here (`#96`, `#199`, `#200`).
+   *
+   * ITS ONE JOB is to outrank a terminal `status`. A turn or a session ending does not take the
+   * app down — the backend pardons the container unconditionally — so `ended` plus a serving
+   * container means "the build is over and your app is still there", and the pane keeps framing it
+   * instead of collapsing to "The preview is no longer running". Without this, pressing Stop, or
+   * simply sending a second message after a build, pulled a running app off the screen.
+   *
+   * IT MAKES NO CLAIM ABOUT THE BUILD. "Alive" and "worth framing" are two questions and they stay
+   * two: this one is answered by what is serving, and what the pane is allowed to SAY about the
+   * newest build is answered by the compile state, whose `unknown` asserts nothing in either
+   * direction. Reading this as "the build succeeded" is the exact conflation that put an unearned
+   * "Build complete" on a screen where no build ever ran.
+   */
+  serving: boolean
 }
 
 /**
@@ -146,7 +174,8 @@ export function resolvePreviewAddress(inputs: PreviewAddressInputs): PreviewAddr
   const {
     turnPreviewUrl, turnStatus, narratingChatIsOpenChat,
     relaunchedUrl, sessionUrl, sessionStatus, sessionId, projectPreviewUrl,
-    sessionBelongsToOpenProject, transcriptHasBuildOutcome,
+    sessionBelongsToOpenProject, sessionEndedCompleted,
+    transcriptHasBuildOutcome,
   } = inputs
 
   // The chat predicate, and ONLY the chat predicate. See the asymmetry note above.
@@ -172,5 +201,56 @@ export function resolvePreviewAddress(inputs: PreviewAddressInputs): PreviewAddr
     (fromProject ? 'ready' : null) ??
     (transcriptHasBuildOutcome ? 'ended' : null)
 
-  return { url, status }
+  // ═══ LIVENESS, AND WHY IT IS THREE SOURCES RATHER THAN ONE ═══
+  //
+  // The preview-state read is the BEST authority — it asks the server what is actually serving
+  // this project, independent of any turn's history — but it is not the only one, because it is a
+  // poll and a poll has not always answered yet. The two disjuncts beside it cover the moments it
+  // has not: the instant a turn ends over a live preview, and the instant a session does. Both are
+  // facts this render already holds, and dropping them would make a citizen watch their app
+  // disappear for one poll interval every time a build finished.
+  //
+  // A TURN THAT PUBLISHED A PREVIEW COUNTS AS SERVING UNLESS IT FAILED, and that clause carries
+  // both `#96` and `#200`.
+  //
+  //   `#96` — `turnStatus` is `'ended'` for a turn that COMPLETED and for one the citizen STOPPED,
+  //           because the backend pardons the container either way. It is `'failed'` only for a
+  //           turn that genuinely failed or lost its workspace. So the pardon rides on the phase
+  //           rather than on a terminal reason string this module never sees.
+  //   `#200` — the moment a citizen SENDS a second message, the surface resets the turn narrative
+  //           and `turnStatus` drops to `null` while `turnPreviewUrl` keeps the URL the last
+  //           `preview_ready` named. Requiring `'ended'` here would make liveness blink off for
+  //           exactly that render — and the status, falling through to the transcript's own
+  //           `'ended'`, would collapse `frameContext` and REMOUNT the iframe. That is the reload
+  //           on every message: the app re-requests its document and throws away the citizen's
+  //           form entries, their scroll position and their selected tab.
+  //
+  // SO `null` IS TREATED AS "STILL SERVING", AND THAT IS NOT A GUESS. `fromTurn` is non-null only
+  // because a turn told this tab, on this chat, that an app was answering at that URL, and the
+  // container behind it is not torn down by anything a turn does. `failed` is the one phase that
+  // says otherwise, and it is excluded. A page that RELOADS starts with no turn preview at all, so
+  // none of this can resurrect a stale claim — the terminal placeholder still wins there, which is
+  // the `framedStatus` lesson this module already keeps.
+  //
+  // NO URL, NOTHING SERVING. Liveness describes what is framed; with nothing framed it is not
+  // "false because the app is down", it is simply not a question, and `false` is the answer that
+  // makes every reader (`keepFramed`, the terminal placeholder) behave as it did before.
+  //
+  // AND THE PROBE NEEDS NO INPUT OF ITS OWN. `fromProject` is already exactly "the preview-state
+  // read answered `alive` for THIS project" — the arm's own docblock quotes the wire contract
+  // saying so — and it already carries the project predicate. A second `containerAlive: boolean`
+  // beside it would be the same fact spelled twice, from the same read, with nothing forcing the
+  // two spellings to agree: a caller could feed a URL on one and `false` on the other and the
+  // resolver would believe both. One expression, one source.
+  //
+  // Note it is `fromProject`, NOT "fromProject won the URL". A live turn's preview outranks it for
+  // what to FRAME while describing the same container, so a project that is demonstrably serving
+  // says so whichever arm supplied the address.
+  const serving =
+    url !== null &&
+    (fromProject !== null ||
+      (fromTurn !== null && turnStatus !== 'failed') ||
+      (fromSession !== null && sessionEndedCompleted))
+
+  return { url, status, serving }
 }

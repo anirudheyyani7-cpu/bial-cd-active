@@ -49,7 +49,7 @@ const h = vi.hoisted(() => ({
   resolvePlanOptions: vi.fn(), uuidv7: vi.fn(),
   loadBuilds: vi.fn(), getBuild: vi.fn(),
   listProjectConversations: vi.fn(), buildUserParts: vi.fn(),
-  stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(),
+  stop: vi.fn(), getStatus: vi.fn(),
 }))
 
 // THE LEGACY RELAY MOCK IS GONE WITH THE HOOK (Plan D U17). Both kinds of chat run on the turn

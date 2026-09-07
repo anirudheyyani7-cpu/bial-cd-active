@@ -204,34 +204,99 @@ describe('LivePreview — status-driven visuals (all 5 C3 statuses)', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toBe('')
   })
 
-  it('the "still working" overlay shows only while a LIVE preview keeps receiving activity', () => {
-    const { container, rerender } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating />)
-    // The copy is "Still working…", not "Still iterating…": "iterate" is a developer's word
-        // for a loop, and a citizen reading it beside their app has no way to tell whether it
-        // describes progress or a fault. Same overlay, same condition, plain language.
-    expect(container.textContent).toMatch(/still working/i)
-    rerender(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating={false} />)
+  // ★ R24/`#195` — THE THREE OVERLAYS ARE GONE FROM THE APP'S CANVAS, and this is the guard that
+  // keeps them from coming back. It used to assert the "Still working…" chip APPEARED while a turn
+  // kept refining a live preview; the chip sat at `absolute top-3 left-1/2`, which is where every
+  // generated app draws its own navigation, so the platform was writing across the citizen's app.
+  //
+  // ASSERT-ABSENCE, PAIRED WITH LIVENESS — an empty pane would satisfy the absence on its own, so
+  // the frame has to be found in the same breath. `iterating` is still a live prop (it drives the
+  // reload nonce); what it no longer does is draw anything over the app.
+  it('★ draws NOTHING over the framed app while a turn keeps refining it', () => {
+    const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" iterating />)
     expect(container.textContent).not.toMatch(/still working/i)
+    // LIVENESS: the app really is framed, so the absence is a deletion rather than a blank pane.
+    expect(container.querySelector('iframe')).toBeTruthy()
+    // …and no platform-owned overlay is anchored over the frame's top-centre, whatever it says.
+    // The geometric form of the same rule, so a NEW chip with different copy is caught too.
+    expect(container.querySelectorAll('[data-testid="device-card"] .absolute')).toHaveLength(0)
   })
 })
 
-describe('LivePreview — the pardoned preview: completed builds stay framed (#13/R2)', () => {
-  it('ended + completedLive + previewUrl KEEPS the frame with the build-complete chip — not the placeholder', () => {
-    const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive />)
+describe('LivePreview — the pardoned preview: a finished turn leaves the app framed (#13/R2)', () => {
+  it('ended + serving + previewUrl KEEPS the frame — and claims nothing about the build', () => {
+    const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" serving />)
     const iframe = container.querySelector('iframe')
     expect(iframe).toBeTruthy() // the server pardoned the container; the URL is genuinely live
     expect(iframe.getAttribute('src')).toBe(SANDBOX_URL)
-    expect(container.textContent).toMatch(/build complete/i)
     expect(container.textContent).not.toMatch(/no longer running/i)
+    // ★ AND THE CLAIM IS GONE WITH THE CHIP (U7a/R24). This used to assert `/build complete/i` was
+    // on screen. The pane frames a live app; it does not also state a build outcome — which is
+    // what let a route where no build ever runs publish one (`#199`).
+    expect(container.textContent).not.toMatch(/build complete/i)
   })
 
-  it('completedLive WITHOUT a previewUrl still shows the terminal placeholder — never a blank pane', () => {
-    const { container } = render(<LivePreview previewUrl={null} status="ended" completedLive />)
+  it('a serving container WITHOUT a previewUrl still shows the terminal placeholder — never a blank pane', () => {
+    const { container } = render(<LivePreview previewUrl={null} status="ended" serving />)
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.textContent).toMatch(/no longer running/i)
   })
 
-  it('ended WITHOUT completedLive still collapses (stop / force-end / failure tore the container down)', () => {
+  it('★ the terminal sentence is UNREACHABLE while the container is serving, in both nodes', () => {
+    // The whole point of U2, stated as the sentence a citizen actually reads. "The preview is no
+    // longer running" is a claim about the container, and it must not be derivable from the turn
+    // being over — a turn ending is not an app ending.
+    //
+    // BOTH NODES, because the pane says everything twice on purpose: the visible card and the
+    // permanent live region. A version that stopped drawing the card but kept announcing it would
+    // pass a text-only assertion while telling a screen-reader user their app was gone.
+    //
+    // ASSERT-ABSENCE, PAIRED WITH LIVENESS: the frame has to be found in the same breath, or an
+    // empty pane satisfies both absences.
+    const { container } = render(
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving previewState="alive" />,
+    )
+
+    expect(container.querySelector('iframe')).toBeTruthy()
+    expect(screen.queryByTestId('preview-ended-card')).toBeNull()
+    expect(screen.getByRole('status').textContent).not.toMatch(/no longer running/i)
+    expect(container.textContent).not.toMatch(/no longer running/i)
+  })
+
+  it('★ a FAILED build stays framed when its container serves — and is never called complete', () => {
+    // `#96`'s third acceptance criterion, at the pane. Widening liveness must not turn a failed
+    // build into a successful-looking one: the frame stays because the container is up, and what
+    // the pane SAYS about the build comes from the compile state, which covers the frame and names
+    // the failure. Two questions, two answers, neither borrowed from the other.
+    render(
+      <LivePreview
+        previewUrl={SANDBOX_URL}
+        status="failed"
+        serving
+        previewState="alive"
+        compileState="failed"
+      />,
+    )
+
+    // The build is named as broken, not as finished.
+    expect(screen.getAllByText(/isn\u2019t running right now/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/build complete/i)).toBeNull()
+    // LIVENESS: and the citizen is not staring at a raw framework error screen — the cover is up.
+    expect(screen.getByRole('status').textContent).not.toMatch(/preview is live/i)
+  })
+
+  it('★ ended with NOTHING SERVING collapses — a reclaimed or torn-down container, not a stop', () => {
+    // ★ THE NAME AND ITS PARENTHETICAL WERE CORRECTED (R26a, `#96`). It read
+    // "ended WITHOUT completedLive still collapses (stop / force-end / failure tore the container
+    // down)", and the parenthetical is FACTUALLY WRONG for a stop: `finish_turn_sandbox` pardons
+    // the container with no branch on how the turn ended, and the stopped arm is reached precisely
+    // because Stop arrives as a task cancellation into that `finally`. Nothing tears anything down.
+    //
+    // WHAT THE ASSERTION NOW REJECTS: a pane that keeps framing a URL when nothing is answering
+    // there. That is the honest half of the old test and it is worth keeping — a frame pointed at a
+    // dead container shows the citizen a painted corpse of their app. What it no longer does is
+    // stand as evidence that collapsing on a STOP was intended; a stopped turn now resolves to a
+    // serving address (see `turnNarrative`'s phase test) and never reaches this state at all.
     const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ended" />)
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.textContent).toMatch(/no longer running/i)
@@ -244,60 +309,70 @@ describe('LivePreview — the pardoned preview: completed builds stay framed (#1
     // thing that could take an iframe down over a container the server is still serving could
     // never actually be set. Both are deleted; what is pinned now is the state that ships.
     const { container } = render(
-      <LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive relaunching />,
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving relaunching />,
     )
     expect(container.querySelector('iframe')).toBeTruthy() // liveness: still framed, still serving
     expect(container.textContent).not.toMatch(/restoring/i)
     expect(container.textContent).not.toMatch(/no longer running/i)
   })
 
-  // ★ U18 — THE RETRACTION REGRESSION, and the reason it belongs to this unit rather than to
-  // plan one's U4. U18 changes what the completion message IS (the harness now renders the
-  // agent's `done_summary` instead of its trailing prose) and this pane's chip is the other
-  // half of that claim: the frame plus "Build complete — your app is live below". Plan one's
-  // retraction is deliberately content-agnostic, so it survives the rendering change on its
-  // own — but only if the claim it retracts actually goes quiet, which is a fact about THIS
-  // file and nothing tested it.
+  // ★ U18 — THE RETRACTION REGRESSION. U18 changed what the completion message IS (the harness
+  // renders the agent's `done_summary` instead of its trailing prose); this pane's half of the same
+  // claim was a chip reading "Build complete — your app is live below", which the cover hid
+  // visually while leaving it in the DOM, where a screen reader lives. A pane covered by the
+  // retraction announced "your app stopped running" and "Build complete" in the same breath.
   //
-  // ASSERT-ABSENCE, PAIRED WITH LIVENESS. "The chip is gone" is also true of a pane that threw
-  // on render, or of a `completedLive` prop that stopped arriving — so the retraction sentence
-  // has to be found on screen in the same breath, in both of its nodes (the visible cover and
-  // the live region), or the absence proves nothing.
+  // THE CHIP IS DELETED NOW (U7a/R24), so the claim cannot be made from this pane at all and the
+  // guard it needed is moot. The scenario survives as the ANNOUNCEMENT test it always really was:
+  // the live region must carry the retraction, and must not be carrying a liveness claim instead.
   //
-  // Mutation check: drop the `!showCover` guard on the chip and the first expectation goes red
-  // with both sentences on screen at once — which is what a screen reader used to be told.
-  it('a retracted claim silences the build-complete chip while the retraction stays readable', () => {
+  // ASSERT-ABSENCE, PAIRED WITH LIVENESS. "No completion claim" is also true of a pane that threw
+  // on render — so the retraction sentence has to be found on screen in the same breath, in both of
+  // its nodes (the visible cover and the live region), or the absence proves nothing.
+  it('a retracted claim leaves no live-preview announcement, and the retraction stays readable', () => {
     render(
       <LivePreview
         previewUrl={SANDBOX_URL}
         status="ended"
-        completedLive
+        serving
         previewState="alive"
         compileState="clean"
         workspaceLost
       />,
     )
 
-    // ABSENCE: the completion claim is not made over a workspace that has been wiped.
+    // ABSENCE: no completion claim, and no "your app preview is live" either — both would be
+    // wrong over a workspace that has been wiped, and the second one is the announcement a
+    // reader would otherwise hear on top of the retraction.
     expect(screen.queryByText(/build complete/i)).toBeNull()
+    expect(screen.getByRole('status').textContent).not.toMatch(/preview is live/i)
     // LIVENESS: …because the retraction is standing in its place, in both nodes — the visible
     // cover and the pane's permanent live region.
     expect(screen.getAllByText(/stopped running and needs to be brought back/i)).toHaveLength(2)
     expect(screen.getAllByText(/we\u2019ll restore it/i).length).toBeGreaterThan(0)
   })
 
-  it('a clean, un-retracted completed build still gets its chip (the guard is not a deletion)', () => {
+  it('a clean, un-retracted finished turn still frames the app and says so in the region', () => {
     const { container } = render(
       <LivePreview
         previewUrl={SANDBOX_URL}
         status="ended"
-        completedLive
+        serving
         previewState="alive"
         compileState="clean"
       />,
     )
-    expect(container.querySelector('iframe')).toBeTruthy()
-    expect(screen.getByText(/build complete/i)).toBeTruthy()
+    const iframe = container.querySelector('iframe')
+    expect(iframe).toBeTruthy()
+    // The reveal is earned by the framed document's own `load`, never by the status.
+    fireEvent.load(iframe)
+    expect(container.querySelector('[data-testid="device-card"]').className).toMatch(/opacity-100/)
+    // ★ AND THE PANE MAKES NO CLAIM ABOUT THE APP, in either node (U3/U7a, `#199`). The chip said
+    // "Build complete — your app is live below"; the region said "Your app preview is live". Both
+    // rested on a cross-origin `load`, which fires for a 500 exactly as for a 200 — so both were
+    // assertions the pane had no evidence for. The app is SHOWN; nothing is said about it.
+    expect(container.textContent).not.toMatch(/build complete/i)
+    expect(screen.getByRole('status').textContent).toBe('')
   })
 })
 
@@ -540,14 +615,20 @@ describe('LivePreview — the U6 relaunch response matrix (#43)', () => {
     expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
   })
 
-  it('overlays the last-saved-version notice on a frame restored from a failed build', () => {
-    const { container, rerender } = render(
-      <LivePreview previewUrl={SANDBOX_URL_2} status="ready" restoredFromFailedBuild />,
-    )
-    expect(container.textContent).toMatch(/last saved version/i)
-    expect(container.querySelector('iframe')).toBeTruthy() // the frame still shows
-    rerender(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" />)
+  // ★ R24/`#195`, THE THIRD OVERLAY. This asserted the "Showing your last saved version — the most
+  // recent build failed" notice appeared on a frame restored after a failed build. It shared the
+  // exact rectangle the other two did, and it is the one a citizen can least afford to have half
+  // covered — or to have covering their app's own nav.
+  //
+  // ITS PROP IS DELETED, NOT JUST ITS MARKUP, and that is stated rather than left to be inferred:
+  // both publishers hardcoded `restoredFromFailedBuild: false`, so nothing could ever produce this
+  // notice. `#75` stays open knowingly and needs a NEW home for it (the toolbar row, or a
+  // transcript line) — which is why there is no replacement assertion here to write.
+  it('★ says nothing over the app about a restore — the notice has no renderer on this pane', () => {
+    const { container } = render(<LivePreview previewUrl={SANDBOX_URL_2} status="ready" />)
     expect(container.textContent).not.toMatch(/last saved version/i)
+    // LIVENESS: the frame is up, so the silence is this pane's choice and not a failed render.
+    expect(container.querySelector('iframe')).toBeTruthy()
   })
 })
 
@@ -885,7 +966,7 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
     try {
       const onRelaunch = vi.fn()
       const { container } = render(
-        <LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive reconnecting onRelaunch={onRelaunch} hasSavedBuild />,
+        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={onRelaunch} hasSavedBuild />,
       )
       expect(container.textContent).toMatch(/reconnecting/i) // before the cap
       act(() => vi.advanceTimersByTime(20001))
@@ -900,10 +981,19 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
     }
   })
 
-  it('does NOT bound while the build is still ACTIVE (no completedLive) — the loop owns recovery', () => {
+  it('★ does NOT bound while the build is still ACTIVE — the loop owns recovery, and LIVENESS does not change that', () => {
+    // ★ `serving` IS PASSED HERE ON PURPOSE, and that is the mutant this scenario now catches.
+    //
+    // The cap used to read `reconnecting && completedLive`, which meant "the build is over" only
+    // because that flag was set by a turn ENDING. Liveness is true DURING a running build as well —
+    // the preview-state read says so — so substituting it one-for-one would arm this timer
+    // mid-build and answer a recovery the loop was about to make with "preview unavailable".
+    // The cap keys on the TERMINAL status instead; `status="ready"` is what holds it off.
     vi.useFakeTimers()
     try {
-      const { container } = render(<LivePreview previewUrl={SANDBOX_URL} status="ready" reconnecting />)
+      const { container } = render(
+        <LivePreview previewUrl={SANDBOX_URL} status="ready" serving reconnecting />,
+      )
       act(() => vi.advanceTimersByTime(60000))
       expect(container.textContent).toMatch(/reconnecting/i) // still reconnecting, never "unavailable"
       expect(container.textContent).not.toMatch(/preview unavailable/i)
@@ -951,7 +1041,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
         <LivePreview
           previewUrl={SANDBOX_URL}
           status="ended"
-          completedLive
+          serving
           reconnecting
           onRelaunch={vi.fn()}
           hasSavedBuild={false}
@@ -988,7 +1078,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
         <LivePreview
           previewUrl={SANDBOX_URL}
           status="ended"
-          completedLive
+          serving
           reconnecting
           onRelaunch={onRelaunchUnavailable}
           hasSavedBuild
@@ -1018,7 +1108,7 @@ describe('LivePreview — the preview only claims a build that exists (R5)', () 
         <LivePreview
           previewUrl={SANDBOX_URL}
           status="ended"
-          completedLive
+          serving
           reconnecting
           onRelaunch={vi.fn()}
           hasSavedBuild={null}
@@ -1123,7 +1213,7 @@ describe('LivePreview — compact unavailable-state card (#42 F3)', () => {
     vi.useFakeTimers()
     try {
       const { container } = render(
-        <LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive reconnecting onRelaunch={vi.fn()} hasSavedBuild />,
+        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={vi.fn()} hasSavedBuild />,
       )
       act(() => vi.advanceTimersByTime(20001))
       const card = container.querySelector('[data-testid="preview-unavailable-card"]')
@@ -1142,7 +1232,7 @@ describe('LivePreview — compact unavailable-state card (#42 F3)', () => {
     try {
       const onRelaunch = vi.fn()
       const { container } = render(
-        <LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive reconnecting onRelaunch={onRelaunch} hasSavedBuild />,
+        <LivePreview previewUrl={SANDBOX_URL} status="ended" serving reconnecting onRelaunch={onRelaunch} hasSavedBuild />,
       )
       act(() => vi.advanceTimersByTime(20001))
       const card = container.querySelector('[data-testid="preview-unavailable-card"]')
@@ -1161,7 +1251,7 @@ describe('LivePreview — a live preview is left alone', () => {
     // The `previewState` prop defaults to null (NOT YET ASKED). The four-state rendering and
     // the reclaimed cases live in LivePreview.test.tsx, next to the wire shape that drives them.
     const { container } = render(
-      <LivePreview previewUrl={SANDBOX_URL} status="ended" completedLive />,
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving />,
     )
     expect(container.querySelector('iframe')).toBeTruthy()
     expect(container.textContent).not.toMatch(/preview unavailable/i)
@@ -1503,6 +1593,27 @@ describe('LivePreview — the holding state stops when the turn does (U7/R13)', 
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('★ says NOTHING on an unreadable verdict — no failure sentence, and no announcement (U5)', () => {
+    // ★ THE THIRD VALUE IS THE LOAD-BEARING ONE. Without it the natural implementation reads "not
+    // failure" as success, and republishes a claim about a build nothing verified — on exactly the
+    // reload where nothing was serving. `unknown` is what the client answers for a refusal, an
+    // unreadable body, a thrown request, or a container running an image older than the signal.
+    //
+    // ASSERT-ABSENCE, PAIRED WITH LIVENESS: the pane has to be showing its ordinary framed content
+    // in the same breath, or a component that threw would satisfy every absence here.
+    const { container } = setup({ compileState: 'unknown', turnRunning: false })
+    loadTheFrame(container)
+
+    // LIVENESS: the app is framed and revealed — this is the pane's normal content, not a hole.
+    expect(container.querySelector('iframe')).toBeTruthy()
+    expect(card(container).className).toMatch(/opacity-100/)
+    expect(coverEl(container)).toBeFalsy()
+    // ABSENCE, IN BOTH DIRECTIONS: no failure sentence, and no claim that anything succeeded.
+    expect(container.textContent).not.toMatch(IDLE_BROKEN)
+    expect(container.textContent).not.toMatch(/build complete/i)
+    expect(container.querySelector('[role="status"]').textContent).toBe('')
   })
 
   it('announces the idle wording through the same single live region', () => {

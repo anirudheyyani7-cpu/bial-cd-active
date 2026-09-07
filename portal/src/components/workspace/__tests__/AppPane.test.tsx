@@ -102,7 +102,7 @@ const region = () => screen.getByTestId('app-pane-region')
 /** What a mounted surface publishes for the pane's chrome — every field at its resting value. */
 const PANE_VIEW = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: true, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -188,7 +188,7 @@ describe('the seam is the resolved address, not a URL that happens to be in hand
   it('frames the host once an address is resolved, and shows no sentence over it', () => {
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -294,7 +294,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // Mutation receipt: change the gate back to `address.url !== null` and this goes red.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(null))
-      c.address.set({ url: null, status: 'provisioning', projectId: 'p1' })
+      c.address.set({ url: null, status: 'provisioning', serving: false, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
       // A surface mid-build publishes its pane view; the host's own "nothing to host at all" early
@@ -314,7 +314,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // starts it", satisfied by zero, in an entirely ordinary state.
     renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'asleep', restorable: true })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -328,7 +328,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // frame somebody is looking at. `could-not-read` is deliberately absent from the veto set.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'unknown' })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -342,7 +342,7 @@ describe('the seam is the address AND the state, not the URL alone', () => {
     // up, that frame is better evidence than the press was.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'asleep' }), { kind: 'timed-out' }))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.visible.set(true)
     })
@@ -402,7 +402,7 @@ describe('the column a plan chat does not get (plan 002, U6)', () => {
     // `src` on the way back, which is a full reload of somebody's application.
     const { container } = renderPane((c) => {
       c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
-      c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+      c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
       c.project.set('p1')
       c.pane.set(PANE_VIEW)
     }, false)
@@ -426,7 +426,7 @@ describe('the movement between the two layouts (plan 002, U6)', () => {
   /** A build chat with a running app framed: the state a citizen actually leaves FROM. */
   const framed = (c: WorkspaceChannel) => {
     c.workspace.set(reportFor(reading({ state: 'alive', alive: true })))
-    c.address.set({ url: 'https://app.example/', status: 'ready', projectId: 'p1' })
+    c.address.set({ url: 'https://app.example/', status: 'ready', serving: true, projectId: 'p1' })
     c.project.set('p1')
     c.pane.set(PANE_VIEW)
   }

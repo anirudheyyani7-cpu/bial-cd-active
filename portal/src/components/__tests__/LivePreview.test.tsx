@@ -35,7 +35,7 @@ function paneFor(state: PreviewState, extra: Record<string, unknown> = {}) {
     <LivePreview
       previewUrl={SANDBOX_URL}
       status="ended"
-      completedLive
+      serving
       previewState={state.state}
       occupyingProjectName={state.occupyingProjectName}
       hasSavedBuild={state.restorable}
@@ -235,7 +235,7 @@ describe('LivePreview — a reclaimed container is never an error (R17)', () => 
         <LivePreview
           previewUrl={SANDBOX_URL}
           status="ended"
-          completedLive
+          serving
           reconnecting
           previewState="alive"
           hasSavedBuild
@@ -252,7 +252,7 @@ describe('LivePreview — a reclaimed container is never an error (R17)', () => 
 
   it('does NOT route a sleeping workspace through "Reconnecting…" — that promises a recovery nobody is bringing', async () => {
     const verdict = await asTheBrowserSeesIt({ state: 'asleep', alive: false, restorable: true })
-    const { container } = paneFor(verdict, { status: 'ready', completedLive: false, reconnecting: true })
+    const { container } = paneFor(verdict, { status: 'ready', serving: false, reconnecting: true })
 
     expect(container.textContent).not.toMatch(/reconnecting to your preview/i)
     expect(container.textContent).toMatch(/workspace is asleep/i)
@@ -375,7 +375,7 @@ describe('LivePreview — one persistent status region announces every state', (
       <LivePreview
         previewUrl={SANDBOX_URL}
         status="ended"
-        completedLive
+        serving
         previewState={alive.state}
         occupyingProjectName={alive.occupyingProjectName}
         hasSavedBuild={alive.restorable}
@@ -387,7 +387,15 @@ describe('LivePreview — one persistent status region announces every state', (
 
     const frame = view.container.querySelector('iframe')
     fireEvent.load(frame as HTMLIFrameElement)
-    expect(screen.getByRole('status').textContent).toMatch(/preview is live/i)
+    // ★ AND THEN THE REGION FALLS SILENT (U3, `#199`). This asserted `/preview is live/i`, which
+    // the pane published from the framed document's `load` alone — an event that fires for a 500
+    // exactly as it does for a 200 on a frame whose status code this pane cannot read. The wait
+    // ENDING is real and still asserted (the sentence is gone); what is no longer asserted is a
+    // verdict on the app that nothing had checked.
+    expect(screen.getByRole('status').textContent).toBe('')
+    // LIVENESS, PAIRED: the frame is up and revealed, so the silence is the announcement chain
+    // reaching its end rather than a pane that failed to render.
+    expect(view.container.querySelector('[data-testid="device-card"]')?.className).toMatch(/opacity-100/)
   })
 })
 
@@ -409,7 +417,7 @@ describe('a workspace found reverted while the tab sat idle', () => {
       <LivePreview
         previewUrl="https://app.example.test/"
         status="ended"
-        completedLive
+        serving
         previewState="alive"
         compileState="clean"
         turnRunning={turnRunning}
@@ -431,7 +439,7 @@ describe('a workspace found reverted while the tab sat idle', () => {
       <LivePreview
         previewUrl="https://app.example.test/"
         status="ended"
-        completedLive
+        serving
         previewState="alive"
         compileState="building"
       />,

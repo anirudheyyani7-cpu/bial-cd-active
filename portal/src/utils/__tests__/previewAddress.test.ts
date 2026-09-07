@@ -29,6 +29,7 @@ const nothing: PreviewAddressInputs = {
   sessionId: null,
   projectPreviewUrl: null,
   sessionBelongsToOpenProject: false,
+  sessionEndedCompleted: false,
   transcriptHasBuildOutcome: false,
 }
 
@@ -69,11 +70,11 @@ describe('resolvePreviewAddress — the precedence', () => {
         projectPreviewUrl: PROJECT,
         sessionBelongsToOpenProject: true,
       }),
-    ).toEqual({ url: PROJECT, status: 'ready' })
+    ).toEqual({ url: PROJECT, status: 'ready', serving: true })
   })
 
   it('every source null resolves to nothing framed, and to a status that does not claim an ending', () => {
-    expect(resolve({})).toEqual({ url: null, status: null })
+    expect(resolve({})).toEqual({ url: null, status: null, serving: false })
   })
 })
 
@@ -122,7 +123,7 @@ describe('resolvePreviewAddress — the project predicate gates the three lower 
         narratingChatIsOpenChat: false,
         sessionBelongsToOpenProject: false,
       }),
-    ).toEqual({ url: null, status: null })
+    ).toEqual({ url: null, status: null, serving: false })
   })
 
   it('THE ASYMMETRY: the project predicate is false and the turn arm still wins', () => {
@@ -134,7 +135,9 @@ describe('resolvePreviewAddress — the project predicate gates the three lower 
         ...everything,
         sessionBelongsToOpenProject: false,
       }),
-    ).toEqual({ url: TURN, status: null })
+    // …and it is SERVING, for the same reason it frames: the turn arm is chat-scoped, so a chat
+    // whose project this page never stamped is still watching its own app run.
+    ).toEqual({ url: TURN, status: null, serving: true })
   })
 })
 
@@ -151,7 +154,7 @@ describe('resolvePreviewAddress — a session id is not the project predicate', 
         sessionId: null,
         sessionBelongsToOpenProject: true,
       }),
-    ).toEqual({ url: RELAUNCH, status: 'ready' })
+    ).toEqual({ url: RELAUNCH, status: 'ready', serving: false })
   })
 
   it('no session id and no relaunch: the session URL and its status are both withheld', () => {
@@ -162,7 +165,118 @@ describe('resolvePreviewAddress — a session id is not the project predicate', 
         sessionId: null,
         sessionBelongsToOpenProject: true,
       }),
-    ).toEqual({ url: null, status: null })
+    ).toEqual({ url: null, status: null, serving: false })
+  })
+})
+
+describe('resolvePreviewAddress — liveness, which is a THIRD question (#96, #199, #200)', () => {
+  // WHAT THIS ANSWERS, AND WHAT IT MUST NOT. `serving` says a container is still answering at the
+  // framed address, which is what lets a terminal status keep its frame. It says NOTHING about
+  // whether the newest build compiled — that is the compile state's job, and conflating the two is
+  // what put "Build complete" on a screen where no build ever runs.
+
+  it('★ a turn that reset its narrative on a SEND stays serving (#200)', () => {
+    // THE REMOUNT-ON-EVERY-MESSAGE DEFECT, at the resolver. A send clears the turn narrative, so
+    // `turnStatus` drops to `null` while `turnPreviewUrl` keeps the URL the last `preview_ready`
+    // named. Requiring a terminal phase here blinks liveness off for exactly that render — and the
+    // status, falling through to the transcript's own `'ended'`, then collapses the frame and
+    // remounts the iframe, throwing away everything the citizen had typed into their own app.
+    //
+    // Mutation check: narrow the turn arm to `turnStatus === 'ended'` and this is the only
+    // scenario in this file that goes red.
+    expect(
+      resolve({
+        turnPreviewUrl: TURN,
+        turnStatus: null,
+        narratingChatIsOpenChat: true,
+        transcriptHasBuildOutcome: true,
+      }),
+    ).toEqual({ url: TURN, status: 'ended', serving: true })
+  })
+
+  it('★ a STOPPED turn is serving, exactly as a completed one is (#96)', () => {
+    // The whole of `#96`, at the resolver. A stop and a completion both leave the phase at `ended`
+    // (`turnNarrative.turnPhase`) because the backend pardons the container either way, so both
+    // resolve to a serving address and the pane keeps framing the running app.
+    expect(
+      resolve({ turnPreviewUrl: TURN, turnStatus: 'ended', narratingChatIsOpenChat: true }),
+    ).toEqual({ url: TURN, status: 'ended', serving: true })
+  })
+
+  it('★ a FAILED turn is not (its liveness is not widened as a side effect)', () => {
+    // `#96`'s third acceptance criterion, and the line the widening must not cross: "alive" and
+    // "worth framing" stay two questions. A turn that genuinely failed — or that lost its
+    // workspace, which is the other way `turnPhase` reaches `failed` — asserts nothing.
+    //
+    // Mutation check: relax the arm to `turnStatus !== null` and this goes red while every other
+    // scenario in this block stays green.
+    expect(
+      resolve({ turnPreviewUrl: TURN, turnStatus: 'failed', narratingChatIsOpenChat: true }),
+    ).toEqual({ url: TURN, status: 'failed', serving: false })
+  })
+
+  it('★ a live container makes a FAILED turn serving again — the read outranks the reason string', () => {
+    // The pairing that keeps the previous scenario from being read as "failed means gone". The
+    // turn's terminal reason is not evidence about the container; the preview-state read is. When
+    // the read says a container is up, the frame stays — and what the pane may SAY about the failed
+    // build is still the compile state's answer, not this one's.
+    expect(
+      resolve({
+        turnPreviewUrl: TURN,
+        turnStatus: 'failed',
+        narratingChatIsOpenChat: true,
+        projectPreviewUrl: PROJECT,
+        sessionBelongsToOpenProject: true,
+      }),
+    ).toEqual({ url: TURN, status: 'failed', serving: true })
+  })
+
+  it('the project read answers liveness even when a higher arm won the URL — one app, one container', () => {
+    expect(
+      resolve({
+        turnPreviewUrl: TURN,
+        narratingChatIsOpenChat: true,
+        projectPreviewUrl: PROJECT,
+        sessionBelongsToOpenProject: true,
+      }).serving,
+    ).toBe(true)
+  })
+
+  it('and the project read carries the PROJECT PREDICATE — a sibling project\'s container claims nothing', () => {
+    // The liveness half of the asymmetry the URL arms already pin, ISOLATED so only the project
+    // read could answer: the turn arm is held at `failed`, which asserts nothing on its own. A
+    // resolver that reached past `fromProject` to a raw "something is alive" flag would let one
+    // project's running container hold another project's frame open.
+    const failedTurnOverA = {
+      turnPreviewUrl: TURN,
+      turnStatus: 'failed' as const,
+      narratingChatIsOpenChat: true,
+      projectPreviewUrl: PROJECT,
+    }
+    expect(resolve({ ...failedTurnOverA, sessionBelongsToOpenProject: false }).serving).toBe(false)
+    // …and the same inputs with the predicate TRUE do answer, so the assertion above is a gate
+    // rather than an input nobody read.
+    expect(resolve({ ...failedTurnOverA, sessionBelongsToOpenProject: true }).serving).toBe(true)
+  })
+
+  it('an ENDED session is serving only when it ended as a SUCCESS', () => {
+    const ended = {
+      sessionUrl: SESSION,
+      sessionStatus: 'ended' as const,
+      sessionId: 'sess-1',
+      sessionBelongsToOpenProject: true,
+    }
+    expect(resolve({ ...ended, sessionEndedCompleted: true }).serving).toBe(true)
+    // A session torn down by a stop or a failure is `ended` too, so the status alone cannot be the
+    // gate — that would keep framing a URL nobody is answering.
+    expect(resolve({ ...ended, sessionEndedCompleted: false }).serving).toBe(false)
+  })
+
+  it('nothing framed is never "serving" — liveness describes an address, not a mood', () => {
+    // With no URL the question is not "false because the app is down", it is not a question at all,
+    // and `false` is the answer that leaves every reader behaving as it did before this field.
+    expect(resolve({ turnStatus: 'ended', narratingChatIsOpenChat: true }).serving).toBe(false)
+    expect(resolve({ sessionEndedCompleted: true, sessionBelongsToOpenProject: true }).serving).toBe(false)
   })
 })
 
@@ -172,7 +286,7 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
     // the citizen would watch nothing happen for the length of a provision.
     expect(
       resolve({ turnStatus: 'provisioning', narratingChatIsOpenChat: true }),
-    ).toEqual({ url: null, status: 'provisioning' })
+    ).toEqual({ url: null, status: 'provisioning', serving: false })
   })
 
   it('the live turn\'s status outranks every lower source', () => {
@@ -192,7 +306,7 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
         sessionId: 'sess-1',
         sessionBelongsToOpenProject: true,
       }),
-    ).toEqual({ url: SESSION, status: 'ended' })
+    ).toEqual({ url: SESSION, status: 'ended', serving: false })
   })
 
   it('a relaunched URL resolves the status to ready — it is a restore, not a build', () => {
@@ -206,7 +320,7 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
         sessionId: 'sess-1',
         sessionBelongsToOpenProject: true,
       }),
-    ).toEqual({ url: RELAUNCH, status: 'ready' })
+    ).toEqual({ url: RELAUNCH, status: 'ready', serving: false })
   })
 
   it('an ended session keeps its terminal status even when the project read says a container is up', () => {
@@ -220,7 +334,7 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
         projectPreviewUrl: PROJECT,
         sessionBelongsToOpenProject: true,
       }),
-    ).toEqual({ url: PROJECT, status: 'ended' })
+    ).toEqual({ url: PROJECT, status: 'ended', serving: true })
   })
 
   it('a transcript with a finished build is the bottom of the status precedence, and contributes no URL', () => {
@@ -229,7 +343,7 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
     // names a container that is long gone.
     expect(
       resolve({ transcriptHasBuildOutcome: true }),
-    ).toEqual({ url: null, status: 'ended' })
+    ).toEqual({ url: null, status: 'ended', serving: false })
   })
 
   it('a transcript outcome does not overrule a live session that is still building', () => {
@@ -241,7 +355,7 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
         sessionBelongsToOpenProject: true,
         transcriptHasBuildOutcome: true,
       }),
-    ).toEqual({ url: SESSION, status: 'building' })
+    ).toEqual({ url: SESSION, status: 'building', serving: false })
   })
 
   it('an out-of-scope session contributes neither its URL nor its status', () => {
@@ -256,6 +370,6 @@ describe('resolvePreviewAddress — the status is resolved independently of the 
         sessionBelongsToOpenProject: false,
         transcriptHasBuildOutcome: false,
       }),
-    ).toEqual({ url: null, status: null })
+    ).toEqual({ url: null, status: null, serving: false })
   })
 })

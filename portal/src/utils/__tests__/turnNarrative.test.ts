@@ -134,12 +134,41 @@ describe('turnPhase — a turn that worked on the app', () => {
     ).toBe('ready')
   })
 
-  it('carries its terminal: completed ends, failed and stopped both fail', () => {
+  it('★ carries its terminal: a failed turn failed, and NOTHING ELSE DID (#96)', () => {
     expect(turnPhase(working(), { running: false, terminal: 'completed' })).toBe('ended')
     expect(turnPhase(working(), { running: false, terminal: 'failed' })).toBe('failed')
-    // STOPPED IS A FAILURE TO THE PANE, deliberately: a build the citizen interrupted did not
-    // finish, and an `ended` here would put a completed treatment over a half-written app.
-    expect(turnPhase(working(), { running: false, terminal: 'stopped' })).toBe('failed')
+    // ★ THIS ASSERTION USED TO SAY `'failed'`, AND WHAT IT REJECTS NOW IS THE `#96` DEFECT ITSELF.
+    //
+    // It was named "failed and stopped both fail" and justified as deliberate: "a build the
+    // citizen interrupted did not finish, and an `ended` here would put a completed treatment over
+    // a half-written app." Both halves of that were wrong.
+    //
+    // THE FACT IT GOT WRONG: the backend does not tear the container down on a stop. It pardons it
+    // with no branch on how the turn ended — `finish_turn_sandbox` is reached on the stopped arm
+    // and calls `_pardon_the_container` unconditionally ("THE CONTAINER IS ALWAYS PARDONED",
+    // `manager.py`). So a stop leaves exactly what a completion leaves: a running app. Mapping it
+    // to `failed` made the pane collapse to "The preview is no longer running" over a container
+    // the server was deliberately keeping up, which is the whole of what a citizen sees in `#96`.
+    //
+    // THE INFERENCE IT GOT WRONG: `ended` is not "a completed treatment". It is the phase for a
+    // turn that is OVER, and nothing downstream reads success into it any more — the completion
+    // chip that once did is deleted (U7a). What the pane may say about a half-written app comes
+    // from the compile state, which reads the container rather than the terminal reason.
+    //
+    // Left uncorrected, this test read as evidence the collapse was intended, which is exactly how
+    // a stale assertion outlives the belief that produced it.
+    expect(turnPhase(working(), { running: false, terminal: 'stopped' })).toBe('ended')
+  })
+
+  it('★ a stopped turn and a failed one are NOT the same phase — the distinction is the fix', () => {
+    // The pairwise form, because the single-value assertions above would both stay green under a
+    // mutant that mapped every terminal to one phase. Asserting they DIFFER is what forbids the
+    // collapse coming back in either direction.
+    const stopped = turnPhase(working(), { running: false, terminal: 'stopped' })
+    const failed = turnPhase(working(), { running: false, terminal: 'failed' })
+    expect(stopped).not.toBe(failed)
+    // …and it is the FAILED one that is terminal-for-the-app, not the stopped one.
+    expect(failed).toBe('failed')
   })
 
   it('says nothing once it is neither running nor terminal', () => {

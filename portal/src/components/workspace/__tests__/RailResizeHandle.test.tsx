@@ -31,7 +31,7 @@ const APP_URL = 'https://app-a.example.azurecontainerapps.io/'
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: true, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -39,7 +39,7 @@ const EMPTY_PANE: PaneView = {
 function Surface({ pane = true }: { pane?: boolean }) {
   useWorkspaceProject('pA')
   usePublishHeading({ projectId: 'pA', projectName: 'Visitor Log', chatTitle: null, chatKind: null })
-  usePublishAddress({ url: APP_URL, status: 'ready' }, 'pA')
+  usePublishAddress({ url: APP_URL, status: 'ready', serving: true }, 'pA')
   usePublishPaneView(EMPTY_PANE)
   useAppPaneVisible(pane)
   return <div data-testid="surface" />

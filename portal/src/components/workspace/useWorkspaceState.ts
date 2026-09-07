@@ -24,8 +24,14 @@
  * stated rather than hidden: at rest, a stopped project shows no save state and no commit, and the
  * save half of the rail appears only while the app is running.
  *
- * `fetchCompileState` and `checkWorkspace` are not called from here at all. They belong to a
- * surface with a live turn behind it, and both cost a container exec.
+ * `fetchCompileState` and `checkWorkspace` are not called from here at all, and the two are no
+ * longer the same case. `checkWorkspace` genuinely belongs to a surface with a live turn behind it:
+ * it costs a container exec, it can raise an operational alarm, and it is gated on a STANDING
+ * COMPLETION CLAIM, which the project screen no longer makes. `fetchCompileState` IS asked from the
+ * project surface now (U4/`#199`) — its route short-circuits before any attach when nothing is
+ * live, so it cannot start a stopped container, which was the whole of R3's objection. It is called
+ * by `ProjectWorkspace` beside this read rather than from inside it, because it is gated on THIS
+ * hook's answer (`alive`) and on the resolved address, neither of which this hook holds.
  *
  * ═══ THE TIMER HAS TWO SPEEDS (#203) ═══
  *

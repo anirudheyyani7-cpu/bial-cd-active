@@ -674,10 +674,17 @@ describe('create and delete', () => {
     expect(screen.queryByRole('button', { name: '10' })).toBeNull()
   })
 
-  it('deleting the last row on a page does not flash "Nothing here yet"', async () => {
-    // The optimistic removal empties `items` while the request is in flight, and that
-    // request drops a database. "Nothing here yet" is a claim about the ACCOUNT, so
-    // showing it to someone with 40 projects for the length of a round trip is a lie.
+  it('★ the row leaves when the cascade returns, not when the button is pressed', async () => {
+    // U23/AE1a. The row used to be filtered out of `items` one line ABOVE the request, so a
+    // citizen watched their project vanish while the server was still dropping its database —
+    // and if the drop failed the row came back under them. A completed delete the platform has
+    // not performed is the one thing the sentence they agreed to must not show them.
+    //
+    // The dialog is what says "this is happening": it stays open and busy for the whole round
+    // trip, which is real work — a force-dropped database, a blob sweep, a container teardown.
+    //
+    // And "Nothing here yet" is a claim about the ACCOUNT, so it must not appear at any point
+    // in this sequence for someone holding 40 projects.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 40, totalPages: 5 }))
     let release: () => void = () => {}
     h.deleteProject.mockReturnValue(new Promise<void>((r) => (release = () => r())))
@@ -690,23 +697,28 @@ describe('create and delete', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /delete project/i }))
 
-    await waitFor(() => expect(screen.queryByText('Alpha')).toBeNull()) // optimistic removal
-    expect(screen.queryByTestId('projects-empty')).toBeNull() // ...but not the first-run screen
+    // ★ STILL THERE. The request has not answered, so nothing has been deleted yet, so the
+    // row is exactly where the citizen left it.
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    expect(screen.getByText('Alpha')).toBeTruthy()
+    expect(screen.queryByTestId('projects-empty')).toBeNull() // and not the first-run screen
 
-    // THE DIALOG ITSELF IS STILL OPEN, HERE, WHILE THE ROW IS ALREADY GONE (round-4 finding
-    // 9). It used to close in the same commit as the optimistic removal above — batched
-    // before the request had even been sent — so its own busy state (the spinner, Cancel
-    // disabling) was set and unmounted in one render and could never be observed. The
-    // backend does real work before answering, so this window is not theoretical.
-    expect(screen.getByRole('dialog')).toBeTruthy()
+    // THE DIALOG HOLDS ITS BUSY STATE for the whole round trip (round-4 finding 9). It used to
+    // close in the same commit as the optimistic removal — batched before the request had even
+    // been sent — so the spinner and the disabled Cancel were set and unmounted in one render
+    // and could never be observed.
     expect(screen.getByRole('button', { name: /cancel/i }).hasAttribute('disabled')).toBe(true)
 
+    // The server answers; the refetch is what takes the row.
+    h.listProjects.mockResolvedValue(page([], { total: 39, totalPages: 5 }))
     release()
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    // FOCUS LANDS ON THE HEADING, not <body>. The row (and its Delete button, the trigger
-    // Radix would otherwise try to restore focus to) left the DOM well before the dialog
-    // closed, so a detached-node no-op is exactly the failure this proves did not happen
-    // (round-4 finding 2).
+    await waitFor(() => expect(screen.queryByText('Alpha')).toBeNull())
+    expect(screen.queryByTestId('projects-empty')).toBeNull() // 39 projects is not "no projects"
+    // FOCUS LANDS ON THE HEADING, not <body>, and it still has to be sent there explicitly:
+    // the Delete button Radix captured is unmounted by the refetch a beat after the dialog
+    // closes, so restoring onto it would put the keyboard on a control that is removed a
+    // moment later (round-4 finding 2, in its new shape).
     expect(document.activeElement?.textContent).toBe('Your apps')
   })
 

@@ -727,7 +727,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                           <button data-testid={`disable-${app.appId}`} onClick={() => onDisable(app)} disabled={busy} title="Disable (kill switch)" className="p-1.5 rounded-lg border border-bial-border text-amber-600 hover:bg-amber-50 transition disabled:opacity-50"><Power size={13} /></button>
                         )}
                         {app.status === 'disabled' && (
-                          <button onClick={() => onEnable(app)} disabled={busy} title="Re-enable" className="p-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition disabled:opacity-50"><Power size={13} /></button>
+                          <button data-testid={`enable-${app.appId}`} onClick={() => onEnable(app)} disabled={busy} title="Re-enable" className="p-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition disabled:opacity-50"><Power size={13} /></button>
                         )}
                         <button data-testid={`audit-${app.appId}`} onClick={() => setAuditing(app)} disabled={busy} title="View audit" className="p-1.5 rounded-lg border border-bial-border text-neutral hover:text-primary hover:bg-bial-bg transition disabled:opacity-50"><ScrollText size={13} /></button>
                         <button data-testid={`delete-${app.appId}`} onClick={() => onDelete(app)} disabled={busy} title="Delete app" className="p-1.5 rounded-lg border border-bial-border text-red-600 hover:bg-red-50 transition disabled:opacity-50"><Trash2 size={13} /></button>

@@ -387,15 +387,57 @@ describe('LivePreview — one persistent status region announces every state', (
 
     const frame = view.container.querySelector('iframe')
     fireEvent.load(frame as HTMLIFrameElement)
-    // ★ AND THEN THE REGION FALLS SILENT (U3, `#199`). This asserted `/preview is live/i`, which
-    // the pane published from the framed document's `load` alone — an event that fires for a 500
-    // exactly as it does for a 200 on a frame whose status code this pane cannot read. The wait
-    // ENDING is real and still asserted (the sentence is gone); what is no longer asserted is a
-    // verdict on the app that nothing had checked.
+    // ★ AND THEN THE REGION FALLS SILENT (U3, `#199`) — because NOTHING HAS CHECKED THE APP.
+    // This asserted `/preview is live/i`, which the pane published from the framed document's
+    // `load` alone: an event that fires for a 500 exactly as it does for a 200 on a frame whose
+    // status code this pane cannot read. The wait ENDING is real and still asserted; what is no
+    // longer asserted is a verdict nothing had evidence for. No `compileState` is passed here, so
+    // the verdict is unreadable — and an unreadable verdict says nothing in either direction.
     expect(screen.getByRole('status').textContent).toBe('')
     // LIVENESS, PAIRED: the frame is up and revealed, so the silence is the announcement chain
     // reaching its end rather than a pane that failed to render.
     expect(view.container.querySelector('[data-testid="device-card"]')?.className).toMatch(/opacity-100/)
+  })
+
+  /**
+   * The other half of `#199`, and the reason the claim was not simply deleted.
+   *
+   * Removing it outright left the SUCCESS path silent while the failure path spoke: a citizen
+   * using a screen reader heard the wait end and then nothing, and could not tell "it worked"
+   * from "the pane stopped talking". The failure verdict gets a sentence, so its opposite does
+   * too — but only where there is evidence, which is a serving container AND a clean compile
+   * verdict, never the framed document's `load`.
+   */
+  it('says the preview is live once the build is verified clean, and only then', async () => {
+    const alive = await asTheBrowserSeesIt({
+      state: 'alive',
+      alive: true,
+      previewUrl: SANDBOX_URL,
+      restorable: true,
+    })
+
+    const view = render(
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving previewState={alive.state} compileState="clean" />,
+    )
+    fireEvent.load(view.container.querySelector('iframe') as HTMLIFrameElement)
+    expect(screen.getByRole('status').textContent).toMatch(/preview is live/i)
+
+    // ★ THE MUTANT THIS KILLS: `compileState !== 'failed'` instead of `=== 'clean'`. That is the
+    // three-into-two collapse R21a forbids, and it republishes `#199`'s false claim on exactly
+    // the reload where nothing has been verified. An unreadable verdict must assert NOTHING.
+    view.rerender(
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving previewState={alive.state} compileState="unknown" />,
+    )
+    expect(screen.getByRole('status').textContent).toBe('')
+    // LIVENESS, PAIRED: the pane is still framing the app, so the silence above is the rule
+    // firing rather than a component that stopped rendering.
+    expect(view.container.querySelector('iframe')).not.toBeNull()
+
+    // And a container that is not answering cannot be called live however clean the build was.
+    view.rerender(
+      <LivePreview previewUrl={SANDBOX_URL} status="ended" serving={false} previewState={alive.state} compileState="clean" />,
+    )
+    expect(screen.getByRole('status').textContent).not.toMatch(/preview is live/i)
   })
 })
 

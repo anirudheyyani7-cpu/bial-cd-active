@@ -783,26 +783,35 @@ export default function LivePreview({
                     ? // The honest sentence for a check that did not happen. It deliberately does
                       // NOT disturb the frame — nothing was learned, so nothing changes on screen.
                       'We could not check on your preview just now — it may still be running'
-                    : // ═══ AND THERE THE REGION FALLS SILENT, DELIBERATELY (U3, `#199`) ═══
+                    : // ═══ THE LIVE CLAIM IS EARNED NOW, NOT ASSUMED (U3/U4, `#199`) ═══
                       //
-                      // The last arm read `revealed ? 'Your app preview is live' : ''`, and it is
-                      // deleted rather than reworded. `revealed` is `frameLoaded && !covered`, and
-                      // `frameLoaded` is the framed document's `load` event — which fires for a 500
-                      // exactly as it does for a 200, on a cross-origin frame whose status code
-                      // this pane cannot read, and which the in-container proxy emits even on the
-                      // 502 it returns when the dev server is down. So the one sentence in this
-                      // chain that made a claim about the APP was resting on the one signal that
-                      // carries no health term at all. A citizen using a screen reader was told
-                      // their preview was live over a framework error screen.
+                      // This arm used to read `revealed ? 'Your app preview is live' : ''`, and
+                      // that was false. `revealed` is `frameLoaded && !covered`, and `frameLoaded`
+                      // is the framed document's `load` event — which fires for a 500 exactly as
+                      // it does for a 200, on a cross-origin frame whose status code this pane
+                      // cannot read, and which the in-container proxy emits even on the 502 it
+                      // returns when the dev server is down. So the one sentence in this chain
+                      // making a claim about the APP rested on the one signal carrying no health
+                      // term at all: a citizen using a screen reader was told their preview was
+                      // live over a framework error screen.
                       //
-                      // WHAT STILL SPEAKS, so this is a removal and not a hole: every wait, the
-                      // cover (including the compile failure's own sentence and the workspace
-                      // retraction), the reconnect, the four not-serving verdicts and the terminal
-                      // placeholder all announce through this same region. What goes quiet is the
-                      // state where the app is simply on screen and the platform has verified
-                      // nothing about it — which is the state that needed no announcement and had
-                      // no evidence behind the one it was making.
-                      ''
+                      // It is not simply deleted, because deleting it leaves the success path
+                      // SILENT while the failure path speaks — a screen-reader user hears the wait
+                      // end and then nothing, and cannot tell "it worked" from "it stopped
+                      // announcing". The failure verdict gets a sentence; so should its opposite.
+                      //
+                      // So the claim is made only where there is evidence for it, from the two
+                      // signals that carry one: `serving` (a container is answering at this
+                      // address) and a `clean` compile verdict (the build the platform actually
+                      // asked about). BOTH are required and neither is `revealed`.
+                      //
+                      // `unknown` and `null` say NOTHING, which is R21a's rule and the reason this
+                      // is a `=== 'clean'` test rather than `!== 'failed'`. "Not failure" read as
+                      // success is exactly the collapse that republishes `#199`'s false claim on
+                      // the reload where nothing is serving.
+                      revealed && serving && compileState === 'clean'
+                        ? 'Your app preview is live'
+                        : ''
 
   return (
     <div className="flex flex-col h-full">

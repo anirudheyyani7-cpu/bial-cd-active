@@ -367,12 +367,18 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     // The reveal is earned by the framed document's own `load`, never by the status.
     fireEvent.load(iframe)
     expect(container.querySelector('[data-testid="device-card"]').className).toMatch(/opacity-100/)
-    // ★ AND THE PANE MAKES NO CLAIM ABOUT THE APP, in either node (U3/U7a, `#199`). The chip said
-    // "Build complete — your app is live below"; the region said "Your app preview is live". Both
-    // rested on a cross-origin `load`, which fires for a 500 exactly as for a 200 — so both were
-    // assertions the pane had no evidence for. The app is SHOWN; nothing is said about it.
+    // ★ THE CHIP IS GONE AND THE SPOKEN CLAIM IS EARNED (U3/U4/U7a, `#199`).
+    //
+    // The chip said "Build complete — your app is live below" and is DELETED: it was drawn over
+    // the citizen's own app, and it rested on a cross-origin `load` that fires for a 500 exactly
+    // as for a 200. The region's sentence rested on the same signal and was equally unevidenced.
+    //
+    // What is different about the region now is not the wording but the WARRANT: it speaks only
+    // when a container is answering (`serving`) AND the platform asked the server whether the
+    // build compiled and was told `clean`. Both hold here, so the sentence is true and this
+    // test's own name — "says so in the region" — is finally what it asserts.
     expect(container.textContent).not.toMatch(/build complete/i)
-    expect(screen.getByRole('status').textContent).toBe('')
+    expect(screen.getByRole('status').textContent).toMatch(/preview is live/i)
   })
 })
 

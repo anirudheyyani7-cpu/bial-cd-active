@@ -140,6 +140,49 @@ describe('the mint-and-navigate protocol, carried through the deletion', () => {
   })
 })
 
+describe('the guardrail hands focus back when it closes (R43, #187)', () => {
+  // THE DIALOG IS HAND-ROLLED — no Radix `DialogContent`, so no `FocusScope` capturing the
+  // element that had focus and restoring it on unmount. Both routes out of it dropped focus on
+  // `<body>`, where the next Tab restarts at the top of the document: a keyboard citizen who
+  // pressed Send had to tab back through the whole shell to reach the message they had just been
+  // told to edit. The box is the target because the refusal keeps everything typed.
+  const BLOCKED = 'an app to spy on the ground crew'
+
+  const openGuardRail = () => {
+    renderComposer()
+    send(BLOCKED)
+    // LIVENESS FIRST. Every assertion below is about a dialog closing; if it never opened, an
+    // assertion that it is gone passes on nothing at all.
+    expect(screen.getByRole('dialog', { name: /prompt blocked/i })).toBeTruthy()
+  }
+
+  it('“Edit My Prompt” puts the caret back in the message', () => {
+    openGuardRail()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit My Prompt' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // PAIRED LIVENESS: the composer is still mounted and still holds the refused message, so
+    // "focus is on the box" is a statement about a live box with the text in it — not about a
+    // component that unmounted or emptied itself under the assertion.
+    expect((composer() as HTMLTextAreaElement).value).toBe(BLOCKED)
+    expect(document.activeElement).toBe(composer())
+  })
+
+  it('dismissing it with the corner control lands focus in the same place', () => {
+    // The other way out. A citizen who closes rather than accepts the advice is in exactly the
+    // same position — the message is still there and still needs editing — so both routes lead
+    // to the box, and neither may leave focus on `<body>`.
+    openGuardRail()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect((composer() as HTMLTextAreaElement).value).toBe(BLOCKED)
+    expect(document.activeElement).toBe(composer())
+  })
+})
+
 describe('the cold return leg — a draft that outlives the trip to a chat (plan 002, U3)', () => {
   /** The two moves a citizen makes with the rail: into a chat, and back to the project. */
   function Trip() {

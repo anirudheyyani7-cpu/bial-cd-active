@@ -159,7 +159,10 @@ function ReviewModal({ app, withdrawn, onClose, onApprove, onReject }: ReviewMod
               <h3 id="admin-review-title" className="text-base font-bold text-tertiary">Review “{appLabel(app)}”</h3>
               <p className="text-sm text-neutral mt-0.5">Owner: {app.ownerUsername || '—'}</p>
             </div>
-            <button onClick={onClose} className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"><X size={18} /></button>
+            {/* NAMED, because it is an icon on its own: without the label this dismiss control
+                reads as "button" to a screen reader, and it is the route out of the dialog that
+                R43's focus restore is measured on. */}
+            <button aria-label="Close" onClick={onClose} className="p-1.5 text-neutral hover:text-tertiary rounded-lg hover:bg-bial-bg transition"><X size={18} /></button>
           </div>
           <p data-testid="review-criterion" className="mt-3 text-xs text-tertiary bg-bial-bg border border-bial-border rounded-xl px-3 py-2.5 leading-relaxed">
             {THE_CRITERION}
@@ -462,6 +465,50 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   // response must not overwrite fresher state. Ref-token variant of the `let live`
   // idiom, since `load` is also called imperatively (Refresh, act's reload).
   const loadSeq = useRef(0)
+  // The queue's own tab — the nearest stable, always-mounted landmark on this panel, and
+  // the fallback for the review below when the row that opened it is gone.
+  const queueTabRef = useRef<HTMLButtonElement>(null)
+  // The Review control that opened the modal, CAPTURED AT PRESS TIME rather than read back
+  // off `document.activeElement`: a click focuses the button in a browser but not under
+  // `fireEvent`, so reading it back would make the restore untestable and — worse — silently
+  // correct in the suite while landing on `<body>` for the citizen. Doubles as the "a review
+  // was opened at some point" flag the effect below keys off.
+  const reviewTriggerRef = useRef<HTMLButtonElement | null>(null)
+
+  /**
+   * PUT FOCUS SOMEWHERE REAL WHEN THE REVIEW CLOSES (R43, #187).
+   *
+   * The review modal is hand-rolled — no Radix `DialogContent`, so no `FocusScope`, so nothing
+   * captures the element that had focus and nothing restores it. Closing it dropped focus on
+   * `<body>`, where the next Tab restarts at the top of the document.
+   *
+   * IT RESTORES THE ROW'S OWN Review BUTTON, which is where an administrator who dismissed a
+   * review belongs — three rows down a queue of forty, not back at the top of it.
+   *
+   * AND IT FALLS BACK, because approving or rejecting DESTROYS that button: the app leaves the
+   * pending queue, so the reload this panel does on success takes the whole row with it. That is
+   * the same detached-trigger case `ProjectsPage`'s delete path documents, and it takes the same
+   * remedy — the nearest stable landmark, here the queue's own tab.
+   *
+   * IN AN EFFECT, NOT IN THE CLOSE HANDLERS, AND THE SUITE CANNOT TELL THE TWO APART — which is
+   * exactly why this note exists. Success closes the modal from an async continuation, and both
+   * of the questions asked below are questions about the DOM: whether the trigger is still
+   * attached, and whether the tab is there to fall back to. In a browser that continuation is a
+   * microtask and React's commit is a scheduled task, so the answers describe the PREVIOUS render
+   * — mid-reload, where `loading` has replaced this whole panel with a spinner, that is a
+   * detached trigger AND a null tab ref, and focus stays on `<body>`. An effect runs after the
+   * commit, so it asks the DOM the citizen actually has. Under RTL both readings pass, because
+   * `act` flushes the commit before the continuation resumes: moving this into `settleReview`
+   * leaves the tests green and the browser broken.
+   */
+  useEffect(() => {
+    if (review !== null) return
+    const trigger = reviewTriggerRef.current
+    if (trigger === null) return // no review has been opened yet — nothing to restore
+    reviewTriggerRef.current = null
+    if (document.contains(trigger)) trigger.focus()
+    else queueTabRef.current?.focus()
+  }, [review])
 
   const load = useCallback(async () => {
     const seq = ++loadSeq.current
@@ -576,6 +623,9 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
         {TABS.map((t) => (
           <button
             key={t}
+            // The review can only be opened from the queue, so the queue's tab is the landmark
+            // focus comes back to when the row it was opened from is gone.
+            ref={t === 'pending' ? queueTabRef : undefined}
             data-testid={`apps-tab-${t}`}
             onClick={() => setTab(t)}
             className={`text-xs font-medium px-3 py-1.5 rounded-md transition inline-flex items-center gap-1.5 ${tab === t ? 'bg-white text-primary shadow-sm border border-bial-border' : 'text-neutral hover:text-primary'}`}
@@ -653,7 +703,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                     <td className="py-3">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {app.status === 'pending' && (
-                          <button data-testid={`review-${app.appId}`} onClick={() => { setWithdrawn(null); setReview(app) }} disabled={busy} className="px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition text-xs font-medium disabled:opacity-50">Review</button>
+                          <button data-testid={`review-${app.appId}`} onClick={(e) => { reviewTriggerRef.current = e.currentTarget; setWithdrawn(null); setReview(app) }} disabled={busy} className="px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition text-xs font-medium disabled:opacity-50">Review</button>
                         )}
                         {app.status === 'approved' && app.redeployNeeded && (
                           <span data-testid={`redeploy-needed-${app.appId}`} title="The approved build has not been deployed (or was re-approved since the last deploy) — run the go-live runbook, then mark it deployed" className="inline-flex items-center text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-100 text-amber-700">Deploy needed</span>

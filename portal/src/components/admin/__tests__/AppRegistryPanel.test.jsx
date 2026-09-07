@@ -602,6 +602,79 @@ describe('a submission withdrawn while the modal was open', () => {
   })
 })
 
+describe('closing the review puts focus somewhere real (R43, #187)', () => {
+  // THE MODAL IS HAND-ROLLED — no Radix `DialogContent`, so no `FocusScope` capturing the
+  // element that had focus and restoring it on unmount. Every route out of it dropped focus on
+  // `<body>`, where the next Tab restarts at the top of the document rather than at the queue
+  // the administrator is working through.
+
+  it('dismissing it returns focus to the row’s own Review button', async () => {
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await openReview()
+    // LIVENESS FIRST: the modal really opened, so "it is gone" below is a close rather than an
+    // assertion that ran before anything rendered.
+    expect(screen.getByTestId('approve-btn')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    await waitFor(() => expect(screen.queryByTestId('approve-btn')).toBeNull())
+    // The queue is untouched by a dismissal, so the button that opened the review is still
+    // there — and three rows down a queue of forty, it is where the administrator belongs.
+    expect(screen.getByTestId('app-row-app-1')).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByTestId('review-app-1'))
+  })
+
+  it('approving it — which destroys the Review button — lands focus on the queue’s tab', async () => {
+    // THE TRIGGER IS DESTROYED BY ITS OWN SUCCESS. An approved app leaves the pending queue, so
+    // the reload that follows takes the whole row (and its Review button) with it: restoring to
+    // the trigger would focus a detached node and silently do nothing, which is `<body>` again.
+    h.approveApp.mockResolvedValue({ status: 'approved' })
+    h.listApps.mockResolvedValueOnce([PENDING]).mockResolvedValue([])
+    const onToast = vi.fn()
+    render(<AppRegistryPanel onToast={onToast} />)
+    await openReview()
+
+    fireEvent.click(screen.getByTestId('approve-btn'))
+
+    // LIVENESS: the approve really went through and the panel really re-rendered on the reload —
+    // not a component that threw somewhere between the two.
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith('“Gate Tool” approved'))
+    await waitFor(() => expect(h.listApps).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('approve-btn')).toBeNull())
+    expect(screen.queryByTestId('review-app-1')).toBeNull() // the trigger is genuinely gone
+
+    expect(document.activeElement).toBe(screen.getByTestId('apps-tab-pending'))
+  })
+
+  it('…and still does when the reload has taken the whole panel off the screen first', async () => {
+    // THE RELOAD IS NOT INSTANT FOR A CITIZEN. `load` raises `loading` before it asks the server,
+    // and this panel answers a truthy `loading` with a spinner INSTEAD of itself — so for the
+    // length of a real round trip the tab strip, every row and the modal are all out of the DOM,
+    // and the landmark this restore aims at is not merely detached but absent. A mock that
+    // resolves in a microtask never renders that frame; this one does, so the assertion is about
+    // a tab that was rebuilt rather than one that never left.
+    h.approveApp.mockResolvedValue({ status: 'approved' })
+    let release = () => {}
+    h.listApps
+      .mockResolvedValueOnce([PENDING])
+      .mockReturnValueOnce(new Promise((resolve) => { release = () => resolve([]) }))
+      .mockResolvedValue([])
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await openReview()
+
+    fireEvent.click(screen.getByTestId('approve-btn'))
+
+    // The panel really is gone mid-reload — the assertion below is about coming back from that,
+    // not about a screen that never moved.
+    await waitFor(() => expect(screen.queryByTestId('apps-tab-pending')).toBeNull())
+    release()
+
+    await waitFor(() => expect(screen.getByTestId('apps-tab-pending')).toBeTruthy())
+    expect(screen.queryByTestId('review-app-1')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('apps-tab-pending'))
+  })
+})
+
 describe('the self-publish lineage has no runbook (R17a)', () => {
   it('an approved self-publish app shows neither Deploy needed nor Mark deployed', async () => {
     h.listApps.mockResolvedValue([{ ...APPROVED, approvalRoute: 'self_publish', redeployNeeded: false }])
@@ -846,5 +919,68 @@ describe('the review queue shows how old the backlog is (#209)', () => {
       expect(el.querySelector('button, select, a, [role="button"]')).toBeNull()
       expect(el.getAttribute('aria-sort')).toBeNull()
     }
+  })
+})
+
+// --- the kill switch, widened to draft and rejected (#163) ---------------------------
+
+const DRAFT = {
+  ...PENDING,
+  appId: 'app-4',
+  name: 'Self Published Tool',
+  status: 'draft',
+  submittedAt: null,
+}
+const REJECTED = { ...PENDING, appId: 'app-5', name: 'Turned Down Tool', status: 'rejected' }
+
+describe('AppRegistryPanel — switching an app off', () => {
+  it('offers the kill switch on draft and rejected rows, and still withholds it from pending', async () => {
+    // The server widened `STATUS_TRANSITIONS[DISABLED]` to {approved, draft, rejected};
+    // this is the half that makes the transition REACHABLE. Pending is excluded on both
+    // sides — an app in the review queue is rejected, not switched off — so a control here
+    // would only ever produce a 409.
+    h.listApps.mockResolvedValue([PENDING, DRAFT, REJECTED, APPROVED])
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Self Published Tool')
+
+    // Liveness first: every row really rendered, so the one absence below means something.
+    for (const id of ['app-1', 'app-4', 'app-5', 'app-2']) {
+      expect(screen.getByTestId(`app-row-${id}`)).toBeTruthy()
+    }
+    expect(screen.getByTestId('disable-app-4')).toBeTruthy() // draft
+    expect(screen.getByTestId('disable-app-5')).toBeTruthy() // rejected
+    expect(screen.getByTestId('disable-app-2')).toBeTruthy() // approved, as before
+    expect(screen.queryByTestId('disable-app-1')).toBeNull() // pending — deliberately not
+  })
+
+  it('switching off a draft calls the API for that app and confirms by name', async () => {
+    h.listApps.mockResolvedValue([DRAFT])
+    h.disableApp.mockResolvedValue({ status: 'disabled' })
+    const onToast = vi.fn()
+    render(<AppRegistryPanel onToast={onToast} />)
+    await screen.findByText('Self Published Tool')
+
+    fireEvent.click(screen.getByTestId('disable-app-4'))
+
+    await waitFor(() => expect(h.disableApp).toHaveBeenCalledWith('app-4'))
+    // A bare confirmation, not the failure severity U15 added — and it names the app, so an
+    // administrator with several rows on screen can see which one they just switched off.
+    expect(onToast).toHaveBeenCalledWith('“Self Published Tool” disabled')
+    expect(h.listApps).toHaveBeenCalledTimes(2) // the list reloads onto the new status
+  })
+
+  it('has a Draft tab at all, so the ordinary self-published app has a row to act on', async () => {
+    // Draft was hidden as "builder-side", which left the app the kill switch most needs to
+    // reach — a one-click deploy never writes a status — with no row on this screen. The
+    // widened transition is unreachable without this tab.
+    h.listApps.mockImplementation((status) =>
+      Promise.resolve(status === 'draft' ? [DRAFT] : [PENDING]))
+    render(<AppRegistryPanel onToast={() => {}} />)
+    await screen.findByText('Gate Tool') // pending is still the default tab
+
+    fireEvent.click(screen.getByTestId('apps-tab-draft'))
+    await screen.findByText('Self Published Tool')
+    expect(h.listApps).toHaveBeenCalledWith('draft')
+    expect(screen.getByTestId('disable-app-4')).toBeTruthy()
   })
 })

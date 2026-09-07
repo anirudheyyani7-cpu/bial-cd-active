@@ -76,6 +76,41 @@ function normalizeHeader(doc: unknown): ConversationHeader | null {
  * rather than rendering one. */
 type RawProjectionItem = { type: string; seq: number } & Record<string, unknown>
 
+/** One attachment on a projected `user_text` item, as the server sends it. */
+interface ProjectedAttachment {
+  attachmentId?: unknown
+  kind?: unknown
+  name?: unknown
+  mediaType?: unknown
+}
+
+/**
+ * The `file` parts for a projected user turn, rebuilt from what the server sent (#214 R23a).
+ *
+ * VALIDATED RATHER THAN CAST. A projection item is `Record<string, unknown>`, so this is the
+ * boundary where the shape stops being a promise: an entry with no id draws nothing, and a
+ * missing `kind` falls back to `image`, which is the branch whose own fetch discovers the file
+ * is gone and renders "attachment unavailable". That is the honest outcome for a reference
+ * whose row was reclaimed with its conversation — the id outlives the row by design.
+ */
+function fileParts(item: RawProjectionItem): MessagePart[] {
+  const raw = item.attachments
+  if (!Array.isArray(raw)) return []
+  const parts: MessagePart[] = []
+  for (const entry of raw as ProjectedAttachment[]) {
+    const attachmentId = typeof entry?.attachmentId === 'string' ? entry.attachmentId : ''
+    if (!attachmentId) continue
+    parts.push({
+      type: 'file',
+      kind: entry.kind === 'document' ? 'document' : 'image',
+      attachmentId,
+      name: typeof entry.name === 'string' ? entry.name : '',
+      mediaType: typeof entry.mediaType === 'string' ? entry.mediaType : '',
+    })
+  }
+  return parts
+}
+
 /**
  * What happens when the projection carries a type this client does not know.
  *
@@ -188,7 +223,13 @@ export function messagesFromProjection(
       messages.push({
         id: `srv_${item.seq}_u_${index}`,
         role: 'user',
-        parts: [{ type: 'text', text: item.text as string }],
+        // FILES FIRST, THEN THE PROSE — the same order `buildUserParts` writes when the message
+        // is first composed, so a reloaded turn renders identically to the one the citizen
+        // watched send. Rebuilding these is the second half of #214 R23a: the server has always
+        // sent the attachment identities and this path threw them away, so every chip vanished
+        // on refresh for every format, and with it the citizen's only sight of the files still
+        // riding on every turn.
+        parts: [...fileParts(item), { type: 'text', text: item.text as string }],
         seq: item.seq,
       })
     } else if (item.type === 'assistant_text') {

@@ -63,7 +63,7 @@ describe('getConversation', () => {
       ok({
         conversation: { _id: 'c1', kind: 'build', title: 'App', context: { theme: 'bial' } },
         projection: [
-          { type: 'user_text', seq: 0, text: 'hi', attachmentIds: [] },
+          { type: 'user_text', seq: 0, text: 'hi', attachments: [] },
           { type: 'assistant_text', seq: 1, text: 'hello!' },
         ],
         activeTurn: null,
@@ -389,7 +389,7 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row', () 
 
   it('keys stay unique across kinds that can repeat within one row', () => {
     const keys = keysOf([
-      { type: 'user_text', seq: 1, mode: 'ask', text: 'a', attachmentIds: [] },
+      { type: 'user_text', seq: 1, mode: 'ask', text: 'a', attachments: [] },
       { type: 'user_text', seq: 1, mode: 'ask', text: 'b', attachmentIds: [] },
       { type: 'step', seq: 2, tool: 'write_file', label: 'x', state: 'ok', hidden: false },
       { type: 'step', seq: 2, tool: 'write_file', label: 'y', state: 'ok', hidden: false },
@@ -642,5 +642,70 @@ describe('messagesFromProjection — a stopped turn still looks stopped after a 
     // Distinct keys, since one row can project several items and React silently corrupts a list
     // with duplicates.
     expect(new Set(messages.map((m) => m.id)).size).toBe(3)
+  })
+})
+
+
+describe('attachment chips survive a reload (#214 R23a)', () => {
+  const withAttachments = (attachments) =>
+    messagesFromProjection([{ type: 'user_text', seq: 1, text: 'what is in this?', attachments }])
+
+  it('rebuilds a file part per attachment, so the chip can name its file', () => {
+    // THE DEFECT THIS CLOSES. The server has always sent the attachment identities on every
+    // user_text item and this path used to build `parts: [{type:'text'}]` and nothing else, so
+    // every chip vanished on refresh — for every format, not only images. The citizen lost
+    // their only sight of the files still riding on every turn, and the per-conversation tally
+    // taken over these messages silently reset to zero.
+    //
+    // Mutation receipt: drop `...fileParts(item)` from the parts array and this goes red.
+    const [msg] = withAttachments([
+      { attachmentId: 'att-1', kind: 'document', name: 'roster.pdf', mediaType: 'application/pdf' },
+      { attachmentId: 'att-2', kind: 'image', name: 'gate.png', mediaType: 'image/png' },
+    ])
+
+    expect(msg.parts).toEqual([
+      { type: 'file', kind: 'document', attachmentId: 'att-1', name: 'roster.pdf', mediaType: 'application/pdf' },
+      { type: 'file', kind: 'image', attachmentId: 'att-2', name: 'gate.png', mediaType: 'image/png' },
+      { type: 'text', text: 'what is in this?' },
+    ])
+  })
+
+  it('puts the files BEFORE the prose, matching how the message was composed', () => {
+    // `buildUserParts` pushes files then text, so a reloaded turn must too or the same message
+    // renders in two different orders depending on whether the page has been refreshed.
+    const [msg] = withAttachments([
+      { attachmentId: 'att-1', kind: 'image', name: 'a.png', mediaType: 'image/png' },
+    ])
+
+    expect(msg.parts[0].type).toBe('file')
+    expect(msg.parts[msg.parts.length - 1].type).toBe('text')
+  })
+
+  it('keeps a reclaimed attachment as a part so the chip can say it is unavailable', () => {
+    // The row is deleted when its conversation is reclaimed, but the id lives in the message
+    // payload forever, so the server sends the id with an empty name. Dropping it here would
+    // hide from the citizen that a file was ever attached; emitting it lets the chip's own
+    // fetch fail and render "attachment unavailable", which is the honest answer.
+    const [msg] = withAttachments([{ attachmentId: 'att-gone', kind: '', name: '', mediaType: '' }])
+
+    expect(msg.parts[0]).toEqual({
+      type: 'file',
+      kind: 'image',
+      attachmentId: 'att-gone',
+      name: '',
+      mediaType: '',
+    })
+  })
+
+  it('draws nothing for an entry with no id, rather than a chip that cannot be fetched', () => {
+    const [msg] = withAttachments([{ kind: 'image', name: 'orphan.png', mediaType: 'image/png' }])
+
+    expect(msg.parts).toEqual([{ type: 'text', text: 'what is in this?' }])
+  })
+
+  it('a turn with no attachments is unchanged', () => {
+    const [msg] = withAttachments(undefined)
+
+    expect(msg.parts).toEqual([{ type: 'text', text: 'what is in this?' }])
   })
 })

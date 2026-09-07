@@ -16,7 +16,9 @@
  * one "is this ours" test breaks both directions at once: it stops a live turn framing in the case
  * that matters most (a chat whose project the page's session was never stamped with), and it lets
  * one project's build frame into another project's pane. `previewAddress.test.ts` and
- * `ConversationSurface-previewaddress.test.tsx` each carry a scenario.
+ * `ConversationSurface-previewaddress.test.tsx` each carry a scenario, and
+ * `ConversationSurface-session.test.jsx` pins the second caller's precedence over a transcript's
+ * own terminal read.
  *
  * A THIRD SCOPE IS NAMED HERE AND KEPT OUT: APP-scoped facts (the compile state, whether the
  * workspace was lost) are about the project's ONE app and deliberately NOT narrowed to the open

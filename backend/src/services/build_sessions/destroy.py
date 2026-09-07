@@ -106,7 +106,7 @@ def _the_lock_engine() -> AsyncEngine:
             settings.DATABASE_URL.get_secret_value(),
             isolation_level="AUTOCOMMIT",
             poolclass=NullPool,
-            # Same no-parameters-in-logs rule as `db/base.py` (#187). This engine runs the
+            # Same no-parameters-in-logs rule as `db/base.py`. This engine runs the
             # reclamation pass unattended, so anything it renders into an exception goes
             # straight to an operator log with nobody reading the response.
             hide_parameters=True,

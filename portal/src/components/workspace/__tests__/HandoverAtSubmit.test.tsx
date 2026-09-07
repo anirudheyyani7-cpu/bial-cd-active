@@ -503,22 +503,22 @@ describe('transferring', () => {
 })
 
 /**
- * ★ AND THE SAME QUESTION, REACHED WITHOUT SENDING ANYTHING (`#196`, U13).
+ * ★ AND THE SAME QUESTION, REACHED WITHOUT SENDING ANYTHING.
  *
- * ═══ WHY THIS BLOCK IS HERE AND NOT IN `AppPane.test.tsx` ═══
+ * WHY THIS BLOCK IS HERE AND NOT IN `AppPane.test.tsx`.
  *
- * `#196` is the citizen who does NOT want to send a message: they want their own app open, and
+ * This is the citizen who does NOT want to send a message: they want their own app open, and
  * until now the only thing on the screen that could get it for them was a composer send. This file
  * is the one that mounts the whole of that — the real shell, the real `ProjectWorkspace`, the real
  * rail composer, and a route that records what a navigation carried — so it is the only place the
  * guarantee can be stated as what it actually is: THE ADDRESS DOES NOT MOVE AND THE MESSAGE IS NOT
  * SENT. A pane-level suite has no composer and no router to be wrong about.
  *
- * The trap it is written against is D1's: `resolveReclaim` awaits `retry()`, which on this surface
+ * The trap it is written against: `resolveReclaim` awaits `retry()`, which on this surface
  * is the rail's own "open the chat with what they typed". A take-back routed through that slot
  * would post the citizen's held message as a build instruction — the exact thing the owner forbade.
  */
-describe('★ taking the workspace back, with nothing sent (#196)', () => {
+describe('★ taking the workspace back, with nothing sent', () => {
   const held = {
     state: 'slot_taken' as const, alive: false, previewUrl: null,
     occupyingProjectName: 'Car pool', occupyingProjectId: 'pA', restorable: true,

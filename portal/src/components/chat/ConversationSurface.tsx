@@ -16,8 +16,10 @@
  * project is stopped first; the session half only reattaches (reload-mid-build) or stops.
  * THREE DISTINCT IDENTITIES: conversationId (the thread), projectId (the container, a
  * breadcrumb), and the build session (one per user, scoped to the project). The refined brief
- * travels in the start body's `prompt`; `conversationId` rides along so the server can
- * materialize attachments already persisted to the thread — never conversation context.
+ * travels in the start body's `prompt`; `conversationId` rides along so the server can run its
+ * project-scoped conversation lookup and materialize attachments already persisted to the
+ * thread — never conversation context. PERSIST-BEFORE-START is what makes both possible: the
+ * thread and its attachments already exist by the time the start request goes looking for them.
  * SESSION ↔ THREAD: the confirming thread ORIGINATES the session; a confirm in another chat of
  * the SAME project RE-ATTACHES it (409 → getStatus → projectId-compare → resubscribe); a
  * DIFFERENT project is BLOCKED — the projectId comparison is the gate, not the bare 409.
@@ -547,7 +549,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     setSaveError(null)
     try {
       await saveProject(activeProjectId)
-      // THE SAME NUDGE THE PROJECT SCREEN'S SAVE RAISES (#205). `usePublishState` listens for it
+      // THE SAME NUDGE THE PROJECT SCREEN'S SAVE RAISES. `usePublishState` listens for it
       // and reconciles the toolbar chip, which mounts on this screen too — without it a save from
       // a chat leaves the chip one read behind until its next focus or visibility read. Raised
       // unconditionally rather than under the id guard below: the event names the project it is
@@ -676,7 +678,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // on screen. See `onStarted` at the publish block far below for what fills it.
   const [startedPreviewUrl, setStartedPreviewUrl] = useState<string | null>(null)
   const [startPending, setStartPending] = useState(false)
-  // A CHAT LOADED COLD CLAIMS THE OPEN PROJECT'S WORKSPACE (#192).
+  // A CHAT LOADED COLD CLAIMS THE OPEN PROJECT'S WORKSPACE.
   //
   // The stamp gates EVERY project-scoped arm of the address, and until now only two things ever
   // wrote it: a reattach that adopts a live build, and the pane's start control reporting one
@@ -1621,7 +1623,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       if (!sink.terminal) return
       showBuildOutcome({
         // THREE TERMINALS IN, THREE OUT. This used to be `=== 'completed' ? 'ended' : 'failed'`,
-        // which is where a citizen's own Stop became a failure (#204): the sink already carries
+        // which is where a citizen's own Stop became a failure: the sink already carries
         // `stopped` — the same fact the activity pill reads to say "stopped before it finished" —
         // and the collapse threw it away one line before the sentence was written from it.
         status: sink.terminal === 'completed' ? 'ended' : sink.terminal,
@@ -1742,7 +1744,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       const cap = validateConversationAttachmentCap(countAttachments(messages), attachments.length)
       if ('error' in cap) throw new SendRefusal(cap.error)
       // The DOCUMENT limit, checked before the token gate can reach the same conclusion with the
-      // wrong advice (#194). The server refuses this too, at `resolve_binaries`; this is the same
+      // wrong advice. The server refuses this too, at `resolve_binaries`; this is the same
       // refusal one step earlier so the composer does not accept a message it knows will bounce.
       const docs = validatePdfPerMessageCap(attachments)
       if ('error' in docs) throw new SendRefusal(docs.error)
@@ -1763,7 +1765,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // went wrong, in the banner, with the server's own words. The composer's catch only needs
       // to know that it must not empty itself.
       //
-      // ══ SILENT, OR THE COMPOSER TALKS OVER THE ANSWER ══
+      // SILENT, OR THE COMPOSER TALKS OVER THE ANSWER
       //
       // Saying "empty of copy" was not enough — a bare `Error` IS copy, because of what the
       // composer does with one. `ComposerBox` shows a refusal's own words only for a
@@ -1772,8 +1774,8 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
       // banner and the composer immediately overwrote it with that generic line — last writer
       // wins, and the writer that knew nothing went last.
       //
-      // The citizen paid for it at exactly the place this branch was fixing. Attach a 40-page
-      // PDF and send: the server refuses with 413 and the sentence `#194` exists to produce —
+      // The citizen paid for it at exactly the seam the document cap guards. Attach a 40-page
+      // PDF and send: the server refuses with 413 and the sentence its page limit exists to say —
       // "That document is too long to work with. Try one under 30 pages." — and what appears
       // under the composer is "try again", advice that cannot work, because trying again sends
       // the same 40 pages to the same cap forever. Verified in a browser: `413 POST
@@ -2098,7 +2100,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // the build before it. Demoting it to the project arm — ranked last — puts a stale session URL
     // in front of the app they pressed a button to bring up.
     relaunchedUrl: startedPreviewUrl,
-    // THE ARM A HARD LOAD ARRIVES ON (#192). Fed from the preview-state read this surface already
+    // THE ARM A HARD LOAD ARRIVES ON. Fed from the preview-state read this surface already
     // makes, exactly as the project surface feeds it: `alive` is the one state whose `previewUrl`
     // the wire's own contract calls framable, and every other state resolves to no address rather
     // than to a guess. Ranked last, so it can never displace a live turn's preview, a restore the
@@ -2221,7 +2223,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // Scoped to THIS chat/project (`turnNarrativeIsThisChat`) like every other cross-surface read on
   // this page: a sibling chat's build says nothing about this project's container.
   //
-  // ═══ THEY ARE FOLDED INTO THE COUNTER, NOT LISTED BESIDE IT (#192) ═══
+  // THEY ARE FOLDED INTO THE COUNTER, NOT LISTED BESIDE IT
   //
   // The address this surface publishes now includes the project arm, which is fed from THIS
   // effect's own answer. So the framed URL is downstream of the probe, and listing it as an input
@@ -2289,7 +2291,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     let latestProbe = 0
     let timer: ReturnType<typeof setInterval> | null = null
     // THE CADENCE THE ANSWERS HAVE DECIDED, and the delay the running timer was actually armed
-    // with (#203). `starting` is asked about every three seconds instead of every forty-five,
+    // with. `starting` is asked about every three seconds instead of every forty-five,
     // because it is the one reading whose successor arrives with no gesture from anybody —
     // `nextProbeCadence` owns that decision, the bound on it, and the reasoning behind both
     // numbers, and the project surface's poll reads the same function so the two cannot drift.
@@ -2297,8 +2299,8 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
     // MADE INSIDE THE PROBE, never as a dependency. This effect keys on `[projectId,
     // previewProbeEpoch]` and its first statement is `setPolledPreview(null)`, so a cadence
     // spelled as a dep would re-run it on the very transition it exists to catch: the pane would
-    // flicker through "we could not check" and — since #192, when the framed address became a
-    // function of this probe's own answer — unframe an app that is running.
+    // flicker through "we could not check" and — because the framed address is a function of
+    // this probe's own answer — unframe an app that is running.
     //
     // `armed` is separate from `cadence` because they answer different questions: one is the
     // decision, the other is the fact. Re-arming an interval that already runs at the right delay
@@ -2374,7 +2376,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
         // the call is an attach against a dead workspace; without the second it races the
         // stream and can move the pane backwards to an older reading.
         //
-        // AND NOT ON AN ACCELERATED TICK (#203). The three-second cadence exists to catch a
+        // AND NOT ON AN ACCELERATED TICK. The three-second cadence exists to catch a
         // `starting` workspace the moment it serves, and the tick that catches it is looking at a
         // container that came up seconds ago — still unpacking a snapshot, still booting a dev
         // server. A compile state read there is a container exec spent on a question whose answer
@@ -2415,7 +2417,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
           if (!live || generation !== latestProbe) return
           if (lost && liveTurnIdRef.current === null) setWorkspaceLost(true)
         }
-        // THE RESCHEDULE, MADE FROM THE ANSWER (#203) — beside the stopping rule, because both are
+        // THE RESCHEDULE, MADE FROM THE ANSWER — beside the stopping rule, because both are
         // the same question asked of the same reading: what this answer means for when we ask next.
         cadence = nextProbeCadence(state.state, cadence)
         if (SETTLED_GONE.has(state.state) && state.restorable !== null) stopAsking()
@@ -2651,7 +2653,7 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
           // arrives here the pane's control has already classified it, and re-classifying an
           // already-narrowed value is how a second authority on a refusal gets created.
           //
-          // ★ `#196`'S TAKE-BACK DOES NOT ARRIVE HERE, AND MUST NOT BE MADE TO (D1). It is the
+          // ★ THE TAKE-BACK DOES NOT ARRIVE HERE, AND MUST NOT BE MADE TO. It is the
           // pane's other control — `Stop “<holder>” and open this app instead` — and it owns its
           // own dialog and its own closure in `useTakeBack`, mounted by `AppPane`. Two reasons,
           // and both are this slot's own documented properties rather than anything wrong with it:

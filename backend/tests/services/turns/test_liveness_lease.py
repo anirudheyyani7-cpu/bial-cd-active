@@ -400,7 +400,7 @@ async def test_a_renewal_with_nothing_to_protect_is_loud_in_its_own_words(
     assert await fake_redis.exists(lease_key(USER)) == 0
 
 
-# --- the lock + heartbeat that ride the same loop (#193) ---------------------
+# --- the lock + heartbeat that ride the same loop -----------------------------
 #
 # WHY THEY LIVE HERE AT ALL. `manager.on_progress` renews the one-sandbox-per-user lock and the
 # heartbeat once per non-terminal progress envelope, which is FRAME-driven. A build that spends
@@ -483,12 +483,13 @@ def _calls(
 async def test_a_write_turn_renews_its_own_lock_on_every_tick(
     fake_redis: aioredis.Redis, renewals: list[tuple[str, uuid.UUID, str]]
 ) -> None:
-    # THE #193 REGRESSION. The lock is pushed back out to its full TTL on the loop's clock, so
-    # a build that goes quiet for fifteen minutes still holds the slot it is working in.
+    # THE REGRESSION THIS GUARDS. The lock is pushed back out to its full TTL on the loop's
+    # clock, so a build that goes quiet for fifteen minutes still holds the slot it is working in.
     await _register(fake_redis, USER)
     token = await locks.acquire_lock(fake_redis, USER)
     assert token is not None
-    # Wound down to nearly nothing, standing in for the minutes it took #193 to get here.
+    # Wound down to nearly nothing, standing in for the minutes the real incident took to get
+    # here.
     await fake_redis.expire(lock_key(USER), 5)
 
     state = _write_turn_state(USER, token)
@@ -510,9 +511,10 @@ async def test_a_write_turn_renews_its_own_lock_on_every_tick(
 async def test_the_heartbeat_comes_back_and_stays_while_the_turn_runs(
     fake_redis: aioredis.Redis, renewals: list[tuple[str, uuid.UUID, str]]
 ) -> None:
-    # The observed half of #193 was the heartbeat key vanishing at roughly 100 seconds and never
-    # returning — the start seed is written ONCE per turn against a 90 s TTL, and nothing on a
-    # clock re-wrote it. Deleted here to stand for that expiry, then the loop must put it back.
+    # The observed half of the regression was the heartbeat key vanishing at roughly 100 seconds
+    # and never returning — the start seed is written ONCE per turn against a 90 s TTL, and
+    # nothing on a clock re-wrote it. Deleted here to stand for that expiry, then the loop must
+    # put it back.
     await _register(fake_redis, USER)
     token = await locks.acquire_lock(fake_redis, USER)
     assert token is not None

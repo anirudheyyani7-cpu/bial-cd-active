@@ -381,10 +381,10 @@ async def start_build(
             # one-per-user lock.
             return _conflict_response(exc)
         except SandboxReclaimBlockedError as exc:
-            # #83 — a DIFFERENT 409 from the one above, and the reason this route now declares
+            # A DIFFERENT 409 from the one above, and the reason this route now declares
             # `BuildConflictEnvelope`: not "you already have a build running" but "another
             # project holds your one workspace and taking it would destroy work". Uncaught, it
-            # was a 500 (#183) — a door into the hand-over dialog that crashed instead of
+            # was a 500 — a door into the hand-over dialog that crashed instead of
             # asking, while `reclaim_blocked_response` was documenting that every door answers
             # identically. NOT a subclass-ordering hazard with the arm above: both derive from
             # `Exception` directly and describe unrelated conditions, so neither can shadow the

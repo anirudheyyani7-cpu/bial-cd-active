@@ -1648,18 +1648,15 @@ async def test_the_terminal_reads_through_the_banners_own_vocabulary(db_session)
 async def test_a_stopped_turn_carries_the_reason_it_stored_and_not_only_the_terminal(
     db_session,
 ) -> None:
-    """★ #186. The row has always stored the reason; the item used to keep it.
+    """★ The row has always stored the reason; the item used to keep it.
 
-    `_write_turn_terminal` writes `meta["reason"] = state.end_reason` on every arm, so the fact
-    was durable the whole time — but `TurnTerminalItem` exposed `terminal` alone, which handed a
-    reloading client STRICTLY LESS than the live `TurnEndedFrame` gives a subscribed one. That
-    asymmetry is the bug: a client that must choose a sentence chooses it from the reason, so a
-    reload could only ever print the generic line for the terminal, over an ending that had a
-    name recorded beside it.
-
-    ASSERTED AS A PAIR, deliberately. `terminal` alone was already green before this change and
-    would stay green if `reason` were dropped again tomorrow; only reading both off one item
-    fails when the finer half goes missing."""
+    `_write_turn_terminal` writes `meta["reason"] = state.end_reason` on every arm, so the fact was
+    durable the whole time — but `TurnTerminalItem` exposed `terminal` alone, handing a reloading
+    client STRICTLY LESS than the live `TurnEndedFrame` gives a subscribed one: a client choosing a
+    sentence from the reason could only print the generic line on reload, over an ending that had a
+    name recorded beside it. ASSERTED AS A PAIR: `terminal` alone was already green before this
+    change and would stay green if `reason` were dropped again tomorrow; only reading both off one
+    item fails when the finer half goes missing."""
     user, _, conversation = await _thread(db_session)
     await _terminal_row(db_session, user, conversation, status="stopped", reason="stopped_by_user")
 
@@ -1673,16 +1670,14 @@ async def test_a_stopped_turn_carries_the_reason_it_stored_and_not_only_the_term
 async def test_the_reason_survives_the_terminals_own_coarseness(db_session) -> None:
     """The case that proves the reason is worth carrying rather than deriving.
 
-    `_banner_kind` reads status before reason, so every named graceful end that finishes
-    `failed` — a spent daily limit, an exhausted self-heal budget, a workspace put back from the
-    last saved copy — arrives with the SAME terminal as a genuine crash. `terminal` therefore
-    cannot distinguish "you used up your day" from "something broke", and a client with only
-    `terminal` has no honest option but the generic failure sentence.
-
-    Sharpening `_banner_kind` is the wrong fix and stays rejected (see
-    `test_the_terminal_reads_through_the_banners_own_vocabulary`: it is the build banner's
-    mapping too, and a second vocabulary for one fact is the worse trade). Carrying the reason
-    beside it is the right one — the finer answer was never lost, only withheld."""
+    `_banner_kind` reads status before reason, so every named graceful end that finishes `failed` —
+    a spent daily limit, an exhausted self-heal budget, a workspace restored from its last save —
+    arrives with the SAME terminal as a genuine crash, leaving a client that holds only `terminal`
+    unable to tell "you used up your day" from "something broke" and no option but the generic
+    failure sentence. Sharpening `_banner_kind` stays rejected: it is the build banner's mapping
+    too (see `test_the_terminal_reads_through_the_banners_own_vocabulary`), and a second vocabulary
+    for one fact is the worse trade. The finer answer was never lost, only withheld — so it rides.
+    """
     for reason in ("quota_exceeded", "self_heal_budget_exhausted", "workspace_restored"):
         user, _, conversation = await _thread(db_session)
         await _terminal_row(db_session, user, conversation, status="failed", reason=reason)

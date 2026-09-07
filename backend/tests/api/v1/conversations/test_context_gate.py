@@ -399,7 +399,7 @@ async def test_an_accepted_turn_still_resolves_a_pending_card(
 
 
 # =============================================================================
-# Documents (U6 / D4) — what a PDF costs, at the route that spends it
+# Documents — what a PDF costs, at the route that spends it
 # =============================================================================
 #
 # The upload cap next door (`test_attachments.py`) refuses a document longer than 30 pages; the
@@ -445,18 +445,15 @@ async def _send_with(client, user, conversation_id: uuid.UUID, ids: list[str], t
 async def test_three_documents_on_one_message_are_refused_by_count_not_by_tokens(
     client, db_session, shared_storage
 ) -> None:
-    """★ THE REFUSAL THAT HAD TO BE ITS OWN SENTENCE.
+    """★ THE REFUSAL THAT HAD TO BE ITS OWN SENTENCE. Three documents cost 3 x 75,000 tokens plus
+    the 8,000 reserve — 233,000 against a 200,000 ceiling — so the token gate would refuse it
+    anyway, with `CHAT_TOO_LONG_TEXT`: copy saying "start a new chat", WRONG ADVICE since the
+    new chat refuses the identical message, looping the citizen with no way out.
+    `MAX_ATTACHMENT_BLOCKS` still advertises eight attachments, warning them of nothing.
 
-    Three documents is 3 x 75,000 plus the 8,000 reserve — 233,000 against a 200,000 ceiling —
-    so the token gate would refuse it anyway, and would refuse it with `CHAT_TOO_LONG_TEXT`.
-    That copy says "start a new chat", which here is WRONG ADVICE: the new chat refuses the
-    identical message, so the citizen is sent round a loop with no way out. `MAX_ATTACHMENT_BLOCKS`
-    meanwhile still advertises eight attachments, so nothing on the way in warned them.
-
-    So the third document is refused by count, before the tokens are counted, with a sentence
-    that names the DOCUMENT limit and an action that works. Delete the count check and this
-    goes red on the copy — the request still fails, but it fails telling the citizen something
-    untrue."""
+    So the third document is refused by count, before tokens are counted, naming the DOCUMENT
+    limit with an action that works. Delete the count check and this goes red on the copy: the
+    request still fails, but telling the citizen something untrue."""
     user, _project, conversation = await _a_conversation(db_session)
     for index in range(3):
         await _upload(client, user, f"doc_{index}", "application/pdf", pdf_with_pages(2))
@@ -515,18 +512,15 @@ async def test_eight_images_still_send_the_document_cap_is_not_an_attachment_cap
 async def test_a_conversation_that_already_holds_two_documents_is_refused_at_its_next_message(
     client, db_session, shared_storage, _fresh_engine
 ) -> None:
-    """★ THE DEPLOY-TIME CONSEQUENCE, ASSERTED RATHER THAN DISCOVERED.
-
-    The gate re-counts the WHOLE history on every send and stored `BinaryContent` is in it, so
-    raising the document charge changes the answer for conversations that already exist. A chat
-    holding two documents and a real build conversation is now refused at its next message where
-    yesterday it sailed on — and that is the point, because yesterday it sailed on into an opaque
+    """★ THE DEPLOY-TIME CONSEQUENCE, ASSERTED RATHER THAN DISCOVERED. The gate re-counts the
+    WHOLE history on every send, and stored `BinaryContent` is in it, so raising the document
+    charge changes the answer for conversations that already exist: a chat holding two documents
+    and a real build now refuses its next message where yesterday it sailed on — into an opaque
     provider-side failure instead.
 
-    The control is the load-bearing half: the SAME conversation shape with two IMAGES in place of
-    the two documents still sends. Nothing else differs, so the only thing that can have changed
-    the answer is what a document is charged. Without it this test passes with the gate wired to
-    refuse anything at all."""
+    The control is the load-bearing half: the SAME shape with two IMAGES in place of the two
+    documents still sends, so only the document charge can have changed the answer. Without it
+    this test would pass even with the gate wired to refuse anything at all."""
     user, _project, conversation = await _a_conversation(db_session)
     for index in range(2):
         await _upload(client, user, f"hist_{index}", "application/pdf", pdf_with_pages(2))

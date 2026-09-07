@@ -1,5 +1,5 @@
 /**
- * #203 — THE ACCELERATED PROBE ON THE CHAT SURFACE, AND WHAT IT IS NOT ALLOWED TO ACCELERATE.
+ * THE ACCELERATED PROBE ON THE CHAT SURFACE, AND WHAT IT IS NOT ALLOWED TO ACCELERATE.
  *
  * The chat surface polls the same preview state the project surface does, on the same cadence and
  * through the same `keepAsking`/`stopAsking` seam — so shortening the interval while a workspace is
@@ -207,7 +207,7 @@ afterEach(() => {
   cleanup()
 })
 
-describe('the chat surface asks faster while a workspace is starting (#203)', () => {
+describe('the chat surface asks faster while a workspace is starting', () => {
   it('hears the app come up within one accelerated read, and asks the container NOTHING to do it', async () => {
     await watchingAStart()
     h.fetchCompileState.mockClear()
@@ -285,11 +285,11 @@ describe('the chat surface asks faster while a workspace is starting (#203)', ()
     expect(h.fetchPreviewState.mock.calls.length).toBeGreaterThan(spent)
   })
 
-  it('changes cadence WITHOUT re-running the effect, so the pane never blinks (#192 stays fixed)', async () => {
+  it('changes cadence WITHOUT re-running the effect, so the pane never blinks', async () => {
     // THE MECHANISM, not just the symptom. The tempting implementation — put the polled state in
     // this effect's dependency list — reaches the running app too, and reaches it by tearing the
     // poll down and building it again on the very transition the feature exists to catch. Its
-    // first statement is `setPolledPreview(null)`, and since #192 the framed address is a function
+    // first statement is `setPolledPreview(null)`, and the framed address is a function
     // of that answer, so the mutation costs an extra request AND hands the pane a blank address in
     // the same commit that says the app is running. The reschedule happens inside the read for
     // exactly this reason, and both halves are asserted: the read count an effect gives itself
@@ -316,8 +316,8 @@ describe('the chat surface asks faster while a workspace is starting (#203)', ()
  * and React re-renders the whole thing — transcript, composer, toolbar — for a reading nobody's
  * screen can tell apart from the one already up. `useWorkspaceState` has compared the FIELDS
  * before recording since it was written; the chat surface's copy of the same poll never did, and
- * #203 turned that from one wasted render every forty-five seconds into one every three, straight
- * through the window a citizen sits watching their app come up.
+ * accelerating the cadence turned that from one wasted render every forty-five seconds into one
+ * every three, straight through the window a citizen sits watching their app come up.
  *
  * THE MUTANT THIS EXISTS FOR: collapse the recorder back to
  * `setPolledPreview((prev) => (state.state === 'unknown' && prev ? prev : { projectId, state }))`
@@ -329,7 +329,7 @@ describe('the chat surface asks faster while a workspace is starting (#203)', ()
  * the wire cannot use. A new object per read is what the parser really does, so it is what this
  * asks the guard to survive.
  */
-describe('an unchanged reading re-renders nothing (#203)', () => {
+describe('an unchanged reading re-renders nothing', () => {
   it('four accelerated ticks saying the same thing cost zero renders — and a changed one still lands', async () => {
     await watchingAStart()
     // Fresh, field-identical objects from here on. See the docblock.

@@ -1,14 +1,18 @@
 /**
  * "2 days ago" — a pure date formatter, with no module it drags along.
  *
+ * WHY THIS EXISTS
+ *
  * It lived in `chatHistory.ts`, which runs `createConversationStore('plan')` at module scope —
  * invisible until something outside chat (the projects list) wants a timestamp, and importing
  * it would spin up a chat store just to render a project row. The function moved here, briefly
  * re-exported from `chatHistory` until that module's chat list was retired along with it.
  *
- * TWO WORDINGS, ONE SET OF BUCKETS: the projects list wants the abbreviated form (`12d ago`),
- * the admin review queue wants it spelled out — an admin surface once shipped its own copy of
- * the bucketing, disagreeing at the edges (`59m ago` here, `1 hour ago` there); one bucketer now.
+ * TWO WORDINGS, ONE SET OF BUCKETS, and that is the whole reason `elapsed` is separate: the
+ * projects list wants the abbreviated form in a dense column (`12d ago`), and the admin review
+ * queue wants it spelled out, because "43 days ago" is the sentence that makes a backlog's depth
+ * land. An admin surface once shipped its own copy of the bucketing, disagreeing at the edges
+ * (`59m ago` here, `1 hour ago` there); one bucketer now.
  */
 
 const MINUTE = 60

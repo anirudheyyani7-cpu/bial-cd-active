@@ -55,12 +55,12 @@ type Resolution =
   | { status: 'gone'; notice: string | null }
 
 /**
- * THE FAILURE THAT EARNS THE SENTENCE, AND THE TWO THAT DO NOT (`#206`).
+ * THE FAILURE THAT EARNS THE SENTENCE, AND THE TWO THAT DO NOT.
  *
  * The catch below is reached by three different things and treats them alike, correctly: they all
  * bounce, because leaving a citizen on a spinner with no answer is worse than moving them somewhere
  * that works. What they do NOT share is whether the platform actually knows anything. A 400 is the
- * server saying that id is not an id — the mangled-link case `#207` is about, and the one status
+ * server saying that id is not an id — the mangled-link case, and the one status
  * this catch actually sees. A 500 is the server failing to look. A DROPPED CONNECTION never reached
  * it at all — `fetch` rejects with a plain `TypeError`, which is not an `ApiError` and carries no
  * status, and telling someone their chat is gone because their wifi blinked asserts a deletion that
@@ -75,9 +75,9 @@ type Resolution =
  * A **404** never arrives either — `getConversation` answers one with `null` (`conversationApi.ts`),
  * which the arm above this catch handles. So the original `404 || 422` matched nothing a citizen
  * could actually produce: a chat link a mail client had wrapped (a space, a `<`, a trailing `.`)
- * bounced to the list in SILENCE, which is the exact failure `#207` names. 404 is kept beside 400
- * because it is the same class of answer and costs nothing if that null-ing ever changes; the dead
- * 422 is gone.
+ * bounced to the list in SILENCE — exactly the failure this predicate exists to catch. 404 is
+ * kept beside 400 because it is the same class of answer and costs nothing if that null-ing
+ * ever changes; the dead 422 is gone.
  */
 function goneNoticeFor(err: unknown): string | null {
   return err instanceof ApiError && (err.status === 400 || err.status === 404) ? PROJECT_GONE_NOTICE : null
@@ -252,10 +252,11 @@ export default function ChatRoute() {
     // viewport height cannot shrink into it, so it overflows and the spinner is clipped low by the
     // navbar's height on every cold chat open. The shell owns the one height model now — surfaces
     // fill the column they are given.
-    // AND IT SAYS SO IN WORDS (#210, R11). The three dots are `animate-bounce`, which the
-    // reduce-motion block now freezes — so for a citizen who asked their operating system to stop
-    // motion this arm was three static dots and nothing to read. D3 enumerated four wordless waits
-    // and gave them all sentences; this is a fifth, in a file that unit did not reach.
+    // AND IT SAYS SO IN WORDS. The three dots are `animate-bounce`, which the reduce-motion
+    // block now freezes — so for a citizen who asked their operating system to stop motion this
+    // arm was three static dots and nothing to read. EVERY WAIT IN THIS PRODUCT CARRIES A
+    // SENTENCE, not motion alone: motion is the decoration, the words are the answer, and a
+    // surface whose only wait indicator can be frozen away must have both.
     //
     // The sentence IS the announcement: `role="status"` wraps it rather than an `sr-only` copy
     // sitting beside it, because two elements carrying one sentence is that sentence read twice

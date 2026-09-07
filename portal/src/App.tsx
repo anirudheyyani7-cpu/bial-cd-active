@@ -11,7 +11,7 @@ import WorkspaceShell from './components/workspace/WorkspaceShell'
 import { isAuthenticated, bootstrapSession } from './utils/auth'
 
 /**
- * The boot / silent-refresh wait — WORDS, not only a spinner (`#210`).
+ * The boot / silent-refresh wait — WORDS, not only a spinner.
  *
  * `index.css`'s reduced-motion block suppresses `.animate-spin` outright, so for a citizen who
  * asks for less motion this screen was a stationary circle and nothing else: a full-bleed white
@@ -73,7 +73,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
   if (status === 'redirect') return <Navigate to="/login" replace />
 
-  // THE POLITE REGION IS PERMANENT AND THE WAIT BOX IS WHAT APPEARS INSIDE IT (ASM5).
+  // THE POLITE REGION IS PERMANENT AND THE WAIT BOX IS WHAT APPEARS INSIDE IT.
   //
   // A live region inserted together with its text is missed entirely by several reader-and-browser
   // combinations — `TurnBanner` and `LivePreview` both record it — and this wait has no leaf of its

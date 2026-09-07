@@ -47,7 +47,7 @@ export interface StartAppControlProps {
   action: WorkspaceAction
   report: WorkspaceReport
   /**
-   * A TAKE-BACK IS IN FLIGHT ON THIS PANE, so every control on it is inert (D2).
+   * A TAKE-BACK IS IN FLIGHT ON THIS PANE, so every control on it is inert.
    *
    * It is a prop rather than local state because the two controls the held arm draws are SIBLING
    * mounts of this component, and "both go inert while one of them works" is a fact neither of them
@@ -174,9 +174,10 @@ export default function StartAppControl({ action, report, inert = false, takeBac
         <Control
           label={action.label}
           pending={false}
-          // UNCHANGED IN LABEL AND BEHAVIOUR, per the owner's decision on `#196` — the only thing
-          // `#196` adds to it is that it goes inert while its neighbour works, which is not a
-          // change to what it does.
+          // UNCHANGED IN LABEL AND BEHAVIOUR, by decision: opening the holder is the remedy the
+          // product leads with, and it keeps its own words. The only thing the take-back adds to
+          // it is that it goes inert while its neighbour works, which is not a change to what it
+          // does.
           inert={inert}
           pendingLabel=""
           icon={<ArrowRight size={15} />}
@@ -208,7 +209,7 @@ export default function StartAppControl({ action, report, inert = false, takeBac
   }
 }
 
-// ─── THE TAKE-BACK (`#196`, D1/D2) ────────────────────────────────────────────────────────────
+// ─── the take-back ───────────────────────────────────────────────────────────────────────────
 
 /**
  * What a pane needs in order to draw the take-back and the question behind it.
@@ -235,7 +236,7 @@ export interface TakeBack {
 /**
  * TAKE THE ONE WORKSPACE BACK — the whole sequence, and every way it can end.
  *
- * ═══ THE PRESS ASKS FOR THE WORKSPACE; IT DOES NOT REACH FOR THE HOLDER ═══
+ * THE PRESS ASKS FOR THE WORKSPACE; IT DOES NOT REACH FOR THE HOLDER
  *
  * The first thing a press does is `relaunchPreview` for THIS project — the same call the start
  * control makes, unchanged. The server is what refuses, with `sandbox_reclaim_blocked`, and that
@@ -245,23 +246,25 @@ export interface TakeBack {
  *  - THE DIALOG GETS REAL DATA. Its three copy arms are chosen from `dirty`, and it withholds the
  *    Save button entirely on a confirmed-clean holder. A `PreviewState` carries no `dirty`, no
  *    `building` and no `agentWorking`, so a synthesised refusal could only ever say "may have
- *    unsaved changes" — the exact hedge R94 removed, in front of somebody whose work is safe.
+ *    unsaved changes" — the exact hedge already banned from this copy, wrong in front of somebody
+ *    whose work is safe.
  *  - THE READING CAN BE STALE. If the slot was freed since the last poll, the ask simply succeeds
  *    and the app comes up: one press, no dialog, nothing stopped.
  *  - THE SAME CALL CLOSES THE SEQUENCE. What runs after the hand-over is this same function, so
  *    another tab taking the slot mid-sequence lands on the same refusal handling and re-asks the
- *    question with the NEW holder in it (D2's fifth ending) instead of needing an arm of its own.
+ *    question with the NEW holder in it — the take-back's fifth ending — instead of needing an
+ *    arm of its own.
  *
- * ═══ THE HANDLERS RESOLVE. THEY DO NOT REJECT (D1) ═══
+ * THE HANDLERS RESOLVE, THEY DO NOT REJECT
  *
  * `ReclaimWorkspaceDialog` owns `busy` and `error` itself, and its `run()` catches EVERY rejection
  * into its own "That did not work. Please try again." alert while staying mounted. A take-back
- * whose handlers rejected would therefore report every failure through that one sentence, and D2's
- * five endings — which are pane states, with different copy and different remedies — would be
- * unreachable. So every ending here resolves, and the caller dismisses the dialog on all of them.
- * The pane is the single reporting surface.
+ * whose handlers rejected would therefore report every failure through that one sentence, and the
+ * take-back's five endings — which are pane states, with different copy and different remedies —
+ * would be unreachable. So every ending here resolves, and the caller dismisses the dialog on all
+ * of them. The pane is the single reporting surface.
  *
- * ═══ AND IT NEVER TOUCHES `captureReclaim` ═══
+ * AND IT NEVER TOUCHES `captureReclaim`
  *
  * On `/chat/{id}` the surface already owns a reclaim slot, and it is single-use, first-refusal-wins,
  * and its `resolve` awaits `retry()` — `fireRelayTurn(rawText, …)` for a refused send. Routing the
@@ -270,14 +273,14 @@ export interface TakeBack {
  * the take-back's refusal outright. The take-back owns its own dialog and its own closure, and the
  * two never meet.
  *
- * ═══ WHAT `mounted` GUARDS, AND WHAT IT DELIBERATELY DOES NOT ═══
+ * WHAT `mounted` GUARDS, AND WHAT IT DELIBERATELY DOES NOT
  *
  * State writes only. The report's handlers are called regardless, exactly as the start path calls
  * them: they write into the SURFACE, which outlives this pane's controls and needs the answer. So a
  * citizen who clicks away during the two-minute stop wait produces no state update and no crash,
  * and the server sequence — which is running server-side anyway — still completes.
  *
- * ═══ `mounted` IS NOT ENOUGH, BECAUSE THE PANE DOES NOT UNMOUNT ═══
+ * `mounted` IS NOT ENOUGH, BECAUSE THE PANE DOES NOT UNMOUNT
  *
  * `AppPane` is a SIBLING of the Outlet, not a child of it — that is the whole point of the shell,
  * and it is why leaving a build chat for the project screen does not reload the running app. The
@@ -366,8 +369,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
    *
    * `stoppedHolder` is what this sequence has ALREADY done to the other project before getting
    * here — `null` on the opening ask, the holder's name once it has been stopped — and it travels
-   * into the outcome untouched, because D2's rule is that any ending which stopped the holder says
-   * so.
+   * into the outcome untouched: any ending which stopped the holder says so.
    */
   const askForTheWorkspace = async (
     rep: WorkspaceReport,
@@ -385,10 +387,10 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
       const blocked = asReclaimBlocked(err)
       if (blocked) {
         // THE QUESTION, WITH WHOEVER IS HOLDING IT NOW. On the opening ask this is the dialog
-        // appearing; after a hand-over it is D2's fifth ending — another tab took the freed slot —
-        // and it is a return to the CHOICE screen with new data, never the dialog's generic caught
-        // error. The caller force-remounts on the holder's id, so the copy and the focus move
-        // together.
+        // appearing; after a hand-over it is the take-back's fifth ending — another tab took the
+        // freed slot — and it is a return to the CHOICE screen with new data, never the dialog's
+        // generic caught error. The caller force-remounts on the holder's id, so the copy and the
+        // focus move together.
         ifStillOurs(projectId, () => setAsking(blocked))
         return
       }
@@ -431,12 +433,12 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
     if (!rep || !holder || !projectId || inFlight.current) return
     inFlight.current = true
     setWorking(true)
-    // HOW FAR THE HAND-OVER GOT, and it is the ONLY thing that tells D2's endings apart. The order
-    // is `handOverWorkspace`'s and lives there: stop, wait for the stop to genuinely finish, save,
-    // release. A rejection while the step is still `stopping` therefore means nothing was stopped
-    // — the holder is untouched and its own ceiling sentence says so — while a rejection at
-    // `saving` or `releasing` means the holder is down and the slot is still held, which is a pair
-    // of facts the pane has to state.
+    // HOW FAR THE HAND-OVER GOT, and it is the ONLY thing that tells the take-back's endings
+    // apart. The order is `handOverWorkspace`'s and lives there: stop, wait for the stop to
+    // genuinely finish, save, release. A rejection while the step is still `stopping` therefore
+    // means nothing was stopped — the holder is untouched and its own ceiling sentence says so —
+    // while a rejection at `saving` or `releasing` means the holder is down and the slot is still
+    // held, which is a pair of facts the pane has to state.
     let reached: HandoverStep = 'stopping'
     try {
       try {
@@ -495,7 +497,7 @@ export function useTakeBack(report: WorkspaceReport | null): TakeBack {
  * One function rather than two, because the two callers used to make this judgement separately
  * with identical code, and "what counts as the server having answered" is exactly the kind of rule
  * that drifts when it is stated twice. What they still decide for themselves is what to SAY when
- * the answer is `null` — and those two sentences are deliberately different (R4b).
+ * the answer is `null` — and those two sentences are deliberately different.
  */
 function serverMessage(err: unknown): string | null {
   return err instanceof ApiError && err.message ? err.message : null

@@ -26,7 +26,7 @@ const h = vi.hoisted(() => ({
   patchProject: vi.fn(),
   generateDescription: vi.fn(),
   listProjectConversations: vi.fn(),
-  // THE PROJECTS INDEX'S OWN READS. `#206` is a two-page behaviour — a bounce OUT of this page and
+  // THE PROJECTS INDEX'S OWN READS. This is a two-page behaviour — a bounce OUT of this page and
   // a sentence ON that one — so the arrival cases below mount the REAL `ProjectsPage` behind the
   // `/projects` route. It reads a page of rows and the three summary numbers on mount, and an
   // unmocked read would make those tests about the network.
@@ -419,15 +419,15 @@ describe('ProjectPage — identity + guard rails carried over', () => {
   })
 })
 
-describe('ProjectPage — a dead address says something on the way out (`#206`)', () => {
+describe('ProjectPage — a dead address says something on the way out', () => {
   /* THE BOUNCE ITSELF IS NOT WHAT CHANGED — the case above still pins it, and both routes
      document the redirect deliberately. What these cases pin is the half that was thrown away:
      the page had the server's own 404 in its hand at the exact moment it decided to say nothing.
 
      THEY MOUNT THE REAL `ProjectsPage`, because this is a two-page behaviour and neither half is
      worth much alone. A test that asserted only "the navigation carried a `notice`" would stay
-     green through an arrival screen that silently ignores it, which is the state this unit found
-     the platform in. */
+     green through an arrival screen that silently ignores it, which is the state the platform
+     was actually in. */
 
   /** Leaves the list, then comes back — the Back press, driven through the router the way a person drives it. */
   function Detour() {
@@ -571,7 +571,7 @@ describe('ProjectPage — a dead address says something on the way out (`#206`)'
   })
 })
 
-describe('ProjectPage — a mangled address never shows the validator (`#207`)', () => {
+describe('ProjectPage — a mangled address never shows the validator', () => {
   /* THE OTHER HALF OF "a bad project address". The dead-address case above is the id that
      RESOLVED and stopped existing; this is the id that never resolved at all — a link that
      lost characters on its way to a citizen, which the backend answers with a Pydantic
@@ -647,7 +647,7 @@ describe('ProjectPage — a mangled address never shows the validator (`#207`)',
   })
 })
 
-describe('ProjectPage — the project-open mark (U4; R104, R105)', () => {
+describe('ProjectPage — the project-open mark', () => {
   /** The page under React's development double-mount, which is how it actually runs in dev. */
   function renderTwiceOver(projectId: string) {
     return render(
@@ -737,7 +737,7 @@ describe('ProjectPage — the project-open mark (U4; R104, R105)', () => {
   })
 })
 
-describe('the project skeleton keeps WORDS and a busy state (#210)', () => {
+describe('the project skeleton keeps WORDS and a busy state', () => {
   /** Every live region currently SAYING the given thing — see the twin helper in `App.test.jsx`. */
   const regionsSaying = (re: RegExp): Element[] =>
     Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
@@ -790,7 +790,7 @@ describe('the project skeleton keeps WORDS and a busy state (#210)', () => {
   })
 
   it('★ the region is already in the tree, EMPTY, before the skeleton appears — and it is the SAME node', async () => {
-    // THE ARM ASM5 EXISTS FOR. This page used to be three early returns, and an early return
+    // WHY THIS ARM EXISTS. This page used to be three early returns, and an early return
     // cannot carry a live region: the region is born holding the sentence, which several
     // reader-and-browser combinations miss entirely. Move the region back inside the `loading`
     // branch — mount it together with its text — and the empty-region assertion below goes red.

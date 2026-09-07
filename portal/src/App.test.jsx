@@ -208,7 +208,7 @@ describe('App — the auth guard sits ABOVE the shell', () => {
   // discriminates is `loading`: a guard nested inside the layout paints the workspace's navbar and
   // two-column frame around the auth spinner, so somebody who may not be signed in at all watches
   // the frame of a workspace assemble around a spinner first. (Mutation-checked both ways.)
-  // THE WAIT IS FOUND BY ITS WORDS, not by a labelled glyph (`#210`). The spinner is
+  // THE WAIT IS FOUND BY ITS WORDS, not by a labelled glyph. The spinner is
   // `aria-hidden` now — `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, so
   // a named-but-frozen circle was the whole of what this screen said — and the sentence carries it.
   const wait = () => screen.queryByText(/Getting things ready/)
@@ -269,7 +269,7 @@ describe('App — addresses outside a project get no workspace frame', () => {
   })
 })
 
-describe('the boot / silent-refresh wait keeps WORDS and a busy state (#210)', () => {
+describe('the boot / silent-refresh wait keeps WORDS and a busy state', () => {
   /**
    * Every live region in the document that is currently SAYING the given thing.
    *
@@ -303,11 +303,12 @@ describe('the boot / silent-refresh wait keeps WORDS and a busy state (#210)', (
   })
 
   it('★ the region is already in the tree, EMPTY, before the text arrives — and it is the SAME node', () => {
-    // THE ARM ASM5 EXISTS FOR. A live region inserted together with its first text is missed
-    // entirely by several reader-and-browser combinations, so the region has to outlive the wait
-    // rather than arrive with it. Mount it together with its text — render it inside
-    // `AuthLoading`, or gate the whole `<div role="status">` on `status === 'loading'` — and the
-    // empty-region assertion below goes red. A leaf-component fix is precisely what breaks here.
+    // THE MOUNT-BEFORE-FILL ORDERING THIS ARM GUARDS: a live region inserted together with its
+    // first text is missed entirely by several reader-and-browser combinations, so the region
+    // has to outlive the wait rather than arrive with it. Mount it together with its text —
+    // render it inside `AuthLoading`, or gate the whole `<div role="status">` on
+    // `status === 'loading'` — and the empty-region assertion below goes red. A leaf-component
+    // fix is precisely what breaks here.
     renderAt('/projects/p1') // signed in: the guard is decided, no wait running
 
     const before = screen.getByTestId('auth-wait')

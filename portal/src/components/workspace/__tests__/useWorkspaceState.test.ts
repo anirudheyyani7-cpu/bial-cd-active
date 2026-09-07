@@ -164,9 +164,9 @@ describe('the cadence — the timer two features depend on', () => {
 })
 
 /**
- * #203 — THE PANE LEAVES "GETTING YOUR APP READY." WHEN THE APP IS READY.
+ * THE PANE LEAVES "GETTING YOUR APP READY." WHEN THE APP IS READY.
  *
- * The measurement in the issue: the server flipped to `alive` at t=2.7s and the pane left
+ * The measurement: the server flipped to `alive` at t=2.7s and the pane left
  * `starting` at t=45.5s, with nothing animating for the 42.8 seconds in between — so there was no
  * cue that it was not simply hung. `starting` is the only reading whose successor arrives with no
  * gesture from anybody, which is exactly why a cadence tuned for "has anything happened while
@@ -177,10 +177,10 @@ describe('the cadence — the timer two features depend on', () => {
  * a three-second poll), and it gives up after a fixed number of reads (or a start that hangs polls
  * for the life of the tab). And it never reclassifies the wait it gives up on — the pane still
  * says a start is happening, because that is still what is true. Reading an elapsed budget as a
- * statement about the container is the mistake in
- * `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02.md`.
+ * statement about the container is the mistake that once marked a live sandbox dead and rolled a
+ * workspace back to its last Save.
  */
-describe('the accelerated cadence while a start is in flight (#203)', () => {
+describe('the accelerated cadence while a start is in flight', () => {
   it('leaves `starting` within ONE accelerated read, not one background cadence', async () => {
     api.fetchPreviewState.mockResolvedValueOnce(reading({ state: 'starting' }))
     api.fetchPreviewState.mockResolvedValue(reading({ state: 'alive', alive: true }))
@@ -211,7 +211,7 @@ describe('the accelerated cadence while a start is in flight (#203)', () => {
 
     // TEN accelerated intervals over a running workspace buy nothing. The mutation this pins is a
     // window that stays open on `alive`, which puts every idle project screen in the product on a
-    // three-second poll — the request volume the issue's fix is explicitly not allowed to change.
+    // three-second poll — the request volume this fix is explicitly not allowed to change.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(STARTING_PROBE_MS * 10)
     })
@@ -265,8 +265,8 @@ describe('the accelerated cadence while a start is in flight (#203)', () => {
     // reason this file already states ("a start outcome must not restart the poll"), it costs an
     // extra request on every transition, and on the chat surface, whose equivalent effect DOES
     // blank its reading on every re-run, the same mutation flickers the pane through "we could not
-    // check" and — since #192 — unframes an app that is running
-    // (`ConversationSurface-cadence.test.jsx` holds that half, where the damage is visible).
+    // check" and unframes an app that is running (`ConversationSurface-cadence.test.jsx` holds
+    // that half, where the damage is visible).
     //
     // So both halves are asserted: the READ COUNT, which is what a re-armed effect gives itself
     // away by, and the sequence of states, which is what a reader would have seen.
@@ -419,9 +419,8 @@ describe('nextProbeCadence — what opens a window, what closes it, what spends 
  *
  * THE RULE THESE PIN, and the asymmetry is the whole of it: a failed read SPENDS from the window
  * and DECIDES nothing. It cannot say whether the container is still coming up, so ending the window
- * on it — or reclassifying the reading — would be reading a failure to ask as an answer, which is
- * the death-certificate mistake in
- * `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02.md`.
+ * on it — or reclassifying the reading — would be reading a failure to ask as an answer: the
+ * death-certificate mistake that once rolled a live workspace back to its last Save.
  */
 describe('spendProbeCadence — what a read that never answered costs the window', () => {
   it('never opens one: a broken server does not buy an acceleration nothing earned', () => {
@@ -431,7 +430,7 @@ describe('spendProbeCadence — what a read that never answered costs the window
   it('spends from an open window WITHOUT closing it', () => {
     // The remaining fast reads are still owed to a start that may land the moment the endpoint
     // recovers. Giving up on the first error would put the pane back on a 45-second wait over a
-    // sentence that still says a start is happening — #203's bug, restored by one 500.
+    // sentence that still says a start is happening — the bug above, restored by one 500.
     const spent = spendProbeCadence({ delayMs: STARTING_PROBE_MS, fastReads: 1 })
     expect(spent).toEqual({ delayMs: STARTING_PROBE_MS, fastReads: 2 })
   })

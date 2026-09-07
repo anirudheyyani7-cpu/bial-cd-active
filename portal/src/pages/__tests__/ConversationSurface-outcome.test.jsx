@@ -123,7 +123,7 @@ async function runBuild(turn, text = 'a visitor app') {
  * the test id proved a box existed, this proves the citizen was told.
  */
 /**
- * EXACT SENTENCES, NOT A LOOSE MATCHER (#204).
+ * EXACT SENTENCES, NOT A LOOSE MATCHER.
  *
  * This used to be `/build finished\.|the build failed|the build stopped/i`, and the substring
  * `the build failed` is what let the Stop test below pass on the WRONG copy for as long as the
@@ -226,7 +226,7 @@ describe('showing the outcome', () => {
   })
 
   it('a genuine failure still reads as a failure — and still does not print its token', async () => {
-    // THE OTHER HALF OF #204's FIX, and the one it could most easily have broken. Teaching the
+    // THE OTHER HALF OF THAT FIX, and the one it could most easily have broken. Teaching the
     // surface that `stopped` is not a failure must not teach it that NOTHING is: a build that
     // really did fall over has to say so, or the fix has simply moved the lie.
     //
@@ -307,19 +307,19 @@ describe('showing the outcome', () => {
 
     // THE ASSERTION THIS TEST USED TO MAKE WAS `expect(await findOutcome()).toBeTruthy()`, and it
     // could not fail: `findOutcome`'s old matcher accepted `the build failed`, which is precisely
-    // the sentence the bug produced. The exact copy is asserted now, and the two things #204
-    // reported are rejected by name — the word "failed", and the raw token.
+    // the sentence the bug produced. The exact copy is asserted now, and the two things that bug
+    // let through are rejected by name — the word "failed", and the raw token.
     const card = await findOutcome()
     expect(card.textContent).toContain(OUTCOME_COPY.stopped_by_user)
     expect(card.textContent).not.toMatch(/failed/i)
     expect(card.textContent).not.toContain('stopped_by_user')
   })
 
-  it('the activity pill and the outcome sentence say the same true thing (#204)', async () => {
-    // The contradiction the issue photographed: the pill read "1 step · stopped before it
-    // finished" while the sentence directly beneath it read "The build failed: stopped_by_user".
-    // One view, one build, two answers. Asserted TOGETHER on one screen, because each half
-    // passing on its own is exactly the state the bug shipped in.
+  it('the activity pill and the outcome sentence say the same true thing', async () => {
+    // The contradiction this reproduces, exactly as it reached a citizen's screen: the pill read
+    // "1 step · stopped before it finished" while the sentence directly beneath it read "The
+    // build failed: stopped_by_user". One view, one build, two answers. Asserted TOGETHER on one
+    // screen, because each half passing on its own is exactly the state the bug shipped in.
     const turn = scriptTurn('t1')
     h.readTurnStream.mockImplementation(turn.impl)
     renderThread()

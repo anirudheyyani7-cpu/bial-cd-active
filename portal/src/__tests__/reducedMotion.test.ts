@@ -1,5 +1,6 @@
 /**
- * THE PORTAL'S REDUCED-MOTION GUARANTEE, ASSERTED AGAINST THE STYLESHEET SOURCE (`#210`).
+ * WHY THIS EXISTS — the portal's reduced-motion guarantee is asserted against the STYLESHEET
+ * SOURCE, because nothing in the unit environment can evaluate it.
  *
  * WHY NOT A DOM TEST. jsdom parses `@media` rules but evaluates none of them, and no Tailwind
  * utility exists in the unit environment at all. A test that mounted a page and asserted "nothing
@@ -8,7 +9,7 @@
  * green while the product regresses. What can be checked honestly here is the source text, so
  * every rule below is a pure function over a CSS or JS string.
  *
- * WHAT `#210` ACTUALLY WAS. Thirty-odd `.animate-spin` / `.animate-pulse` / `.animate-bounce`
+ * WHAT WAS ACTUALLY BROKEN. Thirty-odd `.animate-spin` / `.animate-pulse` / `.animate-bounce`
  * sites ignored the operating-system preference while `tailwind.config.js` stated in prose that
  * `index.css` was "where every other one in this build is suppressed too". Nothing was broken
  * except the sentence, and the sentence is what stopped anyone from looking. So the docblocks are
@@ -17,7 +18,7 @@
  * SOURCE ORDER IS THE MECHANISM, WHICH IS WHY IT IS ASSERTED. The block overrides Tailwind's own
  * `.animate-spin` purely because it sits AFTER `@tailwind utilities` at equal specificity and
  * outside any `@layer`. A tidy-up that moved it into a layer would keep every selector assertion
- * green while silently restoring every spinner — invisible in the same way `#210` was.
+ * green while silently restoring every spinner — invisible in the same way that bug was.
  *
  * EACH RULE IS ASSERTED TWICE: once against the real file, once against a fixture KNOWN to break
  * it. Without the second, a parser whose regex stops matching passes for ever and protects
@@ -36,8 +37,8 @@ const CONFIG_FILE = 'tailwind.config.js'
 const CSS = readFileSync(path.resolve(ROOT, CSS_FILE), 'utf8')
 const CONFIG = readFileSync(path.resolve(ROOT, CONFIG_FILE), 'utf8')
 
-/** The five utilities the block must neutralise. The first two are the app pane (plan 002, U6);
- *  the last three are every perpetual wait in the product, and are what `#210` was about. */
+/** The five utilities the block must neutralise. The first two are the app pane;
+ *  the last three are every perpetual wait in the product, the bug named above. */
 const REQUIRED_SELECTORS = [
   '.animate-pane-leave',
   '.animate-pane-return',

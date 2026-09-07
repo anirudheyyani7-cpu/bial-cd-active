@@ -25,7 +25,7 @@ vi.mock('../../utils/api', async (importOriginal) => ({
 
 vi.mock('../../utils/conversationApi.js', () => ({ getConversation: h.getConversation }))
 // SPREAD FROM THE REAL MODULE, not listed. `ChatRoute` now imports the dead-address sentence from
-// `ProjectsPage` (`#206` — one string, three surfaces), and that page imports names this file has
+// `ProjectsPage` (one string, three surfaces), and that page imports names this file has
 // no opinion about; against a hand-written factory Vitest throws "No X export is defined on the
 // mock" at IMPORT time and the whole file fails. `getProject` is still the only override.
 vi.mock('../../utils/projectApi', async (importOriginal) => ({
@@ -89,7 +89,7 @@ function HeadingProbe() {
 
 
 /**
- * WHERE A BOUNCE LANDS, AND WHAT IT SAID ON THE WAY (`#206`).
+ * WHERE A BOUNCE LANDS, AND WHAT IT SAID ON THE WAY.
  *
  * The real `ProjectsPage` is not mounted here — its own arrival rendering is pinned in
  * `ProjectPage.test.tsx`, which is where the two-page behaviour lives. What is only observable
@@ -155,8 +155,8 @@ afterEach(() => cleanup())
 const beacons = () => beaconsFrom(h.authFetch)
 
 describe('ChatRoute — kind RESOLUTION (it no longer dispatches)', () => {
-  // These two used to assert which PAGE mounted; now the kind the route RESOLVES is the whole
-  // remaining contract, and it is still worth pinning — the value decides the server's toolset.
+  // THE KIND THE ROUTE RESOLVES is the whole remaining contract worth pinning here — the route
+  // dispatches to no separate page per kind, and the resolved value decides the server's toolset.
   it('resolves a plan conversation as plan', async () => {
     h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
     renderRoute('/chat/c1')
@@ -347,9 +347,9 @@ describe('ChatRoute — what it publishes for the toolbar row', () => {
 
     renderRoute('/chat/never-seen')
 
-    // Found by the words it SHOWS. This used to read `getByRole('status', { name: /loading
-    // chat/i })`, which was satisfied by an `aria-label` on a region with NO visible text — the
-    // wordless wait #210 forbids. The label is gone (a live region announces its CONTENT, and a
+    // Found by the words it SHOWS. `getByRole('status', { name: /loading chat/i })` would be
+    // satisfied by an `aria-label` on a region with NO visible text — a wordless wait this
+    // guards against. The label is gone (a live region announces its CONTENT, and a
     // label repeating that content is the sentence read twice), and `role="status"` takes no name
     // from content, so the wait is now asserted by the sentence a citizen can actually read.
     await waitFor(() => expect(screen.getByText('Loading this chat…')).toBeTruthy())
@@ -415,7 +415,7 @@ describe('ChatRoute — load failure', () => {
   })
 })
 
-describe('ChatRoute — a dead address says something on the way out (`#206`)', () => {
+describe('ChatRoute — a dead address says something on the way out', () => {
   /* THE BOUNCE IS UNCHANGED. Every case above still bails to /projects, and should. What these
      pin is the sentence it carries — and, more importantly, the two failures that must NOT
      carry one. The catch this route hangs on is reached by a 400 (a malformed id — the only
@@ -443,7 +443,8 @@ describe('ChatRoute — a dead address says something on the way out (`#206`)', 
        `/chat/abc%20def` → 400 `Invalid conversation id.`
 
        So the old assertion passed while the real citizen path — a chat link a mail client wrapped
-       with a space or a `<` — bounced to the list in SILENCE, the exact failure `#207` names. */
+       with a space or a `<` — bounced to the list in SILENCE, the exact failure this guards
+       against. */
     h.getConversation.mockRejectedValue(new ApiError('Invalid conversation id.', 400))
     renderRoute('/chat/abc def')
 
@@ -456,8 +457,9 @@ describe('ChatRoute — a dead address says something on the way out (`#206`)', 
        `ApiError`. The bounce stays (a spinner with no answer is worse), but the platform knows
        nothing here and must not claim otherwise.
 
-       MUTATION CHECK — this is the named mutant for `#206`: widen `goneNoticeFor` to return the
-       sentence unconditionally and this goes red while every other case in this file stays green. */
+       MUTATION CHECK — the named mutant for this whole describe block: widen `goneNoticeFor` to
+       return the sentence unconditionally and this goes red while every other case in this file
+       stays green. */
     h.getConversation.mockRejectedValue(new TypeError('Failed to fetch'))
     renderRoute('/chat/c-206-offline')
 
@@ -584,12 +586,12 @@ describe('ChatRoute — the chat-open mark', () => {
   })
 })
 
-describe('ChatRoute — the cold-load wait says what it is doing (`#210`, R11)', () => {
+describe('ChatRoute — the cold-load wait says what it is doing', () => {
   it('★ shows a visible sentence and one busy polite region while the chat resolves', async () => {
-    // R11 binds the whole batch: suppressing an animation never leaves a wait silent. The three
-    // dots here are `animate-bounce`, which the reduce-motion block freezes — so without words
-    // this arm is three static dots for a citizen who asked for reduced motion. D3 named four
-    // such waits; this is the fifth, in a file that unit did not reach.
+    // The rule binding the whole batch: suppressing an animation never leaves a wait silent. The
+    // three dots here are `animate-bounce`, which the reduce-motion block freezes — so without
+    // words this arm is three static dots for a citizen who asked for reduced motion. Four such
+    // waits are pinned elsewhere in the suite; this is the fifth, and nothing else covers it.
     let settle: (v: unknown) => void = () => {}
     h.getConversation.mockImplementation(() => new Promise((r) => { settle = r }))
 

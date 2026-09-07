@@ -888,7 +888,7 @@ describe('a refused send leaves the citizen holding their message', () => {
 })
 
 /**
- * THE DOCUMENT CAP, AT THE SEAM (#194).
+ * THE DOCUMENT CAP, AT THE SEAM.
  *
  * `validatePdfPerMessageCap` is unit-tested next door and stayed green through the whole life of
  * this defect, because the helper was never the missing piece — the CALL was. Delete the two lines
@@ -896,7 +896,7 @@ describe('a refused send leaves the citizen holding their message', () => {
  * a citizen sends three PDFs into a turn the server will bounce. So this asserts the wiring:
  * a third document is refused HERE, in the composer, before a turn exists.
  *
- * ═══ AND IT ASSERTS WHICH REFUSAL, WHICH IS THE HALF THAT MOTIVATED THE FIX ═══
+ * AND IT ASSERTS WHICH REFUSAL, WHICH IS THE HALF THAT MOTIVATED THE FIX
  *
  * Without this check the citizen still gets stopped — one step later, by the token gate, which
  * says "start a new chat". That advice does not work: the new chat refuses the identical message,
@@ -905,7 +905,7 @@ describe('a refused send leaves the citizen holding their message', () => {
  * sentence — the two caps answer different questions (per message vs cumulative) and a test that
  * accepted either would go green on the wrong one.
  */
-describe('★ the per-message DOCUMENT cap is enforced where the turn starts (#194)', () => {
+describe('★ the per-message DOCUMENT cap is enforced where the turn starts', () => {
   const pdf = (name) => new File(['%PDF-1.7 ' + 'x'.repeat(64)], name, { type: 'application/pdf' })
   const png = (name) => new File(['x'.repeat(100)], name, { type: 'image/png' })
 
@@ -966,7 +966,7 @@ describe('★ the per-message DOCUMENT cap is enforced where the turn starts (#1
   })
 })
 
-describe('an upload the server refuses says WHY, not "try again" (#194)', () => {
+describe('an upload the server refuses says WHY, not "try again"', () => {
   /* TWO EMITTERS, ONE BANNER, AND THE ONE THAT KNEW NOTHING WENT LAST.
      `fireRelayTurn` catches an upload failure and writes the server's own sentence to the urgent
      slot, then aborts the send. The abort used to reject with a plain `Error`, and a

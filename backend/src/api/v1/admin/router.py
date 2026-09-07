@@ -1360,19 +1360,18 @@ async def reconcile_sandboxes(
 async def _what_the_worker_actually_did(db: DbSession) -> tuple[PassOutcome | None, str | None]:
     """The newest reclamation pass's `(outcome, detail)`, or `(None, None)` if none was ever run.
 
-    THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD (`#190`). It is the API
-    process's own flag; the pass is gated on the worker's, in another container reading another
-    env file. The row the worker wrote is the only artefact in this deployment that both processes
-    agree about, so it is what the report quotes.
-
-    A SECOND READ OF THE SAME ROW `reclamation_pass_freshness` just took, deliberately. That
-    function owns exactly one question — is the worker alive — and answers it for two endpoints;
-    widening its return to carry an outcome would push the reporting concern into the liveness
-    check that `reconcile-sandboxes` also depends on. The cost is one extra indexed single-row
-    select on a superadmin-only, human-invoked endpoint. Worst case under READ COMMITTED is a pass
-    landing between the two reads, which pairs a fresh timestamp with the previous outcome — one
-    tick of staleness in a report whose whole subject is a 15-minute cadence.
+    THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD. It is the API process's own
+    flag; the pass is gated on the worker's, in another container reading another env file. The
+    row the worker wrote is the only artefact in this deployment that both processes agree about,
+    so it is what the report quotes.
     """
+    # A SECOND READ OF THE SAME ROW `reclamation_pass_freshness` just took, deliberately. That
+    # function owns exactly one question — is the worker alive — and answers it for two endpoints;
+    # widening its return to carry an outcome would push the reporting concern into the liveness
+    # check that `reconcile-sandboxes` also depends on. The cost is one extra indexed single-row
+    # select on a superadmin-only, human-invoked endpoint. Worst case under READ COMMITTED is a
+    # pass landing between the two reads, which pairs a fresh timestamp with the previous outcome
+    # — one tick of staleness in a report whose whole subject is a 15-minute cadence.
     row = (
         await db.execute(
             sa.select(WorkerPass.outcome, WorkerPass.detail)

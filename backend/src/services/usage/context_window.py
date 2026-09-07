@@ -114,15 +114,12 @@ class ContextWindowExceededError(Exception):
 def _tokens_in(node: Any) -> int:
     """The estimate over one live object, recursively. See the module docstring for the rules.
 
-    `BinaryContent` is tested BEFORE the generic dataclass arm because it IS a dataclass, and
-    descending into it would charge its `data` field by byte length — the exact over-count the
-    flat nominal exists to avoid.
-
-    THE BINARY ARM IS SPLIT BY MEDIA TYPE, and reads the type off the content rather than
-    guessing from the bytes: a document costs orders of magnitude more than an image and the
-    two must not share a number. Anything that is neither — nothing today, since
-    `resolve_binaries` admits only these two — falls to the image nominal, the smaller and more
-    common shape."""
+    `BinaryContent` is tested BEFORE the generic dataclass arm — it IS a dataclass, and
+    descending would charge its `data` field by byte length, the over-count the flat nominal
+    avoids. THE ARM IS SPLIT BY MEDIA TYPE, read off the content rather than guessed from the
+    bytes: a document costs orders of magnitude more than an image, so the two must not share a
+    number. Anything else falls to the smaller, more common image nominal — nothing today,
+    since `resolve_binaries` admits only these two."""
     if isinstance(node, BinaryContent):
         if node.media_type == PDF_MEDIA_TYPE:
             return NOMINAL_PDF_TOKENS

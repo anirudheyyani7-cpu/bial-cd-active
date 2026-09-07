@@ -32,7 +32,7 @@ import { markProjectOpened } from '../utils/observe'
 import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 
 /**
- * WHAT THE CARD SAYS — and the one status whose sentence is never the server's (`#207`).
+ * WHAT THE CARD SAYS — and the one status whose sentence is never the server's.
  *
  * A 422 on this GET can only be the PATH PARAMETER: the read carries no body for Pydantic to
  * validate, so the `detail[]` FastAPI sends back is always the parser's account of an id that is
@@ -46,8 +46,8 @@ import { PROJECT_GONE_NOTICE } from './ProjectsPage'
  * sentence is `PROJECT_GONE_NOTICE`: from where they stand a malformed address and a deleted one
  * are the same event, an address that does not lead anywhere, and they get the same words for it.
  *
- * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above (`#206`). A 404
- * is a project that WAS an address and stopped being one, so the list is where the citizen now
+ * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above. A 404 is a
+ * project that WAS an address and stopped being one, so the list is where the citizen now
  * belongs. A 422 never addressed a project at all, and redirecting out of an address somebody
  * deliberately opened reads as the app taking their place away. The page stays — with its back
  * control on it, which is what makes staying a choice rather than a dead end.
@@ -89,15 +89,15 @@ export default function ProjectPage() {
 
   const goToProjects = useCallback(() => navigate('/projects', { replace: true }), [navigate])
 
-  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY (`#206`). Two navigations rather
-  // than one flag, because they are not the same event: `goToProjects` is the back control a
-  // citizen PRESSED, and being told "that project is no longer available" after asking to leave a
-  // project that is perfectly fine would be a lie. This one is the involuntary exit.
+  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY. Two navigations rather than one
+  // flag, because they are not the same event: `goToProjects` is the back control a citizen
+  // PRESSED, and being told "that project is no longer available" after asking to leave a project
+  // that is perfectly fine would be a lie. This one is the involuntary exit.
   //
   // The sentence is `ProjectsPage`'s constant, never `err.message`. The server's 404 for another
-  // citizen's project is deliberately identical to its 404 for a project that never existed
-  // (ADR-0004), and piping its text through is the one change that could ever make those two
-  // print differently.
+  // citizen's project is deliberately identical to its 404 for a project that never existed —
+  // this platform is single-tenant with no cross-user existence leak — and piping its text
+  // through is the one change that could ever make those two print differently.
   const bounceGone = useCallback(
     () => navigate('/projects', { replace: true, state: { notice: PROJECT_GONE_NOTICE } }),
     [navigate],
@@ -149,7 +149,7 @@ export default function ProjectPage() {
      as well as in the rail because this is where the reads would be, and an absent fetch explains
      itself to nobody. */
 
-  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM (`#210`, ASM5).
+  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM.
      They used to be three early returns, and that shape is exactly what cannot carry a live
      region: a region inserted together with its text is missed entirely by several reader-and-
      browser combinations (`TurnBanner`, `LivePreview` both record it), and an early return means

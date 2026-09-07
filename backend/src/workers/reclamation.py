@@ -73,20 +73,14 @@ def _detail_with_fleet(detail: str | None) -> str | None:
 
 
 def _log_the_fleet() -> None:
-    """Name the fleet this tick is about, once, before anything decides whether to look at it.
+    """Name the fleet this tick is about, before anything decides whether to look at it.
 
-    BEFORE THE FLAG GATE, DELIBERATELY, and that ordering is the whole fix. The worker that
-    exposed this was misconfigured in both halves at once — the flag was off AND the subscription
-    was a dead one — so a line emitted only on a pass that RUNS would never have been emitted at
-    all, on the exact deployment that needed it. A declined pass is still a worker asserting an
-    opinion about a fleet; it should have to say which.
-
-    AND THE SUBSCRIPTION ID GOES HERE, WHICH IS THE OTHER HALF OF THE SPLIT. `_enumerated_fleet`
-    keeps it out of `WorkerPass.detail` because an admin endpoint reads that column back into a
-    response body; this is the server-side log, where an Azure account identifier belongs and
-    where it is the only field precise enough to settle "which subscription is this worker on".
-
-    Costs structlog and a settings read — nothing the flag gate was protecting the process from.
+    Runs BEFORE THE FLAG GATE on purpose: the worker that exposed this bug had the flag off AND a
+    dead subscription at once, so logging only on a pass that runs would have stayed silent on the
+    exact deployment that needed it — a declined pass is still an opinion about a fleet, and must
+    say which. THE SUBSCRIPTION ID GOES HERE rather than in `WorkerPass.detail`, which an admin
+    endpoint returns verbatim, because this log is the only place precise enough to name which
+    subscription a worker is judging. Only a settings read either way.
     """
     sandbox = settings.sandbox
     if sandbox is None:

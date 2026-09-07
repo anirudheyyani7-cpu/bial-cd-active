@@ -2,30 +2,26 @@
  * THE READ BEHIND THE WORKSPACE STATE.
  *
  * WHY THIS EXISTS
- * `workspaceState.ts` is pure; this is the half that talks to the server — one cheap read, on
- * a cadence, turned into the one value the pane and the Plan-chat line both render.
+ * `workspaceState.ts` is pure; this is the half that talks to the server — one cheap read, on a cadence,
+ * turned into the one value the pane and the Plan-chat line both render.
  *
- * It runs even with NO FRAME on screen — unlike the conversation surface's own preview probe,
- * which only asks while a frame is actually live, right for a pane watching a framed app get
- * reclaimed underneath it. That is exactly wrong here: a project whose app is saved but not
- * running has no address at all, and that no-frame state is precisely what this hook exists to
- * describe, and to carry the product's one start control for.
+ * It runs even with NO FRAME on screen — unlike the conversation surface's preview probe, which asks only
+ * while a frame is live, right for a pane watching a framed app get reclaimed. That is exactly wrong here:
+ * a project whose app is saved but not running has no address at all — the no-frame state this hook exists
+ * to describe, and to carry the product's one start control for.
  *
- * `fetchPreviewState` is CHEAP BY CONTRACT: one cache read, at most two rows, at most two
- * object-store HEADs, no container call — safe on a timer. `fetchSaveState` is not: it runs two
- * `git` executions inside the container, so it is called only when the read says `alive` (asking
- * a stopped project about unsaved work would attach to a dead workspace, which the platform
- * forbids); a stopped project shows no save state and no commit. `fetchCompileState` and
- * `checkWorkspace` are not called from here at all — they belong to a surface with a live turn
- * behind it, and both cost a container exec.
+ * `fetchPreviewState` is CHEAP BY CONTRACT: one cache read, at most two rows, at most two object-store
+ * HEADs, no container call — safe on a timer. `fetchSaveState` is not — two `git` execs in the container —
+ * called only when `alive` (a stopped project's unsaved work would otherwise attach to a dead workspace,
+ * forbidden), and a stopped project shows no save state or commit. Neither `fetchCompileState` nor
+ * `checkWorkspace` is called from here: both belong to a live-turn surface, both costing a container exec.
  *
- * `starting`'s successor arrives with no user gesture, so it is polled faster, at
- * {@link STARTING_PROBE_MS} rather than {@link PREVIEW_PROBE_MS} — and `nextProbeCadence` owns
- * that window and its bound. A read that throws still spends from it (`spendProbeCadence`), and an
- * accelerated tick skips `fetchSaveState` even on `alive`, since a container seconds old is still
- * booting. The thirty-minute stay can still lapse unnoticed, since `RELAUNCH_PREVIEW_STAY_SECONDS`
- * is renewed only by a turn's own deadline writers — the next read returns `asleep`, one press to
- * recover, nothing lost.
+ * `starting`'s successor arrives with no user gesture, so it's polled faster — at
+ * {@link STARTING_PROBE_MS} not {@link PREVIEW_PROBE_MS} — the window `nextProbeCadence` owns and bounds.
+ * A throwing read spends from it too (`spendProbeCadence`); an accelerated tick skips `fetchSaveState`
+ * even on `alive` since a seconds-old container is still booting. A thirty-minute stay can lapse unnoticed
+ * too: `RELAUNCH_PREVIEW_STAY_SECONDS` renews only via a turn's deadline writers, so the next read returns
+ * `asleep` — one press recovers it, nothing lost.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchPreviewState, fetchSaveState, samePreviewState, sameSaveState } from '../../utils/buildSessionApi'
@@ -176,7 +172,7 @@ export function useWorkspaceState({
           // start land, so the container it would ask has been alive for seconds and is still
           // restoring and booting — two `git` executions are the last thing it needs, and the
           // answer is the one the next background tick gives for free. The acceleration must cost
-          // cheap reads and nothing else (#203). SKIPPED, NOT RETURNED FROM: this read still owes
+          // cheap reads and nothing else. SKIPPED, NOT RETURNED FROM: this read still owes
           // the timer below its cadence decision, and an early exit here would leave the 3-second
           // interval running over an app that is already up.
           if (!accelerated) {
@@ -191,7 +187,7 @@ export function useWorkspaceState({
           setSave(null)
         }
 
-        // THE RESCHEDULE, MADE FROM THE ANSWER (#203) — see `nextProbeCadence`. It sits here, with
+        // THE RESCHEDULE, MADE FROM THE ANSWER — see `nextProbeCadence`. It sits here, with
         // the stopping rule, because both are the same question asked of the same reading: what
         // this answer means for when we ask next.
         cadence = nextProbeCadence(next.state, cadence)

@@ -1,4 +1,4 @@
-"""Hand-rolled PDF fixtures for the upload page-cap admission (U6/D4).
+"""Hand-rolled PDF fixtures for the upload page-cap admission.
 
 WRITTEN BY HAND, NOT BY `pypdf`, AND THAT IS THE POINT. The thing under test is a `pypdf`
 page count; building the fixture with the same library would only prove that pypdf agrees
@@ -98,7 +98,7 @@ def objstm_pdf(pages: int) -> bytes:
     object stream, reached through a cross-reference STREAM (PDF 1.5, and what every modern
     producer emits).
 
-    This is the fixture behind D4's refusal to reuse `extract/deck.py::count_pdf_pages`: none
+    This is the fixture behind the refusal to reuse `extract/deck.py::count_pdf_pages`: none
     of the page dictionaries appear as literal bytes anywhere in the file, so a `/Type /Page`
     byte scan finds nothing at all while a real reader finds every page.
     """

@@ -563,7 +563,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            {/* The ordering is a GUARANTEE the backend makes and pins with a test (R16),
+            {/* The ordering is a GUARANTEE the backend makes and pins with a test,
                 and until now it was invisible: nothing on screen told an administrator
                 that top means oldest, so the queue read as an arbitrary list. Said out
                 loud, the position becomes information. Deliberately NOT a sort control —

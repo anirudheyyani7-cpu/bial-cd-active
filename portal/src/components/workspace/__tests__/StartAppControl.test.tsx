@@ -3,7 +3,7 @@
  *
  * A test here can honestly prove: one request, refusals discriminated correctly, no destructive
  * verb named. It CANNOT prove the endpoint is non-destructive — the component never could have
- * destroyed a container. That proof is server-side, against L3's confirmation triple, in
+ * destroyed a container. That proof is server-side, against the confirmation triple, in
  * `backend/tests/api/v1/build_sessions/test_preview_state.py`, on the exact arm this button enters.
  *
  * So there is deliberately NO test here shaped "no stop, release or restore call was made". It
@@ -217,7 +217,7 @@ describe('marked unavailable, never disabled', () => {
     expect(document.activeElement).toBe(button())
   })
 
-  it('★ the WORDS change while a start is in flight, not just an attribute (#210)', async () => {
+  it('★ the WORDS change while a start is in flight, not just an attribute', async () => {
     // WHY THIS EXISTS. `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, and
     // the spinning glyph was the only part of this button that moved when it was pressed — the
     // label read "Launch Application" pressed and unpressed alike. With motion off, a citizen
@@ -240,10 +240,10 @@ describe('marked unavailable, never disabled', () => {
   })
 
   it('★ adds NO live region of its own — the pane already announces this start', () => {
-    // ASM5's other half. `LivePreview` keeps one permanent polite region that speaks for every
-    // state of the pane this button starts, including "Starting your app…". A region here would
-    // be the same situation announced twice, which is the duplicate `Announcer.tsx` records as
-    // having broken three tests.
+    // The other half of the one-live-region rule. `LivePreview` keeps one permanent polite
+    // region that speaks for every state of the pane this button starts, including "Starting
+    // your app…". A region here would be the same situation announced twice, which is the
+    // duplicate `Announcer.tsx` records as having broken three tests.
     api.relaunchPreview.mockImplementation(() => new Promise(() => {}))
     const { container } = renderControl(START, reportSpy())
     fireEvent.click(button())
@@ -298,7 +298,7 @@ describe('the other two verbs, and the one that does not exist', () => {
     for (const action of actions) {
       const { container } = renderControl(action, reportSpy())
       expect(container.textContent ?? '').not.toMatch(destructive)
-      // AND THERE IS NO SECOND NAME TO AUDIT. The `aria-label` override is gone (`#210`), so the
+      // AND THERE IS NO SECOND NAME TO AUDIT. The `aria-label` override is gone, so the
       // visible words above ARE the accessible name — asserting its absence is what keeps this
       // check total rather than leaving a channel that could say a dangerous word unexamined.
       expect(container.querySelector('button')?.hasAttribute('aria-label')).toBe(false)

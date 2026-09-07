@@ -1,7 +1,7 @@
 /**
- * THE TAKE-BACK ON `/chat/{id}` (#196, U13) — and the one guarantee the owner named out loud.
+ * THE TAKE-BACK ON `/chat/{id}` — and the one guarantee the owner named out loud.
  *
- * ═══ WHY THIS SUITE IS ON THE CHAT SURFACE AND NOT ON THE PANE ═══
+ * WHY THIS SUITE IS ON THE CHAT SURFACE AND NOT ON THE PANE.
  *
  * Everything else about the take-back is provable against `AppPane` with a channel primed by hand.
  * Two things are not, and both are about a slot this surface owns:
@@ -10,7 +10,7 @@
  *     `resolveReclaim` awaits `retry()` — `fireRelayTurn(rawText, …)` for a refused send, or
  *     `handleBuildIt`. Route the take-back through it and confirming the hand-over SENDS the
  *     message the citizen is still holding in the composer, as a build instruction, which is the
- *     exact outcome D1 forbids. `startTurn` is the observable, and its call count is zero.
+ *     exact outcome this guards against. `startTurn` is the observable, and its call count is zero.
  *  2. FIRST REFUSAL WINS is that slot's rule, so a refused send already holding it would have
  *     swallowed the take-back's own refusal and resolved with the SEND's retry. The take-back owns
  *     its own dialog and its own retry closure, so neither one can reach the other.

@@ -347,7 +347,7 @@ describe('the review screen leads with the dispute', () => {
     expect(criterion).toMatch(/not checking whether the code is correct/i)
   })
 
-  it('NEVER renders an evidence location (OD-B)', async () => {
+  it('NEVER renders an evidence location', async () => {
     // The declaration is structurally incapable of carrying one — but a future hand that
     // "helpfully" passed the evidence document through would break this, which is the
     // point of asserting it rather than trusting the shape.
@@ -710,9 +710,9 @@ describe('internal identifiers stay out of the administrator’s way', () => {
 })
 
 /**
- * U20 — the review queue shows how old the backlog is (#209).
+ * The review queue shows how old the backlog is.
  *
- * The pending list is ordered oldest-submission-first and pinned by a backend test (R16),
+ * The pending list is ordered oldest-submission-first and pinned by a backend test,
  * so the queue already encodes age in a row's POSITION — but nothing on screen said so,
  * and no row said how old. A submission waiting 43 days was drawn identically to one that
  * arrived a minute ago.
@@ -725,7 +725,7 @@ describe('internal identifiers stay out of the administrator’s way', () => {
  */
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString()
 
-describe('the review queue shows how old the backlog is (#209)', () => {
+describe('the review queue shows how old the backlog is', () => {
   it('a pending row says how long it has been waiting, with the exact moment underneath', async () => {
     const iso = daysAgo(43)
     h.listApps.mockResolvedValue([{ ...PENDING, submittedAt: iso }])

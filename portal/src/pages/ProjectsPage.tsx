@@ -59,16 +59,16 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 
 /**
- * THE ONE SENTENCE A DEAD ADDRESS SAYS ON THE WAY OUT (`#206`).
+ * THE ONE SENTENCE A DEAD ADDRESS SAYS ON THE WAY OUT.
  *
  * Exported because more than one surface has to say it BYTE FOR BYTE: `ProjectPage` sends it when
- * a project id 404s, `ChatRoute` sends it when a chat resolves to nothing, and `#207` says it
- * again in place — as a card body, on a page that stays — for an id the server cannot even parse.
+ * a project id 404s, `ChatRoute` sends it when a chat resolves to nothing, and it appears again in
+ * place — as a card body, on a page that stays — for an id the server cannot even parse.
  * A second copy of these words somewhere else is how two of those three drift apart.
  *
  * IT IS NEUTRAL, AND IT IS NOT DIFFERENTIATED PER CAUSE. A project id belonging to another
- * citizen is a deliberately non-leaking 404, identical to one that never existed (ADR-0004,
- * `owned_project_or_404` — "fail closed with a non-leaking 404"), so "you do not have access"
+ * citizen is a deliberately non-leaking 404, identical to one that never existed
+ * (`owned_project_or_404` — "fail closed with a non-leaking 404"), so "you do not have access"
  * would confirm the existence of someone else's project. One line, whatever the reason — which is
  * also why the line is a CONSTANT rather than the server's own message piped through: the moment
  * it is derived from the response, two causes can print two sentences again.
@@ -175,7 +175,7 @@ export default function ProjectsPage(): React.JSX.Element {
   const [view, setView] = useState<View>(() => readStored(VIEW_KEY, ['list', 'grid'] as const, 'list'))
   const [density, setDensity] = useState<Density>(() => readStored(DENSITY_KEY, ['S', 'M', 'L'] as const, 'M'))
 
-  // COMMITTED query state — WHAT WAS ASKED FOR, and it lives in the address bar (`#208`).
+  // COMMITTED query state — WHAT WAS ASKED FOR, and it lives in the address bar.
   //
   // ONE `commit` RATHER THAN THREE SETTERS, because `setSearchParams` reads the params of the
   // render it was created in: two calls in one handler would each start from that same snapshot,
@@ -219,7 +219,7 @@ export default function ProjectsPage(): React.JSX.Element {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [counts, setCounts] = useState<ProjectCounts | null>(null)
-  // TRUE ONLY WHEN THE FIRST LOAD FAILED WITH NOTHING TO FALL BACK ON (round-4 finding 12).
+  // TRUE ONLY WHEN THE FIRST LOAD FAILED WITH NOTHING TO FALL BACK ON.
   // A REFRESH failure (there IS a last-known-good `counts`) stays silent by design — the
   // comment below explains why — but that same silence, applied to a FIRST load, left the
   // three tiles skeleton-pulsing forever over a working list: no error, no retry, and
@@ -244,7 +244,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // The search is debounced, but `page` resets IMMEDIATELY on a keystroke — a cursor into
   // page 3 of the previous query is meaningless against a new one.
   //
-  // SEEDED FROM THE URL RATHER THAN FROM `''` (`#208`). A cold load of `/projects?q=ramp` with an
+  // SEEDED FROM THE URL RATHER THAN FROM `''`. A cold load of `/projects?q=ramp` with an
   // empty seed asks the server for the UNFILTERED list first, paints all of it, and only 300ms
   // later asks the question the link actually carried — a flash of everybody's projects on an
   // address that named one, and a wasted round trip to produce it.
@@ -254,7 +254,7 @@ export default function ProjectsPage(): React.JSX.Element {
     return () => clearTimeout(t)
   }, [q])
 
-  // THE ARRIVAL NOTICE, READ ONCE AND THEN SCRUBBED (`#206`, ASM4).
+  // THE ARRIVAL NOTICE, READ ONCE AND THEN SCRUBBED.
   //
   // It rides ROUTER STATE, not the query string. A query survives a copy, a bookmark and a share,
   // and "that project is no longer available" pinned to a shareable `/projects?notice=…` is a
@@ -268,7 +268,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // into component state and then replacing the entry with a stateless one is what makes this a
   // one-shot. The replace cannot loop: the re-run reads a `notice` that is no longer there.
   //
-  // WHICH IS ALSO WHY IT NEVER BECOMES A QUERY PARAMETER (`#208`). The replace above carries
+  // WHICH IS ALSO WHY IT NEVER BECOMES A QUERY PARAMETER. The replace above carries
   // `location.search` through verbatim, so the page, size and query a reader arrived with survive
   // being told a project is gone — but the reverse must hold too: a `?notice=…` would be copied
   // forward by `intoParams`, which preserves the parameters it does not own, and would then
@@ -276,7 +276,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // travels on exactly one navigation and nowhere else, so it stays the channel.
   //
   // THE TEXT ARRIVES AFTER ITS REGION, which is why this is an effect and not a `useState`
-  // initialiser (ASM5). A live region inserted together with its text is missed entirely by
+  // initialiser. A live region inserted together with its text is missed entirely by
   // several reader-and-browser combinations — `TurnBanner` and `LivePreview` both record it — so
   // the region below is mounted on every render, empty, and the sentence lands inside it a tick
   // later. It is its own region rather than a second tenant of `projects-wait`: that one narrates
@@ -436,7 +436,7 @@ export default function ProjectsPage(): React.JSX.Element {
   // about this page. Deleting your last row on page 2 must not tell you that you have no
   // projects for the length of a database drop.
   //
-  // `total === 0` CLOSES THE WINDOW `deleteInFlight` DOES NOT (round-4 finding 13). When the
+  // `total === 0` CLOSES THE WINDOW `deleteInFlight` DOES NOT. When the
   // delete settles, `setReloadNonce` and the `finally`'s `deletingIds` clear land in ONE
   // commit — and the refetch that `reloadNonce` triggers is an EFFECT, which runs after
   // that commit paints. So there is a real rendered frame where `items` is empty (optimistic

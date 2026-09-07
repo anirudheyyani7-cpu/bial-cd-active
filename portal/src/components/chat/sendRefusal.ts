@@ -1,4 +1,6 @@
 /**
+ * WHY THIS EXISTS
+ *
  * A refusal whose message was WRITTEN FOR THE CITIZEN and is therefore safe to show — the type
  * IS the permission. Other `onSubmit` rejections (a `TypeError`, an abort the surface already
  * explained in its own banner) must never surface via `err.message`, or developer text — or a
@@ -8,7 +10,8 @@
  * a send someone else already answered (`RailComposer`'s guardrail modal and held-workspace
  * dialog; `handleSubmit`'s abort arm for the banner `fireRelayTurn` already wrote). A plain
  * `Error` there is not silence, it's the GENERIC catch-all overwriting the specific sentence
- * already on screen — an over-long PDF once got "try again" instead of the real page limit.
+ * already on screen — an over-long PDF once got "try again" instead of the real page limit, and
+ * trying again could never work: the PDF was still over the limit either way.
  * Lives in its OWN module so `ComposerBox` can `instanceof`-check it without a cycle through
  * `Composer` — replaces a duck-typed `err.name` check plus an unchecked cast for `silent`.
  */

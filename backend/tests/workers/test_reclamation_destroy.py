@@ -424,9 +424,9 @@ class _SandboxFlags:
         # Read by `_threshold()` on the full-task path; irrelevant to the arm-level tests above.
         self.reclaim_fleet_alarm_threshold = 25
         # THE TARGETING FIELDS ARE NOT OPTIONAL ON THE REAL THING, so this double may not omit
-        # them. `SandboxConfig` declares all four with no default (fail-first), and `#190` made
-        # the pass name the fleet it is about before the flag gate — so every path through the
-        # task now reads them, including the report-only and raising arms below. A double that
+        # them. `SandboxConfig` declares all four with no default (fail-first), and the pass now
+        # names the fleet it is about before the flag gate — so every path through the
+        # task reads them, including the report-only and raising arms below. A double that
         # carries only the flags it happens to gate on drifts from the config it stands in for,
         # and the drift surfaces as an AttributeError in an unrelated test rather than as a
         # missing setting. Fake values, real shape.

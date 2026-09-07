@@ -198,8 +198,8 @@ describe('messagesFromProjection — the loud fallback arm', () => {
   })
 
   it('stays silent for a COMPLETED turn_terminal, which is KNOWN and deliberately draws nothing', () => {
-    // ★ THE MUTANT'S TEST. #186 narrowed this silence to completed terminals; it did not remove
-    // it, and the difference is the whole design. `_write_turn_terminal` writes one of these
+    // ★ THE MUTANT'S TEST. Narrowing this silence to completed terminals did not remove it, and
+    // the difference is the whole design. `_write_turn_terminal` writes one of these
     // rows for EVERY turn of BOTH kinds, unconditionally — so a `turn_terminal` arm that drew
     // whatever it was handed would stamp "Build finished." after every single exchange in every
     // chat, including a Plan conversation that never built anything. Make the arm render
@@ -485,7 +485,7 @@ describe('one reply is one message (the copy-control guard)', () => {
   })
 })
 
-describe('messagesFromProjection — a stopped turn still looks stopped after a reload (#186)', () => {
+describe('messagesFromProjection — a stopped turn still looks stopped after a reload', () => {
   // A stopped build used to say NOTHING once the page was refreshed. Live, the surface writes a
   // sentence the moment the turn ends; the durable `turn_terminal` row is the only record of that
   // ending (a turn writes no build-outcome part on purpose — that would render the same ending
@@ -519,9 +519,8 @@ describe('messagesFromProjection — a stopped turn still looks stopped after a 
    * 'completed' ? 'ended' : sink.terminal`, then the shared table. It is here so the assertions
    * below can compare the two DERIVATIONS rather than compare each of them to a string literal:
    * two tests that each pin their own copy of the expected sentence both stay green while the
-   * paths drift apart, which is exactly the failure
-   * `docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`
-   * records — fixing one emitter only changed WHEN the wrong text appeared.
+   * paths drift apart — exactly the failure that let two independent emitters disagree: fixing
+   * one of them only changed WHEN the wrong text appeared.
    */
   const live = (terminal, reason) =>
     outcomeSummary({ status: terminal === 'completed' ? 'ended' : terminal, reason })

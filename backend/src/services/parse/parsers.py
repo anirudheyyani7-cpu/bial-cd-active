@@ -51,23 +51,14 @@ those stay collapsed behind a single sentence on purpose."""
 
 
 def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
-    """A real PDF's page count, read by a real PDF reader. Runs INSIDE the governor child.
-
-    ★ THIS IS NOT `extract/deck.py::count_pdf_pages`, AND MUST NOT BECOME IT. That one scans
-    the raw bytes for `/Type /Page` markers, which is documented as reliable for the
-    LibreOffice/Gotenberg output it was written for and silently UNDER-counts any PDF whose
-    page objects live in a compressed object stream — the one failure mode an admission cap
-    cannot have, because under-counting is what admits the document the charge cannot cover.
-    The deck path keeps its scan and its own 100-page limit; the two caps disagreeing is
-    deliberate and is revisited when decks are enabled.
-
-    `len(reader.pages)` rather than the catalog's `/Count`: the count is walked from the page
-    tree, so a file that merely CLAIMS to be short is counted honestly. pypdf's own traversal
-    limits (depth, entry count) turn a page-tree bomb into an exception here rather than a
-    hang, and everything it can still raise — a truncated file, a broken cross-reference, a
-    recursion limit — is mapped to one 400. `MemoryError` is deliberately re-raised: the
-    governor maps it to its own 413, and swallowing it would report a contained OOM as a
-    malformed file."""
+    """A PDF page count via pypdf in the governor child, never `extract/deck.py::count_pdf_pages`,
+    whose `/Type /Page` byte-scan (reliable only for LibreOffice/Gotenberg) silently UNDER-counts
+    pages in a compressed object stream: an admission cap can't tolerate that — it would admit what
+    the charge can't cover. The deck path keeps its own scan and 100-page limit; the divergence is
+    deliberate, revisited when decks are enabled. `len(reader.pages)` (not `/Count`) walks the page
+    tree, so a file only CLAIMING to be short counts honestly; pypdf's traversal limits turn a
+    page-tree bomb into an exception not a hang, other failures (truncated, broken xref, recursion
+    limit) map to 400, and `MemoryError` re-raises as the governor's 413, not malformed."""
     # Imported HERE, not at module scope: `spawn` re-imports this module in every governor
     # child, so a top-level pypdf import would be paid by the office kinds too — and by the
     # API process at boot, which never counts a page.

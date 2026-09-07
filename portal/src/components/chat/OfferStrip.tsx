@@ -1,27 +1,28 @@
 /**
- * THE PLAN OFFER, AS A STRIP ON THE COMPOSER. The plan agent calls an offer tool when it judges
- * the plan finished; the browser renders the PENDING call as a strip with two buttons, and
- * pressing either supplies the tool result.
+ * THE PLAN OFFER, AS A STRIP ON THE COMPOSER.
  *
- * WHY SENDING WAITS, AND WHY TWO BUTTONS: a tool call must be answered before the conversation
- * continues, so a typed message while this strip is pending would leave the call open and get the
- * next request rejected. A single "Build this plan" would be a dead end for anyone who wanted to
- * change something, so "Keep planning" answers the call too and hands the box back. Those labels
- * name the mode the press puts you in, and the SAME words appear in the model-facing copy; this
- * file owns only what is drawn. Resolution values stay `build`/`refine` (wire values, unrenamed).
+ * WHY THIS EXISTS, AND WHY SENDING WAITS FOR ONE OF TWO BUTTONS. The plan agent calls an offer
+ * tool when it judges the plan finished; the browser renders the PENDING call as a strip with
+ * two buttons, and pressing either supplies the tool result. A tool call must be answered
+ * before the conversation continues, so a typed message while this strip is pending would leave
+ * the call open and get the next request rejected. A single "Build this plan" would be a dead
+ * end for anyone who wanted to change something, so "Keep planning" answers the call too and
+ * hands the box back. Those labels name the mode the press puts you in, and the SAME words
+ * appear in the model-facing copy; this file owns only what is drawn. Resolution values stay
+ * `build`/`refine` (wire values, unrenamed).
  *
  * THE BROWSER NEVER POSTS THE PLAN TEXT BACK: the server reads it from the offering tool call's
  * own message, and the press sends only the conversation id, the tool call id, and a minted new-
  * chat id. A browser-supplied body would let a stale second tab write stale requirements into the
  * permanent first message.
  *
- * WHY THIS EXISTS — A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool
- * call; the strip then renders spent but REMAINS LIVE, so pressing it again creates another Build
- * chat. Idempotency is storage-free: the press names the chat it creates with a UUIDv7 minted ONCE
- * PER PRESS-SESSION and held in a ref, so a double press or retry carries the same id, collides on
- * the primary key, and the server returns the existing chat. A RELOAD IS OUT OF REACH — a ref dies
- * with the page — so a reload's fresh press-session mints a new id and creates a second Build
- * chat. Asserted by a test; closing it needs storage, a decision nobody has taken.
+ * A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool call; the strip
+ * then renders spent but REMAINS LIVE, so pressing it again creates another Build chat.
+ * Idempotency is storage-free: the press names the chat it creates with a UUIDv7 minted ONCE
+ * PER PRESS-SESSION and held in a ref, so a double press or retry carries the same id, collides
+ * on the primary key, and the server returns the existing chat. A RELOAD IS OUT OF REACH — a ref
+ * dies with the page — so a reload's fresh press-session mints a new id and creates a second
+ * Build chat. Asserted by a test; closing it needs storage, a decision nobody has taken.
  */
 import { useCallback, useRef, useState, type FC } from 'react'
 import { Loader2, Wand2 } from 'lucide-react'

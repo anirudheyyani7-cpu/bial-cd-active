@@ -1,54 +1,29 @@
 /**
- * ONE WORKSPACE STATE, COMPUTED ONCE, RENDERED TWICE.
+ * WHY THIS EXISTS: ONE WORKSPACE STATE, COMPUTED ONCE, RENDERED TWICE.
  *
- * ═══ WHAT THIS MODULE ANSWERS, AND THE QUESTION IT REFUSES ═══
+ * It answers WHAT TO SAY: the sentence a person reads and the at-most-one thing they may press.
+ * The app pane renders it; a Plan chat, which has no pane, renders the same value above its
+ * composer — one author per workspace sentence, so "no pane" cannot come to mean "says nothing".
  *
- * It answers WHAT TO SAY: given what the platform reports about a project's one workspace, the
- * sentence a person reads and the at-most-one thing they may press. The app pane renders that
- * value; a Plan chat, which has no pane, renders the same value as a line above its composer. That
- * is what makes "no pane" structurally incapable of meaning "says nothing" — there is one author
- * for every workspace sentence in the product, and both surfaces are readers of it.
+ * IT DOES NOT ANSWER WHAT TO FRAME: there is no URL field to put one in, and that absence is the
+ * enforcement. The address comes only from `utils/previewAddress.ts`, whose precedence — a live
+ * turn's preview outranks the session URL — a `PreviewState` in hand here would silently drop.
  *
- * IT DOES NOT ANSWER WHAT TO FRAME, and the output type carries no URL for exactly that reason.
- * The address comes from `utils/previewAddress.ts` and from nowhere else, with its precedence
- * intact — the live turn's preview outranks the session URL, because the live turn is the app
- * being built in front of the person while the session URL describes the previous build. A
- * `PreviewState` carries a `previewUrl` of its own and it is conveniently in hand right here;
- * framing it silently drops the top of that precedence. There is no field on `WorkspaceState` to
- * put it in, which is the enforcement.
+ * THE ACTION UNION REACHES NOTHING DESTRUCTIVE UNASKED. Four members: start, retry, go to the
+ * project holding the workspace, and take it back. No restore, rebuild or teardown verb exists in
+ * the type, so an unknown state, a timeout, a `ready: false` and a missing field all land on "try
+ * again" — not because a guard checks something first, but because those arms have no other verb.
  *
- * ═══ THE ACTION UNION REACHES NOTHING DESTRUCTIVE UNASKED, AND THAT IS THE POINT ═══
+ * THE FOURTH MEMBER ACTS ON SOMEBODY ELSE'S APP and still reaches nothing on its own: pressing it
+ * asks this project's own start, and the server's refusal opens `ReclaimWorkspaceDialog`, which
+ * saves the holder's work first and refuses to release anything on a failed save. Every verb the
+ * client may reach is in this union, each `switch` failing to compile until a new member is
+ * handled — but that closes the CLIENT half only. `POST /relaunch` is the server's, so a client
+ * test asserting "this component made no restore call" passes in the very state that loses work.
  *
- * Four members: start, retry, go to the project that holds the workspace, and take the workspace
- * back from it. There is still no restore verb, no rebuild verb and no teardown verb anywhere in
- * the type, so an unknown state, a readiness timeout, a `ready: false` and a missing field all
- * land on "try again" — not because a guard checks something first, but because "try again" and
- * "start" are the only verbs those arms have.
- *
- * THE FOURTH MEMBER IS THE ONE THAT ACTS ON SOMEBODY ELSE'S APP, and it is worth being exact about
- * why that is not a hole in the rule above. It reaches nothing on its own: pressing it asks this
- * project's own start for the workspace, and the server's refusal is what opens
- * `ReclaimWorkspaceDialog` — the telling `manager.py`'s `finish_turn_sandbox` bargain requires,
- * which offers to save the holder's work first and, on a save that fails, refuses to release
- * anything at all. What the citizen presses here is a question; the destructive half is theirs to
- * answer. Everything the CLIENT may reach is still in this union, visible in a diff at this
- * declaration, with every `switch` over it failing to compile until a new member is handled.
- *
- * BE PRECISE ABOUT WHAT THAT BUYS. It closes the CLIENT half of the recorded data-loss path and
- * only the client half. What `POST /relaunch` does when the word is pressed is the server's
- * behaviour, proved in `backend/tests/api/v1/build_sessions/`, and a client-side test asserting
- * "this component made no restore call" would pass in the very state that loses work — the
- * component was never the thing that could have destroyed it.
- *
- * ═══ THE COPY RULE ═══
- *
- * The pane says what IS, never what is not. The stopped state's headline is "Your app is saved."
- * — full stop. Not "saved but not running", not "stopped". `not running` survives as an INTERNAL
- * state name, here and on the wire; it is never rendered. And the no-invented-durations rule is
- * taken literally: no sentence names a duration the platform has not measured, so the starting
- * state says what it is doing and carries no number. If a measured cold-start baseline ever
- * exists it arrives from one constant, in one place, and not by somebody typing "about half a
- * minute" into a string here.
+ * THE COPY RULE: the pane says what IS, never what is not — "Your app is saved.", full stop, not
+ * "saved but not running". `not running` survives only as an internal state name, never rendered,
+ * and no sentence names a duration the platform has not measured.
  */
 import type { PreviewLifeState, PreviewState } from '../../utils/buildSessionApi'
 import { assertNever } from '../../utils/assertNever'
@@ -86,7 +61,7 @@ export function isTerminalReading(preview: Pick<PreviewState, 'state' | 'restora
   return SETTLED_GONE.has(preview.state) && preview.restorable !== null
 }
 
-// ─── the cadence while a start is in flight (#203) ────────────────────────────────────────────
+// ─── the cadence while a start is in flight ───────────────────────────────────────────────────
 
 /**
  * THE ONE STATE WORTH ASKING ABOUT OFTEN, and the numbers that say how often and for how long.
@@ -95,33 +70,29 @@ export function isTerminalReading(preview: Pick<PreviewState, 'state' | 'restora
  * server holds the state, the container comes up, and the next read says `alive`. Every other
  * state changes because somebody did something, and the thing they did re-arms the poll on its
  * own. So a background cadence tuned for "has anything happened while nobody was looking" is the
- * wrong instrument for exactly one state, and #203 is the bill for using it there: an app serving
- * at t=2.7s, a pane still saying "Getting your app ready." at t=45.5s, and nothing animating in
- * between to suggest it was not simply hung.
+ * wrong instrument for exactly one state, and using it there produced exactly the failure these
+ * numbers exist to prevent: an app serving at t=2.7s, a pane still saying "Getting your app
+ * ready." at t=45.5s, and nothing animating in between to suggest it was not simply hung.
  *
- * ═══ WHY 3 SECONDS ═══
- *
- * Chosen from the platform's own timings, because no start could be measured in the session that
- * wrote this (the Azure subscription was read-only) — and that is worth saying plainly rather
- * than dressing a guess as a measurement. Three anchors:
+ * WHY 3 SECONDS. Chosen from the platform's own timings, because no start could be measured in
+ * the session that wrote this (the Azure subscription was read-only) — and that is worth saying
+ * plainly rather than dressing a guess as a measurement. Three anchors:
  *
  *  - `_ATTACHED_READY_BUDGET_SECONDS` is 15s server-side: a warm attach is expected to be serving
  *    inside it. An interval of 3s resolves such a start within a fifth of its own budget, so the
  *    lag the poll adds is small next to the event it is waiting for.
- *  - #203's one real measurement has the flip at 2.7s. At 3s that start is caught on the first or
- *    second accelerated read; at 45s it was caught 42.8s late.
- *  - The read is cheap by contract (C3 §8.3: one cache read, at most two rows and two object-store
- *    HEADs, no container call), so 20 of them a minute — only while somebody is watching a start —
- *    is a real cost and a small one.
+ *  - The one start measured directly had the flip at 2.7s. At 3s that start is caught on the
+ *    first or second accelerated read; at 45s it was caught 42.8s late.
+ *  - The read is cheap by contract — one cache read, at most two rows and two object-store HEADs,
+ *    no container call — so 20 of them a minute — only while somebody is watching a start — is a
+ *    real cost and a small one.
  *
  * WHAT WOULD HAVE SETTLED IT BETTER: the distribution of `starting`→`alive` on real starts, warm
  * attach and cold create+pull separately, with the interval set near the tenth percentile and the
  * window near the ninety-fifth. Anyone holding that data should change these two numbers and say
  * so here.
  *
- * ═══ WHY IT STOPS ═══
- *
- * {@link STARTING_PROBE_LIMIT} accelerated reads is 120 seconds, which is
+ * WHY IT STOPS. {@link STARTING_PROBE_LIMIT} accelerated reads is 120 seconds, which is
  * `_COLD_READY_BUDGET_SECONDS` — the budget the server itself gives the final `wait_ready` leg of
  * a cold start. Past it the platform is no longer confident this attempt is coming up, so neither
  * is this timer, and the asking falls back to the background cadence.
@@ -129,13 +100,11 @@ export function isTerminalReading(preview: Pick<PreviewState, 'state' | 'restora
  * FALLING BACK IS NOT A VERDICT. The reading is left exactly as it was — still `starting`, still
  * "Getting your app ready." — and the background poll goes on correcting it if the app lands two
  * minutes late. Reading an elapsed budget as a statement about the container is the precise
- * mistake in `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-
- * 2026-08-02.md`, where a timeout was read as a death certificate and destroyed unsaved work.
+ * mistake that once read a timeout as a death certificate and destroyed unsaved work.
  *
- * ═══ AND IT STOPS ON A CLOCK, NOT ON A TALLY OF ANSWERS WE LIKED ═══
- *
- * The bound is only a ceiling if EVERY read spends from it — including the ones that came back with
- * nothing. `fetchPreviewState` throws on any non-2xx and on a dropped connection, and for as long as
+ * AND IT STOPS ON A CLOCK, NOT ON A TALLY OF ANSWERS WE LIKED. The bound is only a ceiling if
+ * EVERY read spends from it — including the ones that came back with nothing.
+ * `fetchPreviewState` throws on any non-2xx and on a dropped connection, and for as long as
  * only `nextProbeCadence` could advance the count, a workspace that reached `starting` and then hit
  * a 500, an expired session or a dead network was asked every three seconds FOR THE LIFE OF THE
  * TAB — twenty requests a minute, on both surfaces, with the 40-read bound that exists to prevent
@@ -171,8 +140,8 @@ export const BACKGROUND_CADENCE: ProbeCadence = { delayMs: PREVIEW_PROBE_MS, fas
  * blank their reading on every re-run so a stale verdict cannot be left under a frame that has
  * moved. Adding the preview state to either dep list would therefore re-run the effect on the very
  * transition this exists to catch, flickering the pane through `could-not-read` and — on the chat
- * surface, since #192 — unframing an app that is running. So the reschedule happens HERE, inside
- * the read, on the `keepAsking`/`stopAsking` seam both effects already own.
+ * surface — unframing an app that is running. So the reschedule happens HERE, inside the read, on
+ * the `keepAsking`/`stopAsking` seam both effects already own.
  *
  * STRICTLY `starting`, and it reverts on anything else. A window that stayed open on `alive` would
  * put the whole product on a 3-second poll, which is the change nobody asked for.
@@ -192,7 +161,7 @@ export function nextProbeCadence(answer: PreviewLifeState, held: ProbeCadence): 
  * A READ THAT NEVER PRODUCED AN ANSWER — a 500, a dropped connection, an expired session — and what
  * it costs the accelerated window.
  *
- * ═══ IT SPENDS, AND IT DECIDES NOTHING. THAT ASYMMETRY IS THE WHOLE RULE ═══
+ * IT SPENDS, AND IT DECIDES NOTHING. THAT ASYMMETRY IS THE WHOLE RULE.
  *
  * SPENDS, because {@link STARTING_PROBE_LIMIT} is meant as a ceiling on how long anybody may be
  * polled at three seconds, and a budget only successful reads draw from is no ceiling at all: an
@@ -201,14 +170,13 @@ export function nextProbeCadence(answer: PreviewLifeState, held: ProbeCadence): 
  *
  * DECIDES NOTHING, because a failed read is not evidence about the workspace. It cannot tell you
  * whether the container is still coming up, and ending the window on it — or worse, letting it
- * reclassify the reading — would be reading a failure to ask as an answer. That is the same move as
- * `docs/solutions/logic-errors/readiness-timeout-triggers-destructive-sandbox-restore-2026-08-02.md`,
- * where an elapsed readiness budget was read as a death certificate and destroyed unsaved work. So
- * three things it deliberately does NOT do: it does not open a window (a poll that has never seen
- * `starting` must not be accelerated by a broken server — `fastReads === 0` stays at background),
- * it does not close one early (the remaining fast reads are still owed to a start that may yet land
- * the moment the endpoint recovers), and it does not touch the reading, which stays whatever the
- * last real answer made it.
+ * reclassify the reading — would be reading a failure to ask as an answer. That is the same
+ * mistake that once read an elapsed readiness budget as a death certificate and destroyed unsaved
+ * work. So three things it deliberately does NOT do: it does not open a window (a poll that has
+ * never seen `starting` must not be accelerated by a broken server — `fastReads === 0` stays at
+ * background), it does not close one early (the remaining fast reads are still owed to a start
+ * that may yet land the moment the endpoint recovers), and it does not touch the reading, which
+ * stays whatever the last real answer made it.
  *
  * The consequence, stated plainly: a start that goes dark is polled fast for the SAME 120 seconds a
  * start that keeps answering `starting` gets, and then both fall back to 45s with the pane still
@@ -252,7 +220,7 @@ export type StartOutcome =
   /** The server named a reason. Carried verbatim — this map does not rewrite server prose. */
   | { readonly kind: 'failed'; readonly reason: string }
   /**
-   * A TAKE-BACK THAT DID NOT FINISH (`#196`, D2) — and the one ending that has to say what it did
+   * A TAKE-BACK THAT DID NOT FINISH — and the one ending that has to say what it did
    * to somebody ELSE's app on the way.
    *
    * It is a member of this union rather than a field beside it because it is the same kind of
@@ -268,9 +236,10 @@ export type StartOutcome =
       /**
        * THE HOLDER WE ALREADY STOPPED, or `null` when the stop itself is what failed.
        *
-       * D2's whole point in one field. Three of the five endings leave the other project down —
-       * a failed save, a failed release, and a relaunch that could not take the freed slot — and
-       * a pane that did not say so would leave somebody wondering why their other app went quiet.
+       * This field exists for exactly one purpose: three of the five endings leave the other
+       * project down — a failed save, a failed release, and a relaunch that could not take the
+       * freed slot — and a pane that did not say so would leave somebody wondering why their
+       * other app went quiet.
        * `null` is the ending where nothing moved, and only there may a sentence say so.
        */
       readonly stoppedHolder: string | null
@@ -288,7 +257,7 @@ export type WorkspaceAction =
   | { readonly kind: 'retry'; readonly label: string }
   | { readonly kind: 'go-to-project'; readonly label: string; readonly projectId: string }
   /**
-   * TAKE THE ONE WORKSPACE BACK (`#196`, D1) — and it deliberately carries NO id.
+   * TAKE THE ONE WORKSPACE BACK — and it deliberately carries NO id.
    *
    * The obvious payload would be the holder's `occupyingProjectId`, mirroring the member above.
    * It is absent because the take-back does not act on the reading that produced this action: it
@@ -337,8 +306,8 @@ export interface WorkspaceState {
   readonly detail: string | null
   /**
    * THE ONE A SURFACE LEADS WITH. `null` is a real answer — "nothing built" and "starting" both
-   * offer none. On the held arm this stays exactly what it was before `#196`, per the owner:
-   * `Open “<holder>”`, same label, same behaviour.
+   * offer none. On the held arm this stays exactly what it was before the take-back existed, per
+   * the owner: `Open “<holder>”`, same label, same behaviour.
    */
   readonly action: WorkspaceAction | null
   /**
@@ -364,7 +333,7 @@ export interface WorkspaceState {
    */
   readonly secondAction?: WorkspaceAction | null
   /**
-   * ONE EXTRA LINE, AND IT IS ONLY EVER ABOUT ANOTHER PROJECT (D2).
+   * ONE EXTRA LINE, AND IT IS ONLY EVER ABOUT ANOTHER PROJECT.
    *
    * A take-back that got as far as stopping the holder and then failed has TWO things to report:
    * what went wrong with this app, which is the headline and the detail, and what it already did
@@ -507,7 +476,7 @@ export function resolveWorkspaceState(inputs: WorkspaceInputs): WorkspaceState {
  * than naming none. The failure this arm is written against is a sentence with an empty pair of
  * quotes in it, which is what a template does when it trusts the name to be there.
  *
- * ═══ THE UNATTRIBUTED ARM GAINS NOTHING FROM `#196`, AND HERE IS WHY ═══
+ * THE UNATTRIBUTED ARM GAINS NOTHING FROM THE TAKE-BACK, AND HERE IS WHY.
  *
  * Structurally, not by oversight. Both of this arm's controls NAME the project they act on, and the
  * take-back's whole safety is that the citizen knows whose work they are about to stop: a button
@@ -518,7 +487,7 @@ export function resolveWorkspaceState(inputs: WorkspaceInputs): WorkspaceState {
  * so the arm that cannot label a take-back is exactly the arm that cannot navigate either, and one
  * `if` still covers both.
  *
- * ═══ AND THE TAKE-BACK CARRIES NO ID FROM HERE ═══
+ * AND THE TAKE-BACK CARRIES NO ID FROM HERE.
  *
  * `occupyingProjectId` is in hand and is deliberately NOT put on the second action — see the union.
  * The take-back asks this project's own start for the workspace and takes the holder off the
@@ -527,7 +496,7 @@ export function resolveWorkspaceState(inputs: WorkspaceInputs): WorkspaceState {
  */
 function heldElsewhere(preview: PreviewState, startOutcome: StartOutcome | null): WorkspaceState {
   const { occupyingProjectName: name, occupyingProjectId: id } = preview
-  // WHAT A TAKE-BACK JUST DID, when it did not finish (D2, endings 1, 3 and 4). All three land
+  // WHAT A TAKE-BACK JUST DID, when it did not finish — endings 1, 3 and 4. All three land
   // back here — the slot is still held — and they are told apart by one fact: whether the holder
   // is down. Any other start outcome is still outranked, exactly as before.
   const failure = startOutcome?.kind === 'take-back-failed' ? startOutcome : null
@@ -605,7 +574,7 @@ function fromStartOutcome(outcome: StartOutcome): WorkspaceState {
         note: null,
       }
     case 'take-back-failed':
-      // D2'S SECOND ENDING, AND THE ACCEPTANCE EXAMPLE IT SUPERSEDES. "Returns to the
+      // A FAILED TAKE-BACK'S SECOND ENDING, AND THE EXPECTATION IT SUPERSEDES. "Returns to the
       // held-by-another state" is unreachable here: the release succeeded, so the holder is gone
       // and the slot is free — the only thing that failed is bringing this app up, which is
       // exactly what the existing failed-to-start sentence says. The one thing it does NOT say is

@@ -26,8 +26,8 @@ export const CHARS_PER_TOKEN = 4
  * however many megabytes it is, so it is charged flat. Its byte length is the wrong number by
  * orders of magnitude.
  *
- * It used to cover PDFs too, and that is what #194 measured going wrong: a 61-page document
- * really cost 153,342 tokens against a 1,600 charge. Documents now have their own number below.
+ * It used to cover PDFs too — measured going wrong when a 61-page document really cost 153,342
+ * tokens against a 1,600 charge. Documents now have their own number below.
  */
 export const NOMINAL_BINARY_TOKENS = 1_600
 

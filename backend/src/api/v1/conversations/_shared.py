@@ -82,7 +82,7 @@ PDF_MEDIA_TYPE = "application/pdf"
 # HOW MANY DOCUMENTS MAY RIDE ONE MESSAGE, and why it is a SEPARATE limit from
 # `MAX_ATTACHMENT_BLOCKS` rather than a smaller value of it.
 #
-# It falls out of arithmetic that is already fixed elsewhere (D4). `usage/context_window` charges
+# It falls out of arithmetic that is fixed elsewhere: `usage/context_window` charges
 # an admitted PDF `NOMINAL_PDF_TOKENS` (75,000 — what the longest document the upload cap admits
 # actually costs), and `occupied_window` adds the 8,000-token system-prompt reserve before it
 # counts a word. So three documents is 233,000 against a 200,000 ceiling and cannot be sent, even

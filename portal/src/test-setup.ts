@@ -125,8 +125,8 @@ beforeEach(() => {
 // It is not a tidiness problem. A leaked hook is still subscribed: one
 // `document.dispatchEvent(new Event('visibilitychange'))` reaches every tree a previous test
 // left standing, so a poll-counting assertion measures its own file's history rather than its
-// own scenario. It was measured at 18 reads where 2 were intended (#203's cadence work), and
-// it silently inflates any exact-count assertion in a multi-render file.
+// own scenario. It was measured at 18 reads where 2 were intended, and it silently inflates
+// any exact-count assertion in a multi-render file.
 //
 // Registered here rather than in each file for the reason `setupFiles` exists at all: seventeen
 // files once hand-stubbed `scrollIntoView`. `cleanup()` is idempotent, so the many files that

@@ -49,11 +49,11 @@ engine = create_async_engine(
     settings.DATABASE_URL.get_secret_value(),
     pool_size=20,
     pool_pre_ping=True,
-    # NO BIND PARAMETERS IN LOGS, EVER (#187). SQLAlchemy renders a failing statement's
+    # NO BIND PARAMETERS IN LOGS, EVER. SQLAlchemy renders a failing statement's
     # bound values into `StatementError.__str__` as a `[parameters: ...]` appendix, and
     # `unhandled_exception_handler` logs `exc_info` for every uncaught exception — so a
     # single 500 on any write path puts whatever the citizen typed into an operator-readable
-    # log line. #187 measured exactly that on `DELETE /v1/projects/{id}`: the actor's email,
+    # log line. This was measured exactly on `DELETE /v1/projects/{id}`: the actor's email,
     # their display name and their free-text deletion reason. This is the fix at source
     # rather than at one route, because the exposure was never route-local: the flag
     # replaces the appendix with a fixed "parameters hidden" marker for EVERY logger and

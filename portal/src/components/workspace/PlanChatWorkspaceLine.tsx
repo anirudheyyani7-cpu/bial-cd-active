@@ -48,7 +48,7 @@ export default function PlanChatWorkspaceLine() {
   const state = report?.state
   const speak = state !== undefined && SPOKEN_HERE.has(state.name)
   // The ONE action member this surface may render, narrowed off the slot the map LEADS with —
-  // never off `secondAction`, which is where `#196`'s take-back lives and which this surface has
+  // never off `secondAction`, which is where the take-back lives and which this surface has
   // no business drawing. Read before the early return below so the rule is visible beside the
   // states it applies to rather than buried in a branch.
   const remedy = state?.action?.kind === 'go-to-project' ? state.action : null

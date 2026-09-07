@@ -478,7 +478,7 @@ async def _noop_record(*, outcome: str, counts: dict[str, int], detail: str | No
     return None
 
 
-# --- WHICH FLEET? (#190) -----------------------------------------------------------
+# --- WHICH FLEET? ------------------------------------------------------------------
 
 #: The `backend/` tree — `tests/workers/` lives two levels under it.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -526,8 +526,8 @@ async def test_a_running_pass_names_the_fleet_it_enumerated_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """THE GREPPABLE LINE. `sandbox_fleet_over_threshold` and the pass-completed event both
-    describe a fleet without naming one, so neither can settle the question `#190` actually
-    hit: is this worker judging OUR containers? The resource group and the managed environment
+    describe a fleet without naming one, so neither can settle the question that actually
+    matters: is this worker judging OUR containers? The resource group and the managed environment
     answer it, and the subscription id — which is kept out of `WorkerPass.detail` because an
     admin endpoint reads that column into a response — is precise enough to settle it alone.
 
@@ -555,7 +555,7 @@ async def test_a_running_pass_names_the_fleet_it_enumerated_exactly_once(
 async def test_a_pass_declined_by_the_flag_still_names_its_fleet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`#190`'s WORKER, RECONSTRUCTED. It was misconfigured in both halves at once: the reclaim
+    """THE MISCONFIGURED WORKER, RECONSTRUCTED. It was wrong in both halves at once: the reclaim
     flag was never set on the worker's own env, AND the subscription was one retired two
     rotations earlier. A fleet line emitted only by a pass that RUNS would never have been
     emitted on that deployment — the one it exists for — which is why `_log_the_fleet` is called
@@ -577,11 +577,11 @@ async def test_a_pass_declined_by_the_flag_still_names_its_fleet(
     assert named[0]["resource_group"] == "rg-not-ours"
 
 
-# --- the tracked sample (#190's second finding) -------------------------------------
+# --- the tracked sample -------------------------------------------------------------
 
 
 def test_the_worker_sample_boots_a_valid_worker_profile() -> None:
-    """R4 FOR THE ROLE THAT HAD NO TEMPLATE. A fresh checkout could produce a working API from
+    """THE WORKER ROLE, WHICH HAD NO TEMPLATE. A fresh checkout could produce a working API from
     `.env.example`; there was nothing at all for the worker, and `WorkerSettings` makes object
     storage, Redis and ARM access REQUIRED in every environment — so a hand-assembled file fails
     at construction, and the cheapest way out of that is to start trimming safety.

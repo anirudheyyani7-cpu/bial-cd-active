@@ -242,7 +242,7 @@ async def test_the_audit_row_carries_counts_and_never_a_container_name(  # noqa:
     assert doomed not in str(detail)
 
 
-# --- what the WORKER did, not what this process's flags say (#190) -----------------
+# --- what the WORKER did, not what this process's flags say -----------------------
 
 
 def _a_fleet_configuration(*, subscription_id: str) -> SandboxConfig:
@@ -279,15 +279,13 @@ async def _a_recorded_pass(db: AsyncSession, *, outcome: PassOutcome, detail: st
 async def test_a_declined_pass_is_surfaced_so_scanned_zero_cannot_read_as_clean(  # noqa: ANN001
     client, app, db_session, fake_redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`#190` IN ONE TEST. The reported shape was `scanned: 0` beside `reclaimEnabled: true`,
-    `reclamationStale: false` — every field green — while the worker logged
-    `sandbox_reclamation_pass_disabled reason=flag_off` and enumerated nothing. The row already
-    knew: `_record_pass` writes `declined`/`flag_off` on purpose. The report was the only thing
-    that did not.
+    """THE FALSE GREEN, IN ONE TEST. The reported shape was `scanned: 0` beside `reclaimEnabled:
+    true`, `reclamationStale: false` — every field green — while the worker logged
+    `sandbox_reclamation_pass_disabled reason=flag_off` and enumerated nothing; `_record_pass`
+    had already written `declined`/`flag_off`, so only the report did not know.
 
-    `reclaimEnabled` STAYS TRUE HERE (R6). Its meaning is unchanged — it is this process's flag,
-    and that is exactly the point: the green field and the honest one now sit side by side, and
-    the honest one is the one that describes the process doing the work."""
+    `reclaimEnabled` STAYS TRUE HERE — it is this process's flag, unchanged — so the green field
+    and the honest one now sit side by side, the honest one describing the actual work."""
     monkeypatch.setattr(settings, "sandbox", _a_fleet_configuration(subscription_id=_FAKE_SUB))
     admin = await _admin(db_session)
     _wire(app, _Fleet([]))
@@ -306,10 +304,10 @@ async def test_a_declined_pass_is_surfaced_so_scanned_zero_cannot_read_as_clean(
 async def test_a_successful_pass_names_the_fleet_it_enumerated(  # noqa: ANN001
     client, app, db_session, fake_redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A COUNT IS A FACT ABOUT A SUBSCRIPTION, and `#190`'s second finding was a worker pointed
-    at a third one — it would have reported `scanned: 0` about a fleet that is not ours, and the
-    report could not have told anybody. The resource group and the managed environment are what
-    make that divergence readable."""
+    """A COUNT IS A FACT ABOUT A SUBSCRIPTION, and the same defect's second finding was a worker
+    pointed at a third one — it would have reported `scanned: 0` about a fleet that is not ours,
+    and the report could not have told anybody. The resource group and the managed environment
+    are what make that divergence readable."""
     monkeypatch.setattr(settings, "sandbox", _a_fleet_configuration(subscription_id=_FAKE_SUB))
     admin = await _admin(db_session)
     _wire(app, _Fleet([]))
@@ -327,15 +325,13 @@ async def test_a_successful_pass_names_the_fleet_it_enumerated(  # noqa: ANN001
 async def test_the_subscription_id_reaches_no_response_body(  # noqa: ANN001
     client, app, db_session, fake_redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """THE ONE THING THE FLEET NOTE MUST NOT CARRY (`.claude/rules/security.md`). A resource group
-    and a managed environment name distinguish one deployment's fleet from another's, which is
-    what an operator needs; a subscription id is an Azure account identifier, and it belongs in
-    the server-side log line beside the row, never in a response this endpoint hands back.
+    """THE ONE THING THE FLEET NOTE MUST NOT CARRY: a resource group and managed-environment name
+    distinguish one deployment's fleet from another's — what an operator needs — but a subscription
+    id is an Azure account identifier that belongs in the server-side log line, never in a response
+    this endpoint hands back. Asserted over the WHOLE serialised body, not just the two new fields,
+    since a later leak (a `fleet` object, a debug echo of the flags) is the same leak.
 
-    ASSERTED OVER THE WHOLE SERIALISED BODY, not over the two new fields — a leak added anywhere
-    in this response (a future `fleet` object, a debug echo of the flags) is the same leak.
-
-    MUTATION-CHECK: add `subscription_id` to `_enumerated_fleet`'s f-string, or hang the id off
+    MUTATION-CHECK: add `subscription_id` to `_enumerated_fleet`'s f-string, or hang it off
     `ReclamationReportResponse`, and this goes red while every other test here stays green."""
     monkeypatch.setattr(settings, "sandbox", _a_fleet_configuration(subscription_id=_FAKE_SUB))
     admin = await _admin(db_session)
@@ -370,17 +366,15 @@ async def test_no_pass_ever_recorded_leaves_both_fields_null(  # noqa: ANN001
 async def test_the_worker_writes_the_fleet_onto_the_row_the_report_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """THE SEAM BETWEEN THE TWO HALVES OF THIS FIX, and the only test that spans it.
+    """THE SEAM BETWEEN THE TWO HALVES OF THIS FIX, and the only test spanning it: every route
+    test above builds its row's `detail` via `_detail_with_fleet` itself, proving only that the
+    ENDPOINT surfaces a fleet note faithfully, not that the worker ever writes one. Drop the call
+    and they all stay green while production reverts to `flag_off` with no fleet attached.
 
-    Every route test above builds its row's `detail` by calling `_detail_with_fleet` itself, so
-    they prove the ENDPOINT surfaces a fleet note faithfully and say nothing about whether the
-    worker ever writes one. Drop the call from `_record_pass` and all of them stay green while
-    production goes back to `flag_off` with no fleet attached — which is `#190` again.
-
-    A CAPTURING FACTORY RATHER THAN THE DATABASE: `_record_pass` opens its OWN session on purpose
-    (it must land even when the pass it describes has just failed), so letting it run for real
-    here would commit a row outside this test's rolled-back transaction and into every later test.
-    It also swallows every exception, so the unpack below is what makes a broken fake fail loudly
+    A CAPTURING FACTORY, NOT THE DATABASE: `_record_pass` opens its own session on purpose (it
+    must land even when the pass it describes has just failed), so letting it run for real here
+    would commit a row past this test's rolled-back transaction and into every later test. It
+    also swallows every exception, so the unpack below is what makes a broken fake fail loudly
     instead of passing with nothing written."""
     import src.db.base as db_base
     from src.workers.reclamation import _record_pass

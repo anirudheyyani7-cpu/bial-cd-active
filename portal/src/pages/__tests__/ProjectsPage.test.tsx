@@ -47,7 +47,7 @@ function LocationProbe(): React.JSX.Element {
   return (
     <>
       <div data-testid="location">{loc.pathname}</div>
-      {/* #208 put page, size and query in the address bar, so the address bar is now an
+      {/* Page, size and query live in the address bar, so the address bar is now an
           assertable output of this page rather than scenery. */}
       <div data-testid="location-search">{loc.search}</div>
     </>
@@ -104,7 +104,7 @@ function renderPage(entry: Entry = '/projects') {
 }
 
 /**
- * A LIST THAT ANSWERS THE PAGE IT WAS ACTUALLY ASKED FOR (round-4 finding 10, restated).
+ * A LIST THAT ANSWERS THE PAGE IT WAS ACTUALLY ASKED FOR.
  *
  * A static `mockResolvedValue` always answers `page: 1`, which pins `appliedPage` at 1 whatever
  * was clicked — and every assertion about restoring page 3 would then pass against a page 3 that
@@ -368,7 +368,7 @@ describe('the states', () => {
   })
 
   it('a later page failure can actually be RETRIED', async () => {
-    // Round-4 finding 11: the message underneath the rows was static text with no control.
+    // The message underneath the rows was static text with no control.
     // Clicking the same page number again is a React no-op — the state value is unchanged,
     // so the fetch effect's deps do not change and nothing re-runs — which left the failure
     // unrecoverable without a reload. `reloadNonce` is the dep that always changes.
@@ -388,7 +388,7 @@ describe('the states', () => {
   })
 
   it('a FIRST-LOAD counts failure offers a retry instead of pulsing forever', async () => {
-    // Round-4 finding 12: the catch was made a total no-op, which is right for a REFRESH
+    // The catch was made a total no-op, which is right for a REFRESH
     // (keep the last known-good numbers) and wrong for a first load — `counts` stayed null,
     // all three tiles skeleton-pulsed over a working list, and nothing but a delete could
     // ever bump `reloadNonce` to ask again.
@@ -503,7 +503,7 @@ describe('create and delete', () => {
     //
     // Driven through real navigation, because the window is computed from the component's
     // OWN page state — but the mocked RESPONSE has to answer with the page that was actually
-    // requested too (round-4 finding 10). The original version of this test used one static
+    // requested too. The original version of this test used one static
     // `mockResolvedValue` that always said `page: 1` regardless of what was asked for, so
     // `appliedPage` never moved past 1 no matter which button was clicked — the window slid
     // (computed from local `page` state) but NO button was ever `aria-current`, and mutating
@@ -552,7 +552,7 @@ describe('create and delete', () => {
     // 10 here; a window that never slid would strand you as it did before the fix. Neither
     // is caught by the mid-list case above.
     //
-    // The response has to echo the page actually requested (round-4 finding 10) — a static
+    // The response has to echo the page actually requested — a static
     // mock always answering `page: 1` left `appliedPage` at 1 while the window rendered
     // 6-10, so nothing was ever `aria-current` and this test's own title ("marked active")
     // was not being checked at all.
@@ -606,8 +606,8 @@ describe('create and delete', () => {
     await waitFor(() => expect(screen.queryByText('Alpha')).toBeNull()) // optimistic removal
     expect(screen.queryByTestId('projects-empty')).toBeNull() // ...but not the first-run screen
 
-    // THE DIALOG ITSELF IS STILL OPEN, HERE, WHILE THE ROW IS ALREADY GONE (round-4 finding
-    // 9). It used to close in the same commit as the optimistic removal above — batched
+    // THE DIALOG ITSELF IS STILL OPEN, HERE, WHILE THE ROW IS ALREADY GONE. It used to close
+    // in the same commit as the optimistic removal above — batched
     // before the request had even been sent — so its own busy state (the spinner, Cancel
     // disabling) was set and unmounted in one render and could never be observed. The
     // backend does real work before answering, so this window is not theoretical.
@@ -623,11 +623,10 @@ describe('create and delete', () => {
   })
 
   it('an empty page with a non-zero total is NOT the first-run screen', async () => {
-    // Round-4 finding 13, tested at the guard rather than at the frame. The race he
-    // describes — the committed render between the delete settling and the refetch effect
-    // running — is not observable from RTL, which flushes effects inside `act()`; asserting
-    // around it produced a test that passed with the fix REMOVED, so this pins the condition
-    // itself instead.
+    // TESTED AT THE GUARD RATHER THAN AT THE FRAME. The race — the committed render between
+    // the delete settling and the refetch effect running — is not observable from RTL, which
+    // flushes effects inside `act()`; asserting around it produced a test that passed with the
+    // fix REMOVED, so this pins the condition itself instead.
     //
     // `items: []` with `total: 40` is the same state that frame has, and it is reachable for
     // real: delete the last row on page 5 and the server answers an empty page while the
@@ -667,7 +666,7 @@ describe('create and delete', () => {
   })
 })
 
-describe('the projects list and the count tiles keep WORDS and a busy state (#210)', () => {
+describe('the projects list and the count tiles keep WORDS and a busy state', () => {
   /** Every live region currently SAYING the given thing — see the twin helper in `App.test.jsx`. */
   const regionsSaying = (re: RegExp): Element[] =>
     Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
@@ -694,10 +693,10 @@ describe('the projects list and the count tiles keep WORDS and a busy state (#21
   })
 
   it('★ the region is already in the tree, EMPTY, before the wait starts — and it is the SAME node', async () => {
-    // THE ARM ASM5 EXISTS FOR. Every skeleton on this page is conditional, so a region rendered
-    // beside one is born holding its own text — which several reader-and-browser combinations
-    // miss entirely. Move `<div role="status">` inside the `waiting` branch and the empty-region
-    // assertion below goes red.
+    // THE REASON THE REGION IS MOUNTED PERMANENTLY. Every skeleton on this page is
+    // conditional, so a region rendered beside one is born holding its own text — which
+    // several reader-and-browser combinations miss entirely. Move `<div role="status">` inside
+    // the `waiting` branch and the empty-region assertion below goes red.
     h.listProjects.mockResolvedValue(page([mkProject('p1', 'Alpha')], { total: 12, totalPages: 2 }))
     renderPage()
     await screen.findByText('Alpha')
@@ -731,11 +730,11 @@ describe('the projects list and the count tiles keep WORDS and a busy state (#21
   })
 })
 
-// --- the list remembers where you were (#208) -----------------------------------
+// --- the list remembers where you were -----------------------------------
 
-describe('page, search and rows-per-page live in the URL (#208)', () => {
+describe('page, search and rows-per-page live in the URL', () => {
   /**
-   * The three round trips the issue reproduced on a real account with 23 projects across 3 pages:
+   * The three round trips reproduced on a real account with 23 projects across 3 pages:
    * page 3 → open a project → Back landed on page 1; a search survived neither the trip nor a
    * reload; and rows-per-page reset to 8. All three were component state that no navigation could
    * see. What makes it a bug rather than a stated policy is the neighbour: the SAME page already
@@ -882,10 +881,10 @@ describe('page, search and rows-per-page live in the URL (#208)', () => {
   })
 
   it('the footer narrates the page the ROWS answer, not the page that was asked for', async () => {
-    // ASM7: `appliedPage` / `appliedPageSize` are NOT redundant copies of the URL. The URL is
+    // `appliedPage` / `appliedPageSize` are NOT redundant copies of the URL. The URL is
     // what was asked for and moves the instant a number is clicked; the mirrors are what the rows
-    // on screen answer and move only when a response lands. §11 keeps a failed page's rows on
-    // screen, so the gap between the two is a real rendered state, not a theoretical one.
+    // on screen answer and move only when a response lands. A failed request leaves the previous
+    // rows on screen, so the gap between the two is a real rendered state, not a theoretical one.
     //
     // MUTATION RECEIPT: collapse the mirrors into the URL state — render `page` / `pageSize`
     // where `appliedPage` / `appliedPageSize` are read — and both halves below go red.
@@ -910,7 +909,7 @@ describe('page, search and rows-per-page live in the URL (#208)', () => {
     expect(screen.queryByText(/Showing 9–9 of 12/)).toBeNull()
   })
 
-  it('#206’s arrival notice scrubs itself WITHOUT taking the view with it', async () => {
+  it('the arrival notice scrubs itself WITHOUT taking the view with it', async () => {
     // The two mechanisms meet here. The notice rides router state and is replaced away the moment
     // it is read; that replace carries `location.search` through verbatim, so the page and query
     // the reader arrived with survive being told a project is gone. The reverse matters as much:

@@ -48,7 +48,7 @@ def _new_maintenance_engine(url: str | URL) -> AsyncEngine:
         url,
         isolation_level="AUTOCOMMIT",
         poolclass=NullPool,
-        # Same no-parameters-in-logs rule as `db/base.py` (#187). What it covers here is the
+        # Same no-parameters-in-logs rule as `db/base.py`. What it covers here is the
         # BOUND values this engine's statements carry — the registry reads and writes that ride
         # the same connection.
         #

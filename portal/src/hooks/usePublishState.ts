@@ -66,16 +66,14 @@ function dispatchDeploymentChanged(projectId: string, origin: number): void {
 }
 
 /**
- * SOMETHING OUTSIDE THIS HOOK CHANGED WHAT THIS READ WOULD RETURN (#205).
+ * SOMETHING OUTSIDE THIS HOOK CHANGED WHAT THIS READ WOULD RETURN.
  *
- * The project screen's Save writes a new bundle, and the LAST SAVED row is `savedHead` and
- * `savedAt` — two fields of THIS read and of no other. The surface that performs the save holds
- * no publish read at all: the row is drawn by `AppStatusPanel` and the state by the toolbar's
- * chip, each with its own. So the save raises the nudge those two already listen to and both
- * reconcile off one dispatch, which is exactly the case the nudge was kept alive for.
- *
- * The alternative — a second deployment fetch inside the workspace's own refresh epoch — would
- * duplicate a reader and still leave the chip naming the previous version.
+ * The project screen's Save writes a new bundle, and the LAST SAVED row (`savedHead`, `savedAt`)
+ * is two fields of THIS read and of no other. The saving surface holds no publish read at all:
+ * the row is `AppStatusPanel`'s, the state the toolbar chip's, each with its own. So the save
+ * raises the nudge those two already listen to and both reconcile off one dispatch, the case the
+ * nudge was kept alive for. A second deployment fetch inside the workspace's own refresh epoch
+ * would instead duplicate a reader and still leave the chip naming the previous version.
  */
 export function announceDeploymentChanged(projectId: string): void {
   dispatchDeploymentChanged(projectId, NO_MOUNT)

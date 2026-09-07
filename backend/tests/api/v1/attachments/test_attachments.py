@@ -28,7 +28,7 @@ from tests.pdfs import encrypted_pdf, pdf_with_pages, unreadable_pdf, xref_bomb_
 _TTL = settings.auth.access_ttl_seconds
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-# A REAL one-page PDF, not just the magic prefix: since U6 a PDF upload is parsed for its page
+# A REAL one-page PDF, not just the magic prefix: a PDF upload is parsed for its page
 # count, so magic-valid rubbish is refused rather than stored. `unreadable_pdf()` is that case,
 # tested by name below.
 _PDF = pdf_with_pages(1)
@@ -628,10 +628,10 @@ async def test_requires_auth(client) -> None:
     assert (await client.post("/v1/attachments", json={})).status_code == 401
 
 
-# --- the PDF page cap (U6 / D4) -----------------------------------------------
+# --- the PDF page cap ---------------------------------------------------------
 #
 # ★ WHAT THIS SECTION IS FOR. A 61-page document measured 153,342 tokens — 77% of the hard
-# context limit — while the guardrail recorded it as 1,600, or 0.8% (#194). Two halves fix it:
+# context limit — while the guardrail recorded it as 1,600, or 0.8%. Two halves fix it:
 # the window charge next door in `test_context_window.py`, and this one, which stops a document
 # the charge could not honestly cover from being admitted at all.
 #
@@ -675,8 +675,8 @@ async def test_a_pdf_one_page_over_the_cap_is_refused_in_plain_words(
     THE COPY IS THE ASSERTION, not decoration. The refusal has to name a limit the person can
     act on ("under 30 pages") and must not hand them the platform's vocabulary — no page
     objects, no parser, no bytes, no library name, no traceback. A body that leaks any of those
-    is the failure this pins, and it is a security property as much as a copy one
-    (`.claude/rules/security.md`: never expose internal errors to the frontend)."""
+    is the failure this pins, and it is a security property as much as a copy one —
+    internal errors must never be exposed to the frontend."""
     headers, _ = await _auth(db_session)
 
     resp = await _upload_pdf(client, headers, "att_over", pdf_with_pages(MAX_PDF_PAGES + 1))
@@ -727,11 +727,11 @@ async def test_a_corrupt_pdf_is_refused_with_the_same_sentence_not_a_500(
 ) -> None:
     """Magic-valid bytes that will not parse.
 
-    The 18-byte prefix check passes — `%PDF-1.4` is all it reads — so before U6 this was
-    STORED and sent to the model as a document. It must now be refused, and refused as a
-    client error rather than as a server one: a 500 here would be the platform reporting its
-    own failure for the citizen's malformed file, and would put a stack trace one config flag
-    away from the browser.
+    The 18-byte prefix check passes — `%PDF-1.4` is all it reads — so before the page cap
+    existed this was STORED and sent to the model as a document. It must now be refused, and
+    refused as a client error rather than as a server one: a 500 here would be the platform
+    reporting its own failure for the citizen's malformed file, and would put a stack trace one
+    config flag away from the browser.
 
     It wears the SAME sentence as the over-cap refusal on purpose. There is nothing true and
     useful the platform can tell someone about a PDF it could not read, and a second sentence
@@ -790,7 +790,7 @@ async def test_a_pptx_is_still_governed_by_the_deck_cap_not_the_new_one(
     """The deck path keeps its own 100-page limit, and the two caps disagreeing is deliberate.
 
     A deck is rendered to a PDF by Gotenberg and counted by `extract/deck.py::count_pdf_pages`
-    — a raw-byte scan that is reliable for LibreOffice output and nothing else. U6 did not
+    — a raw-byte scan that is reliable for LibreOffice output and nothing else. The new cap did not
     reuse it and did not touch it. So a 60-page deck, which is over the new 30-page upload cap
     and under the deck path's 100, still uploads. Wire the new cap into the pptx branch and
     this goes red."""

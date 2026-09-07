@@ -1,4 +1,4 @@
-"""#183 — `POST /v1/build-sessions` and the TWO 409s it can answer.
+"""`POST /v1/build-sessions` and the TWO 409s it can answer.
 
 `reclaim_blocked_response`'s docstring promises that "all three entry points (the send, the
 plan offer's build action, and relaunch) come through this one function — which is what makes
@@ -51,7 +51,7 @@ async def _hand_the_slot_to(
     handle, and a recovery bundle so the workspace is not the "nothing to lose" case.
 
     Seeded through the fake's own `restore_from_snapshot`, not by hand-writing the hash — that
-    is the call which hydrates the C5 registry in production, so this cannot drift out of the
+    is the call which hydrates the registry hash in production, so this cannot drift out of the
     shape `_refuse_if_reclaim_would_destroy_work` reads.
     """
     app_id = await resolve_app_for_project(db, user.id, project.id)
@@ -74,7 +74,7 @@ async def _hand_the_slot_to(
 async def test_a_slot_held_by_another_project_answers_start_with_the_handover_409(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    """#183 — THE unit. A start whose workspace is occupied by a different project is a
+    """THE unit. A start whose workspace is occupied by a different project is a
     hand-over question, not a crash.
 
     The body is asserted field by field because the dialog is built from it: without
@@ -244,8 +244,8 @@ async def test_a_restore_that_never_completes_is_still_503(
 
 def test_openapi_declares_both_409_shapes_on_start() -> None:
     """The declaration is half the fix. A route documenting only `{message, code, sessionId}`
-    tells every generated client that the hand-over fields do not exist — which reproduces
-    #183's defect one layer up, in the clients rather than the server."""
+    tells every generated client that the hand-over fields do not exist — the same one-shape
+    blind spot that once crashed the server, now moved to the clients instead."""
     spec = create_app().openapi()
     ref = spec["paths"]["/v1/build-sessions"]["post"]["responses"]["409"]["content"][
         "application/json"

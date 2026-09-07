@@ -206,12 +206,13 @@ export function messagesFromProjection(
           {
             type: 'build',
             sessionId: item.sessionId as string,
-            // THE RELOAD HALF OF #204. The projection's banner vocabulary is four-valued —
-            // `completed` / `failed` / `stopped` / `quota` (`projection.py::_banner_kind`) — and
-            // this mapping used to throw two of those away, landing `stopped` and `quota` on
-            // `ended`. That put a part claiming the build ended normally directly beside the
-            // stored sentence "You stopped this build before it finished." A quota stop is a stop
-            // for the same reason the live path treats it as one: nothing broke, the day ran out.
+            // THE RELOAD HALF OF THE BANNER-VOCABULARY FIX. The projection's banner vocabulary is
+            // four-valued — `completed` / `failed` / `stopped` / `quota`, the four kinds
+            // `projection.py::_banner_kind` returns — and this mapping used to throw two of those
+            // away, landing `stopped` and `quota` on `ended`. That put a part claiming the build
+            // ended normally directly beside the stored sentence "You stopped this build before it
+            // finished." A quota stop is a stop for the same reason the live path treats it as
+            // one: nothing broke, the day ran out.
             status: bannerStatus(item.banner),
             reason: item.banner as string,
             previewUrl: (item.previewUrl as string | null) ?? null,
@@ -275,7 +276,7 @@ export function messagesFromProjection(
         seq: item.seq,
       })
     } else if (item.type === 'turn_terminal') {
-      // THE RELOAD HALF OF THE OUTCOME SENTENCE (#186).
+      // THE RELOAD HALF OF THE OUTCOME SENTENCE.
       //
       // A stopped turn used to say NOTHING after a refresh. Live, the surface draws a sentence
       // the moment the turn ends (`announceTerminal` → `showBuildOutcome`); this row is the only
@@ -286,11 +287,9 @@ export function messagesFromProjection(
       //
       // THE SENTENCE COMES FROM `outcomeSummary`, THE SAME FUNCTION THE LIVE PATH CALLS, and
       // that shared call is the entire point rather than a convenience. Two authors for one
-      // sentence is a documented failure of this codebase
-      // (`docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`),
-      // where fixing one emitter only changed WHEN the wrong text appeared. The server's own
-      // contract says the same thing from its end: the terminal is "derived from the same
-      // mapping of the same stored meta".
+      // sentence is a documented failure of this codebase — fixing one emitter only changed WHEN
+      // the wrong text appeared. The server's own contract says the same thing from its end: the
+      // terminal is "derived from the same mapping of the same stored meta".
       //
       // A COMPLETED TERMINAL STILL DRAWS NOTHING, and the narrowing stops exactly there. Every
       // turn writes one of these rows — `_write_turn_terminal` runs for BOTH kinds,
@@ -327,9 +326,10 @@ export function messagesFromProjection(
       // was built in this chat" to the preview pane (`transcriptHasBuildOutcome`) and carry a
       // `snapshotCommitted` warning. A turn terminal knows neither — it has no preview URL and
       // no snapshot verdict — so synthesising one would answer the pane's question with a guess,
-      // on every stopped Plan turn as well. What #186 is missing is the SENTENCE.
+      // on every stopped Plan turn as well. The reload fix above supplies only the sentence, never
+      // a build part.
     } else {
-      // THE LOUD FALLBACK ARM (L4). Until this existed the chain simply ended, so an item type
+      // THE LOUD FALLBACK ARM. Until this existed the chain simply ended, so an item type
       // this client did not recognise vanished with no error, no warning and no trace — on the
       // one path a reloaded transcript is rebuilt from. That is the four-edit change no compiler
       // enforces, on the path that is load-bearing for BOTH kinds of chat.

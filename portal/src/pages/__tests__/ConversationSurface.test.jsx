@@ -323,7 +323,7 @@ describe('a failed launch INSIDE a chat says why', () => {
 })
 
 /**
- * ★ A SAVE FROM THE CHAT RAISES THE DEPLOYMENT NUDGE (#205) — the other half of the seam.
+ * ★ A SAVE FROM THE CHAT RAISES THE DEPLOYMENT NUDGE — the other half of the seam.
  *
  * `savedHead` and `savedAt` are fields of the DEPLOYMENT read, and a Save is what changes them.
  * The surface performing the save holds no such read: the row is drawn by `AppStatusPanel` and
@@ -336,7 +336,7 @@ describe('a failed launch INSIDE a chat says why', () => {
  * was missing on this surface. Delete `announceDeploymentChanged(activeProjectId)` from
  * `handleSave` and this is what goes red.
  */
-describe('★ a Save from the chat raises the deployment nudge (#205)', () => {
+describe('★ a Save from the chat raises the deployment nudge', () => {
   /** Every nudge the window saw, in order. A CustomEvent is the whole mechanism, so listening for
    *  it is watching the real wire rather than a spy standing in for one. */
   const nudges = []

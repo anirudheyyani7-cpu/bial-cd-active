@@ -353,7 +353,7 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
 })
 
 /**
- * THE FOURTH ARM: the project's own live preview, on a CHAT route (#192, U11).
+ * THE FOURTH ARM: the project's own live preview, on a CHAT route.
  *
  * WHAT WAS BROKEN. Reload a build chat whose app is up — a bookmark, an F5, a browser restart —
  * and the headline said the app was running while the pane framed nothing. Two independent

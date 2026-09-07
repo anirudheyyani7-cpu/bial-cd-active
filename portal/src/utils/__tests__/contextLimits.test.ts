@@ -125,10 +125,10 @@ describe('estimateConversationTokens', () => {
     )
   })
 
-  it('★ charges a DOCUMENT the document nominal, not the image one (#194)', () => {
+  it('★ charges a DOCUMENT the document nominal, not the image one', () => {
     // THE TWIN RULE, AND THIS FILE'S HEADER STATES IT: these constants are two readings of one
-    // scale with the server's, and changing one means changing the other. #194 split the
-    // server's binary charge by media type and this side was outside that unit's file list, so
+    // scale with the server's, and changing one means changing the other. When the server's
+    // binary charge was split by media type, this side was outside that unit's file list, so
     // for a while the browser charged a PDF 1,600 against the server's 75,000 — a 47x gap. The
     // citizen would watch a comfortable meter, keep attaching, and be refused mid-sentence.
     const doc: ChatMessage = {

@@ -467,7 +467,7 @@ describe('the Save control', () => {
     for (const el of screen.getAllByRole('button')) expect(el.hasAttribute('disabled')).toBe(false)
   })
 
-  // ═══ THE WAIT ITSELF (`#202`) ═══
+  // THE WAIT ITSELF
   //
   // The control between a citizen and losing their work was the quietest wait in the product: the
   // word changed and nothing else did. Every scenario above stayed green through the removal of
@@ -475,9 +475,9 @@ describe('the Save control', () => {
   // these four are about the other two registers, and about the class name that carries the
   // reduced-motion guarantee.
 
-  it('★ #202 — while it saves it SHOWS the wait: a spinner, `aria-busy`, and the sentence', () => {
-    // Mutation receipt: delete the `Loader2` arm and this line goes red — the mutant `#202` itself
-    // shipped, and the one no assertion in this suite caught until now.
+  it('★ while it saves it SHOWS the wait: a spinner, `aria-busy`, and the sentence', () => {
+    // Mutation receipt: delete the `Loader2` arm and this line goes red — the one no assertion in
+    // this suite caught until now.
     withSave({ dirty: true, saving: true, error: null }, () => {})
     const save = screen.getByTestId('save-project')
     expect(screen.getByTestId('save-spinner')).toBeTruthy()
@@ -515,11 +515,12 @@ describe('the Save control', () => {
   })
 
   it('★ announces the wait by WRAPPING its one sentence, in a region that was already mounted', () => {
-    // ASM5, both halves. A second `sr-only` copy is the on-screen sentence read twice — the shape
-    // `Announcer.tsx` records as having broken three tests — and a live region inserted TOGETHER
-    // with its text is missed entirely by several reader-and-browser combinations, which is why
-    // `TurnBanner.tsx` keeps a permanent region and lets only the box inside it appear. So: the
-    // same region element before and after, empty first, and exactly one copy of the sentence.
+    // TWO WAYS TO ANNOUNCE A WAIT BADLY, and this pins against both. A second `sr-only` copy is
+    // the on-screen sentence read twice — the shape `Announcer.tsx` records as having broken three
+    // tests — and a live region inserted TOGETHER with its text is missed entirely by several
+    // reader-and-browser combinations, which is why `TurnBanner.tsx` keeps a permanent region and
+    // lets only the box inside it appear. So: the same region element before and after, empty
+    // first, and exactly one copy of the sentence.
     const view = withSave({ dirty: true, saving: false, error: null }, () => {})
     const before = within(screen.getByTestId('save-project')).getByRole('status')
     expect(before.getAttribute('aria-live')).toBe('polite')
@@ -608,7 +609,7 @@ describe('the back control and the rename', () => {
     expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
   })
 
-  it('★ `#207` — no pencil over a project that never loaded, and one the moment it does', () => {
+  it('★ no pencil over a project that never loaded, and one the moment it does', () => {
     /* THE MANGLED ADDRESS, in the only shape this row can see it. `projectId` is the ROUTE PARAM,
        so it is still there on a page whose project 422'd at the boundary — which is exactly what
        the pencil used to be gated on, and why a citizen who followed a truncated link was offered
@@ -629,7 +630,7 @@ describe('the back control and the rename', () => {
     expect(rename).toHaveBeenCalledTimes(1)
   })
 
-  it('★ `#207` — and the way out is NOT gated by the fact that silences the pencil', () => {
+  it('★ the way out is NOT gated by the fact that silences the pencil', () => {
     /* THE MUTANT THIS EXISTS FOR: gate the back control on `heading.projectName !== null` too and
        the dead address becomes a dead end. The row's own docblock is explicit that the control
        survives the load-error branch, and a branch with no way off it is worse than the raw
@@ -640,9 +641,9 @@ describe('the back control and the rename', () => {
     expect(screen.getByTestId('where').textContent).toBe('/projects')
   })
 
-  it('★ `#207` — the deliberate "Your project" fallback on a chat is untouched', () => {
-    /* NOT PART OF THE DEFECT, and the issue says so. A project deleted out from under an open
-       chat leaves the breadcrumb with no name, and the row deliberately says "Your project"
+  it('★ the deliberate "Your project" fallback on a chat is untouched', () => {
+    /* NOT PART OF THE DEFECT, and deliberately left as it is. A project deleted out from under
+       an open chat leaves the breadcrumb with no name, and the row deliberately says "Your project"
        rather than leaving a gap that shifts the layout when a fetch lands. The pencil gate is
        allowed to read the same `null`; it is not allowed to change what the slot says. */
     render(<Workspace entry="/chat/c1" chat={{ heading: { ...CHAT_HEADING, projectName: null } }} />)

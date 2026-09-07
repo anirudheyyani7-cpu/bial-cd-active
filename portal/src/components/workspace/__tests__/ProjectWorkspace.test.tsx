@@ -41,7 +41,7 @@ vi.mock('../../../utils/buildSessionApi', async (importOriginal) => ({
   relaunchPreview: api.relaunchPreview,
   saveProject: api.saveProject,
 }))
-// THE PUBLISH READ IS PART OF THIS SCREEN, not a stub (#205). The rail's APP STATUS panel holds
+// THE PUBLISH READ IS PART OF THIS SCREEN, not a stub. The rail's APP STATUS panel holds
 // one and the toolbar's chip holds another, and the LAST SAVED row this suite asserts about is a
 // FIELD OF THIS RESPONSE — so it is mocked at the wire, where a count of the reads is meaningful,
 // rather than at the hook, which is the seam the defect lived in.
@@ -457,7 +457,7 @@ describe('a chat that declares no pane', () => {
 })
 
 /**
- * ★ LAST SAVED TELLS THE TRUTH AFTER A SAVE (plan 001, U18 — issue #205).
+ * ★ LAST SAVED TELLS THE TRUTH AFTER A SAVE.
  *
  * THE DEFECT. The rail's LAST SAVED row is drawn from `savedHead`/`savedAt`, which are fields of
  * the DEPLOYMENT read — and Save wrote a new bundle without telling that read anything. The row
@@ -515,7 +515,7 @@ const dirtyAndAlive = () => {
 const savedRow = () => screen.getByTestId('status-row-saved')
 const pressSave = async () => fireEvent.click(await screen.findByTestId('save-project'))
 
-describe('★ the LAST SAVED row after a save (#205)', () => {
+describe('★ the LAST SAVED row after a save', () => {
   it('★ moves off "We could not tell" on the FIRST save a project ever has', async () => {
     // A project with nothing saved yet: both halves of the row are null, so it says so in words.
     dirtyAndAlive()
@@ -551,7 +551,7 @@ describe('★ the LAST SAVED row after a save (#205)', () => {
   })
 
   it('★ keeps the row it already had when the re-read FAILS, rather than blanking the panel', async () => {
-    // THE RULE THE ISSUE DOES NOT GIVE. `usePublishState` sets `loadError` on any failure and the
+    // THE RULE NOBODY WROTE DOWN. `usePublishState` sets `loadError` on any failure and the
     // panel renders that branch FIRST — pill, every provenance row and the action all replaced by
     // one line — so a 500 on the read that follows a save would blank the whole section on a
     // screen that has just said "Saved". A stale row is worse than a fresh one and far better

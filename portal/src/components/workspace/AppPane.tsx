@@ -98,17 +98,17 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   // ZERO IN BOTH DIRECTIONS, because this column sits in a flex row above the stacking threshold
   // and a flex COLUMN below it — a width alone leaves a full-height band under a stacked rail.
   const visible = useWorkspacePaneVisible()
-  // THE TAKE-BACK'S WHOLE SEQUENCE (`#196`) — held here because this is what outlives it. See the
-  // docblock. `null` when nobody has computed a state; the hook is unconditional, as hooks are.
+  // THE TAKE-BACK'S WHOLE SEQUENCE — held here because this is what outlives it. See the docblock.
+  // `null` when nobody has computed a state; the hook is unconditional, as hooks are.
   //
   // THE WHOLE REPORT, NOT ITS HANDLERS: the hook reads `projectId` off it to know whose sequence
   // it is holding, and a pane that outlives a navigation would otherwise carry one project's
   // dialog and busy flag onto the next.
   const takeBack = useTakeBack(report)
-  // THE APP THE CITIZEN IS TRYING TO OPEN — issue `#161`'s framing half, which the dialog leads
-  // with. Published by the routes (`ProjectPage` / `ChatRoute`), not by the surfaces, so it is read
-  // from the channel rather than derived here. `null` before a project's own fetch lands, and the
-  // dialog then falls back to its plain phrasing rather than quoting an empty string.
+  // THE APP THE CITIZEN IS TRYING TO OPEN — the framing half the dialog leads with. Published by
+  // the routes (`ProjectPage` / `ChatRoute`), not by the surfaces, so it is read from the channel
+  // rather than derived here. `null` before a project's own fetch lands, and the dialog then falls
+  // back to its plain phrasing rather than quoting an empty string.
   const heading = useWorkspaceHeading()
   // THE EXIT THE BOARD DRAWS, and the reason it needs a state of its own: see `paneExit.ts`. This
   // column is the outermost thing that collapses, so the hold is decided here and handed to the
@@ -161,11 +161,11 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           visible
             ? 'flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden'
             : leaving
-              ? // ON ITS WAY OUT (plan 002, U6). The column keeps its size for one animation while
-                // the card slides right and fades — `w-0` here instead would make the keyframe
-                // unobservable, which is why the utility existed unused. The rail beside it is
-                // already growing, which is the board's "the conversation is already settling
-                // towards the middle of the window".
+              ? // ON ITS WAY OUT. The column keeps its size for one animation while the card slides
+                // right and fades — `w-0` here instead would make the keyframe unobservable, which
+                // is why the utility existed unused. The rail beside it is already growing, which
+                // is the board's "the conversation is already settling towards the middle of the
+                // window".
                 'flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden animate-pane-leave'
               : // Hidden, never unmounted — the whole point of the sibling host is that leaving a
                 // build chat for a plan chat must not re-issue the frame's `src`.
@@ -182,11 +182,11 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           Skip past your app
         </button>
 
-        {/* THE COLLAPSE CONTROL IS NOT HERE ANY MORE (plan 002, U2). It moved to the toolbar row,
-            which is drawn once above the two-column grid. Here it was already better than living
-            inside the rail it hides — a collapsed rail is invisible and untabbable, so a toggle in
-            it is a one-way door — but it still appeared and disappeared with the pane. In the row it
-            has one home in every state, beside the title that now also survives a collapse. */}
+        {/* THE COLLAPSE CONTROL IS NOT HERE ANY MORE. It moved to the toolbar row, which is drawn
+            once above the two-column grid. Here it was already better than living inside the rail
+            it hides — a collapsed rail is invisible and untabbable, so a toggle in it is a one-way
+            door — but it still appeared and disappeared with the pane. In the row it has one home
+            in every state, beside the title that now also survives a collapse. */}
 
         {frameIt ? (
           // THE FRAME IS THE HOST'S. Everything from the frame inward — the cover that holds on an
@@ -213,9 +213,9 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           </div>
         )}
       </section>
-      {/* THE QUESTION `#196` ROUTES THE TAKE-BACK THROUGH (D1) — the dialog that already exists,
-          with its three copy arms and its `agentWorking` sentence reused unchanged. No new copy is
-          written for it anywhere in this unit.
+      {/* THE TAKE-BACK IS ROUTED THROUGH THE DIALOG THAT ALREADY EXISTS, with its three copy arms
+          and its `agentWorking` sentence reused unchanged. No new copy is written for it anywhere
+          in this unit.
 
           FORCE-REMOUNTED, KEYED ON THE HOLDER, and that is not a rendering nicety. When another tab
           takes the freed slot mid-sequence the refusal names a DIFFERENT project, and this dialog
@@ -268,9 +268,9 @@ function NoFrame({
     <div
       data-testid="app-pane-empty"
       // THE INTERNAL STATE NAME, EXPOSED FOR TESTS AND NEVER RENDERED. `not-running` is the one to
-      // watch: it is a state name here and on the wire, and the exact phrase R-16 forbids on
-      // screen. It is an attribute rather than text for that reason — and it gives a suite a handle
-      // on WHICH state the pane reached without pinning the copy, which may change again.
+      // watch: it is a state name here and on the wire, and the exact phrase the copy rule forbids
+      // on screen. It is an attribute rather than text for that reason — and it gives a suite a
+      // handle on WHICH state the pane reached without pinning the copy, which may change again.
       data-workspace-state={state.name}
       className="flex flex-1 items-center justify-center p-8"
     >
@@ -288,7 +288,7 @@ function NoFrame({
         )}
         <p className="text-base font-bold text-tertiary">{state.headline}</p>
         {state.detail && <p className="mt-2 text-sm text-neutral leading-relaxed">{state.detail}</p>}
-        {/* WHAT A TAKE-BACK DID TO SOMEBODY ELSE'S APP (D2) — its own line, because it has its own
+        {/* WHAT A TAKE-BACK DID TO SOMEBODY ELSE'S APP — its own line, because it has its own
             subject. Emphasised rather than greyed: it is the half of the outcome a citizen cannot
             find out any other way without opening the other project. */}
         {state.note && (
@@ -297,7 +297,8 @@ function NoFrame({
           </p>
         )}
         {state.action && (
-          /* THE ROW IS THE POLITE REGION (`#210`'s rule, applied to the wait `#196` adds).
+          /* THE ROW IS THE POLITE REGION: a wait is announced from a region that was already
+             mounted, and the take-back's wait is announced from this one.
              `LivePreview` keeps the pane's permanent region and speaks for every framed state — but
              it is not mounted here, because this arm renders precisely when there is nothing to
              frame, so the take-back's wait would otherwise pass in silence.

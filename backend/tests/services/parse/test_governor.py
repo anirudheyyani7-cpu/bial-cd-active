@@ -111,7 +111,7 @@ async def test_governor_contained_crash_is_413() -> None:
     assert exc.value.code == "FILE_TOO_LARGE"
 
 
-# --- the PDF page count (U6 / D4) ----------------------------------------------
+# --- the PDF page count -----------------------------------------------------
 #
 # A fourth kind rides the same governor, for the same reason the office extracts do: a PDF is
 # the worst-behaved thing the upload route accepts, and the two bounds that already exist —
@@ -135,16 +135,14 @@ def test_an_unreadable_pdf_is_a_clean_400_not_a_governor_500() -> None:
 
 
 def test_the_deck_byte_scan_would_have_under_counted_this_document() -> None:
-    """★ WHY D4 REFUSED TO REUSE `extract/deck.py::count_pdf_pages`.
+    """★ WHY THE PDF PAGE COUNT DOES NOT REUSE `extract/deck.py::count_pdf_pages`.
 
-    Its raw-byte `/Type /Page` scan is documented as reliable for LibreOffice/Gotenberg output.
-    Every modern producer writes page objects into a COMPRESSED object stream instead, where
-    no such bytes appear anywhere in the file — so the scan reports zero pages for a 31-page
-    document and would wave it straight past a 30-page cap.
-
-    Under-counting is the only direction that matters here: it admits the document the window
-    charge cannot honestly cover, which is the whole of #194. Swap the new kind for the deck
-    scan and this test is what goes red."""
+    Its raw-byte `/Type /Page` scan is reliable only for LibreOffice/Gotenberg output: modern
+    producers write page objects into a COMPRESSED object stream instead, so no such bytes
+    appear and the scan reports zero pages for a 31-page document — enough to wave it straight
+    past a 30-page cap. Under-counting is the dangerous direction here, since it admits a
+    document the window charge cannot honestly cover. Swap the new kind for the deck scan and
+    this test goes red."""
     document = objstm_pdf(31)
 
     assert deck_byte_scan(document) == 0
@@ -161,14 +159,12 @@ async def test_the_pdf_count_runs_in_the_subprocess() -> None:
 async def test_a_cross_reference_bomb_is_killed_at_the_deadline() -> None:
     """★ THE FILE THE GOVERNOR EXISTS FOR, in the PDF kind's own shape.
 
-    Eight kilobytes: a Flate-compressed cross-reference stream declaring two million entries,
-    every one of which a reader must materialise before it can resolve the catalog. It is
-    inside the 4 MB size cap and inside the memory ceiling, and it costs seven to twelve
-    seconds — unbounded in the only axis neither bound watches.
-
-    The control below is what stops this passing for the wrong reason: given time, the same
-    bytes parse to a one-page document, so the deadline is what refused it and not a
-    malformation. Move the count into the request handler and there is no deadline to hit."""
+    Eight kilobytes: a Flate-compressed cross-reference stream declaring two million entries, every
+    one of which a reader must materialise before it can resolve the catalog. It sits inside the 4
+    MB size cap and inside the memory ceiling, yet costs seven to twelve seconds — unbounded in the
+    only axis neither bound watches. Given time the same bytes parse to a one-page document, so
+    what stops this test passing for the wrong reason is the deadline, not a malformation; move the
+    count into the request handler and there is no deadline to hit."""
     bomb = xref_bomb_pdf()
 
     with pytest.raises(FileParseError) as exc:

@@ -431,14 +431,15 @@ class ReclamationReportResponse(CamelModel):
     #: Destroy candidates AND escalations — everything a human has a decision to make about.
     #: Spared containers are the boring majority and are a count only.
     candidates: list[ReclamationCandidate]
-    #: What THIS PROCESS'S flags say right now — and that qualifier is the correction `#190`
-    #: bought. `reclaimEnabled` is read from the API's own `settings.sandbox`, while the scheduled
-    #: pass is gated on the WORKER's, loaded from a different env file in a different container.
+    #: What THIS PROCESS'S flags say right now — and that qualifier is the whole of the field's
+    #: meaning, because two processes read two different files. `reclaimEnabled` is read from the
+    #: API's own `settings.sandbox`, while the scheduled pass is gated on the WORKER's, loaded from
+    #: a different env file in a different container.
     #: An operator who set `SANDBOX__RECLAIM_ENABLED` in `.env` and not `.env.worker` — the
     #: ordinary mistake, since `.env` is the file everyone edits — got `reclaimEnabled: true`
     #: beside a worker declining every pass with `flag_off`. This field therefore answers "did my
     #: config change reach the API", never "is the pass running"; `lastPassOutcome` below is the
-    #: only field that can answer the second. Its meaning is deliberately UNCHANGED (R6): deriving
+    #: only field that can answer the second. Its meaning is deliberately UNCHANGED: deriving
     #: it from the worker would silently redefine a shipped field.
     #:
     #: `reclaimDestroy` false means a running pass reports rather than acts. This endpoint answers
@@ -451,7 +452,7 @@ class ReclamationReportResponse(CamelModel):
     #: whether the scheduled worker is alive.
     last_reclamation_pass_at: datetime | None = None
     reclamation_stale: bool = True
-    #: WHAT THE WORKER ACTUALLY DID, straight off the `worker_passes` row it wrote (`#190`).
+    #: WHAT THE WORKER ACTUALLY DID, straight off the `worker_passes` row it wrote.
     #:
     #: `lastReclamationPassAt` proves a pass HAPPENED; on its own it cannot say whether the pass
     #: looked at anything. `_record_pass` writes `declined`/`flag_off` deliberately — "reclamation
@@ -462,7 +463,7 @@ class ReclamationReportResponse(CamelModel):
     #: against, so a worker sweeping somebody else's subscription cannot read as ours.
     #:
     #: NO SUBSCRIPTION ID travels here, by construction — `workers/reclamation._enumerated_fleet`
-    #: keeps it in the server-side log (`.claude/rules/security.md`).
+    #: keeps it in the server-side log only.
     #:
     #: Both null when no pass has ever been recorded, which pairs with `reclamationStale: true`.
     #: THE WORKER'S OWN ENUM rather than a re-spelled `str`, the same call

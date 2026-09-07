@@ -506,7 +506,7 @@ describe('the movement between the two layouts', () => {
 
     // Each utility is looked up in whatever rule carries it, rather than in a rule matching the
     // two of them ADJACENT. The old regex demanded `.animate-pane-leave, .animate-pane-return {`
-    // literally, so #210 — which suppressed the same way by adding `.animate-spin`,
+    // literally, so a later change that suppressed the same way by adding `.animate-spin`,
     // `.animate-pulse` and `.animate-bounce` to this very selector list — turned this guard red
     // while the guarantee it protects was strictly widened. A guard that breaks when the thing it
     // guards gets stronger is a guard that gets deleted.
@@ -525,11 +525,10 @@ describe('the movement between the two layouts', () => {
 })
 
 /**
- * ★ A BLOCKED PROJECT TAKES ITS WORKSPACE BACK (`#196`, U13) — the pane half.
+ * ★ A BLOCKED PROJECT TAKES ITS WORKSPACE BACK — the pane half.
  *
- * ═══ WHAT THIS BLOCK IS WRITTEN AGAINST ═══
- *
- * The unit's three structural traps, each of which passes review and fails in a browser:
+ * WHAT THIS BLOCK IS WRITTEN AGAINST: the unit's three structural traps, each of which passes
+ * review and fails in a browser:
  *
  *  1. A take-back that reports `onStartPending` UNMOUNTS ITS OWN BUTTON. `resolveWorkspaceState`
  *     answers `gettingReady()` on an in-flight press, that arm offers no action, and `NoFrame`
@@ -538,13 +537,13 @@ describe('the movement between the two layouts', () => {
  *     still there" and "the pane is still held" are two different failures.
  *  2. THE DIALOG OWNS `busy` AND `error` ITSELF, and its `run()` catches every rejection into one
  *     alert while staying mounted. If the take-back's handlers rejected, that alert would be what
- *     a citizen reads on all five of D2's endings and none of the pane states below would be
- *     reachable. Every failing ending here asserts the dialog is GONE.
+ *     a citizen reads on all five of the take-back's endings and none of the pane states below
+ *     would be reachable. Every failing ending here asserts the dialog is GONE.
  *  3. THE REOPENED DIALOG IS A NEW MOUNT. It takes focus in a mount-time effect, so a dialog
  *     updated in place would leave a keyboard user parked where the busy state put them while the
  *     copy in front of them started naming a different project.
  */
-describe('★ taking the workspace back (#196)', () => {
+describe('★ taking the workspace back', () => {
   const HELD: Partial<PreviewState> = {
     state: 'slot_taken', occupyingProjectName: 'Car pool', occupyingProjectId: 'pA', restorable: true,
   }
@@ -569,8 +568,8 @@ describe('★ taking the workspace back (#196)', () => {
    * `onStartPending` IS WIRED TO THE MAP, exactly as both real publishers wire it — the project
    * hook's `reportStartPending` and the chat surface's `setStartPending` both feed
    * `resolveWorkspaceState`. Without that the arm assertion below would be vacuous: a harness
-   * holding one frozen state cannot show a take-back unmounting its own button, which is the
-   * precise failure D2 describes.
+   * holding one frozen state cannot show a take-back unmounting its own button, which is trap 1
+   * above.
    */
   function heldPane(startOutcome: StartOutcome | null = null) {
     const channel = createWorkspaceChannel()
@@ -614,7 +613,8 @@ describe('★ taking the workspace back (#196)', () => {
 
   it('★ the held arm draws TWO controls, and the first is untouched', async () => {
     heldPane()
-    // Unchanged in label and in behaviour, per the owner's decision on #196.
+    // The take-back was added BESIDE this control, never in place of it: the open-holder button
+    // keeps the label and the behaviour it already had.
     expect(openHolder()).toBeTruthy()
     expect(takeBack()).toBeTruthy()
   })
@@ -693,7 +693,8 @@ describe('★ taking the workspace back (#196)', () => {
     // "That did not work. Please try again." alert never appeared.
     await waitFor(() => expect(dialog()).toBeNull())
     expect(screen.queryByRole('alert')).toBeNull()
-    // LIVENESS: the pane is still on the held arm with both ways out, which is where D2 puts it.
+    // LIVENESS: the pane is still on the held arm with both ways out, which is the outcome this
+    // ending specifies.
     expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('held-by-another-project')
     expect(takeBack()).toBeTruthy()
   })
@@ -739,8 +740,8 @@ describe('★ taking the workspace back (#196)', () => {
     expect(pane.report.onRefresh).toHaveBeenCalled()
     await waitFor(() => expect(dialog()).toBeNull())
 
-    // And that outcome, over the reading that follows it, is the pane D2 describes: the ordinary
-    // failed-to-start sentence, one line naming the holder, and the same Try again.
+    // And that outcome, over the reading that follows it, is the pane this ending specifies: the
+    // ordinary failed-to-start sentence, one line naming the holder, and the same Try again.
     cleanup()
     renderPane((c) =>
       c.workspace.set(
@@ -787,7 +788,7 @@ describe('★ taking the workspace back (#196)', () => {
     expect(working.getAttribute('aria-disabled')).toBe('true')
     // BOTH, which is a fact about a pair of siblings and so cannot live in either of them.
     expect(openHolder().getAttribute('aria-disabled')).toBe('true')
-    // ★ TRAP 1, asserted as the ARM rather than as the button — that is the failure D2 describes:
+    // ★ TRAP 1, asserted as the ARM rather than as the button:
     // a take-back on the in-flight channel reaches `starting`, which offers no action at all and
     // un-frames the pane. The harness feeds `onStartPending` back through the map (see `heldPane`),
     // so reporting one here really does move this arm.
@@ -797,9 +798,9 @@ describe('★ taking the workspace back (#196)', () => {
   })
 
   it('the row the two controls sit in is a polite region, mounted before it has anything to say', async () => {
-    // #210's rule: `LivePreview` keeps the pane's permanent region and is not mounted on this arm,
-    // so the take-back's wait would otherwise pass in silence. The region is the ROW — never a
-    // second `sr-only` copy of a sentence already on screen.
+    // The one-live-region rule, other half: `LivePreview` keeps the pane's permanent region and
+    // is not mounted on this arm, so the take-back's wait would otherwise pass in silence. The
+    // region is the ROW — never a second `sr-only` copy of a sentence already on screen.
     heldPane()
     const row = takeBack().parentElement
     expect(row?.getAttribute('role')).toBe('status')

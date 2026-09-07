@@ -157,7 +157,7 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
 }
 
 /**
- * A DOCUMENT LIMIT, NOT A TOKEN LIMIT, and the distinction is the whole reason this exists (#194).
+ * A DOCUMENT LIMIT, NOT A TOKEN LIMIT, and the distinction is the whole reason this exists.
  *
  * A PDF is charged a flat 75,000 tokens because that is what the largest admissible one can really
  * cost, so three of them exceed the context ceiling before a word is typed. Left to the token gate,

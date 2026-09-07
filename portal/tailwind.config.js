@@ -198,10 +198,11 @@ export default {
          * REDUCED MOTION — WHAT IS ACTUALLY TRUE. Both keyframe animations are suppressed by the
          * `@media (prefers-reduced-motion: reduce)` block in `index.css`, which ALSO suppresses
          * `.animate-spin`, `.animate-pulse` and `.animate-bounce`. That block and
-         * `usePrefersReducedMotion()` — used by `ToolActivityLine`, `OfferStrip` and
-         * `StopTurnControl` — are the portal's only two mechanisms; there is no third, and
-         * `src/__tests__/reducedMotion.test.ts` pins that fact so it cannot again be claimed
-         * universal while dozens of other spinners quietly ignore the preference.
+         * `usePrefersReducedMotion()` — defined in `src/components/chat/ToolActivityLine.tsx`,
+         * used there and by `OfferStrip` and `StopTurnControl` — are the portal's only two
+         * mechanisms; there is no third, and `src/__tests__/reducedMotion.test.ts` pins that fact
+         * so it cannot again be claimed universal while dozens of other spinners quietly ignore
+         * the preference.
          */
         'pane-leave': 'pane-leave 0.24s ease-in forwards',
         'pane-return': 'pane-return 0.24s ease-out',

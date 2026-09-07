@@ -1215,21 +1215,17 @@ class SessionManager:
     ) -> Exception:
         """WHICH refusal a held slot has earned.
 
-        Two truths are available when the slot is taken and they are not equally useful.
-        `BuildSessionConflictError` becomes `409 build_session_already_active`, which the client
-        reads as "nothing you can do but wait" (`utils/turnStreamApi.ts`) and renders as "That
-        message did not send - try again" - advice that stays wrong for as long as the other
-        build runs. When the holder is a DIFFERENT project, the citizen has a remedy: stop it.
-        `SandboxReclaimBlockedError` is how that remedy is offered, and `ReclaimWorkspaceDialog`
-        already carries the copy and the stop-it-first handler for the `building` arm - it was
-        simply unreachable, because this guard answered first with the poorer truth.
-
-        SAME PROJECT KEEPS THE BARE CONFLICT, and that is the honest answer there: a genuine
-        double-send has no incumbent to release and nothing to offer but waiting.
-
-        Falls back to the bare conflict whenever the richer one cannot be told truthfully - no
-        `db` to name the project with, no session to read, or a project row that has gone. A
-        dialog naming the wrong project is worse than a plain refusal (`_occupying_project`).
+        `BuildSessionConflictError` (409 `build_session_already_active`) is the "nothing you can
+        do but wait" branch of `utils/turnStreamApi.ts`, and reaches the citizen as `ComposerBox`'s
+        generic "That message did not send… try again" — advice that stays wrong for as long as
+        the other build runs. It is honest only for a same-project double-send, which has no
+        incumbent to release. A DIFFERENT-project holder has a remedy, stop it, and
+        `SandboxReclaimBlockedError` is how it is offered: `ReclaimWorkspaceDialog` already carries
+        the copy and the stop-it-first handler for the `building` arm, unreachable only because
+        this guard answered first with the poorer truth. Falls back to the bare conflict whenever
+        the richer refusal cannot be told truthfully — no `db` to name the project with, no session
+        to read, or a project row that has gone (`_occupying_project`) — since a dialog naming the
+        wrong project is worse than a plain refusal.
         """
         if blocking is None or db is None or requested_project_id is None:
             return BuildSessionConflictError(blocking_id)
@@ -2332,7 +2328,8 @@ class SessionManager:
                     # other unreadable-signal answer, whose message is already "a retry is the
                     # way forward" — which is exactly right here: the saved version is intact,
                     # the container may be too, and nothing has been destroyed to find out.
-                    # L7 in one arm: every unreadable arrow leads to escalate, never destroy.
+                    # The invariant in one arm: every unreadable arrow leads to escalate, never
+                    # destroy.
                     raise
                 except NoLiveSandboxError:
                     # THE COLD CLOCK STARTS HERE — see `cold_started_at` above for why this

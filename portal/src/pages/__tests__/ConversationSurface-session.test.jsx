@@ -295,7 +295,7 @@ describe('BuilderPage — the build-turn flow', () => {
     expect(glyphs().getAllByText(/^failed$/i).length).toBe(1)
   })
 
-  it('a quota breach ends gracefully and shows the daily-limit banner (C7 §8)', async () => {
+  it('a quota breach ends gracefully and shows the daily-limit banner', async () => {
     // The resolver's PROJECT arm on the chat route outranks
     // `transcriptHasBuildOutcome ? 'ended'`. The shared fixture answers `alive` for EVERY
     // project id as scenery; under it the pane now correctly frames the serving container
@@ -331,7 +331,7 @@ describe('BuilderPage — the transition\'s refusals are typed HTTP statuses now
     // the fetch layer raises on (429/409/503), so `buildFromPlan` THROWS and the catch arm puts
     // the server's sentence on the card — the old 200-with-a-reason looked just like a quota refusal.
     h.buildFromPlan.mockRejectedValue(new Error('Another build is already running for your workspace.'))
-    // #192 fed the resolver's PROJECT arm on the chat route, and that arm outranks
+    // The resolver's PROJECT arm on the chat route outranks
     // `transcriptHasBuildOutcome ? 'ended'`. The shared fixture answers `alive` for EVERY
     // project id as scenery; under it the pane now correctly frames the serving container
     // instead of saying the preview is gone. This test is about the banner, not about a
@@ -644,7 +644,7 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works',
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
 
     // Navigate the SAME instance to project B's builder chat.
-    // #192: project B must answer for ITSELF. The blanket `alive` fixture would have B's
+    // Project B must answer for ITSELF. The blanket `alive` fixture would have B's
     // pane frame project A's container — the cross-project frame the resolver's project
     // label exists to prevent — so each id now answers its own truth.
     h.fetchPreviewState.mockImplementation(async (id) =>
@@ -785,7 +785,7 @@ describe('a failed mode switch says what actually failed — RETIRED, now an ine
 // `workspace` frame; this page always renders a build chat, so `isBuild` is hardcoded `true` here.
 // NOT COVERED: the `isBuild: false` arm of `narrativeStatus` (`turnNarrative.ts`) has no direct
 // unit test anywhere in the repo — out of this file's scope.
-describe('a read turn reads the live container without becoming a build (2026-07-30)', () => {
+describe('a read turn reads the live container without becoming a build', () => {
   /** An open read-turn socket: the workspace frame lands first, the answer arrives later. */
   function scriptReadTurn() {
     const live = { emit: null, close: null }
@@ -854,7 +854,7 @@ describe('a read turn reads the live container without becoming a build (2026-07
 
 // The other half of the same emptiness rule: a WRITE turn whose container never came up is
 // terminal with no steps and no headline, so the transcript has no activity to draw.
-describe('a build that dies before its first step shows no empty bubble (2026-07-30)', () => {
+describe('a build that dies before its first step shows no empty bubble', () => {
   it('renders the failure, not an empty assistant bubble', async () => {
     const turn = scriptedBuild({ opening: [T_WORKSPACE('unavailable', 1, 'The workspace service is not available right now.')] })
     renderBuilder({ deps: deps().deps })

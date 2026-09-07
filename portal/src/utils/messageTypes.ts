@@ -94,8 +94,8 @@ export type FilePart = FilePartImageOrDocument | FilePartOffice | FilePartDeck
  *
  * `'stopped'` is a first-class outcome and NOT a flavour of failure. A citizen's own Stop, a
  * force-end, an idle teardown and a spent daily limit all end a build with nothing wrong, and
- * folding them into `'failed'` is exactly what announced a deliberate Stop as "The build failed:
- * stopped_by_user" (#204) — while the activity pill beside it correctly read "stopped before it
+ * folding them into `'failed'` is exactly what once announced a deliberate Stop as "The build
+ * failed: stopped_by_user" — while the activity pill beside it correctly read "stopped before it
  * finished". One fact, two states, one screen.
  *
  * BOTH producers carry it, deliberately. The live turn terminal (`ConversationSurface`'s
@@ -112,8 +112,7 @@ export type BuildOutcomeStatus = 'ended' | 'failed' | 'stopped'
  * only a leaf can serve both: the live terminal is drawn by `ConversationSurface` and the reloaded
  * one is projected by `conversationApi`, and a util cannot import a component without a cycle.
  * "Two authors for one sentence" is the documented failure this arrangement exists to prevent —
- * `docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md` records
- * fixing one emitter only changing WHEN the wrong text appeared.
+ * fixing one emitter alone only ever changed WHEN the wrong text appeared, never whether it did.
  *
  * IT MIRRORS `backend/src/services/build_sessions/outcome.py::_summary` — same four reasons, same
  * wording — because that emitter writes the durable row for legacy build sessions while this one
@@ -123,7 +122,7 @@ export type BuildOutcomeStatus = 'ended' | 'failed' | 'stopped'
  * PLUS ONE ARM THE SERVER TABLE LACKS: `workspace_restored`. It is raised at
  * `backend/src/services/turns/engine.py:1612` — a turn that ends because the citizen's workspace
  * had to be put back from the last saved copy, which is a SUCCESSFUL restore and not a broken
- * build. #204 caught it being announced as "The build failed: workspace_restored".
+ * build, once wrongly announced as "The build failed: workspace_restored".
  */
 export const OUTCOME_COPY: Readonly<Record<string, string | undefined>> = {
   quota_exceeded: 'The build stopped: you reached your daily limit.',
@@ -178,9 +177,9 @@ export interface BuildPartPersisted {
   previewUrl: string | null
 }
 
-/** The live `build` part — rendered the moment a build turn ends, before any reload. Two call sites feed this: the C7
- * session-based path (carries `sessionId`) and the current turn-stream "Build
- * it" path (carries `turnId`); both otherwise produce the same fields. */
+/** The live `build` part — rendered the moment a build turn ends, before any reload. Two call
+ * sites feed this: the legacy session-based path (carries `sessionId`) and the current
+ * turn-stream "Build it" path (carries `turnId`); both otherwise produce the same fields. */
 export interface BuildPartLive {
   type: 'build'
   status: BuildOutcomeStatus

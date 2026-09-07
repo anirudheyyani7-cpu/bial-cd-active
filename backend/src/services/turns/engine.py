@@ -223,9 +223,7 @@ _PERSIST_FAILED_MESSAGE = (
     "The reply could not be saved, so this turn was stopped. Try sending the message again."
 )
 
-# =====================================================================================
-# THE TWO THINGS THE HARNESS SAYS WHEN NOTHING ELSE IS SPEAKING
-# =====================================================================================
+# THE TWO THINGS THE HARNESS SAYS WHEN NOTHING ELSE IS SPEAKING.
 #
 # Both are the PLATFORM's words, never the agent's, and both are pinned here rather than asked
 # for in a prompt. An acknowledgement the model has to remember to write is an acknowledgement

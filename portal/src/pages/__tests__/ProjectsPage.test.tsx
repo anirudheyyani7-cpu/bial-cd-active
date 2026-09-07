@@ -170,6 +170,70 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
+// --- what changes without saying so (R44b/AE9b) ----------------------------------
+
+describe('★ the two things on this page that change silently now announce', () => {
+  // The page already had two working regions — the wait sentence and the dead-bookmark notice —
+  // which is why the sweep that filed #187 counting `[aria-live]` elements was literally right
+  // and practically wrong. What it named and what was genuinely uncovered are these two: the
+  // numbers, and the range caption. A citizen who deletes a project watches "In production" go
+  // from 3 to 4 in silence, and a search rewrites the rows underneath with nothing said about
+  // how many there now are.
+
+  it('announces the three numbers, and the region is mounted before they arrive', async () => {
+    let resolve: (c: typeof COUNTS) => void = () => {}
+    h.listProjectCounts.mockReturnValue(new Promise((r) => (resolve = r)))
+
+    renderPage()
+
+    // MOUNTED FIRST. A region inserted together with its text is missed entirely by several
+    // reader-and-browser combinations — the rule the wait region above it already states — so
+    // the region has to exist while the numbers are still skeletons.
+    const region = screen.getByTestId('projects-counts')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    expect(region.getAttribute('role')).toBe('status')
+    expect(region.textContent).not.toContain('7')
+
+    resolve({ inProduction: 7, totalApplications: 9, inPipeline: 2 })
+
+    // …and the numbers land INSIDE it, so the change is what gets read.
+    await waitFor(() => expect(screen.getByTestId('projects-counts').textContent).toContain('7'))
+    expect(screen.getByTestId('projects-counts').textContent).toContain('In production')
+  })
+
+  it('keeps the region when the counts fail cold, rather than swapping it out', async () => {
+    // The counts have two arms and both swap in and out. A region inside the ternary would
+    // arrive with its own content on whichever arm won — which is the same defect as not
+    // having one.
+    h.listProjectCounts.mockRejectedValue(new Error('nope'))
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText(/couldn’t load your counts/i)).toBeTruthy())
+    const region = screen.getByTestId('projects-counts')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    expect(region.textContent).toContain('Couldn’t load your counts')
+  })
+
+  it('announces the range caption, and it really does change', async () => {
+    h.listProjects.mockResolvedValue(
+      page([mkProject('p1', 'One'), mkProject('p2', 'Two')], { total: 14, totalPages: 2, pageSize: 8 }),
+    )
+    renderPage()
+
+    const range = await screen.findByTestId('projects-range')
+    expect(range.getAttribute('aria-live')).toBe('polite')
+    const before = range.textContent
+    expect(before).toContain('of 14')
+
+    // PAIRED WITH A REAL CHANGE, so a static page cannot pass this: the caption has to say
+    // something different after the search, not merely carry the attribute.
+    h.listProjects.mockResolvedValue(page([mkProject('p1', 'One')], { total: 1, totalPages: 1 }))
+    fireEvent.change(screen.getByLabelText('Search projects'), { target: { value: 'One' } })
+    await waitFor(() => expect(screen.getByTestId('projects-range').textContent).not.toBe(before))
+    expect(screen.getByTestId('projects-range').textContent).toContain('of 1')
+  })
+})
+
 // --- the three numbers ---------------------------------------------------------
 
 describe('the dashboard strip', () => {

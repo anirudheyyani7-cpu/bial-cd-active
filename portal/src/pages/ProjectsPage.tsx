@@ -542,7 +542,24 @@ export default function ProjectsPage(): React.JSX.Element {
           ) : null}
         </div>
 
-        {/* Three numbers. Nothing else — no charts (§1). */}
+        {/* Three numbers. Nothing else — no charts (§1).
+
+            AND THEY ANNOUNCE, because they CHANGE without saying so (R44b/AE9b). A citizen who
+            deletes a project, or publishes one, watches "In production" go from 3 to 4 with no
+            sound at all — the numbers are the page's only report of what just happened to the
+            estate. The region is `polite`, never `alert`: nothing here is a failure, and an
+            assertive channel would interrupt whatever the person was reading to say "4".
+
+            MOUNTED UNCONDITIONALLY, WRAPPING BOTH ARMS. A region inserted together with its text
+            is missed entirely by several reader-and-browser combinations — the rule the wait
+            region above already states and the reason it lives in the header. The counts have two
+            arms (the cold-failure card and the tiles) and both swap in and out, so the region has
+            to sit OUTSIDE the ternary or it is a region that arrives with its own content.
+
+            IT WRAPS THE VISIBLE NUMBERS rather than adding an `sr-only` copy — two elements
+            carrying one sentence is that sentence read twice (`Announcer.tsx` records that as
+            having broken three tests). */}
+        <div role="status" aria-live="polite" data-testid="projects-counts">
         {countsFailedCold ? (
           <div className="flex items-center justify-between gap-3 bg-white border border-danger/30 rounded-2xl px-5 py-4 mt-5 mb-6">
             <p className="text-xs text-danger">Couldn’t load your counts.</p>
@@ -575,6 +592,7 @@ export default function ProjectsPage(): React.JSX.Element {
           ))}
         </div>
         )}
+        </div>
 
         {/* ONE controls row: search, density (grid only), view, New project (§3). The
             New project button lives HERE and nowhere else — it used to sit in the page
@@ -766,7 +784,12 @@ export default function ProjectsPage(): React.JSX.Element {
             )}
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-4 text-xs text-neutral">
-              <span className="tabular-nums">
+              {/* THE CAPTION ANNOUNCES TOO (R44b/AE9b). Searching, turning a page or changing the
+                  page size leaves the rows below silently different and this line the only thing
+                  that says how many there now are — a screen reader was told nothing at all. The
+                  region is on the WRAPPER, not on the text, so it is mounted before the numbers
+                  change; `polite`, for the same reason the counts are. */}
+              <span className="tabular-nums" role="status" aria-live="polite" data-testid="projects-range">
                 Showing {firstOnPage}–{lastOnPage} of {total}
               </span>
 

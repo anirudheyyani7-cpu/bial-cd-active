@@ -61,6 +61,20 @@ import {
   MIN_DELETE_REASON_WORDS,
 } from '../../utils/words'
 
+/** Ties the TEXTAREA to the rule it must satisfy and to its own running count (R44b/AE9b).
+ *
+ *  The field carried `aria-label` and nothing else, so a reader heard "Why are you deleting this
+ *  project?" and was told neither the bound nor how close they were to it — the two facts the
+ *  sighted person reads directly under the box. The count is live in its own right: it changes on
+ *  every keystroke, which is exactly what `aria-describedby` re-reads on demand rather than
+ *  announcing at people.
+ *
+ *  NOT ON THE CONTENT. `DialogContent`'s own `aria-describedby` stays pointed at the cascade
+ *  sentence — that is what a reader should hear after the title, and the one thing in here they
+ *  must not miss. Two different elements, two different descriptions. */
+const RULE_ID = 'delete-remark-rule'
+const COUNT_ID = 'delete-remark-count'
+
 /** Ties the panel to its cascade sentence for `aria-describedby`. */
 const CASCADE_ID = 'delete-project-cascade'
 
@@ -207,6 +221,7 @@ export default function ProjectDeleteDialog({
             rows={3}
             maxLength={MAX_DELETE_REASON_CHARS}
             aria-label="Why are you deleting this project?"
+            aria-describedby={`${RULE_ID} ${COUNT_ID}`}
             className="mt-1.5 resize-y"
           />
           <div className="flex items-baseline justify-between mt-1">
@@ -217,11 +232,12 @@ export default function ProjectDeleteDialog({
                 read surface is tracked in #176; when it lands, the stronger sentence becomes
                 true again and this reverts. Until then the copy says what the platform
                 actually does, which is keep the reason with the record. */}
-            <span className="text-[11px] text-neutral">
+            <span id={RULE_ID} className="text-[11px] text-neutral">
               Between {MIN_DELETE_REASON_WORDS} and {MAX_DELETE_REASON_WORDS} words. Kept with
               the deletion record.
             </span>
             <span
+              id={COUNT_ID}
               className={`text-[11px] tabular-nums ${
                 remark.length > 0 && !remarkValid ? 'text-danger font-semibold' : 'text-neutral'
               }`}

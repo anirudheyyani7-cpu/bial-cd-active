@@ -1112,3 +1112,177 @@ async def test_another_citizen_never_learns_the_saved_head_or_when_it_was_saved(
     )
     assert owner_resp.json()["savedHead"] == _SAVED_SHA
     assert owner_resp.json()["savedAt"] == "2026-08-25T14:20:00Z"
+
+
+# --- U16: WHY the saved pair is absent, which the pair itself cannot say ----------------
+#
+# `savedHead`/`savedAt` both read null in three different situations, and until this unit
+# the response could not tell them apart: one sentinel answered "no store bound", "the
+# store would not answer" and "there is no bundle". All three are one answer to the DRIFT
+# question — never spelled "up to date" — and three answers to "has this citizen ever
+# saved". The rail could only render the union of them, so it told somebody who had never
+# saved that their last save could not be found, on the panel they open precisely when
+# they are unsure their work is safe (R37a).
+#
+# The invariant every test below re-checks: `publishState` is UNCHANGED by the split. If
+# a mutation makes the drift answer move, that is the regression, not the fix.
+
+
+class _StoreThatKnowsNothing(FakeStorage):
+    """A store with no objects in it at all — the never-saved case, which is `head()`
+    answering `None` rather than raising."""
+
+
+async def test_a_project_that_never_saved_says_so_rather_than_saying_nothing(
+    wire, client, db_session
+) -> None:
+    """AE9a. The store answers and there is no bundle: `never_saved`, which is the one
+    value on which the rail omits its LAST SAVED row entirely.
+
+    Mutation receipt: fold the `meta is None` arm back into the storage-error sentinel and
+    this goes red on `savedState` while every `publishState` assertion in the file stays
+    green — which is exactly the shape of the bug, a fact nobody could see."""
+    # `wire=None` so `_owner_with_app` seeds NOTHING at `snapshot_key` — the store is still
+    # bound (the `wire` fixture binds it), it simply has no bundle for this app. That is the
+    # never-saved case, and it is `head()` answering `None` rather than raising.
+    user, app_row = await _owner_with_app(db_session)
+    await db_session.commit()
+
+    resp = await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["savedState"] == "never_saved"
+    assert body["savedHead"] is None
+    assert body["savedAt"] is None
+    # The drift answer is untouched by the split.
+    assert body["publishState"] == "draft"
+
+
+async def test_a_storage_error_is_distinguishable_from_a_project_that_never_saved(
+    wire, client, db_session
+) -> None:
+    """THE WHOLE POINT OF THE UNIT, asserted as a DIFFERENCE rather than as two values.
+
+    A store that would not answer and a citizen who has never saved produce identical
+    `savedHead`/`savedAt` (both null) and an identical `publishState`. If the two are ever
+    equal on this axis too, the presenter is back to guessing — and the guess it has to
+    make is the one that tells a citizen their work is missing.
+
+    Mutation receipt: return the same `SavedState` from both arms of
+    `_saved_version_for_publish_state` and this fails on the inequality, whichever value
+    the mutation picks."""
+    user, app_row = await _owner_with_app(db_session, wire)
+    await _live_deployment(db_session, app_id=app_row.id, user_id=user.id)
+    await db_session.commit()
+
+    wire.app.dependency_overrides[storage_or_none_dependency] = lambda: _AlwaysBoomingStorage()
+    refused = (
+        await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
+    ).json()
+
+    wire.app.dependency_overrides[storage_or_none_dependency] = lambda: _StoreThatKnowsNothing()
+    empty = (
+        await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
+    ).json()
+
+    assert refused["savedState"] == "storage_error"
+    assert empty["savedState"] == "never_saved"
+    assert refused["savedState"] != empty["savedState"]
+    # …and the two are otherwise INDISTINGUISHABLE, which is why the field had to exist.
+    assert refused["savedHead"] == empty["savedHead"] is None
+    assert refused["savedAt"] == empty["savedAt"] is None
+    assert refused["publishState"] == empty["publishState"] == "live_drift_unknown"
+
+
+async def test_an_unconfigured_store_reports_its_own_reason_not_the_citizens(
+    app: FastAPI, client, db_session
+) -> None:
+    """The third arm, and the one a fixture makes invisible by construction
+    (`.claude/rules/testing.md`): with storage always bound there is no request in which
+    `storage is None`, so the branch is untestable rather than merely untested.
+
+    NO `wire`, NO `fake_storage` — the unconfigured posture this route already documents
+    as supported. The platform cannot see this citizen's saves at all, and must not report
+    that as their absence."""
+    assert storage_or_none_dependency not in app.dependency_overrides, (
+        "this test is only meaningful with storage UNBOUND"
+    )
+    user = await UserFactory.create(db_session)
+    app_row = await AppRegistryFactory.create(db_session, user_id=user.id)
+    await db_session.commit()
+
+    resp = await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["savedState"] == "store_unconfigured"
+    assert body["savedState"] != "never_saved"
+    assert body["publishState"] == "draft"
+
+
+async def test_a_saved_project_reports_saved_with_its_real_timestamp(
+    wire, client, db_session
+) -> None:
+    """The ordinary case, and the guard against a split that reports every project as
+    never-saved: a bundle exists, so `saved` — with the date and the id the rail draws."""
+    user, app_row = await _owner_with_app(db_session, wire)
+    await db_session.commit()
+    key = snapshot_key(app_row.id)
+    wire.store.objects[key] = a_git_bundle(_SAVED_SHA)
+    wire.store.meta[key] = {"head_sha": _SAVED_SHA}
+    wire.store.mtimes[key] = _SAVED_AT
+
+    resp = await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["savedState"] == "saved"
+    assert body["savedHead"] == _SAVED_SHA
+    assert body["savedAt"] == "2026-08-25T14:20:00Z"
+
+
+async def test_an_unstamped_bundle_is_a_save_the_platform_cannot_describe(
+    wire, client, db_session
+) -> None:
+    """THE TRAP IN THE MIDDLE. A bundle written before the metadata stamp existed has no
+    head and — if the store lost its last-modified too — no date either, so both halves
+    read exactly like a project that never saved. It is not one: the object is there. The
+    citizen HAS saved and the platform cannot describe which version, which is the case
+    "We could not tell" was written for and the case U16 deliberately leaves saying it.
+
+    Mutation receipt: key `SavedState` off `head is None` instead of off the object's
+    existence and this goes red while every other test in this section stays green."""
+    user, app_row = await _owner_with_app(db_session, wire)
+    await db_session.commit()
+    key = snapshot_key(app_row.id)
+    wire.store.objects[key] = a_git_bundle(_SAVED_SHA)
+    wire.store.meta[key] = {}  # a present blob carrying no `head_sha` stamp
+    wire.store.mtimes.pop(key, None)  # …and a store that does not know when, either
+
+    resp = await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["savedState"] == "saved"
+    assert body["savedHead"] is None
+    assert body["savedAt"] is None
+
+
+async def test_a_project_with_no_app_row_has_nothing_that_could_have_been_saved(
+    wire, client, db_session
+) -> None:
+    """The one path that never reaches the store at all. `NOTHING_BUILT` is returned before
+    any storage read, and it KNOWS: there is no app, so there is no bundle that could have
+    been saved. `never_saved` rather than an "unknown" — the rail draws no saved row, which
+    is the true thing, instead of one that cannot tell."""
+    user = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, user_id=user.id)
+    await db_session.commit()
+
+    resp = await client.get(_STATUS.format(pid=project.id), headers=auth_headers(user))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["publishState"] == "nothing_built"
+    assert body["savedState"] == "never_saved"

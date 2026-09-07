@@ -42,13 +42,29 @@
  * timestamp now, from the SAME read, with no container in the request path: the row has to
  * render on a project whose workspace is stopped, which is precisely where `save-state` — which
  * attaches to a container first — has nothing to say.
+ *
+ * ═══ WHAT PLAN 001 ADDED, AND WHY EACH IS HERE RATHER THAN ELSEWHERE ═══
+ *
+ * U14 — a COPY control on the live address (`LiveAddress`). Sharing a published app meant
+ * opening a tab and copying the browser's address bar. It is gated on the same `url` the row
+ * already carries, so a taken-offline app — whose address would 404 — cannot grow one.
+ *
+ * U15 — the reviewer's REJECTION NOTE as a row (`NoteRow`). It was already on the wire and
+ * rendered only inside the declaration dialog, which a citizen opens when they believe they are
+ * finished; it now sits above the state's action, where the person who has to act on it is
+ * looking. Bounded and scrollable, never truncated.
+ *
+ * U16 — the LAST SAVED row is now ABSENT for a project that has never saved, rather than present
+ * and reading "We could not tell". That decision lives in `publishPresentation.savedRow`; what
+ * changed here is nothing at all, which is the point — the panel renders the rows it is given.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ExternalLink } from 'lucide-react'
+import { Check, Copy, ExternalLink } from 'lucide-react'
 import DataClassificationModal from '../DataClassificationModal'
 import { usePublishState } from '../../hooks/usePublishState'
 import { useRailSlot } from './workspaceChannel'
 import { shortSha } from '../../utils/shortSha'
+import { ClipboardRefused, copyToClipboard } from '../../utils/clipboard'
 import {
   ACTION_LABEL,
   formatStamp,
@@ -73,6 +89,121 @@ export interface AppStatusPanelProps {
    * band of empty rail in every state.
    */
   label: ReactNode
+}
+
+/**
+ * THE LIVE APP'S ADDRESS — open it, or take a copy of it (plan 001, U14, R34).
+ *
+ * The panel already linked the address correctly; sharing it meant opening the tab and
+ * copying the browser's own address bar, which is the complaint `#188` records. The copy
+ * control sits beside the link because it copies THAT address and nothing else.
+ *
+ * IT IS RENDERED WHEREVER THE ROW OFFERS A URL, and that is the whole of its presence
+ * rule. `provenanceRows` already decides where an address is worth pointing at — a
+ * taken-offline app's address would 404, so that row carries `url: null` — so a copy
+ * control gated on the same value cannot appear on an app whose address does not work,
+ * and there is no second place deciding it.
+ *
+ * A REFUSAL IS SPOKEN, WITH THE ADDRESS BESIDE IT. `navigator.clipboard` is undefined on
+ * an insecure origin and rejects on a denied permission, and both are invisible without
+ * this: the press does nothing, the citizen pastes whatever was on their clipboard
+ * before, and the platform said not one word about it. The address is printed in full so
+ * the remedy is in the same place as the failure rather than "try the address bar".
+ *
+ * NOTHING IS ADDED TO THE PUBLISHED PAGE ITSELF (R33) — no provenance strip, no branding,
+ * no builder attribution. The link opens the citizen's app as it is.
+ */
+function LiveAddress({ url }: { url: string }) {
+  const [outcome, setOutcome] = useState<'idle' | 'copied' | 'refused'>('idle')
+
+  // The confirmation is temporary on purpose: a control stuck reading "copied" is
+  // describing the last press for ever, and the next press has nothing to say.
+  useEffect(() => {
+    if (outcome !== 'copied') return
+    const timer = window.setTimeout(() => setOutcome('idle'), 2500)
+    return () => window.clearTimeout(timer)
+  }, [outcome])
+
+  return (
+    <>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open the published app"
+        className="ml-1.5 inline-block align-[-1px] text-primary"
+      >
+        <ExternalLink size={10} aria-hidden />
+      </a>
+      <button
+        type="button"
+        data-testid="status-copy-link"
+        aria-label={outcome === 'copied' ? 'Link copied' : 'Copy the link to this app'}
+        onClick={() => {
+          void copyToClipboard(url).then(
+            () => setOutcome('copied'),
+            (error: unknown) => {
+              // `copyToClipboard` folds every cause it knows — no clipboard on this
+              // origin, a denied permission, a failed write — into one typed error, so
+              // this handles that one case rather than swallowing whatever arrives.
+              if (!(error instanceof ClipboardRefused)) throw error
+              setOutcome('refused')
+            },
+          )
+        }}
+        className="ml-1.5 inline-block align-[-1px] text-primary transition hover:text-primary-600"
+      >
+        {outcome === 'copied' ? (
+          <Check size={10} aria-hidden />
+        ) : (
+          <Copy size={10} aria-hidden />
+        )}
+      </button>
+      {outcome === 'refused' && (
+        <span
+          role="alert"
+          data-testid="status-copy-refused"
+          className="mt-1 block text-[10.5px] leading-relaxed text-danger"
+        >
+          We could not copy it. Here is the address to copy by hand:{' '}
+          <span className="font-mono break-all text-canvas-sha">{url}</span>
+        </span>
+      )}
+    </>
+  )
+}
+
+/**
+ * THE REVIEWER'S OWN WORDS, on the rail, without opening anything (plan 001, U15, R35).
+ *
+ * The note reached the browser on every status read and rendered in exactly one place:
+ * inside the declaration dialog, which a citizen opens when they believe they are
+ * FINISHED. So the sentence telling them what to change arrived one press after the moment
+ * they needed it, and only if they pressed at all.
+ *
+ * BOUNDED AND SCROLLABLE, WITH THE WHOLE NOTE IN THE DOM. The note is free text capped at
+ * 1,000 characters and this rail is 360–640px wide, so an unbounded block would push the
+ * state's action below the fold — the button the note is telling them to press again.
+ * Clipping it in JavaScript would fix the geometry by hiding the reviewer's words, so the
+ * text is complete and it is the BOX that is bounded: assistive technology reads all of
+ * it, and `tabIndex` makes the overflow reachable by keyboard rather than by mouse wheel
+ * alone.
+ */
+function NoteRow({ row }: { row: ProvenanceRow }) {
+  return (
+    <div data-testid={`status-row-${row.key}`} className="py-[3px]">
+      <span className="block text-[9.5px] font-extrabold tracking-[.4px] text-canvas-label">
+        {row.label}
+      </span>
+      <p
+        data-testid={`status-row-${row.key}-note`}
+        tabIndex={0}
+        className="mt-1 max-h-[7.5rem] overflow-y-auto rounded-[7px] border border-bial-border bg-bial-bg/60 px-2 py-1.5 text-[11.5px] leading-relaxed whitespace-pre-wrap text-primary-900"
+      >
+        {row.note}
+      </p>
+    </div>
+  )
 }
 
 /** The section's head: the label, and whatever the state wants carried to its right. */
@@ -113,17 +244,7 @@ function Row({ row }: { row: ProvenanceRow }) {
           ) : (
             <span className="ml-1.5 text-[10px] font-normal text-canvas-sha">version unknown</span>
           )}
-          {row.url && (
-            <a
-              href={row.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open the published app"
-              className="ml-1.5 inline-block align-[-1px] text-primary"
-            >
-              <ExternalLink size={10} aria-hidden />
-            </a>
-          )}
+          {row.url && <LiveAddress url={row.url} />}
         </span>
       )}
     </div>
@@ -205,11 +326,20 @@ export default function AppStatusPanel({ projectId, label }: AppStatusPanelProps
         </span>
       </SectionHead>
 
+      {/* A ROW IS EITHER PROSE OR PROVENANCE, and the branch is here rather than inside
+          `Row` so the two shapes stay two components: a dated line with a fixed-width
+          label, and a bounded block of somebody's words. `provenanceRows` decides which
+          states get which, and puts the note FIRST so the state's action below stays in
+          view however long it is. */}
       {rows.length > 0 && (
         <div className="pt-1">
-          {rows.map((row) => (
-            <Row key={row.key} row={row} />
-          ))}
+          {rows.map((row) =>
+            typeof row.note === 'string' ? (
+              <NoteRow key={row.key} row={row} />
+            ) : (
+              <Row key={row.key} row={row} />
+            ),
+          )}
         </div>
       )}
 

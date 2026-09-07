@@ -81,6 +81,7 @@ from src.api.v1.deploy.schemas import (
     DeployRoutedResponse,
     DeployStartedResponse,
     PublishState,
+    SavedState,
     UnpublishResponse,
     compute_publish_state,
 )
@@ -884,16 +885,32 @@ class _SavedVersion:
 
     The two halves are INDEPENDENTLY nullable and that is deliberate: a bundle written
     before the stamp existed still has a last-modified, so it can say when without saying
-    which. Neither is ever invented — `None` is "no claim" on both axes."""
+    which. Neither is ever invented — `None` is "no claim" on both axes.
+
+    A THIRD FIELD SAYS WHY THEY ARE ABSENT (plan 001, U16). The pair alone cannot: it reads
+    the same for a citizen who has never saved and for a store that would not answer, and
+    those are opposite facts to the person reading the rail."""
 
     head: str | None
     saved_at: datetime | None
+    state: SavedState
 
 
-# Nothing to say on either axis: no store bound, no object, or a store that would not
-# answer. A single named value so the three "cannot tell" arms below are visibly the same
-# answer rather than three coincidentally-identical literals.
-_NOTHING_SAVED = _SavedVersion(head=None, saved_at=None)
+# THE SENTINEL WAS ONE VALUE FOR THREE FACTS, and this is the split (U16, R37a).
+#
+# All three still answer the DRIFT question identically — `head=None`, which
+# `compute_publish_state` reads as `live_drift_unknown` and never as "up to date" — so
+# nothing about the publish state moves. What was missing is the OTHER question the same
+# read answers: has this citizen ever saved? "No store bound" and "the store would not
+# answer" are claims about the platform's reach; "there is no bundle" is a claim about
+# their work, and collapsing the three made the rail tell a citizen who had never saved
+# that their save could not be found.
+#
+# Three named values rather than three coincidentally-identical literals — and now they
+# are visibly NOT the same answer, which is the whole change.
+_NEVER_SAVED = _SavedVersion(head=None, saved_at=None, state=SavedState.NEVER_SAVED)
+_NO_STORE = _SavedVersion(head=None, saved_at=None, state=SavedState.STORE_UNCONFIGURED)
+_STORE_REFUSED = _SavedVersion(head=None, saved_at=None, state=SavedState.STORAGE_ERROR)
 
 
 async def _saved_version_for_publish_state(
@@ -920,9 +937,15 @@ async def _saved_version_for_publish_state(
     existed: all three are "cannot tell", which `compute_publish_state` reads as
     `live_drift_unknown`, never as "up to date". If a later reader "fixes" this back to
     match its two neighbours, that is the regression — the difference is deliberate and
-    the reason lives here rather than only in the plan."""
+    the reason lives here rather than only in the plan.
+
+    THE THREE ARE ONE ANSWER TO THE DRIFT QUESTION AND THREE TO THE SAVE QUESTION (U16).
+    Everything the paragraph above says still holds — none of them is ever spoken as "up
+    to date" — but each now returns its own `SavedState`, because a client rendering the
+    citizen's own last save has to tell "you have never saved" apart from "we could not
+    look". Anything that folds them back into one sentinel reintroduces R37a."""
     if storage is None:
-        return _NOTHING_SAVED
+        return _NO_STORE
     try:
         # THE KEY CHOICE, AND IT IS THE CITIZEN'S SAVE — `snapshot_key`, which
         # `snapshot.Destination.saved` names "the user's explicit Save; the one key a
@@ -938,13 +961,22 @@ async def _saved_version_for_publish_state(
         meta = await storage.head(snapshot_key(app_id))
     except StorageError:
         _log.warning("publish_state_saved_head_unavailable", app_id=str(app_id))
-        return _NOTHING_SAVED
+        return _STORE_REFUSED
     if meta is None:
-        return _NOTHING_SAVED
+        return _NEVER_SAVED
     # `head_sha_from_metadata` answers None for an unstamped bundle; `last_modified` is
     # whatever the store knows (also nullable). Neither absence is filled in from the
     # other — an unstamped bundle reports its date and withholds its id.
-    return _SavedVersion(head=head_sha_from_metadata(meta.metadata), saved_at=meta.last_modified)
+    #
+    # THE OBJECT EXISTS, so this is `SAVED` whatever the two halves say. A bundle whose
+    # metadata answers neither question is a save the platform cannot describe, not an
+    # absent one — that is the case "We could not tell" was written for, and the case U16
+    # deliberately leaves saying it.
+    return _SavedVersion(
+        head=head_sha_from_metadata(meta.metadata),
+        saved_at=meta.last_modified,
+        state=SavedState.SAVED,
+    )
 
 
 @router.get(
@@ -992,9 +1024,9 @@ async def latest_deployment(
     U15 ADDS `publish_state`, computed from the two rows above PLUS exactly one
     object-store metadata HEAD (`_saved_version_for_publish_state`) — never a download,
     and never a second query. Storage stays as optional here as everything else on this
-    route: an unconfigured store reads the same as one that raised (see that helper),
-    so this endpoint keeps needing nothing but the database, exactly as the paragraph
-    above already promises for the deploy pipeline.
+    route: an unconfigured store reads the same as one that raised (see that helper) FOR
+    THE DRIFT QUESTION, so this endpoint keeps needing nothing but the database, exactly
+    as the paragraph above already promises for the deploy pipeline.
 
     U4 SPENDS THAT SAME HEAD TWICE INSTEAD OF ONCE. The metadata read already happening
     for `publish_state` carries the citizen's saved commit and the store's last-modified
@@ -1003,7 +1035,14 @@ async def latest_deployment(
     LATEST" row on a project whose CONTAINER IS STOPPED — no sandbox dependency is
     declared on this route, so there is nothing here that could wake one, and that is
     the property the row depends on. `save-state` cannot answer it: that read attaches
-    to a container first, so it is silent in exactly the reclaimed case the row is for."""
+    to a container first, so it is silent in exactly the reclaimed case the row is for.
+
+    U16 ADDS `saved_state`, off the SAME read again — no fourth I/O, just the fact the
+    helper already knew and threw away: whether the pair above is absent because nothing
+    was ever saved, because no store is bound, or because the store would not answer. The
+    drift answer is unchanged for all three; the rail's "LAST SAVED" row is not, and that
+    is R37a — it is omitted for a citizen who has never saved, instead of telling them
+    their save could not be found."""
     await owned_project_or_404(db, user.id, project_id)
 
     app_row = (
@@ -1020,9 +1059,15 @@ async def latest_deployment(
         # registry row as a required input precisely because every OTHER member needs
         # one.
         # No app row means no bundle to have saved, so both halves of the saved row are
-        # null on the one path that never reaches the store at all.
+        # null on the one path that never reaches the store at all — and `NEVER_SAVED`
+        # rather than an "unknown", because this path knows: there is nothing that could
+        # have been saved, so the rail draws no saved row rather than one that cannot
+        # tell (U16).
         return DeploymentResponse(
-            publish_state=PublishState.NOTHING_BUILT, saved_head=None, saved_at=None
+            publish_state=PublishState.NOTHING_BUILT,
+            saved_head=None,
+            saved_at=None,
+            saved_state=SavedState.NEVER_SAVED,
         )
 
     approval = ApprovalState.of(app_row)
@@ -1056,6 +1101,7 @@ async def latest_deployment(
             publish_state=publish_state,
             saved_head=saved.head,
             saved_at=saved.saved_at,
+            saved_state=saved.state,
         )
     return DeploymentResponse.of(
         row,
@@ -1063,6 +1109,7 @@ async def latest_deployment(
         publish_state=publish_state,
         saved_head=saved.head,
         saved_at=saved.saved_at,
+        saved_state=saved.state,
     )
 
 

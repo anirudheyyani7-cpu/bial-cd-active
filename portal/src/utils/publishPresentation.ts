@@ -266,11 +266,24 @@ export function presentationFor(state: PublishState): Presentation {
       // DEPARTURE, dropped. `disable` fails closed by severing the app's database; it does
       // not take the container down, so reachability is not a claim this platform can
       // stand behind. The remedy-less truth is the part that matters and it stays.
+      //
+      // IT NO LONGER MENTIONS PUBLISHING (plan 001, U31, R41a). The kill switch used to
+      // reach approved apps only, so "nothing can be published" was the whole of what it
+      // meant; it now reaches DRAFT and REJECTED apps too (`#163`), and to the owner of an
+      // app that has never been published — the ordinary case — that sentence named a
+      // consequence they were not pursuing and left the one they are hitting unsaid.
+      //
+      // The second sentence is the true one and it is deliberately the WIDER claim: the
+      // workspace refuses to start, and every turn of every kind is refused with it, at
+      // `resolve_app_for_project` — the one site all three doors run through. Save is the
+      // documented exception and is NOT refused, because refusing it would destroy unsaved
+      // work in a live container; that is a deliberate trade rather than a gap in the
+      // sentence, and nothing consumes the snapshot it lets advance.
       return {
         label: 'Switched off',
         sentence:
-          'An administrator switched this app off. Nothing can be published until ' +
-          'they switch it back on.',
+          'An administrator switched this app off. You cannot make changes to it ' +
+          'until they switch it back on.',
         action: null,
         version: 'none',
       }
@@ -458,20 +471,52 @@ export interface ProvenanceRow {
   tone: RowTone
   /** Offered only where the state says the address is worth pointing at. */
   url?: string | null
+  /**
+   * FREE TEXT INSTEAD OF A DATE AND AN ID (plan 001, U15) — the reviewer's own words, and
+   * the one row that is prose rather than provenance.
+   *
+   * IT RIDES ON THIS TYPE RATHER THAN BESIDE IT because the rail had nowhere else to put
+   * it: the note reached the browser on every read and rendered only inside the dialog a
+   * citizen opens when they believe they are FINISHED, which is one press too late to be
+   * the thing they act on. A row carries it above the state's action, which is where R35
+   * puts it so a long note cannot push "Send for review" out of view.
+   *
+   * A ROW HAS EITHER A NOTE OR A STAMP/SHA PAIR, never both — the panel branches on this
+   * being a string and draws a bounded, scrollable block instead of a dated line.
+   */
+  note?: string | null
 }
 
 /**
- * The citizen's own save, as a row — and the ONE case worth spelling out.
+ * The citizen's own save, as a row — or NO ROW AT ALL for a project that has never saved.
  *
  * THE TWO HALVES ARE INDEPENDENTLY NULL. A bundle written before the metadata stamp exists still
  * has a last-modified on the object, so the store can say WHEN without saying WHICH. That mixed
  * case is not hypothetical and it is not an error: the row prints its date and says the version
  * is unknown, rather than printing a blank or inventing an id.
  *
- * BOTH NULL is the "cannot tell" rendering: nothing has ever been saved, or the store would not
- * answer. Either way the row must not read as "saved just now with no id".
+ * BOTH NULL is the "cannot tell" rendering, and it now means ONE thing rather than three
+ * (plan 001, U16). It used to be reached three ways — the store said there is no bundle, the
+ * store was not configured, or the store raised — and the panel spoke all three as "LAST SAVED —
+ * We could not tell". On the first of them that sentence is false and it is false in the
+ * frightening direction: a citizen who has never saved reads it as the platform having LOST their
+ * work, on the exact panel they open when they are unsure their work is safe. The backend now
+ * says which of the three happened (`SavedState`), so:
+ *
+ *   NEVER SAVED  → no row, exactly as an app nobody approved gets no APPROVED row (see
+ *                  `provenanceRows` below) and for the same reason: the absent row says the true
+ *                  thing by saying nothing.
+ *   ANYTHING ELSE → the row stays and says "We could not tell", which is what that wording was
+ *                  written for — a save that exists and could not be read is a genuine gap.
+ *
+ * A `null` deployment is not "never saved" either: it is no answer at all, so it keeps the row.
  */
-export function savedRow(deployment: DeploymentView | null, label: string, tone: RowTone): ProvenanceRow {
+export function savedRow(
+  deployment: DeploymentView | null,
+  label: string,
+  tone: RowTone,
+): ProvenanceRow | null {
+  if (deployment?.savedState === 'never_saved') return null
   return {
     key: 'saved',
     label,
@@ -531,10 +576,30 @@ export function provenanceRows(
    * approval, so a missing stamp there is a genuine "we could not tell" about a real event.
    */
   const wasApproved = (approval?.approvedAt ?? approval?.approvedCommitSha ?? null) !== null
+
+  /** The saved row where there is one to draw, and nothing at all where there is not — see
+   *  `savedRow`, which is where the "never saved gets no row" decision lives. */
+  const saved = (label: string, tone: RowTone): ProvenanceRow[] => {
+    const row = savedRow(deployment, label, tone)
+    return row === null ? [] : [row]
+  }
+
+  /**
+   * THE REVIEWER'S OWN WORDS, on the state that asks the citizen to act on them (R35).
+   *
+   * NO NOTE MEANS NO ROW, on exactly the `wasApproved` reasoning above: an administrator may
+   * reject without writing anything, and a row headed WHY whose whole value is "We could not
+   * tell" would invent a note that was never written.
+   */
+  const rejection: ProvenanceRow | null =
+    typeof approval?.rejectionNote === 'string' && approval.rejectionNote.trim().length > 0
+      ? { key: 'rejection', label: 'WHY', stamp: null, sha: null, tone: 'ink', note: approval.rejectionNote }
+      : null
+
   const liveRows = (tone: RowTone): ProvenanceRow[] => [
     published,
     ...(wasApproved ? [approved] : []),
-    savedRow(deployment, 'YOUR LATEST', tone),
+    ...saved('YOUR LATEST', tone),
   ]
 
   switch (state) {
@@ -546,14 +611,20 @@ export function provenanceRows(
     case 'switched_off':
       return []
     case 'draft':
-    case 'changes_requested':
     case 'did_not_start':
-      return [savedRow(deployment, 'LAST SAVED', 'ink')]
+      return saved('LAST SAVED', 'ink')
+    // THE NOTE COMES FIRST, and that ordering is the requirement rather than a preference:
+    // every row here renders above the state's action, so a note capped at 1,000 characters
+    // in a 360px rail must not be able to push "Send for review" below the fold. It is
+    // bounded and scrollable where it is drawn (`AppStatusPanel`), and it sits above the
+    // save row because it is the thing the citizen has to read before doing anything.
+    case 'changes_requested':
+      return [...(rejection === null ? [] : [rejection]), ...saved('LAST SAVED', 'ink')]
     case 'in_review':
-      return [submitted, savedRow(deployment, 'LAST SAVED', 'ink')]
+      return [submitted, ...saved('LAST SAVED', 'ink')]
     case 'approved_ready_to_publish':
     case 'approved_needs_review_again':
-      return [approved, savedRow(deployment, 'LAST SAVED', 'ink')]
+      return [approved, ...saved('LAST SAVED', 'ink')]
     // THE ROWS THE BOARD DRAWS — three where an administrator approved the version, two where
     // nobody did (see `wasApproved`) — and the one that is amber. Only `live_newer_work` is
     // KNOWN to have drifted: `live_current` knows the two agree, and `live_drift_unknown` is
@@ -568,7 +639,7 @@ export function provenanceRows(
     case 'taken_offline':
       return [
         { ...published, label: 'LAST PUBLISHED', url: null },
-        savedRow(deployment, 'LAST SAVED', 'ink'),
+        ...saved('LAST SAVED', 'ink'),
       ]
     default:
       return assertNever(state)

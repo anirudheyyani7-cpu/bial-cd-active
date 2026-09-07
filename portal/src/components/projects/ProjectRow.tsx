@@ -13,15 +13,19 @@
  * wrapping it in a link, is what breaks it. Native buttons carry Enter and Space for free,
  * so there is no key handler here and there should not be one.
  *
- * BOTH TOOLTIPS ARE CONDITIONAL, per §10 (description) and §14 (name): clipped text reveals
- * itself on hover, and text that already fits shows nothing. A tooltip firing on text the
- * reader can see in full is noise, so each is gated on the element actually being clipped
- * (`scrollWidth > clientWidth`), measured after layout rather than guessed from length.
+ * ONE TOOLTIP, ON THE NAME ONLY (§14). It is conditional: clipped text reveals itself on
+ * hover, text that already fits shows nothing, and the gate is the element actually being
+ * clipped (`scrollWidth > clientWidth`), measured after layout rather than guessed from
+ * length. A tooltip firing on text the reader can already see in full is noise.
  *
- * THE DESCRIPTION HAS TO BE LIFTED ABOVE THE STRETCHED `::after` to be hoverable at all —
- * see `ClampedDescription`. That is the same reason Delete carries `z-10`, and it is why the
- * description also wires `onOpen` back: lifting it out of the overlay takes it out of the
- * row's click target unless you put it back.
+ * THE DESCRIPTION'S TOOLTIP AND POINTER CURSOR ARE GONE (plan 001, U15, R37) — it is clipped
+ * by CSS with its full text left in the DOM, so there is nothing a hover could reveal that
+ * assistive technology does not already read. `ClampedDescription` carries the whole argument,
+ * including why JavaScript truncation would have reproduced the defect rather than fixed it.
+ *
+ * THE DESCRIPTION IS STILL LIFTED ABOVE THE STRETCHED `::after` — the same `z-10` Delete
+ * carries — so its `onOpen` is what receives the click rather than the overlay. That is a
+ * deliberate keep, not a leftover: see `ClampedDescription`.
  */
 import { Trash2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -37,18 +41,32 @@ export interface ProjectRowProps {
 }
 
 /**
- * The description cell: one line, ellipsis, and a tooltip ONLY when it is really clipped.
+ * The description cell: the WHOLE description, clipped to two lines by CSS (plan 001, U15, R37).
  *
- * `relative z-10` IS LOAD-BEARING AND WAS MISSING. The name button's stretched `::after` is
- * positioned against the row, so it painted over this static sibling and took every pointer
- * event: hovering a clipped description hit the BUTTON, and the tooltip — correctly built and
- * correctly measured — could never open. jsdom does no hit testing, so no unit test in the
- * suite could see it.
+ * ═══ WHAT WENT, AND WHY THE OBVIOUS FIX WAS THE WRONG ONE ═══
  *
- * Lifting it costs the row's click target here, so `onOpen` is wired back explicitly. It stays
- * a `<p>` rather than becoming a button: the name is already the row's one keyboard-reachable
- * open affordance, and a second interactive element covering the same action is the shape
- * F-10 exists to prevent.
+ * This cell used to be one `truncate`d line carrying a `cursor-pointer` and a hover tooltip.
+ * Three defects in one small element: it advertised an interaction (the pointer) that had no
+ * keyboard route, it hid most of the text behind a HOVER — which a keyboard or touch reader
+ * never triggers — and it did all that for an action the row's name already offers.
+ *
+ * The obvious remedy is to cut the string in JavaScript and show the rest in a tooltip. That
+ * reproduces both defects rather than fixing either: a JS-truncated description is truncated in
+ * the ACCESSIBLE TREE too, so a screen reader loses the same 58% a sighted reader loses, and the
+ * tooltip that "solves" it is the hover-only affordance we are removing. So the complete text
+ * stays in the DOM and only the BOX is bounded — `line-clamp-2`, which clips visually and leaves
+ * the text intact for anything that is not painting pixels.
+ *
+ * NO SECOND INTERACTIVE ELEMENT IS ADDED, and the name keeps its tooltip (§14) because a
+ * clipped NAME has no other route to its full value — the description now reads two lines of
+ * itself, and its full text is available to assistive technology either way.
+ *
+ * `relative z-10` STAYS, AND ITS REASON CHANGED. It used to lift this cell above the name
+ * button's stretched `::after` so the tooltip could be hovered at all. There is no tooltip now,
+ * but the lift is what keeps `onOpen` reachable: without it the `::after` takes the click and
+ * the row opens anyway, which is fine in a browser and INVISIBLE to jsdom — so the explicit
+ * handler is the version this suite can actually hold. It stays a `<p>`: the name is the row's
+ * one keyboard-reachable open affordance, and a second one is the shape F-10 exists to prevent.
  */
 function ClampedDescription({
   text,
@@ -57,53 +75,21 @@ function ClampedDescription({
   text: string | null
   onOpen: () => void
 }): React.JSX.Element {
-  const { ref, clipped } = useClipped<HTMLParagraphElement>(text)
-
   if (text === null) {
-    // NOTHING TO CLIP AND NOTHING TO SHOW IN A TOOLTIP, but still part of the row's click
-    // target — the populated branch below has `onClick`/`cursor-pointer`, and this one used
-    // to lack both (round-4 finding 8): a project with nothing typed yet had a dead strip
-    // across its row, on exactly the newest, emptiest projects most likely to be clicked.
+    // Still part of the row's click target — this branch used to lack `onClick` entirely
+    // (round-4 finding 8): a project with nothing typed yet had a dead strip across its row,
+    // on exactly the newest, emptiest projects most likely to be clicked into.
     return (
-      <p
-        onClick={onOpen}
-        className="relative z-10 text-xs text-neutral/70 italic truncate cursor-pointer"
-      >
+      <p onClick={onOpen} className="relative z-10 text-xs text-neutral/70 italic">
         No description yet
       </p>
     )
   }
 
-  // THE TOOLTIP MACHINERY IS ALWAYS MOUNTED; only `TooltipContent` is conditional on
-  // `clipped`. Swapping the whole subtree in and out of the JSX by branch (as this used to
-  // do) puts the `<p ref>` at a different TREE POSITION depending on `clipped` — a plain
-  // `<p>` versus one nested inside `TooltipProvider > Tooltip > TooltipTrigger` — and React
-  // treats that as a REMOUNT, not an update. The `useClipped` effect's deps (`[measure,
-  // text]`) do not change on that remount, so the `ResizeObserver` never rebinds to the new
-  // node: `false→true` worked once, but `true→false` (a column widening enough to un-clip
-  // text) never fired again, leaving a stale tooltip armed on text that now fits (round-4,
-  // three reviewers independently). Keeping the wrapper constant and only toggling
-  // `TooltipContent` means the ref's element never moves, so one `ResizeObserver` keeps
-  // working for the component's whole lifetime.
   return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <p
-            ref={ref}
-            onClick={onOpen}
-            className="relative z-10 text-xs text-neutral truncate cursor-pointer"
-          >
-            {text}
-          </p>
-        </TooltipTrigger>
-        {clipped && (
-          <TooltipContent side="bottom" align="start" className="max-w-md">
-            {text}
-          </TooltipContent>
-        )}
-      </Tooltip>
-    </TooltipProvider>
+    <p onClick={onOpen} className="relative z-10 text-xs text-neutral leading-relaxed line-clamp-2">
+      {text}
+    </p>
   )
 }
 

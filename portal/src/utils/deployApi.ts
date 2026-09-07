@@ -234,6 +234,12 @@ export interface DeploymentView {
    */
   savedHead: string | null
   savedAt: string | null
+  /**
+   * WHY the pair above is absent, which the pair itself cannot say (plan 001, U16). See
+   * `SavedState`: only `never_saved` removes the rail's row, and `null` — a server that did
+   * not say, or a value this client does not know — keeps it.
+   */
+  savedState: SavedState | null
 }
 
 /**
@@ -307,6 +313,41 @@ function toApprovalState(value: unknown): ApprovalState | null {
     submittedSha: optionalString(value.submittedSha),
     submittedAt: optionalString(value.submittedAt),
   }
+}
+
+/**
+ * WHY THE SAVED PAIR IS ABSENT — the three answers that used to be one (plan 001, U16).
+ *
+ * `savedHead`/`savedAt` are both null in four different situations and the panel spoke all
+ * of them with one sentence, "LAST SAVED — We could not tell". On a project that has never
+ * been saved that sentence is not merely vague, it is false in the frightening direction: a
+ * citizen reads it as the platform having lost their work, on the panel they open precisely
+ * when they are unsure their work is safe.
+ *
+ * So the server now says WHICH, and the client renders the never-saved case as no row at
+ * all. `store_unconfigured` and `storage_error` keep the "could not tell" wording, which is
+ * what it was written for — a save that exists and could not be read is a genuine gap in
+ * the record, not an absence of work.
+ */
+export type SavedState = 'saved' | 'never_saved' | 'store_unconfigured' | 'storage_error'
+
+const SAVED_STATES: ReadonlySet<string> = new Set<SavedState>([
+  'saved',
+  'never_saved',
+  'store_unconfigured',
+  'storage_error',
+])
+
+/**
+ * NULL IS THE CONSERVATIVE READING, and it is `toApprovalRoute`'s policy rather than
+ * `toPublishState`'s: an unrecognised value must not blank the citizen's whole status panel
+ * over a supplementary field. It must also not be read as `never_saved` — the one value
+ * that REMOVES a row. "No claim" keeps the row and its honest "could not tell", so a server
+ * that grows a fifth member fails towards saying too little rather than towards telling a
+ * citizen their save was never made.
+ */
+function toSavedState(value: unknown): SavedState | null {
+  return typeof value === 'string' && SAVED_STATES.has(value) ? (value as SavedState) : null
 }
 
 const PUBLISH_STATES: ReadonlySet<string> = new Set<PublishState>([
@@ -424,6 +465,7 @@ function toDeploymentView(body: unknown): DeploymentView {
     publishState: toPublishState(body.publishState),
     savedHead: optionalString(body.savedHead),
     savedAt: optionalString(body.savedAt),
+    savedState: toSavedState(body.savedState),
   }
 }
 

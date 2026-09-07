@@ -93,6 +93,9 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   publishState,
   savedHead: null,
   savedAt: null,
+  // `null` is "the server did not say", which keeps the saved row — the neutral default
+  // for suites that are not about U16's never-saved omission.
+  savedState: null,
   ...over,
 })
 

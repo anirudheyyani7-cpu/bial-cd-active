@@ -129,6 +129,29 @@ describe('the decision is total over every state the server can send', () => {
   })
 })
 
+describe('a switched-off app is told what it cannot do (U31, R41a, #163)', () => {
+  it('★ names the consequence the owner is actually hitting, and never mentions publishing', () => {
+    // THE KILL SWITCH REACHES DRAFTS NOW (#163). When it reached approved apps only, "nothing
+    // can be published" was the whole of what it meant. To the owner of an app that has never
+    // been published — the ordinary case, since one-click deploy never writes a status — that
+    // sentence named a consequence they were not pursuing and left the one they are hitting
+    // unsaid: their workspace will not start and no message they send will run.
+    const { sentence } = presentationFor('switched_off')
+
+    expect(sentence).toContain('An administrator switched this app off')
+    expect(sentence).toContain('cannot make changes')
+    expect(sentence.toLowerCase()).not.toContain('publish')
+  })
+
+  it('★ offers nothing to do, because the owner has nothing they can do', () => {
+    // Only an administrator can undo this. An action here would send the citizen round a loop
+    // that cannot end — which is why `taken_offline`, whose remedy IS the owner's to take,
+    // keeps its action while this one does not.
+    expect(presentationFor('switched_off').action).toBeNull()
+    expect(presentationFor('taken_offline').action).not.toBeNull()
+  })
+})
+
 describe('the saved row keeps its two halves independent', () => {
   it('carries a date with no id, an id with no date, and neither', () => {
     expect(savedRow(view({ savedAt: '2026-08-25T14:20:00Z', savedHead: null }), 'LAST SAVED', 'ink')).toMatchObject({
@@ -146,10 +169,12 @@ describe('the saved row keeps its two halves independent', () => {
     // The failure this forbids: a row that reports a version because it has a date, or a date
     // because it has a version. `null` is "no claim" on each axis, independently.
     const row = savedRow(view({ savedAt: '2026-08-25T14:20:00Z', savedHead: null }), 'LAST SAVED', 'ink')
-    expect(row.sha).toBeNull()
+    expect(row?.sha ?? null).toBeNull()
+    expect(row?.stamp ?? null).toBe('2026-08-25T14:20:00Z') // liveness: it IS a row, not an omission
     const other = savedRow(null, 'LAST SAVED', 'ink')
-    expect(other.stamp).toBeNull()
-    expect(other.sha).toBeNull()
+    expect(other).not.toBeNull()
+    expect(other?.stamp ?? null).toBeNull()
+    expect(other?.sha ?? null).toBeNull()
   })
 
   it('labels the row for what it is being compared against', () => {
@@ -161,6 +186,110 @@ describe('the saved row keeps its two halves independent', () => {
     expect(labelFor('live_newer_work')).toBe('YOUR LATEST')
     expect(labelFor('draft')).toBe('LAST SAVED')
     expect(labelFor('changes_requested')).toBe('LAST SAVED')
+  })
+})
+
+/**
+ * U16 / R37a — the three reasons the saved pair can be absent, and the ONE of them that
+ * removes the row.
+ *
+ * `savedHead`/`savedAt` both read null when the citizen has never saved, when no object store
+ * is bound, and when the store would not answer. The panel spoke all three as "LAST SAVED — We
+ * could not tell", which on the first is false in the frightening direction: it tells somebody
+ * who has never saved that the platform lost their work, on the panel they open precisely when
+ * they are unsure it is safe.
+ */
+describe('a project that has never been saved gets no saved row at all', () => {
+  it('★ omits the row for `never_saved`, and keeps it for every other absence', () => {
+    // Mutation receipt: delete the `never_saved` guard in `savedRow` and the first assertion
+    // goes red while the three below stay green — they are what stops the guard being widened
+    // into "no row whenever the pair is null", which would delete the honest gap as well.
+    expect(savedRow(view({ savedState: 'never_saved' }), 'LAST SAVED', 'ink')).toBeNull()
+    for (const state of ['store_unconfigured', 'storage_error', 'saved'] as const) {
+      expect(savedRow(view({ savedState: state }), 'LAST SAVED', 'ink'), state).not.toBeNull()
+    }
+    // A server that said nothing is not a claim that nothing was saved.
+    expect(savedRow(view({ savedState: null }), 'LAST SAVED', 'ink')).not.toBeNull()
+  })
+
+  it('★ drops it from every state that draws one, and keeps that state\'s other rows', () => {
+    // The liveness half matters more than the absence half: a `provenanceRows` that threw, or
+    // returned nothing at all, would satisfy "no saved row" perfectly.
+    const never = view({ savedState: 'never_saved' })
+    const withApproval = approval({ approvedAt: '2026-08-19T00:00:00Z', approvedCommitSha: 'abc' })
+    for (const state of ['draft', 'did_not_start', 'in_review', 'live_current', 'taken_offline'] as const) {
+      const keys = provenanceRows(state, never, withApproval).map((row) => row.key)
+      expect(keys, state).not.toContain('saved')
+    }
+    expect(provenanceRows('live_current', never, withApproval).map((row) => row.key)).toEqual([
+      'published',
+      'approved',
+    ])
+    expect(provenanceRows('in_review', never, withApproval).map((row) => row.key)).toEqual(['submitted'])
+  })
+
+  it('★ a save the platform could not READ still says "we could not tell"', () => {
+    // The wording R37a explicitly keeps. A storage blip is a gap in the record about work that
+    // exists; blanking the row there would hide the one case that rendering was written for.
+    for (const state of ['store_unconfigured', 'storage_error'] as const) {
+      const row = provenanceRows('draft', view({ savedState: state }), approval()).find(
+        (r) => r.key === 'saved',
+      )
+      expect(row, state).toBeTruthy()
+      expect(row?.stamp ?? null, state).toBeNull()
+      expect(row?.sha ?? null, state).toBeNull()
+    }
+  })
+
+  it('a project that HAS saved still reports its date and its build id', () => {
+    const row = provenanceRows(
+      'draft',
+      view({ savedState: 'saved', savedAt: '2026-08-25T14:20:00Z', savedHead: 'abc' }),
+      approval(),
+    ).find((r) => r.key === 'saved')
+    expect(row?.stamp).toBe('2026-08-25T14:20:00Z')
+    expect(row?.sha).toBe('abc')
+  })
+})
+
+/**
+ * U15 / R35 — the reviewer's reason, as a row, above the state's action.
+ */
+describe('the rejection note reaches the rail', () => {
+  const NOTE = 'Move the hardcoded database URL out of lib/db.ts, then send it again.'
+
+  it('★ rides on the changes-requested state, FIRST, so the action below stays reachable', () => {
+    const rows = provenanceRows(
+      'changes_requested',
+      view(),
+      approval({ status: 'rejected', rejectionNote: NOTE }),
+    )
+    expect(rows.map((row) => row.key)).toEqual(['rejection', 'saved'])
+    expect(rows[0].note).toBe(NOTE)
+    // The whole note, never a prefix — truncating it here would put the clipping in the
+    // accessible tree, which is the defect the CSS-bounded block exists to avoid.
+    expect(rows[0].note?.length).toBe(NOTE.length)
+  })
+
+  it('★ writes no note row when the administrator wrote no note', () => {
+    // Same rule as the absent APPROVED row: a row headed WHY reading "we could not tell"
+    // would invent a note nobody wrote.
+    for (const note of [null, '   ']) {
+      const rows = provenanceRows('changes_requested', view(), approval({ status: 'rejected', rejectionNote: note }))
+      expect(rows.map((row) => row.key), String(note)).toEqual(['saved']) // liveness: the state still draws its rows
+    }
+  })
+
+  it('★ puts it on THAT state and no other', () => {
+    // A note present on the approval block must not leak onto a state whose words are about
+    // something else — an app resubmitted after a rejection is `in_review`, and its rail must
+    // not still be showing the old complaint as though it were current.
+    const rejected = approval({ status: 'rejected', rejectionNote: NOTE })
+    for (const state of EVERY_STATE.filter((s) => s !== 'changes_requested')) {
+      const keys = provenanceRows(state, view(), rejected).map((row) => row.key)
+      expect(keys, state).not.toContain('rejection')
+    }
+    expect(provenanceRows('changes_requested', view(), rejected).map((r) => r.key)).toContain('rejection')
   })
 })
 

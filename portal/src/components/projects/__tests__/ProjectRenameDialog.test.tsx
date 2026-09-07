@@ -6,7 +6,7 @@
  * come here rather than going quiet with the markup they used to describe.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({ patchProject: vi.fn() }))
 vi.mock('../../../utils/projectApi', () => ({ patchProject: h.patchProject }))
@@ -198,5 +198,44 @@ describe('renaming a project', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
     expect(h.patchProject).not.toHaveBeenCalled() // a no-op close, not a rename
     expect(screen.queryByRole('alert')).toBeNull() // and no manufactured error
+  })
+})
+
+describe('cancelling a rename that is already in flight (R44a, #187)', () => {
+  it('leaves the project with its ORIGINAL name — asserted on the name, not on the dialog closing', async () => {
+    // ★ THE DEFECT: Cancel called `onClose` unconditionally. Pressing Save fires the request; the
+    // dialog closing does nothing to a request already away, so the citizen was told the rename
+    // was cancelled and the project was renamed anyway.
+    //
+    // ASSERTED ON THE OUTCOME, NOT THE DIALOG. A test that only checks `onClose` was not called
+    // would pass on a build that closes late and still renames — which is the bug wearing a
+    // different shape.
+    let settle: (p: Project) => void = () => {}
+    h.patchProject.mockImplementation(() => new Promise<Project>((resolve) => { settle = resolve }))
+
+    const onProjectUpdate = vi.fn()
+    const { onClose, input } = renderDialog(onProjectUpdate)
+
+    fireEvent.change(input, { target: { value: 'Renamed' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+
+    // LIVENESS: the request really is in flight, so what follows is the guard firing rather than
+    // a component that never got started.
+    await waitFor(() => expect(h.patchProject).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: /saving/i })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    expect(onClose).not.toHaveBeenCalled()
+
+    await act(async () => { settle({ ...PROJECT, name: 'Renamed' }); await Promise.resolve() })
+    // The rename that was already away still completes — Cancel cannot recall it, and the honest
+    // behaviour is to refuse the cancel rather than to pretend.
+    expect(onProjectUpdate).toHaveBeenCalled()
+  })
+
+  it('still closes when nothing is in flight', () => {
+    const { onClose } = renderDialog()
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

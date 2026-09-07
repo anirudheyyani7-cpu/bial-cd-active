@@ -538,7 +538,7 @@ describe('the properties that hold across every input', () => {
     // that arm and of nothing else. Nine of the ten arms could have dropped a key with the suite
     // green. The inputs below reach all ten; `expectedNames` is asserted too, so an input that
     // stops reaching its arm fails loudly rather than quietly shrinking the coverage.
-    const KEYS = ['action', 'detail', 'headline', 'name', 'note', 'secondAction']
+    const KEYS = ['action', 'busy', 'detail', 'headline', 'name', 'note', 'secondAction']
 
     const arms: Array<[string, WorkspaceState]> = [
       ['running', resolve({ preview: reading({ state: 'alive', alive: true }) })],

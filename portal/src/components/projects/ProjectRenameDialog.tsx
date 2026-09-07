@@ -163,10 +163,28 @@ export default function ProjectRenameDialog({ project, onProjectUpdate, onClose 
         )}
 
         <div className="mt-5 flex justify-end gap-2">
+          {/* CANCEL HAS TO REFUSE WHILE A SAVE IS IN FLIGHT (R44a, `#187`). It called `onClose`
+              unconditionally, so a citizen who pressed Save, changed their mind and pressed Cancel
+              got the dialog closed AND the project renamed — the request was already away, and
+              closing the dialog does nothing to it. That is data integrity, not polish: the
+              citizen was told the rename was cancelled and it was not.
+
+              The same rule already rides `onOpenChange` above, which is why Escape and the overlay
+              click were safe and only the explicit button was not. This is the gap, not a new rule.
+
+              `aria-disabled`, never `disabled`, for the reason the Save button states one line
+              down: a disabled control throws focus to the body, which is the defect the focus work
+              on the neighbouring dialogs exists to prevent. */}
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-xl border border-bial-border px-4 py-2 text-sm font-semibold text-neutral transition hover:bg-bial-bg"
+            onClick={() => {
+              if (busy) return
+              onClose()
+            }}
+            aria-disabled={busy}
+            className={`rounded-xl border border-bial-border px-4 py-2 text-sm font-semibold text-neutral transition hover:bg-bial-bg ${
+              busy ? 'cursor-not-allowed opacity-50' : ''
+            }`}
           >
             Cancel
           </button>

@@ -71,7 +71,7 @@
  * nothing. The empty, stopped and gone states are therefore drawn HERE, from the workspace state,
  * rather than left to whatever the framed origin happens to return.
  */
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { Box, Locate, Play, type LucideIcon } from 'lucide-react'
 import AppPaneHost from './AppPaneHost'
 import { HIDDEN_BUT_MOUNTED } from './hiddenSubtree'
@@ -84,6 +84,7 @@ import {
   useWorkspaceAddress,
   useWorkspaceHeading,
   useWorkspacePaneVisible,
+  useWorkspaceReclaim,
   useWorkspaceReport,
 } from './workspaceChannel'
 import type { WorkspaceStateName } from './workspaceState'
@@ -164,6 +165,9 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
   // it is holding, and a pane that outlives a navigation would otherwise carry one project's
   // dialog and busy flag onto the next.
   const takeBack = useTakeBack(report)
+  // The shell's hand-over question, if one is up. See the render site below: exactly one of the
+  // two identical dialogs is on screen at a time, and the one with a parked send behind it wins.
+  const reclaim = useWorkspaceReclaim()
   // THE APP THE CITIZEN IS TRYING TO OPEN — issue `#161`'s framing half, which the dialog leads
   // with. Published by the routes (`ProjectPage` / `ChatRoute`), not by the surfaces, so it is read
   // from the channel rather than derived here. `null` before a project's own fetch lands, and the
@@ -247,30 +251,82 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
             it is a one-way door — but it still appeared and disappeared with the pane. In the row it
             has one home in every state, beside the title that now also survives a collapse. */}
 
-        {frameIt ? (
-          // THE FRAME IS THE HOST'S. Everything from the frame inward — the cover that holds on an
-          // unknown, the `load`-gated reveal, the frame key, the inbound-message gate on origin AND
-          // source, the sandbox token list — is unchanged and stays there. The device WIDTH is the
-          // shell's now, because the control that picks it is in the row, and it is passed through
-          // rather than held: two owners of one width is how the card and the switcher disagree.
-          //
-          // IT DRAWS ITS OWN CARD — `LivePreview` frames the iframe in a padded `#e8edf2` box with a
-          // rounded, shadowed white surround — which is why the card below is on the EMPTY arm only.
-          // A second card around the first would be two borders and two shadows on one app.
-          <AppPaneHost device={device} reloadNonce={reloadNonce} leaving={leaving} />
-        ) : (
-          // THE EMPTY PANE IS A NAMED REGION WITH A CARD IN IT, which is what `PreviewOff`,
-          // `NothingBuilt` and `PreviewStarting` draw — and only those three. The label is the tell:
-          // it appears on exactly the boards where the pane holds no app, because a blank half of the
-          // screen needs to say what it is for, and a running application says that itself. Drawn
-          // here rather than at the section, so it comes and goes with the emptiness it explains.
-          <div className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3.5">
-            <p className="mb-2.5 text-[11.5px] font-bold tracking-[0.6px] text-neutral">YOUR APP</p>
-            <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-canvas-rule bg-white shadow-app-card">
-              <NoFrame report={report} takeBack={takeBack} />
-            </div>
-          </div>
-        )}
+        {/* ═══ THE PANE'S LIVE REGION, MOUNTED UNCONDITIONALLY AND WRAPPING ITS CONTENT (R30) ═══
+
+            IT USED TO LIVE INSIDE THE ROW THAT DRAWS THE BUTTONS, which meant the one state with a
+            wait in it and no button — `starting`, whose `action` is `null` — had NO REGION AT ALL.
+            A citizen sat through a two-minute sandbox start with nothing said, entering or leaving.
+            That is the whole defect R30 names, and moving this element out of `NoFrame`'s
+            `state.action &&` block is the whole of the fix: the region is now born with the pane,
+            holds whatever the board is saying, and outlives every transition between boards.
+
+            IT WRAPS THE EMPTY-PANE CONTENT AND POINTEDLY NOT THE FRAMED HOST. `LivePreview` keeps
+            its own permanent region and speaks for every framed state; wrapping the host as well
+            would put a second polite region around the first and announce the cover, the stall and
+            the reveal twice — the exact duplication `LivePreview`'s own docblock forbids. The two
+            regions divide the pane between them: this one owns the states with no app in them.
+
+            SO WHEN THE APP IS FRAMED THIS ELEMENT IS EMPTY, and it keeps standing anyway. A live
+            region inserted together with its text announces inconsistently — the convention stated
+            at `LivePreview.tsx` and at `TurnBanner.tsx` — so it must exist before it has anything
+            to say. Empty, its only child is absolutely positioned, so it occupies no height and the
+            host beside it is unaffected. */}
+        <div
+          data-testid="app-pane-live"
+          role="status"
+          aria-live="polite"
+          // NO `aria-busy` HERE, DELIBERATELY. The wait's busy flag goes on the board that draws
+          // the wait (see `NoFrame`), because `aria-busy` on a live region tells a reader to hold
+          // its announcements until the busy clears — which would silence the very "entering the
+          // wait" announcement this region exists to make.
+          className={frameIt ? '' : 'flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3.5'}
+        >
+          {!frameIt && (
+            // THE EMPTY PANE IS A NAMED REGION WITH A CARD IN IT, which is what `PreviewOff`,
+            // `NothingBuilt` and `PreviewStarting` draw — and only those three. The label is the
+            // tell: it appears on exactly the boards where the pane holds no app, because a blank
+            // half of the screen needs to say what it is for, and a running application says that
+            // itself. Drawn here rather than at the section, so it comes and goes with the
+            // emptiness it explains.
+            <>
+              {/* DECORATIVE, and it has to be now that it is inside the region: the section above
+                  is already labelled "Your app", so this caption is that label a second time, and
+                  a reader would otherwise hear "YOUR APP" announced every time the pane emptied. */}
+              <p
+                aria-hidden="true"
+                className="mb-2.5 text-[11.5px] font-bold tracking-[0.6px] text-neutral"
+              >
+                YOUR APP
+              </p>
+              <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-canvas-rule bg-white shadow-app-card">
+                <NoFrame report={report} takeBack={takeBack} />
+              </div>
+            </>
+          )}
+          {/* ═══ WHAT A TAKE-BACK THAT WORKED DID TO THE OTHER PROJECT (R44c, U11) ═══
+
+              THE FAILURE ARM ALREADY HAD A SENTENCE and it is NOT produced here: the map writes it
+              onto `state.note` and the board above renders it, and it announces now purely because
+              this region moved. A second producer for it would be the same news said twice.
+
+              THE SUCCESS ARM HAD NOTHING, which is the half this adds. A take-back that works ends
+              with the other citizen's app stopped and this pane quietly framing an app — so the
+              person who pressed it learned nothing at all about what they had just taken. It is
+              `sr-only` because on this ending the pane is showing the running app: there is no card
+              left to put a sentence in, and a line floating over the frame would be the pane
+              talking about itself. Nothing else on screen says it, so this is not a duplicate. */}
+          {takeBack.outcome !== null && <p className="sr-only">{takeBack.outcome}</p>}
+        </div>
+        {/* THE FRAME IS THE HOST'S. Everything from the frame inward — the cover that holds on an
+            unknown, the `load`-gated reveal, the frame key, the inbound-message gate on origin AND
+            source, the sandbox token list — is unchanged and stays there. The device WIDTH is the
+            shell's now, because the control that picks it is in the row, and it is passed through
+            rather than held: two owners of one width is how the card and the switcher disagree.
+
+            IT DRAWS ITS OWN CARD — `LivePreview` frames the iframe in a padded `#e8edf2` box with a
+            rounded, shadowed white surround — which is why the card above is on the EMPTY arm only.
+            A second card around the first would be two borders and two shadows on one app. */}
+        {frameIt && <AppPaneHost device={device} reloadNonce={reloadNonce} leaving={leaving} />}
       </section>
       {/* THE QUESTION `#196` ROUTES THE TAKE-BACK THROUGH (D1) — the dialog that already exists,
           with its three copy arms and its `agentWorking` sentence reused unchanged. No new copy is
@@ -286,7 +342,21 @@ function AppPane({ device, reloadNonce }: AppPaneProps) {
           AND THE HANDLERS ARE PASSED THROUGH RATHER THAN WRAPPED. The dialog's `run()` turns any
           rejection into its own alert and stays up; every ending of `resolve` resolves, and the
           pane behind is what reports. */}
-      {takeBack.asking && (
+      {/* ═══ ONE HAND-OVER QUESTION AT A TIME (R44, `#187`) ═══
+          This dialog and the shell's are LITERALLY THE SAME COMPONENT mounted from two places —
+          the shell's from a send the platform refused, this one from the citizen pressing take
+          back. They are visually identical, so with both up the citizen answers whichever is on
+          top believing it is the one they opened, and "Switch anyway" on the shell's lets the
+          refused send through — starting the very build the take-back exists to avoid.
+
+          THE SHELL'S WINS, and the direction is not arbitrary: a reclaim on the channel has a
+          PENDING PROMISE behind it — the send is parked waiting for an answer — so refusing to
+          render it would strand that send forever. The take-back has no such debt.
+
+          AND THIS HOLDS THE QUESTION RATHER THAN DROPPING IT. `takeBack.asking` stays set; only
+          the render waits. When the reclaim clears, this dialog appears with its question intact,
+          so a citizen who pressed take back is never silently ignored. */}
+      {takeBack.asking && reclaim === null && (
         <ReclaimWorkspaceDialog
           key={takeBack.asking.projectId}
           blocked={takeBack.asking}
@@ -334,6 +404,14 @@ function NoFrame({
       // on WHICH state the pane reached without pinning the copy, which the client has changed
       // twice and may change again.
       data-workspace-state={state.name}
+      // THE BUSY STATE R27 ASKS FOR, on the board that draws the wait rather than on the region
+      // that announces it — the same placement `LivePreview`'s `BouncingWait` already uses. It is
+      // a property, not a speech: it marks this content as unsettled without saying anything, so
+      // the region above stays free to announce the wait entering and leaving.
+      //
+      // FROM THE MAP, NEVER FROM `state.name === 'starting'` HERE. A second derivation of the same
+      // claim is a second author for it; see `WorkspaceState.busy`.
+      aria-busy={state.busy === true}
       className="flex flex-1 items-center justify-center p-8"
     >
       <div className="flex max-w-sm flex-col items-center text-center">
@@ -358,19 +436,18 @@ function NoFrame({
             {state.note}
           </p>
         )}
+        {/* HOW LONG THIS HAS BEEN GOING ON (R28) — the honest half of the progress bar D2 dropped.
+            A still card that never changes reads as a hung screen after about twenty seconds; a
+            number that moves is the cheapest possible evidence that the platform is still working,
+            and unlike a bar every position on it is a measured fact. */}
+        {state.busy === true && <ElapsedSinceTheWaitBegan />}
+        {/* THE ROW IS NO LONGER THE POLITE REGION (R30). It was, and that was the defect: a region
+            mounted inside `state.action &&` does not exist on the one state that has a wait and no
+            action. The region moved up to `AppPane`, where it wraps this whole board — so the
+            take-back still renames ITSELF inside it and is still announced once on entering and
+            again on leaving, and the headline, the detail and the note are announced too. */}
         {state.action && (
-          /* THE ROW IS THE POLITE REGION (`#210`'s rule, applied to the wait `#196` adds).
-             `LivePreview` keeps the pane's permanent region and speaks for every framed state — but
-             it is not mounted here, because this arm renders precisely when there is nothing to
-             frame, so the take-back's wait would otherwise pass in silence.
-
-             THE REGION IS THE ROW, NOT A SECOND `sr-only` SENTENCE. `Announcer.tsx` records that a
-             hidden duplicate of visible text is that text read twice; the take-back renames ITSELF
-             while it works, so wrapping the row makes that rename the announcement — once, on
-             entering and again on leaving. And the row is in the accessibility tree, with its
-             buttons in it, before any of that happens, which is `TurnBanner.tsx`'s rule about
-             regions born holding their text. */
-          <div role="status" aria-live="polite" className="mt-5 flex flex-wrap justify-center gap-2.5">
+          <div className="mt-5 flex flex-wrap justify-center gap-2.5">
             <StartAppControl action={state.action} report={report} inert={takeBack.working} />
             {state.secondAction && (
               <StartAppControl
@@ -385,6 +462,57 @@ function NoFrame({
       </div>
     </div>
   )
+}
+
+/**
+ * HOW LONG THE WAIT HAS BEEN RUNNING — R28's elapsed time, and the one number on this pane.
+ *
+ * ═══ WHY IT IS A COUNT AND NOT A BAR (D2) ═══
+ *
+ * R28 asks for a bar whose fill is STEP-determinate, advancing on the workspace claim, the
+ * container start and the first document served. The platform observes all three and the browser
+ * can read none of them: they happen inside one synchronous backend call and the wire carries a
+ * single opaque `starting`/`ready` field. A bar built on what IS readable could only be
+ * time-determinate, and R28's own text rules that out — "a bar that sits at 80% for two minutes is
+ * worse than the honest still card". Elapsed time is what is left that is true.
+ *
+ * ═══ IT COUNTS FROM ITS OWN MOUNT, WHICH IS EXACTLY THE WAIT ═══
+ *
+ * No timestamp travels on the report and none needs to: this renders only while `state.busy`, so
+ * mounting IS the wait beginning and unmounting IS it ending. A stamp on the state would have to be
+ * compared in `sameWorkspaceState` — where a value that changes every render defeats the whole
+ * comparator — and would re-render the entire shell once a second for a number only this pane
+ * shows.
+ *
+ * ═══ AND IT IS NOT ANNOUNCED ═══
+ *
+ * `aria-live="off"` because this element sits INSIDE the pane's polite region, and a counter that
+ * ticks inside a live region is a screen reader reading a number every second for two minutes. Off
+ * on the nearest ancestor means the value is still in the accessibility tree — a reader can go and
+ * read it whenever they want to know — without being pushed at anybody.
+ */
+function ElapsedSinceTheWaitBegan() {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const tick = setInterval(() => setSeconds((was) => was + 1), 1_000)
+    return () => clearInterval(tick)
+  }, [])
+  return (
+    <p
+      data-testid="app-pane-elapsed"
+      aria-live="off"
+      className="mt-3 text-xs tabular-nums text-neutral"
+    >
+      {formatElapsed(seconds)} so far
+    </p>
+  )
+}
+
+/** `0s`, `45s`, `1m 05s`. Seconds stay two-digit past the minute so the line does not jitter. */
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
 }
 
 /**

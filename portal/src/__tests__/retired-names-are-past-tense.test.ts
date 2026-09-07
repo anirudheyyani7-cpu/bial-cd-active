@@ -41,6 +41,14 @@ const RETIRED = [
   'fetchClaudeStream',
   'BuildProgress',
   '/v1/claude',
+  // U33 deleted the standalone build stack from both trees. `forceEnd` is the portal half: the
+  // typed client, its `ForceEndResponse`, the `useBuildSession` wrapper and the backend route all
+  // went together, having had no UI call site since the block banner's Force-end button was
+  // removed. Its sibling `tests/api/v1/claude_retired/test_retired_names_are_past_tense.py` names
+  // the backend half. `ForceEndResponse` is NOT listed separately — every mention of it sits
+  // beside one of `forceEnd`, and a longer list is a list that gets skimmed. Neither is
+  // `force-end` the bare phrase: it appears in live copy about what a stop DOES.
+  'forceEnd',
 ] as const
 
 /** Past-tense markers. Deliberately generous: a miss is cheaper than a false alarm. */

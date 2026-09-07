@@ -827,14 +827,63 @@ describe('★ taking the workspace back (#196)', () => {
     await act(async () => { hold.settle(); await Promise.resolve() })
   })
 
-  it('the row the two controls sit in is a polite region, mounted before it has anything to say', async () => {
-    // #210's rule: `LivePreview` keeps the pane's permanent region and is not mounted on this arm,
-    // so the take-back's wait would otherwise pass in silence. The region is the ROW — never a
-    // second `sr-only` copy of a sentence already on screen.
+  it('★ ONE hand-over question at a time — the shell\'s wins, and this one is HELD not dropped (R44, #187)', async () => {
+    // The two dialogs are the SAME component mounted from two places, so they are visually
+    // identical: with both up, a citizen answers whichever is on top believing it is the one
+    // they opened, and "Switch anyway" on the shell's lets the refused send through — starting
+    // the build the take-back exists to avoid.
+    const pane = await askTheQuestion()
+
+    // The shell's question arrives while this one is up. Exactly one is on screen after it.
+    act(() => {
+      pane.channel.reclaim.set({
+        blocked: { projectId: 'pB', projectName: 'Roster', dirty: false, building: false, agentWorking: false },
+        startingProjectName: 'Roster',
+        resolve: async () => {},
+        cancel: () => {},
+        step: null,
+      })
+    })
+    expect(screen.queryAllByRole('dialog')).toHaveLength(0)
+    // LIVENESS: the pane is still mounted and still holding, so the absence above is the
+    // precedence rule firing rather than a component that unmounted.
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('held-by-another-project')
+
+    // ★ HELD, NOT DROPPED. When the shell's clears, this one returns with its question intact —
+    // a citizen who pressed take back is never silently ignored.
+    act(() => pane.channel.reclaim.set(null))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
+
+  it('the pane itself is a polite region, mounted before it has anything to say and on arms with no buttons', () => {
+    // ★ CORRECTED (U8, `#197`). This asserted the region was `takeBack().parentElement` — the ROW
+    // THE TWO CONTROLS SIT IN — which was true and was the defect: the region lived inside the
+    // block that renders the buttons, so any state with `action: null` had no live region at all.
+    // `starting` is exactly such a state, and it is the one wait in the product with nothing to
+    // press, so a sandbox start announced NOTHING. What this test now rejects is a region scoped
+    // to the controls rather than to the pane.
+    //
+    // #210's rule still holds and is why the region exists here at all: `LivePreview` keeps the
+    // pane's other permanent region and is not mounted on these arms, so without this one the
+    // wait would pass in silence. Never a second `sr-only` copy of a sentence already on screen —
+    // the two regions divide the pane, and this one owns the states with no app in them.
     heldPane()
-    const row = takeBack().parentElement
-    expect(row?.getAttribute('role')).toBe('status')
-    expect(row?.getAttribute('aria-live')).toBe('polite')
+    const region = screen.getByTestId('app-pane-live')
+    expect(region.getAttribute('role')).toBe('status')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    // It is the pane, not the controls: the take-back row is INSIDE it rather than being it.
+    expect(region.contains(takeBack())).toBe(true)
+    expect(takeBack().parentElement?.getAttribute('role')).not.toBe('status')
+
+    // ★ THE ARM THE MOVE WAS FOR. `starting` offers no action, so under the old scoping it had no
+    // region on any screen. Asserted with liveness — the board really rendered — so a pane that
+    // failed to mount cannot pass by having no region either.
+    cleanup()
+    renderPane((c) => c.workspace.set(reportFor(reading({ state: 'starting' }))))
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state')).toBe('starting')
+    const starting = screen.getByTestId('app-pane-live')
+    expect(starting.getAttribute('role')).toBe('status')
+    expect(starting.getAttribute('aria-live')).toBe('polite')
   })
 
   it('★ unmounting mid-sequence updates nothing and crashes nothing — and the server sequence finishes', async () => {

@@ -4,18 +4,12 @@ Keyset, NOT offset: a page must come back with no duplicates and no skips while 
 inserted underneath it, which offset structurally cannot promise. Every owned model has a
 time-sortable UUIDv7 primary key, so the cursor IS the last row's id and a page is
 `WHERE id < :cursor ORDER BY id DESC LIMIT :n+1` — the extra row is how `hasMore` is known.
-The envelope is `{items, nextCursor, hasMore}`, with no `total`/`totalPages`: keyset does
-not cheaply provide them.
+The envelope is `{items, nextCursor, hasMore}`, with no `total`/`totalPages`.
 
-TWO SURFACES PAGE BY OFFSET INSTEAD, and they are the only two — the marketplace catalog and
-the projects list, both because their designs specify numbered pages and a `Showing 1-8 of 12`
-count, which need the total keyset declines to compute. The helpers and the separate argument
-each deviation rests on live in `offset_pagination.py`; a third caller owes a third argument,
-not an import.
-
-This module remains the single source of truth for the platform's page-size ceiling, which the
-offset callers import rather than redeclare.
-"""
+TWO SURFACES PAGE BY OFFSET INSTEAD — the marketplace catalog and the projects list, both
+because their designs specify numbered pages and a `Showing 1-8 of 12` count that keyset
+can't cheaply compute. Their helpers live in `offset_pagination.py`. This module stays the
+single source of truth for the platform's page-size ceiling, which offset callers import."""
 
 from __future__ import annotations
 

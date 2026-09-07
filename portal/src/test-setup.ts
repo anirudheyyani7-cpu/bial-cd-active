@@ -1,26 +1,21 @@
 /**
  * THE ONE PLACE THE TEST ENVIRONMENT IS TAUGHT WHAT JSDOM DOES NOT IMPLEMENT.
  *
- * Before this file the portal had NO `setupFiles` key at all, and the gap showed: `scrollIntoView`
- * was stubbed per-file in seventeen files, `MarketplacePage.test.tsx` stubbed all four of Radix
- * Select's requirements with a comment saying the shim lived there *because there was nowhere
- * else to put it*, and `ResizeObserver`, `IntersectionObserver` and `navigator.clipboard` had zero
- * occurrences anywhere in `src/` — not because nothing needed them, but because nothing that
- * needed them could be rendered at all.
+ * WHY THIS EXISTS. Before this file the portal had NO `setupFiles` at all: `scrollIntoView`
+ * was stubbed per-file in seventeen files, `MarketplacePage.test.tsx` stubbed all four of
+ * Radix Select's requirements with a comment saying the shim lived there because there was
+ * nowhere else to put it, and `ResizeObserver`/`IntersectionObserver`/`navigator.clipboard`
+ * had zero occurrences anywhere in `src/` — not because nothing needed them, but because
+ * nothing that needed them could render at all.
  *
- * ── WHAT IS DELIBERATELY NOT DONE HERE ──
+ * WHAT IS DELIBERATELY NOT DONE: the seventeen per-file `scrollIntoView` stubs stay — removing
+ * them is a mechanical sweep with its own risk (a stub shaped differently than assumed), and
+ * folding that in here would leave a red suite ambiguous between this file and that sweep.
  *
- * The seventeen per-file `scrollIntoView` stubs are NOT removed. Removing them is a mechanical
- * sweep with one real risk — a file that relied on a differently-shaped stub — and folding it in
- * here would mean a red suite could be either this file or that sweep. The blast radius of adding
- * `setupFiles` is kept to "things that were previously impossible".
- *
- * ── EVERY DEFAULT IS TODAY'S BEHAVIOUR ──
- *
- * A shim that changes what tests observe is a shim that rewrites the suite. `matchMedia` reports
- * `matches: false`, so `usePrefersReducedMotion` keeps returning "animate" exactly as it does now
- * when the function is absent entirely. The observers do nothing rather than firing synthetic
- * callbacks. Nothing here makes an assertion pass that would otherwise fail.
+ * EVERY DEFAULT IS TODAY'S BEHAVIOUR: a shim that changes what tests observe rewrites the
+ * suite. `matchMedia` reports `matches: false` (same as the hook seeing no function at all);
+ * observers do nothing rather than firing synthetic callbacks. Nothing here makes an
+ * assertion pass that would otherwise fail.
  */
 // No `jest-dom` import: the suite asserts with plain vitest matchers throughout, and adding the
 // package here would put a new dependency in front of every one of the 103 existing test files

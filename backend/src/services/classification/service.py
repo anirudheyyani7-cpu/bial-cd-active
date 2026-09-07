@@ -1,52 +1,15 @@
 """The classification review runner: start a review for a version, land exactly one
 result, and turn every way it can fail into a state the rest of the system can act on.
+START is synchronous (cap check, claim, detach); RUN is a detached task that never
+raises and outlives the request, so a crash cannot leave a row stuck RUNNING.
 
-Two halves with a hard line between them, the deploy service's shape deliberately.
-
-The START half is synchronous and fast: enforce the three-runs-per-version cap, claim (or
-get back) the app's one review row, and detach the run. `head_sha` is the CALLER'S to
-resolve — the routes read it from the snapshot blob's stored metadata (the save-state
-reader's exact move, never an extraction), and the drift path hands over the extraction
-it already holds. The service takes the stamp as input and fails closed if the tree it
-extracts turns out to be a different commit; resolving metadata here would put a storage
-read inside a service that otherwise only needs it mid-run, and would give the two
-callers two different ways to disagree with themselves.
-
-The RUN half is a detached task held in a strong-reference set. It NEVER raises, and
-every write opens its own short session from the session factory — it outlives its
-request. It extracts into a throwaway directory of its own under the process temp root
-and deletes it in a `finally`, unconditionally: success, every failure bucket, the
-wall-clock ceiling, and cancellation. A root a CALLER handed over is never deleted —
-ownership stays with whoever created it — and the run never joins the shared SHA-keyed
-extraction cache, so nothing it removes was ever another consumer's.
-
-THE SCAN RUNS FIRST, then the model: hits go into the prompt as directed evidence —
-location and family, never a value. The review's verdict is the credentials answer,
-including against the scan; a Tier A overrule is recorded as a dispute, and when the
-model never returned at all, a Tier A hit from a COMPLETE sweep stands in as the
-credentials answer on the failed row (the floor), with the other five left unanswered.
-
-TRUNCATION IS CAUGHT AT THE MODEL SEAM, not in the agent loop. `_MeteredModel` wraps
-whatever model the run was given and raises on `finish_reason == "length"` BEFORE the
-response reaches output validation — otherwise a clipped structured output presents as a
-validation failure and the agent's `retries=2` re-runs it at the same cap, twice, for a
-guaranteed second failure. One guided retry follows, in the same conversation minus
-exactly the truncated turn, with a nudge that CONSTRAINS the output; a second truncation
-is review-failed, and no partial verdicts are ever salvaged.
-
-THE SPEND IS METERED BUT IS NOT THE CITIZEN'S TO PAY. Two halves, both
-deliberate: the daily token gate is NEVER consulted (a heavy build day must not make an
-app unpublishable), and usage is recorded on the `review` kind, which that gate does not
-read (opening the publish dialog must not silently spend build budget the citizen never
-chose to spend). The spend is still recorded against them — knowing who generates review
-cost is the point. The real bound is `MAX_MODEL_RUNS_PER_VERSION` plus the per-run
-request budget and wall-clock ceiling in `constants.py`.
-
-EVERY TERMINAL RUN WRITES AN AUDIT ROW: the triggering citizen as actor plus their
-email in detail (the actor reference nulls when a user is removed), the version stamp,
-the outcome or failure bucket, and the six verdicts. The store row is one-per-app and
-overwritten, so the audit trail is the only place re-runs can be counted — a run not
-recorded is gone.
+WHY THIS EXISTS
+`head_sha` is always the CALLER's to resolve — this service fails closed on version
+drift rather than trusting a second, possibly stale, read of its own. Review spend is
+metered but deliberately excluded from the citizen's daily token gate (`kind=REVIEW`;
+`enforce_daily_limit` is never called here) — a heavy build day must not block
+publishing, nor must opening the publish dialog spend budget the citizen never chose
+to spend, though the spend is still recorded per-citizen.
 """
 
 from __future__ import annotations
@@ -154,15 +117,13 @@ _FLOOR_UNANSWERED_REASON: Final = (
 
 
 class _TruncatedAtTheCapError(Exception):
-    """The model stopped at the output token cap (`finish_reason == "length"`). Raised
-    by `_MeteredModel` from INSIDE the model seam, so the truncated response never
-    reaches output validation and the agent's own retries never re-run at the same cap.
+    """The model stopped at the output token cap (`finish_reason == "length"`), raised
+    by `_MeteredModel` INSIDE the model seam so the truncated response never reaches
+    output validation and the agent's own retries never re-run at the same cap.
 
-    Carries the raw provider finish reason (for `failure_detail` — a cap overshoot must
-    stay diagnosable from an endpoint problem) and the conversation UP TO the truncated
-    turn: the messages handed to the model on the truncating request are exactly "the
-    entire conversation minus the trailing partial assistant turn" the guided retry
-    must resend."""
+    Carries the raw finish reason (for diagnosing a cap overshoot vs. an endpoint
+    problem) and the conversation UP TO the truncated turn — exactly what the guided
+    retry must resend."""
 
     def __init__(self, *, raw_finish_reason: str, history: list[ModelMessage]) -> None:
         super().__init__(f"model output truncated (finish_reason={raw_finish_reason!r})")
@@ -401,18 +362,14 @@ class ClassificationReviewService:
             )
 
     async def _settle(self, write: Coroutine[Any, Any, None]) -> None:
-        """The terminal write, guarded so `_run`'s "NEVER raises" is true on EVERY exit.
+        """The terminal write, guarded so `_run`'s "NEVER raises" is true on every exit.
 
-        Both settles open their own session and commit; a transient Postgres error there
-        — dropped connection, statement timeout, deadlock — used to raise straight out of
-        the detached task on the SUCCESS path, which nothing awaits. The exception went
-        nowhere, the review had actually succeeded, and the row simply never learned it:
-        the citizen sat out the whole ceiling and was told the review was unavailable,
-        with the model spend already paid. Swallowing here is the lesser harm — the row
-        ages out and `start` re-claims it — but it is logged loudly, because a settle that
-        cannot write is a database problem, not a review outcome.
-
-        `CancelledError` is deliberately NOT caught: shutdown must stay propagating."""
+        A transient Postgres error here (dropped connection, timeout, deadlock) used to
+        escape the detached task on the SUCCESS path, which nothing awaits: the review
+        had actually succeeded but the row never learned it, so the citizen sat out the
+        ceiling and was told it failed — with the spend already paid. Swallowing is the
+        lesser harm (the row ages out and `start` re-claims it) but is logged loudly.
+        `CancelledError` is NOT caught: shutdown must keep propagating."""
         try:
             await write
         except asyncio.CancelledError:
@@ -809,20 +766,14 @@ def _cites_a_real_location(root: Path, rel_path: str) -> bool:
 def _build_record(
     output: ReviewOutput, *, root: Path, sweep: CredentialSweep
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The completed output → the two stored documents.
-
-    `verdicts` is the citizen/administrator-safe half: per-question verdict, REDACTED
-    reason, scan agreement, and the downgrade marker — plus a compact `scan` block
-    (booleans only, no locations) so a reader takes the Tier A dispute and an incomplete
-    sweep straight off the row. `evidence` is the internal half: the cited locations with
-    their validity, the scan's located hits, and the downgraded keys — stored for machine
-    checking, never rendered to a person.
+    """The completed output → the two stored documents: `verdicts` (citizen/admin-safe
+    — per-question verdict, REDACTED reason, scan agreement, downgrade marker, plus a
+    booleans-only `scan` summary) and `evidence` (internal — cited locations, the
+    scan's located hits, downgraded keys; never rendered to a person).
 
     Two rules run BEFORE anything is written: a Yes with no VALID cited location is
-    downgraded to unanswered (the question goes to the citizen, a flag is never silently
-    cleared), and every reason passes through the shared redactor — the deterministic
-    backstop behind the prompt's plain-language instruction, since this text reaches both
-    the citizen and the administrator."""
+    downgraded to unanswered, never silently cleared; every reason passes the shared
+    redactor, the deterministic backstop behind the prompt's own plain-language ask."""
     tier_a = any(located.hit.tier is Tier.A for located in sweep.hits)
     tier_b = any(located.hit.tier is Tier.B for located in sweep.hits)
 

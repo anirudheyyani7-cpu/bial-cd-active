@@ -1,17 +1,13 @@
 """Single-tenant object-key builders + metadata normalization.
 
-The builders take `uuid.UUID`, never `str`: a canonical UUID cannot contain `/`,
-`..`, or a control char, so path traversal and prefix collision are structurally
-impossible here — the type IS the validation, and widening any builder to `str`
-puts both attacks back.
+Builders take `uuid.UUID`, never `str`: a canonical UUID cannot contain `/`, `..`, or a control
+char, so path traversal and prefix collision are structurally impossible — the type IS the
+validation, and widening a builder to `str` puts both attacks back.
 
-`assert_owned` is the fail-closed read-side guard: it re-checks that a stored key
-lives strictly under the caller's `att/{user_id}/` prefix, using a TRAILING-SLASH
-boundary (never a bare `startswith`) so one owner id can never be a prefix of
-another.
-
-`normalize_metadata` / `normalize_metadata_key` run before user metadata reaches
-the SDK, so the Azure metadata charset round-trips deterministically.
+`assert_owned` is the fail-closed read-side guard: it re-checks a stored key lives strictly
+under the caller's `att/{user_id}/` prefix via a TRAILING-SLASH boundary (never a bare
+`startswith`), so one owner id can never be a prefix of another. `normalize_metadata`/
+`normalize_metadata_key` run before metadata reaches the SDK, so the Azure charset round-trips.
 """
 
 from __future__ import annotations
@@ -78,23 +74,12 @@ def snapshot_key(app_id: uuid.UUID) -> str:
 def recovery_key(app_id: uuid.UUID) -> str:
     """Key for an app's AUTOSAVED tree: `recovery/{app_id}/app.bundle`.
 
-    A SEPARATE NAMESPACE FROM `snapshot_key`, and the separation is the whole point. Saving
-    is the user's explicit action: `finish_turn_sandbox` does not snapshot, because every
-    message becoming a new saved version leaves no such thing as trying something and walking
-    away from it. Writing autosaves to `snapshot_key` would reverse that by the back door —
-    it is the bundle `submit` copies and the one a relaunch restores, so an autosave there
-    IS a save.
-
-    So durability and versioning are split, which is what every comparable product does:
-    the platform keeps you from losing work (here), the user decides what becomes a version
-    (`snapshot_key`). It IS restored in place of the saved bundle when it holds a newer tree
-    — see `SessionManager.newest_restore_source` — and that is resumption, not promotion:
-    `snapshot_key` is untouched, so `dirty` stays true and what becomes a saved VERSION is
-    still only ever the user's click. Restoring the saved tree over a newer recovery one was
-    a data-loss bug, not a safeguard: it discarded everything done since the last Save one
-    turn after a container was reclaimed.
-
-    Overwrite-latest like its sibling — this is a safety net, not a history."""
+    A separate namespace from `snapshot_key`, deliberately: Save is the user's explicit action, and
+    writing autosaves to `snapshot_key` would reverse that by the back door — it is the bundle
+    `submit` copies and a relaunch restores, so an autosave there IS a save. It IS restored in
+    place of the saved bundle when it holds a newer tree (`SessionManager.newest_restore_source`),
+    but that is resumption, not promotion: `snapshot_key` stays untouched, so `dirty` stays true
+    and only the user's click makes a VERSION. Overwrite-latest — a safety net, not a history."""
     return f"recovery/{app_id}/app.bundle"
 
 
@@ -106,16 +91,12 @@ def quarantine_prefix(app_id: uuid.UUID) -> str:
 def quarantine_key(app_id: uuid.UUID, taken_at: datetime) -> str:
     """One tree parked aside before restoring over it: `quarantine/{app_id}/{stamp}.bundle`.
 
-    PER-OCCURRENCE, unlike its two overwrite-latest siblings, and that is the whole point. A
-    quarantine object is forensic evidence — in a false-`REVERTED` case it holds the only copy of
-    the user's newest work — so a second reversion must not be able to destroy the first one's
-    record. `recovery_key` and `snapshot_key` are safety nets and may overwrite; this is not.
-
-    SORTABLE, because the operator surface lists these and the useful order is
-    chronological. Microsecond precision is enough to be collision-free HERE and the reason is
-    structural rather than probabilistic: writes for one app are serialized by
-    `snapshot._serialized_per_app`, and a user holds one build slot at a time, so two quarantine
-    writes for one app cannot be in flight together."""
+    Per-occurrence, unlike its two overwrite-latest siblings: a quarantine object is forensic
+    evidence — in a false-`REVERTED` case, the only copy of the user's newest work — so a second
+    reversion must not destroy the first one's record. Sortable, for the operator surface's
+    chronological listing. Microsecond precision is collision-free structurally, not
+    probabilistically: writes for one app are serialized by `snapshot._serialized_per_app`, one
+    build slot per user, so two quarantine writes for one app can never be in flight together."""
     return f"{quarantine_prefix(app_id)}{_stamp(taken_at)}.bundle"
 
 

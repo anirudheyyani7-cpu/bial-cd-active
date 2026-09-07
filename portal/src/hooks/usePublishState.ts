@@ -1,43 +1,20 @@
 /**
- * The publish read and the publish request, behind one lifetime — everything the chip
- * needs to say where an app stands and to act on it.
+ * The publish read and the publish request, behind one lifetime — everything the chip needs
+ * to say where an app stands and to act on it. Renamed from `useDeployment`; unchanged except
+ * three derived values retired because the server now computes the one state they guessed at.
  *
- * RENAMED, NOT REWRITTEN. This was `useDeployment`, and 287 of its 290 lines are
- * unchanged: the generation token, the poll lifetime, the cross-mount nudge and the
- * treatment of `unsaved_changes` as a question rather than a failure are exactly the parts
- * that rot when copied, which is why they were not. What changed is three derived values
- * that went, because the server now computes the one state they were guessing at.
+ * The approval lifecycle rides the same status response, because a surface with no app id
+ * (the builder, pre-submit) can show nothing else.
  *
- * THE APPROVAL LIFECYCLE COMES THROUGH HERE TOO, off the same status response. The
- * status card used to read `/apps/:id/status` itself, once, on mount — so a citizen who
- * pressed Publish and watched their app route into the queue sat there being told it was
- * still a draft. Hanging the lifecycle off this read is also the only way a surface with
- * no app id can show anything at all, and the builder's mount is exactly that.
- *
- * TWO REFRESH TRIGGERS BESIDES THE POLL, and they are worth telling apart.
- *
- * The visibility/focus listeners are what make the poll safe to stop: a publish can be
- * started from another tab, so a settled state is re-read whenever somebody actually looks
- * at this one. That is the cross-tab story, and it still works exactly as it did.
- *
- * The `bial:deployment-changed` nudge is NOT that. It is a `window` CustomEvent, so it never
- * leaves the document that dispatched it — it exists to reconcile two mounts on ONE screen,
- * which is what the retired publish card and review status card were: two inches apart,
- * where nothing is ever re-entered and a withdrawal in one left the other saying "waiting
- * for review".
- *
- * THE NUDGE IS LOAD-BEARING AGAIN, and this paragraph replaces one that said the opposite.
- * It used to record that the chip's two mount sites were SIBLING ROUTES under one Outlet, so
- * at most one could be live and the nudge had nobody to notify — kept only against a future
- * that might bring a second surface back. That future arrived: two DIFFERENT consumers now
- * hold separate reads and mount together on the workspace screen, the chip in
- * `WorkspaceToolbar` and `AppStatusPanel` in `WorkspaceRail`. `AppStatusPanel`'s own docblock
- * quotes the very sentence this one used to end on and answers it — "That moment is now."
- * So the nudge is what keeps them agreeing, not three spare lines waiting for a use.
- *
- * Its test renders two hooks explicitly and pins that contract. Anyone reading this as dead
- * code and deleting it would be reintroducing the withdrawal-in-one-surface bug, on a screen
- * where both surfaces are visible at once.
+ * WHY THIS EXISTS
+ * Two refresh triggers besides the poll. The visibility/focus listeners are the cross-TAB
+ * story — a publish started elsewhere is picked up when this tab is looked at. The
+ * `bial:deployment-changed` CustomEvent is the cross-MOUNT story on one document: the chip
+ * (`WorkspaceToolbar`) and `AppStatusPanel` (`WorkspaceRail`) now mount together on the
+ * workspace screen holding separate reads, and without the nudge a withdrawal in one leaves
+ * the other saying "waiting for review" — the exact bug this closes. Its test renders two
+ * hooks explicitly and pins the contract; deleting the nudge as apparently-dead code would
+ * reintroduce that bug on a screen where both surfaces are visible at once.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -71,16 +48,11 @@ interface DeploymentChanged {
 let mountCounter = 0
 
 /**
- * THREE DERIVED VALUES ARE GONE FROM HERE, and their absence is the point of the unit
- * that removed them: `running` (`status === 'running'`), `waitingForReview`
- * (`approval.status === 'pending'`) and `routed` (the last routed POST, held so a surface
- * could re-render it). Each was the browser re-deciding something the server had already
- * decided, and each was a place where two surfaces could disagree. The one publish state
- * on `deployment.publishState` says all three, and says them the same way to everyone.
- *
- * NOTHING HERE MAY GROW A PREDICATE BACK. If a consumer needs to know "is it live", "is it
- * waiting", "did it drift" — that is `publishState`, and if `publishState` cannot say it,
- * the fix is in the server that authors it.
+ * NOTHING HERE MAY GROW A PREDICATE BACK. `running`, `waitingForReview`, `routed` — derived
+ * booleans the browser used to compute from raw fields — are gone: each was the browser
+ * re-deciding something the server had already decided, and each was a place two surfaces
+ * could disagree. `deployment.publishState` alone says all three, the same way to everyone;
+ * if it can't say what a consumer needs, the fix belongs in the server that authors it.
  */
 export interface UsePublishState {
   deployment: DeploymentView | null

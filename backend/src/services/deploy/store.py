@@ -1,27 +1,20 @@
 """Row operations on `deployments` — the claim, the heartbeat, and the terminal write.
 
-The claim is the interesting one. It is an `INSERT ... ON CONFLICT DO NOTHING RETURNING`
-against a PARTIAL unique index (`uq_deployments_one_in_flight`), so exactly one caller gets
-a row back and everyone else learns "already deploying" without a race and without a lock.
-By INFERENCE, not by constraint name: a partial index cannot be an `ON CONSTRAINT` target,
-so `index_elements` + `index_where` is required and the predicate must match the index's
-exactly or Postgres refuses to infer it.
+The claim is an `INSERT ... ON CONFLICT DO NOTHING RETURNING` against a PARTIAL unique index
+(`uq_deployments_one_in_flight`): one caller gets a row back, everyone else learns "already
+deploying" without a race or lock — inferred via `index_elements`/`index_where` (a partial
+index cannot be an `ON CONSTRAINT` target), so the predicate must match the index's exactly.
 
-THE STALE-CLAIM SELF-HEAL EXISTS BECAUSE THE CONTROL PLANE RESTARTS. A pipeline runs for
-minutes and every platform deploy kills it mid-flight; without recovery the `running` row it
-left behind would wedge that app forever, and the citizen's only signal would be a Deploy
-button that 409s until someone notices. So a claim that loses to a row nobody is beating for
-takes it over. Same shape as `appdb/provision.py`'s stale-claim reprovision arm.
+WHY THIS EXISTS: the control plane restarts mid-pipeline, so a killed deploy's `running` row
+would wedge that app forever behind a 409ing Deploy button — a claim nobody is beating for
+takes over instead (same shape as `appdb/provision.py`'s stale-claim reprovision arm).
+Staleness is measured from `heartbeat_at`, never `created_at`, since a legitimate build can
+run for minutes and a start-time threshold would either kill live deploys or let a crashed
+one hold the slot just as long.
 
-Staleness is measured from `heartbeat_at`, NEVER from `created_at`. An image build
-legitimately runs for minutes, so a start-time threshold either kills live deploys or lets a
-crashed one hold the slot for as long as the longest legitimate build.
-
-Every function takes an `AsyncSession`, and every PIPELINE writer commits its own work: the
-pipeline outlives its request, so it opens short sessions of its own rather than borrowing
-one it does not own. `unpublish` is the one deliberate exception — it is called mid-request
-from a route that sequences several commits around it, so it leaves the boundary to its
-caller. See its own docstring.
+Every function takes an `AsyncSession`; every PIPELINE writer commits its own work since it
+outlives its request. `unpublish` is the one exception — called mid-request, it leaves the
+commit boundary to its caller; see its own docstring.
 """
 
 from __future__ import annotations
@@ -80,17 +73,13 @@ async def claim(
     classification: dict[str, Any] | None = None,
     classification_score: int | None = None,
 ) -> uuid.UUID | None:
-    """Claim the one in-flight deploy slot for `app_id`, or `None` if one is genuinely
-    running. Commits.
-
-    The data-classification declaration that cleared the gate is written by the SAME insert
-    that claims the slot, so a row cannot exist without the answers that authorised it. A
-    second UPDATE would open a window where a crash leaves a running deploy whose
-    justification is missing — the one question a post-incident review always asks.
-
-    Two attempts at most: the first plain claim, then — only if a stale row is actually
-    taken over — one retry. Bounded on purpose; an unbounded retry loop against a row a
-    live pipeline keeps beating would spin."""
+    """Claim the one in-flight deploy slot for `app_id`; `None` if one is genuinely running.
+    Commits. The classification that cleared the gate is written by the SAME insert that
+    claims the slot, so a row cannot exist without its authorising answers — a second UPDATE
+    could let a crash leave a running deploy unjustified, the first thing a post-incident
+    review checks. Two attempts at most: plain claim, then one retry only if a stale row was
+    taken over; unbounded retries against a row a live pipeline keeps beating would spin.
+    """
     claimed = await _try_claim(
         db,
         app_id=app_id,
@@ -234,24 +223,14 @@ async def fail(
 async def _finish(
     db: AsyncSession, deployment_id: uuid.UUID, *, status: DeploymentStatus, **fields: Any
 ) -> bool:
-    """The single terminal write, guarded on `running` so a row settles exactly once.
-
-    The return value matters to the reconciler: a `False` means someone else already settled
-    this row (it was taken over, or the reconciler promoted it), which is precisely when a
-    late-arriving pipeline must stop writing rather than contradict what is now on record.
-
-    IT ALSO CLEARS `unpublished_at`, and that is not housekeeping. `unpublish` resolves its
-    target through `latest_for_app`, which has no status predicate, so an unpublish landing in
-    the check-then-act window after `in_flight` returned None can stamp the NEW running row —
-    the one whose pipeline is at that moment publishing the container. Without this the row
-    settles SUCCEEDED wearing a takedown stamp: the portal reports "Taken down" over an app
-    that is genuinely live, and every later unpublish takes the idempotent early return and
-    never calls Azure again — the kill-switch jams on exactly the app it exists to kill.
-
-    Clearing here is safe by construction and cannot erase a legitimate takedown: the UPDATE is
-    guarded on `RUNNING`, and a row that is still running has not finished publishing yet, so a
-    stamp on it can only have come from that race. A real takedown targets an already-settled
-    row, which this statement never touches."""
+    """The single terminal write, guarded on `running` so a row settles exactly once. `False`
+    means someone else already settled it, so a late pipeline must stop rather than contradict
+    the record. Clearing `unpublished_at` here is NOT housekeeping: `unpublish` targets via
+    `latest_for_app` (no status predicate), so a race can stamp a NEW running row mid-publish;
+    without this clear it settles SUCCEEDED wearing a takedown stamp and the kill-switch jams
+    on the app it exists to kill. Safe by construction — guarded on RUNNING, so a real
+    takedown always targets an already-settled row.
+    """
     result = await db.execute(
         sa.update(Deployment)
         .where(Deployment.id == deployment_id, Deployment.status == DeploymentStatus.RUNNING)

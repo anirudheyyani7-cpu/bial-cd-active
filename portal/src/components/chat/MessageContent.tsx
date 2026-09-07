@@ -16,21 +16,16 @@ export interface MessageContentProps {
 }
 
 /** A link inside assistant markdown: an EXTERNAL (`http(s)://`) link opens in a new tab,
- *  never trusted to carry `window.opener`/referrer/search-engine credit back to this app —
- *  the URL came from model output, which is prompt-injection reachable. A fragment-only
- *  href (`remark-gfm`'s footnote links, e.g. `#user-content-fn-1`) or a relative href the
- *  model emits does NOT get `target="_blank"`: opening either in a new tab doesn't scroll
- *  to anything, it just opens a second tab at the current URL — which races a second
- *  reattach to the same build session.
+ *  never trusted to carry `window.opener`/referrer back to this app — the URL came from
+ *  model output, which is prompt-injection reachable. A fragment-only or relative href does
+ *  NOT get `target="_blank"`: opening either in a new tab scrolls nowhere and just opens a
+ *  second tab at the current URL, racing a second reattach to the same build session.
  *
  *  Streamdown still computes its own default `target="_blank"`/`rel="noopener noreferrer"`
- *  for EVERY link and passes them down as props to whichever component renders `a` — a
- *  component override swaps whose function runs, not what gets passed to it. Verified
- *  directly: rendering with `components={{ a: MarkdownLink }}` and NOT destructuring
- *  `target`/`rel` out below leaks Streamdown's `target="_blank"` onto internal/relative
- *  links regardless of `external`, because the plain `{...props}` spread carries them in
- *  before the conditional spread runs. Destructured out and discarded so the conditional
- *  spread is the only source of truth for both. */
+ *  for EVERY link and passes them as props — a component override swaps whose function runs,
+ *  not what gets passed to it. Verified directly: NOT destructuring `target`/`rel` out below
+ *  leaks Streamdown's `target="_blank"` onto internal links regardless of `external`, because
+ *  the plain `{...props}` spread carries them in before the conditional spread runs. */
 function MarkdownLink({
   node: _node,
   href,
@@ -60,46 +55,34 @@ function MarkdownStrong({ node: _node, ...props }: HTMLAttributes<HTMLElement> &
  * Render one chat message bubble's inner content from the neutral `parts[]` model — the
  * Streamdown variant, used by the one conversation surface for both chat kinds.
  *
- * PROSE ONLY. `partsToText` yields the text parts and nothing else; the attachment chips are
- * the THREAD's to draw, from its own `UserAttachments` slot (`ChatThread.tsx`), not this
- * component's.
+ * PROSE ONLY: `partsToText` yields text parts and nothing else — attachment chips are the
+ * THREAD's to draw (`UserAttachments`, `ChatThread.tsx`), not this component's. BOTH SHAPES
+ * ARE REAL: the live call site hands down a plain string; `MessageContent.test.tsx`'s parity
+ * cases hand down `TextPart[]` — `partsToText`'s union is load-bearing, not defensive.
  *
- * BOTH SHAPES ARE REAL. The live call site — the thread's text-part slot — hands down a
- * plain string, and the parity cases in `MessageContent.test.tsx` hand down `TextPart[]`, so `partsToText`'s
- * union is load-bearing rather than defensive.
- *
- * `mode="static"` is load-bearing, not decorative: Streamdown's own default is
- * `mode="streaming"` with `parseIncompleteMarkdown` on, which keeps "repairing" the text
- * (closing an unterminated `**`, an unclosed code fence, an unclosed link) forever, not
- * just while a message is mid-stream — with no signal telling it a message has settled.
- * That silently corrupts ordinary settled content this platform renders routinely (`2**8`
- * becomes `28`, a glob like `**` + `/*.tsx` loses a `*`, an unclosed link drops its trailing
- * clause). This component never hands Streamdown a message that's still arriving in the first place —
- * `isStreaming` (below) takes the plain-text branch instead — so by the time text reaches
- * Streamdown it is always settled, and `mode="static"` says so explicitly rather than
- * relying on the plain-text branch alone to keep the repair from ever running.
+ * `mode="static"` IS LOAD-BEARING. Streamdown's default `mode="streaming"` keeps "repairing"
+ * text (closing an unterminated `**`, an unclosed fence/link) FOREVER, not just mid-stream,
+ * silently corrupting settled content this platform renders routinely (`2**8` becomes `28`,
+ * a glob loses a `*`). This component never hands Streamdown a still-arriving message —
+ * `isStreaming` takes the plain-text branch instead — so `mode="static"` says explicitly
+ * what the plain-text branch alone would only imply.
  *
  * SECURITY: `disallowedElements={['img', 'picture', 'source']}` blocks
- * `![](https://attacker.example/x)` and an HTML `<picture><source srcset="...">` —
- * without it, assistant markdown (model output, reachable via prompt injection through
- * user prompts/attachments/sandbox tool output) could fire a zero-click GET to an
- * arbitrary external host the instant the bubble paints, leaking this user's IP and
- * user-agent. `picture`/`source` alone can't fetch anything (the browser's image-selection
- * algorithm needs the `<img>` this blocklist removes) but are stripped too as insurance
- * against that arming later.
+ * `![](https://attacker.example/x)` and `<picture><source srcset="...">` — without it,
+ * assistant markdown (model output, prompt-injection reachable) could fire a zero-click GET
+ * to an arbitrary host the instant the bubble paints, leaking this user's IP/user-agent.
+ * `picture`/`source` alone can't fetch (needs the `<img>` this blocklist removes) but are
+ * stripped too as insurance.
  *
- * This component passes no `rehypePlugins`, so Streamdown's raw HTML goes through its own
- * DEFAULT pipeline: `rehype-raw` (parses raw HTML into real elements) → `rehype-sanitize`
- * (allowlist-filters them against `hast-util-sanitize`'s default schema) → `rehype-harden`
- * (drops `javascript:`/`data:`/`vbscript:` URLs and off-origin image/link prefixes, though
- * with `allowedProtocols`/`allowedImagePrefixes`/`allowDataImages` left at Streamdown's
- * wide-open defaults — this raw-package build has no `security` prop to narrow them). That
- * is NOT "raw HTML is escaped" (react-markdown's old model, which this replaced) — it is
- * parse-then-allowlist, a materially different guarantee. `<script>`/`<iframe>`/`<style>`/
- * `on*` handlers are stripped by the schema; `<div>`/`<span>`/`<details>`/`<b>` and similar
- * are allowlisted through as real elements. MessageContent.test.tsx pins the discriminating
- * case (an allowlisted tag renders, a disallowed one doesn't) against the actually-installed
- * package, not assumed from docs.
+ * No `rehypePlugins` passed, so raw HTML goes through Streamdown's DEFAULT pipeline:
+ * `rehype-raw` → `rehype-sanitize` (allowlist against `hast-util-sanitize`'s default schema)
+ * → `rehype-harden` (drops `javascript:`/`data:`/`vbscript:` URLs and off-origin
+ * image/link prefixes; its allowedProtocols/allowedImagePrefixes/allowDataImages stay at
+ * Streamdown's wide-open defaults — no `security` prop to narrow them in this raw-package
+ * build). NOT "raw HTML is escaped" (the old react-markdown model) — parse-then-allowlist,
+ * a materially different guarantee: `<script>`/`<iframe>`/`<style>`/`on*` are stripped,
+ * `<div>`/`<span>`/`<details>`/`<b>` pass through. `MessageContent.test.tsx` pins the
+ * discriminating case against the actually-installed package, not assumed from docs.
  */
 export default function MessageContent({ parts, isUser, isStreaming }: MessageContentProps) {
   const text = partsToText(parts)

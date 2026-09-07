@@ -3,18 +3,12 @@
  * already looking when they need to act on one. Presentational: every decision is
  * `useBuildSession` state; every action is one of its callbacks.
  *
- * ASSERTIVE IS FOR THINGS THAT WENT WRONG. Both of these interrupt the operator
- * (`role="alert"` / `aria-live="assertive"`) because something is genuinely blocked or
- * broken.
- *
- * TWO, NOT FOUR: the other two were deleted when their producers were, not because they read
- * badly. Add a banner back without a live producer and it is worse than a missing one — the
- * state it names then reads as covered when nothing is watching it.
- *
- *   - feed-disconnected — the SSE feed died and the bounded reconnect gave up; offers a
- *                      manual reconnect (the build may well still be running, so nothing
- *                      else signals the dead feed).
- *   - quota          — the daily token cap was hit; building pauses until it resets.
+ * ASSERTIVE (`role="alert"`/`aria-live="assertive"`) because something is genuinely blocked or
+ * broken. TWO, NOT FOUR: the other two were deleted with their producers, not for reading
+ * badly — a banner without a live producer is worse than a missing one, since the state it
+ * names then reads as covered when nothing is watching it.
+ *   - feed-disconnected — SSE feed died and the bounded reconnect gave up; manual reconnect.
+ *   - quota — the daily token cap was hit; building pauses until it resets.
  */
 import { RefreshCw } from 'lucide-react'
 import type { QuotaState } from '../../hooks/useBuildSession'

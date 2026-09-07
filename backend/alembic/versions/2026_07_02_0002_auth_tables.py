@@ -4,13 +4,11 @@ Revision ID: 0002_auth_tables
 Revises: 0001_enable_extensions
 Create Date: 2026-07-02
 
-The first real tables in the control-plane. `users` fulfils the promise
-`OwnedByUserMixin` already FKs; `refresh_tokens` denormalizes rotation/reuse-detection
-state onto each row (family_id, used_at, revoked, absolute_expires_at) instead of a
-separate token_families table. Hand-finalized from an autogenerate starting point;
-`users` is created before `refresh_tokens` for the FK, and `downgrade()` drops them
-in reverse. No enums this phase (role/RBAC deferred), so no DROP TYPE.
-"""
+The first real tables in the control-plane. `users` fulfils the promise `OwnedByUserMixin`
+already FKs; `refresh_tokens` denormalizes rotation/reuse-detection state onto each row
+(family_id, used_at, revoked, absolute_expires_at) instead of a separate token_families
+table. `users` precedes `refresh_tokens` for the FK; `downgrade()` drops them in reverse.
+No enums this phase (RBAC deferred), so no DROP TYPE."""
 
 from __future__ import annotations
 

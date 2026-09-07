@@ -2,16 +2,13 @@
 
 Every non-default argument below closes a specific silent failure; none of them is style.
 
-IMPORT DISCIPLINE. This module imports only stdlib, structlog, taskiq and the settings front
-door — never the ARM SDK, never the ORM, never FastAPI. It is imported by every task module, and
-a task whose flag is off must cost nothing.
+IMPORT DISCIPLINE: only stdlib, structlog, taskiq and the settings front door — never the ARM SDK,
+ORM or FastAPI. Imported by every task module, so a task whose flag is off must cost nothing.
 
-CONSTRUCTION IS TOTAL. `build_broker()` returns an `InMemoryBroker` rather than raising when
-Redis is absent, because the test environment carries no `REDIS__*` block while `conftest.py`
-imports the app at module scope — a factory that raised would make the whole suite
-uncollectable. It cannot be fixed after the fact by monkeypatching the singleton either:
-`AsyncTaskiqDecoratedTask.__init__` binds `self.broker` at DECORATION time, so rebinding this
-module's global after import changes nothing for tasks that are already decorated.
+CONSTRUCTION IS TOTAL. `build_broker()` returns an `InMemoryBroker` rather than raising when Redis
+is absent — `conftest.py` imports the app at module scope with no `REDIS__*` block, and a raising
+factory would make the suite uncollectable. It can't be fixed after the fact by monkeypatching the
+singleton either: `AsyncTaskiqDecoratedTask.__init__` binds `self.broker` at DECORATION time.
 """
 
 from __future__ import annotations
@@ -84,20 +81,12 @@ def _namespaced(base: str, environment: str) -> str:
 def build_broker() -> AsyncBroker:
     """Construct the broker for this process, or an in-memory stand-in when Redis is absent.
 
-    `RedisStreamBroker`, not `ListQueueBroker`: the latter issues an unbounded blocking pop, and
-    its reconnect guard catches the BUILTIN `ConnectionError`, which `redis.exceptions.
-    ConnectionError` does not subclass — so the guard is dead code, against an upstream issue
-    literally titled "Occasional endless blocking dispatching tasks using Azure Redis".
-
-    And not `PubSubBroker`, outright: it broadcasts, so a delete-capable task would execute once
-    per subscriber.
-
-    No result backend. Nothing awaits a reclamation result, and the Redis result backend defaults
-    to an arbitrary-object binary serializer reading unprefixed keys from a database shared with
-    other applications — a remote-code-execution surface in exchange for results nothing reads.
-    (`RedisStreamBroker.__init__` cannot accept a `result_backend` kwarg at all; the default
-    `DummyResultBackend` is what we want anyway.)
-    """
+    `RedisStreamBroker`, not `ListQueueBroker` — its blocking pop's reconnect guard is dead code
+    (catches builtin `ConnectionError`, not `redis.exceptions.ConnectionError`), against a known
+    Azure Redis "endless blocking" issue. Not `PubSubBroker`: it broadcasts, so a delete-capable
+    task would run once per subscriber. No result backend — nothing awaits a reclaim result, and
+    Redis's default is an arbitrary-object deserializer on unprefixed shared keys: an RCE surface
+    for unread results (`RedisStreamBroker.__init__` doesn't accept `result_backend` anyway)."""
     redis_config = settings.redis
     if redis_config is None:
         _log.info(

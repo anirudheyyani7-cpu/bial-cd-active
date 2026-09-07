@@ -82,17 +82,12 @@ def get_maintenance_engine() -> AsyncEngine | None:
 def maintenance_engine_for_database(db_name: str) -> AsyncEngine:
     """A FRESH AUTOCOMMIT/`NullPool` engine bound to ONE app database — the maintenance DSN
     with `database=` swapped to `db_name`. The caller OWNS it and must dispose it.
-
-    Schemas are per-database and `ALTER SCHEMA public` acts on the CURRENT database, so a
-    provisioning step that must touch an app database's `public` cannot ride the shared
-    maintenance engine (pinned to the maintenance database). Unlike `get_maintenance_engine`
-    this is deliberately NOT cached: it is a short-lived, single-statement engine, and caching
-    one per app database would leak engines without bound.
-
+    NOT CACHED, unlike `get_maintenance_engine`: `ALTER SCHEMA public` acts on the CURRENT
+    database, so per-database provisioning can't ride the shared maintenance engine, and
+    caching one per app database would leak engines without bound.
     Raises `AppDatabaseUnconfiguredError` when no substrate is configured — its only caller
-    runs after `get_maintenance_engine` has already established one, so an unset substrate here
-    is a real invariant break, not the supported no-op that `get_maintenance_engine` models.
-    """
+    runs after `get_maintenance_engine` already established one, so this is a real invariant
+    break, not a supported no-op."""
     from src.config import settings  # lazy: avoid an import cycle via src.config
 
     if settings.app_db is None:

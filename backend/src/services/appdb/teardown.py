@@ -1,28 +1,22 @@
 """Sever a project database from its app, and (irreversibly) salt the earth.
 
-Two entry points sharing one primitive:
+Two entry points share one primitive:
 
-* `sever()` — the kill-switch half. Order is load-bearing: lock the door (`NOLOGIN`,
-  `REVOKE CONNECT`) BEFORE kicking anyone out (`pg_terminate_backend`), so a pooled client
-  that immediately reconnects finds it locked. Terminating first would just hand the pool a
-  fresh, fully-privileged connection. It RAISES on failure — a `disable` that silently
-  failed to sever would be a lie told to an operator.
-* `salt_the_earth()` — sever, then `DROP DATABASE ... WITH (FORCE)`, then `DROP ROLE`. It
-  runs POST-commit on the delete paths, where the registry row is already gone and there is
-  nothing left to roll back, so it is best-effort per step with its own logging and
-  NEVER raises (the name encodes the behaviour).
+* `sever()` — the kill-switch half. RAISES on failure (a silently half-severed database
+  would be a lie told to an operator).
+* `salt_the_earth()` — sever, then DROP DATABASE, then DROP ROLE. Runs POST-commit, where
+  the registry row is already gone and there is nothing to roll back, so it is best-effort
+  per step and NEVER raises.
 
-Both are idempotent, both take plain name scalars (captured pre-commit by the caller —
-`services/projects/delete.py` shape), and both classify errors by SQLSTATE, never by
-message text: "already gone" and "transient Azure name-lock" read identically in prose and
-completely differently in code.
+WHY THIS EXISTS: `sever`'s internal order is load-bearing — lock the door (`NOLOGIN`,
+`REVOKE CONNECT`) BEFORE kicking anyone out (`pg_terminate_backend`). Terminating first
+would just hand a pooled client that immediately reconnects a fresh, privileged connection.
 
-`restore_login()` is `sever`'s inverse for the admin `enable` lever.
-
-`teardown_handles()` is how a caller GETS the two names, and it is deliberately the only
-thing in this module that touches the ORM: every lever above runs at a point where the
-registry row is gone or about to be, so the names have to be read out as plain scalars
-BEFORE the caller's commit (`services/projects/delete.py`'s `app_container_ids` precedent).
+Both levers are idempotent and classify errors by SQLSTATE, never message text — "already
+gone" and "transient Azure name-lock" read identically in prose, differently in code.
+`restore_login()` is `sever`'s inverse. `teardown_handles()` is the only thing here that
+touches the ORM: every lever runs where the registry row is gone or about to be, so names
+must be read out as plain scalars before the caller's commit.
 """
 
 from __future__ import annotations

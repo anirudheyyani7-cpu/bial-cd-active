@@ -1,50 +1,24 @@
 """The per-question merge — three sources, one effective answer.
 
-A PURE module by design: no database, no model, no I/O — so the truth table can be pinned
-exhaustively (`test_merge.py` names every cell). This is the one genuinely new decision surface
-in the feature, and it is deliberately small enough to read against the truth table line by
-line.
+A PURE module: no DB, no model, no I/O — the truth table is pinned exhaustively by
+`test_merge.py`. Shaped for its second consumer, the publish gate: one `QuestionMergeInput`
+per questionnaire key (citizen answer, review verdict, scan signal — credentials only —,
+policy weight), read back as per-question effective answers plus `any_weighted_yes` (ladder
+rule 6: any weighted category merges to Yes → ROUTE).
 
-THE API IS SHAPED FOR THE PUBLISH GATE, its second consumer. The publish request builds one
-`QuestionMergeInput` per questionnaire key — the citizen's declared answer, the stored review
-verdict, the scan signal (credentials only), and the policy weight from
-`deploy/classification.DATA_CLASSIFICATION_QUESTIONS` — and reads back per-question effective
-answers plus `any_weighted_yes`, which is exactly ladder rule 6 ("any weighted category merges
-to Yes → ROUTE"). The recorded disagreement kinds are what the publish gate persists into the
-routing declaration and what the administrator's view leads with.
+Conventions callers must honour: `review_verdict=None` means no completed verdict is on
+record (never ran / still running / failed) — the merge defers to the citizen's answer;
+routing that is ladder rule 4's job, never the merge's. An unevidenced Yes was already
+downgraded upstream, in the runner. A review No against a shown Tier A hit records
+`TIER_A_OVERRULE`; an absent review with a Tier A hit makes credentials Yes with
+`SCAN_STOOD_IN`. Tier B records nothing — it is a lead for the review, expected to be
+mostly noise.
 
-Input conventions the callers must honour (each pinned by a named test):
-
-* `review_verdict=None` means NO COMPLETED REVIEW VERDICT IS ON RECORD for the question — the
-  review never ran, is still running, or failed. The merge hands those to the citizen's answer;
-  ROUTING them is ladder rule 4's job, never the merge's.
-* A Yes whose evidence did not validate was already downgraded to `unanswered` upstream, in the
-  runner — the merge never sees an unevidenced Yes.
-* `scan` is meaningful for `credentials_secrets` only; every other question passes
-  `ScanSignal.NONE`.
-
-The two obligations live here: a review No against a shown Tier A hit records `TIER_A_OVERRULE`,
-and an absent review with a Tier A hit makes credentials Yes with `SCAN_STOOD_IN` recorded (the
-scan is the answer when the model is unavailable). A Tier B signal records NOTHING, ever — it is
-a lead handed to the review, expected to be mostly noise.
-
-A DISCARDED OR OVERRULED AGENT SIGNAL ROUTES; IT DOES NOT FALL THROUGH TO THE CITIZEN. Two cells
-used to, and both published unattended on the citizen's own No:
-
-  * a Tier A hit the review overruled (`TIER_A_OVERRULE`), and
-  * a review Yes discarded for citing locations that do not exist
-    (`UNEVIDENCED_YES_ROUTED`).
-
-Recording a dispute was the whole compensation for making the scan non-binding — but the record
-renders only on the administrator's review screen, which is only ever opened for an app that
-ROUTED. On an app nothing else routes, the note was written to a page nobody would open. The
-rule the merge now holds everywhere: EITHER SIDE MAY RAISE A FLAG AND NEITHER MAY LOWER THE
-OTHER'S — a review Yes already stood over a citizen No, and these two close the cases where the
-agent's own signal was quietly discarded instead.
-
-This deliberately narrows the earlier rule that a review verdict alone decides, and the rule
-that a discarded, unevidenced Yes simply falls through to an ordinary citizen-only abstention —
-both are deliberate, recorded changes, not smuggled in. Public Data is untouched: weight zero
+WHY THIS EXISTS: a discarded or overruled agent signal ROUTES; it does not fall through to
+the citizen. Two cells used to, and both published unattended on the citizen's own No — a
+Tier A hit the review overruled (`TIER_A_OVERRULE`), and a review Yes discarded for citing
+locations that don't exist (`UNEVIDENCED_YES_ROUTED`). The rule now, everywhere: either side
+may raise a flag, neither may lower the other's. Public Data is untouched — weight zero
 still routes nothing, by design.
 """
 

@@ -4,37 +4,26 @@ import * as PopoverPrimitive from "@radix-ui/react-popover"
 import { cn } from "@/lib/utils"
 
 /**
- * Hand-authored shadcn `new-york` popover primitive, matching `dropdown-menu.tsx` in this
- * folder rather than the current registry.
+ * WHY THIS EXISTS: hand-authored shadcn `new-york` popover, matching `dropdown-menu.tsx` in
+ * this folder rather than the current registry. Four things before editing:
  *
- * FOUR THINGS TO KNOW BEFORE EDITING, the first three about this build rather than the
- * component:
+ * 1. CLASSES ARE THE OLDER (Tailwind-3) REGISTRY GENERATION — this portal is on Tailwind
+ *    3.4.17, and a class the build does not produce renders as nothing while jsdom's DOM
+ *    assertions still pass; `tailwind-tokens.test.js` only guards the `bial-*` namespace. Check:
+ *    `--popover`, `--popover-foreground`, `--border` are declared in `tailwind.config.js` +
+ *    `index.css` (`:root` and `.dark`, confirmed), plus one look in a real browser.
  *
- * 1. THE CLASSES ARE THE OLDER (Tailwind-3) REGISTRY GENERATION. The current registry
- *    popover uses Tailwind-v4-era syntax, and this portal is on Tailwind 3.4.17, where a
- *    class the build does not produce renders as NOTHING while every DOM assertion still
- *    passes. jsdom computes no Tailwind styles, so no unit test in this repo can catch
- *    that, and `src/__tests__/tailwind-tokens.test.js` guards only the `bial-*` namespace
- *    — every token used here is outside it. The check is that `--popover`,
- *    `--popover-foreground` and `--border` are declared in `tailwind.config.js` +
- *    `src/index.css` (they are, all three, in both `:root` and `.dark`), plus one look at
- *    the rendered popover in a real browser.
+ * 2. PORTALLED IS LOAD-BEARING, not a carried-over default: its one consumer mounts inside four
+ *    nested `overflow-hidden` ancestors (`WorkspaceShell` root, row wrapper, pane column,
+ *    `AppPaneHost`'s pane). Unportalled content is clipped, not overflowing — it disappears.
  *
- * 2. IT IS PORTALLED, AND THAT IS LOAD-BEARING HERE rather than a default carried over.
- *    Its one consumer mounts inside the builder's pane toolbar, under four nested
- *    `overflow-hidden` ancestors (`WorkspaceShell` root, its row wrapper, the pane column,
- *    and `AppPaneHost`'s pane). Content anchored without a portal is clipped the moment it
- *    extends past the toolbar row — it does not overflow, it disappears.
+ * 3. `@radix-ui/react-popover` IS A DIRECT DEPENDENCY on purpose — it was already on disk as a
+ *    transitive of `@assistant-ui/react`, which would silently break on a future install that
+ *    reshaped that graph.
  *
- * 3. `@radix-ui/react-popover` IS NOW A DIRECT DEPENDENCY. It was already on disk as a
- *    transitive of `@assistant-ui/react` → `radix-ui`, so importing it would have
- *    resolved — and silently broken on any future install that reshaped that graph.
- *
- * 4. THE ALIAS SET IS TRIMMED TO THE THREE THE CHIP USES. `PopoverAnchor` and `PopoverClose`
- *    were vendored with the file and reached nothing — `PublishStatusChip.tsx` anchors on its own
- *    trigger and closes on outside-press. They are named here because `@shadcn/popover` is still
- *    listed in the unlanded vendoring batch, so a re-add would restore them AND clobber the
- *    custom `align`/`sideOffset` defaults below with no trace of why they were chosen.
+ * 4. ALIASES ARE TRIMMED TO THE THREE THE CHIP USES. `PopoverAnchor`/`PopoverClose` were
+ *    vendored but reached nothing; they're named here because the unlanded vendoring batch would
+ *    re-add them and clobber the custom `align`/`sideOffset` defaults below with no trace of why.
  */
 
 const Popover = PopoverPrimitive.Root

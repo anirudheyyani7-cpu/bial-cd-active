@@ -5,28 +5,23 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 /**
- * shadcn/ui `button`, copied in from the registry, with three deliberate departures from the
- * copied source — all recorded here because the next person to re-copy the registry will
- * reintroduce them.
+ * shadcn/ui `button`, copied in from the registry, with three deliberate departures — recorded
+ * here because the next person to re-copy the registry will reintroduce them.
  *
- * 1. THERE IS NO `secondary` VARIANT. The registry's resolves to `bg-secondary`, which in this
- *    build is the brand gold #D9A036. The UX canvas paints every primary action #0D7377 and
- *    paints that gold nowhere at all (one `:root` declaration across 41 boards, zero usages),
- *    so a gold action fill is not a variant this product has. It had no caller when it was
- *    removed; adding one back means adding a colour the boards do not draw.
- * 2. `outline` AND `ghost` HOVER ON `surface-muted`, NOT ON `accent`. Stock shadcn means
- *    `accent` as a near-neutral hover tint; this build's `accent` is the brand orange #F5A623,
- *    which turned the transcript's Copy button solid orange under the pointer. The canvas
- *    specifies exactly one hover in 41 boards — a link going teal-dark — and no orange surface
- *    anywhere. `accent` keeps its two real board roles (the token-meter fill and the 6px
- *    unsaved dot) and stops being a hover.
- * 3. THE VARIANT TABLE IS ONLY WHAT IS ACTUALLY MOUNTED. `destructive`, `link` and the `sm` and
- *    `lg` sizes went the way `secondary` went, and for the same reason: the one production call
- *    site is `assistant-ui/thread.tsx`'s copy control, which asks for `variant="ghost"
- *    size="icon"`, and the portal contains no `variant={…}`/`size={…}` expression, so nothing can
- *    select a key at run time. `outline` STAYS even though only `__tests__/smoke.test.tsx`
- *    reaches it: that case is the sole coverage of the `asChild`/Slot branch below, which is live
- *    code merely riding the variant as a vehicle.
+ * 1. NO `secondary` VARIANT: the registry's resolves to `bg-secondary`, this build's brand gold
+ *    #D9A036. The UX canvas paints every primary action #0D7377 and that gold nowhere (one
+ *    `:root` declaration across 41 boards, zero usages) — a gold fill is not a variant this
+ *    product has. It had no caller when removed; adding one back adds a colour the boards don't draw.
+ * 2. `outline`/`ghost` HOVER ON `surface-muted`, NOT `accent`: stock shadcn's `accent` is a
+ *    near-neutral tint, this build's is brand orange #F5A623, which turned the transcript's
+ *    Copy button solid orange under the pointer. The canvas specifies one hover in 41 boards
+ *    (a link going teal-dark) and no orange surface anywhere; `accent` keeps its two real board
+ *    roles (token-meter fill, 6px unsaved dot) and stops being a hover.
+ * 3. THE VARIANT TABLE IS ONLY WHAT IS MOUNTED: `destructive`, `link`, and sizes `sm`/`lg` went
+ *    the way `secondary` did — the one production call site (`assistant-ui/thread.tsx`'s copy
+ *    control) asks for `variant="ghost" size="icon"`, and the portal has no
+ *    `variant={…}`/`size={…}` expression to select any other key. `outline` STAYS: it's the sole
+ *    coverage of the `asChild`/Slot branch below, live code riding the variant as a vehicle.
  */
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",

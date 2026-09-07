@@ -76,30 +76,14 @@ const NOTHING_IN_DISPUTE_COPY =
   'they both said.'
 
 /**
- * Review a pending SUBMISSION.
- *
- * READING ORDER: what is in DISPUTE first, then the automatic check's reason for
- * each, then the developer's explanation. The disagreement is the thing to read first —
- * the metadata is provenance, and the criterion is what the whole screen is for.
- *
- * Approve sends EXACTLY the submission id on display, so the server's reviewed-id guard
- * has something to check: a re-submit since this review 409s, never a silent promotion of
- * an unreviewed build. A WITHDRAWAL between opening this and clicking is answered by
- * purpose-written copy rendered IN PLACE OF the actions (`submission_withdrawn`), because
- * "conflict" describes a column and the administrator needs to know what happened.
- *
- * THE SCROLL CONTRACT. This card was a fixed-width box in a centred overlay with no
- * max-height and no overflow, and the page behind an overlay does not scroll either — so
- * anything taller than the viewport was simply unreachable. It now takes a max-height and
- * splits into three: a header, a MIDDLE THAT SCROLLS (the disputes and the explanation,
- * which is the part that grows without bound), and an action row OUTSIDE that scroll
- * region, so Approve and Reject are reachable with a full six-category dispute and a long
- * explanation on screen. `min-h-0` on the scrolling child is load-bearing: a flex item's
- * default `min-height:auto` refuses to shrink below its content, which silently restores
- * the original bug.
- *
- * EVIDENCE LOCATIONS ARE NEVER RENDERED — and structurally cannot be: they live in
- * a separate document that no call reaching this screen makes.
+ * Review a pending SUBMISSION. Reading order: disputes first, then the automatic check's
+ * reasoning, then the developer's explanation — the disagreement matters most. Approve sends the
+ * exact submission id on display, so a re-submit since this review 409s instead of silently
+ * promoting an unseen build; a withdrawal mid-review swaps the actions for explanatory copy. The
+ * card splits header / scroll / action row so a long dispute list can't push Approve/Reject
+ * off-screen — `min-h-0` on the scroll child is load-bearing (flex won't shrink below content).
+ * EVIDENCE LOCATIONS ARE NEVER RENDERED, and structurally cannot be: they live in a separate
+ * document that no call reaching this screen makes.
  */
 interface ReviewModalProps {
   app: RegistryApp
@@ -464,16 +448,11 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 
   useEffect(() => { load() }, [load])
 
-  // Run a mutating action with a PER-ROW busy lock + toast, then reload. Returns the
-  // FAILURE, or null when `fn()` didn't throw — so callers can both gate on success and
-  // inspect which failure it was. (It used to return a bare boolean; the withdrawal race
-  // needs the error's `code`, and re-throwing after already toasting would have made the
-  // one caller that cares wrap every call in a second try.)
-  //
-  // this is the one channel a confirmation AND a raw failure both travel down —
-  // `okMsg` on the happy path, `e`'s message on the catch. They must not render the same
-  // way: an administrator reading a channel that looks identical either way cannot tell,
-  // without reading the words, whether the action they just took worked.
+  // Run a mutating action with a per-row busy lock + toast, then reload. Returns the FAILURE,
+  // or null on success — never a bare boolean, because the withdrawal race needs the error's
+  // `code` and re-throwing after already toasting would force every caller into a second try.
+  // The toast is one channel for both a confirmation and a raw failure (okMsg vs. e.message),
+  // rendered identically — an admin can only tell which happened by reading the words.
   const act = async (appId: string, fn: () => Promise<unknown>, okMsg?: string): Promise<unknown> => {
     setBusyIds((s) => new Set(s).add(appId))
     try { await fn(); if (okMsg) onToast(okMsg) ; await load(); return null }
@@ -491,15 +470,11 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
     }
   }
 
-  // Approve carries the submission id ON DISPLAY (the reviewed-id guard's input):
-  // the server 409s with "re-submitted since you reviewed it" copy, which `act`
-  // surfaces verbatim via the toast — never a generic failure. Close the modal ONLY
-  // on success: on the 409 the admin needs the submission metadata to re-review.
-  //
-  // app.submissionId is nullable in the general RegistryApp schema, but the Review
-  // button (and so this call) only ever fires for a 'pending' app, which always
-  // carries the submission that made it pending. Unchecked pass-through, matching
-  // pre-migration behavior exactly (no null guard existed before either).
+  // Approve sends the on-display submission id (the reviewed-id guard's input); a stale
+  // review 409s with copy `act` surfaces verbatim via toast, and the modal closes only on
+  // success so a 409 leaves the metadata visible to re-review. `submissionId` is nullable in
+  // the schema but always present once an app is 'pending' — the `as string` below is an
+  // unchecked pass-through matching pre-migration behavior, not a missed null check.
   const onApprove = (app: RegistryApp) => act(app.appId, () => approveApp(app.appId, app.submissionId as string), `“${appLabel(app)}” approved`).then(settleReview)
   const onReject = (app: RegistryApp, note: string) => act(app.appId, () => rejectApp(app.appId, note), `“${appLabel(app)}” rejected`).then(settleReview)
   const onToggleLogin = (app: RegistryApp) => act(app.appId, () => patchApp(app.appId, { loginRequired: !app.loginRequired }), `Login ${app.loginRequired ? 'disabled' : 'required'} for “${appLabel(app)}”`)

@@ -1,36 +1,14 @@
 /**
- * Typed client for one-click deploy (`/api/projects/:projectId/{deploy,deployment}`),
- * mirroring `projectApi.ts`: every call is `fn(args, deps = {})` forwarding `deps` to
- * `authFetch`, responses arrive as `unknown` and pass through a narrower that throws
- * `ApiError` on a structurally-invalid row — never cast, never `any`.
+ * Typed client for one-click deploy (`/api/projects/:projectId/{deploy,deployment}`), mirroring
+ * `projectApi.ts`: responses arrive as `unknown` through a narrower that throws `ApiError`.
  *
- * ONE CALL DECIDES, AND THEN EITHER PUBLISHES OR QUEUES. The answers ride in the deploy
- * body and are merged and scored by the server inside the same request, so there is no
- * "score my answers" endpoint to call first — one that merely reported a number would be
- * advisory, and a client that skipped it would reach the pipeline unscored. That
- * one call has TWO success shapes (`DeployOutcome`): the deploy started, or the app was
- * routed into the administrator's queue at the exact version examined. `getDeployment` is
- * a progress poll, not a second decision: a deploy runs for minutes and the edge gateway
- * gives a request twenty seconds, so the work is detached and the client watches it.
- *
- * THE STATUS POLL ALSO CARRIES THE APP'S APPROVAL STATE (`DeploymentView.approval`),
- * and that is not a layering slip. The citizen has two publish surfaces; the toolbar one
- * is mounted with a project id and no app id, so an app-scoped lifecycle read is not
- * addressable from it at all. Hanging the lifecycle off this response is what lets both
- * surfaces inherit one poll lifetime, one generation guard and one staleness story
- * instead of growing a second fetch-once-and-rot one of their own.
- *
- * The pre-publish REVIEW is a separate surface (`classificationApi.ts`): it pre-fills the
- * questionnaire from an automatic check of the saved code, but the publish request still
- * re-reads the STORED review server-side and merges there — nothing the browser learned
- * from that surface rides into this one as authority.
- *
- * The weights below are a DUPLICATE of the server's, kept by hand — there is no codegen
- * across the two languages. That is tolerable only because this copy decides nothing: it
- * drives the running total and the explanation prompt, and the deploy button stays enabled
- * even when the local total looks too HIGH — a refusal the server issues with its own
- * explanation is the correct outcome, not a UI failure to prevent. If the two ever drift,
- * the server is right and the UI is merely stale.
+ * ONE CALL DECIDES, THEN PUBLISHES OR QUEUES: answers are merged and scored server-side in one
+ * request, so `DeployOutcome` is either started or routed to the admin queue at the version
+ * examined. `getDeployment` polls a detached job — the deploy outruns the gateway's 20s budget —
+ * and that poll ALSO carries approval state, since the toolbar publish surface has a project id
+ * and no app id. The pre-publish review only pre-fills; the publish re-reads the STORED review
+ * server-side, so nothing the browser learned there is authoritative. The weights below decide
+ * nothing — see `totalWeight`.
  */
 import { ApiError, isRecord, optionalString, readApiError } from './apiError'
 import { authFetch } from './api.js'
@@ -50,17 +28,11 @@ export interface DataClassificationAnswers {
 export type ClassificationKey = keyof Omit<DataClassificationAnswers, 'notes'>
 
 /**
- * `(key, label, weight, storedKey)` — THE questionnaire on this side of the wire: the
- * modal's question list, its running total, and the labels the admin review screen puts
- * on a stored declaration. Mirrors the backend's `DATA_CLASSIFICATION_QUESTIONS`
- * (`services/deploy/classification.py`). Keep in sync by hand — with ONE table, because
- * two hand-kept mirrors of one server table are two chances to reword a question in half
- * the product (`components/admin/declaration.ts` derives its list from this one).
- *
- * `storedKey` is the SAME question under its snake_case name, which is how it is spelled
- * inside the stored declaration document — that is stored data keyed the way the server
- * keys everything else, not a camelCase wire body. Carrying both spellings here is what
- * makes the pairing checkable in one place instead of inferred at a call site.
+ * `(key, label, weight, storedKey)` — THE questionnaire on this side of the wire, mirroring the
+ * backend's `DATA_CLASSIFICATION_QUESTIONS` (`services/deploy/classification.py`). Keep in sync
+ * by hand, as ONE table — `components/admin/declaration.ts` derives its list from this one.
+ * `storedKey` is the same question's snake_case spelling in the stored declaration document,
+ * carried here so the pairing is checkable in one place instead of inferred at a call site.
  */
 export const DATA_CLASSIFICATION_QUESTIONS: ReadonlyArray<
   readonly [key: ClassificationKey, label: string, weight: number, storedKey: string]
@@ -81,7 +53,13 @@ export const DATA_CLASSIFICATION_QUESTIONS: ReadonlyArray<
  *  the deploy button, because then the client would be the gate. */
 export const AUTO_DEPLOY_MAX_SCORE = 0
 
-/** The weighted total for a possibly-partial answer set; unanswered categories don't count. */
+/**
+ * The weighted total for a possibly-partial answer set; unanswered categories don't count.
+ *
+ * This copy of the weights DECIDES NOTHING — it drives the running total and the prompt, and the
+ * deploy button stays enabled even at a high local total, because a server refusal is the correct
+ * outcome, never a UI failure to prevent.
+ */
 export function totalWeight(answers: Partial<Record<string, boolean | null>>): number {
   return DATA_CLASSIFICATION_QUESTIONS.reduce(
     (sum, [key, , weight]) => (answers[key] === true ? sum + weight : sum),
@@ -144,24 +122,12 @@ export interface ApprovalState {
 export type DeploymentStatus = 'running' | 'succeeded' | 'failed'
 
 /**
- * THE publish state — one server-computed field, spelled exactly as
- * `backend/src/api/v1/deploy/schemas.py`'s `PublishState` spells it. The server is its
- * sole author; this union is the client's whole copy, and the chip switches on it and on
- * nothing else.
- *
- * NOTHING HERE RECOMBINES ANYTHING. A client that mirrors a server decision from parts
- * has produced the same class of bug four times in this one feature, most
- * recently promising "this can publish automatically" moments before the server routed
- * the app to an administrator. `status` + `unpublishedAt` + `failureCode` + the approval
- * lineage + the pin are all still on the wire for the version rows to render, but not one
- * of them is read to decide what state the app is in.
- *
- * Three values look alike and are deliberately three, because the sentence under each is
- * different: `live_current` (the heads agree — nothing of theirs is waiting),
- * `live_newer_work` (they saved since it went live), and `live_drift_unknown` (the server
- * could not make the comparison — a storage read that would not answer, or a bundle saved
- * before the metadata stamp existed). The last one must never be spoken as the first: a
- * false "nothing of yours is waiting" is the exact failure this feature keeps shipping.
+ * THE publish state — the server's `PublishState` (`backend/src/api/v1/deploy/schemas.py`),
+ * one computed field. NOTHING HERE RECOMBINES the raw fields (status, unpublishedAt,
+ * failureCode, approval, pin) to re-derive it — doing that has shipped the same bug four
+ * times, most recently claiming "can auto-publish" moments before the server routed to a
+ * human. `live_current`/`live_newer_work`/`live_drift_unknown` look alike but must stay
+ * distinct: the last (comparison failed) must never be spoken as the first (nothing waiting).
  */
 export type PublishState =
   | 'nothing_built'
@@ -213,41 +179,24 @@ export interface DeploymentView {
    */
   publishState: PublishState
   /**
-   * THE CITIZEN'S OWN LAST SAVE — which commit, and when.
-   *
-   * The server spends its ONE object-store metadata HEAD twice instead of once: the same read
-   * that computes `publishState`'s drift now also returns the head it compared and the store's
-   * last-modified on that bundle. No second call, and NO CONTAINER — which is the whole point,
-   * because the rail draws this row on a project whose workspace is stopped, and `save-state`
-   * attaches to a container before it can answer.
-   *
-   * THE TWO HALVES ARE INDEPENDENTLY NULL and neither is ever filled in from the other. A bundle
-   * written before the metadata stamp existed has a last-modified but no head, so it can say WHEN
-   * without saying WHICH — a renderer has to cover that mixed case, not only "both present" and
-   * "both absent". `null` on either axis is "no claim", and must never be spoken as a version.
-   *
-   * NO COUNT RIDES BESIDE THEM and none can: the snapshot key is overwrite-latest with one bundle
-   * per app and there is no version-history table, so "4 newer saves" has no source. The chip says
-   * newer work exists; it does not count it.
+   * THE CITIZEN'S OWN LAST SAVE. The server reuses the ONE object-store metadata HEAD that
+   * computes `publishState`'s drift — no second call, no container needed (works on a
+   * stopped workspace). The two fields are INDEPENDENTLY NULL: a pre-metadata-stamp bundle
+   * has a last-modified but no head, so `null` on either axis means "no claim", never a
+   * version. No count rides beside them — one overwrite-latest bundle per app, no
+   * version-history table, so "N newer saves" has no source.
    */
   savedHead: string | null
   savedAt: string | null
 }
 
 /**
- * NO PREDICATE OVER THESE FIELDS LIVES HERE ANY MORE, and none may come back. (The names
- * are deliberately not written out: a retirement guard walks this tree for them.)
- *
- * Four helpers went together, because they were four halves of one mistake. One answered
- * "is it serving traffic right now" from the status and the takedown stamp. One answered
- * "was that failed row actually a routing" from a set of codes, and the set was the other.
- * One turned the pipeline's phase tokens into citizen words. Every one of them re-decided,
- * on this side of the wire, something the server had already decided — and each was a
- * place where two surfaces reading one response could still disagree.
- *
- * `publishState` is where all four answers come from now. If a consumer needs one of them
- * and the field cannot say it, the fix belongs in the server that authors the field, not
- * in a helper here.
+ * NO PREDICATE OVER THESE FIELDS LIVES HERE ANY MORE (names deliberately omitted — a
+ * retirement guard walks this tree for them). Four helpers were retired together, each
+ * re-deciding server-side state the server already decided — is-it-serving, was-that-a-
+ * routing, phase-token-to-citizen-words — each a place two surfaces could disagree.
+ * `publishState` answers all four now; a gap the field can't cover gets fixed in the
+ * server that authors it, not a new helper here.
  */
 
 /** The 409 raised when the workspace is ahead of the last save; retry with `saveFirst`. */
@@ -323,55 +272,38 @@ const PUBLISH_STATES: ReadonlySet<string> = new Set<PublishState>([
   'did_not_start',
 ])
 
+// ── THE MIRROR-GAP REGISTER (L12) ──────────────────────────────────────────────────────
+// L12: a client mirroring a server decision must mirror it whole or not at all, and where
+// it provably cannot see an input, write the gap down and prove it one-directional. This
+// client does not mirror the decision — it consumes it — so below is everything it could
+// never have seen, and why each gap costs only a press, never a wrong promise.
+//
+// 1. SAVE TIMING. `saveFirst` can write a new snapshot inside this same request (ladder
+//    rule 3a defers to the pipeline), so the commit judged need not exist when this read is
+//    taken. One-directional: the button states a ceiling on the attempt, never the outcome
+//    — publishing directly beats what it promised, never contradicts it.
+// 2. MERGED CLASSIFICATION SCORE. The server merges the stored review with submitted
+//    answers and scores in-request; the local weights (see file header) drive only the
+//    running tally, never withhold the button — a server refusal-with-explanation is
+//    correct, never a UI failure to prevent.
+// 3. THE SAVED SNAPSHOT'S HEAD. The server spends its one metadata HEAD on the drift
+//    comparison and serves the ANSWER, not the head — this client cannot compute drift,
+//    so it cannot quietly resolve `live_drift_unknown` to `live_current`.
+// 4. COORDINATION LOCKS. `build_in_flight` (Redis) and `deploy_in_flight` (a DB predicate)
+//    refuse against state this read never queries — they arrive as a post-press refusal
+//    with the server's own sentence, never a button withheld on a guess.
+// 5. OWNERSHIP. Enforced by a query predicate server-side, not by this surface offering or
+//    withholding anything — a forged request is refused regardless, so nothing here is a
+//    security control.
+// ───────────────────────────────────────────────────────────────────────────────────────
+
 /**
  * THE publish state, parsed once here so nothing downstream re-checks a raw record.
  *
- * IT THROWS, and the reversal recorded twenty lines up at `toApprovalRoute` does not
- * apply. That reversal was for a SUPPLEMENTARY field: an unknown lineage could be
- * answered `null` — the conservative reading — while the surface still rendered
- * everything else. Here the field IS the surface. There is no conservative reading of
- * "we do not know what state this app is in" that is not itself a claim, and the two
- * candidates are both worse than throwing: guessing a state lies, and rendering nothing
- * is indistinguishable from a broken page on the only publishing surface the citizen
- * has. So it throws, and the chip owns what that looks like — one honest read-failure
- * chip with a re-read and no action, never a blank space where the affordance was.
- * A missing value throws for the same reason: a total field with a hole is a server
- * contract break, not a state.
- *
- * ── THE MIRROR-GAP REGISTER (L12) ──────────────────────────────────────────────────
- * L12 asks that a client mirroring a server decision either mirror the whole decision or
- * not at all, and that where it provably cannot see an input, the gap is written down
- * and proved one-directional. This client does not mirror the decision at all — it
- * consumes it — so what follows is the list of what it could never have seen anyway, and
- * why each gap can only ever cost a press, never a wrong promise.
- *
- * 1. THE TREE THE DECISION IS TAKEN AGAINST MAY BE SAVED INSIDE THE SAME REQUEST. This
- *    is the load-bearing one. `saveFirst` writes a new snapshot before the ladder runs,
- *    and ladder rule 3a defers to the pipeline, so the commit that gets judged need not
- *    exist when this read is taken. No read taken before the press can predict the
- *    outcome. ONE-DIRECTIONAL because the chip never promises an outcome: its button
- *    states the ceiling of what the press will attempt, and the server's answer states
- *    what happened. Publishing directly where the button said "Send update for review"
- *    reads as the better outcome, not as a contradiction.
- * 2. THE MERGED CLASSIFICATION SCORE. The server merges the STORED review with the
- *    submitted answers and scores inside the request. The weights in this module are a
- *    hand-kept duplicate that decides nothing (see the header) — the local total drives
- *    the running tally and the explanation prompt and never withholds the button.
- *    ONE-DIRECTIONAL: a refusal the server issues with its own explanation is the correct
- *    outcome, never a UI failure to prevent.
- * 3. THE SAVED SNAPSHOT'S HEAD. The server spends its one object-store metadata HEAD on
- *    the drift comparison and serves the ANSWER, not the head. So the client cannot
- *    compute drift and therefore cannot contradict the server about it — including that
- *    it cannot quietly resolve `live_drift_unknown` to `live_current`.
- * 4. THE COORDINATION LOCKS. `build_in_flight` (Redis) and `deploy_in_flight` (a
- *    deployments-table predicate) are refusals taken against state this read never
- *    queries. ONE-DIRECTIONAL: they arrive as a refusal after a press, with the server's
- *    own sentence, never as a button this surface withheld on a guess.
- * 5. OWNERSHIP. The gate is enforced with an ownership predicate in the query, not by
- *    this surface offering or withholding anything. A chip that offered nothing would
- *    still be refused if the request were forged, which is why nothing here is a security
- *    control.
- * ───────────────────────────────────────────────────────────────────────────────────
+ * IT THROWS: no conservative reading of "we don't know this app's state" exists that isn't
+ * itself a claim, and guessing or rendering nothing (the only publishing surface) are both
+ * worse — the chip owns the read-failure UI, one honest retry, never a blank space. A
+ * missing value throws too: a total field with a hole is a server-contract break, not a state.
  */
 function toPublishState(value: unknown): PublishState {
   if (typeof value === 'string' && PUBLISH_STATES.has(value)) {
@@ -434,16 +366,12 @@ export interface StartDeployRequest {
 }
 
 /**
- * Ask to publish. TWO success shapes, discriminated by `outcome`: `started`
- * (202, the deploy is running and this is the id to poll) and `routed_for_review` (200,
- * the app went into the administrator's queue pinned to `commitSha` and nothing was
- * published). The second is an OUTCOME, not a failure — it resolves, and both publish
- * surfaces render it informationally.
- *
- * Throws `ApiError` otherwise — notably 409 `app_disabled`, 409 `waiting_for_review`
- * (a version is already in the queue; `error.detail` carries the pending state so a
- * surface renders the waiting text without a second call), 409 `unsaved_changes`, 409
- * `snapshot_moved`, 422 `explanation_required`, and 503 `storage_unavailable`.
+ * Ask to publish. Two success shapes via `outcome`: `started` (202, poll the id) or
+ * `routed_for_review` (200, queued pinned to `commitSha`) — an OUTCOME, not a failure, and
+ * both surfaces render it informationally. Throws `ApiError` otherwise: 409
+ * `app_disabled`/`unsaved_changes`/`snapshot_moved`, 409 `waiting_for_review`
+ * (`error.detail` carries the pending state, no second call needed), 422
+ * `explanation_required`, 503 `storage_unavailable`.
  */
 export async function startDeploy(
   projectId: string,

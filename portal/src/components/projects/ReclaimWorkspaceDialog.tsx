@@ -50,14 +50,12 @@ interface Props {
 }
 
 /**
- * FOUR SITUATIONS, NOT TWO. A BUILDING project has an agent writing into it: no settled tree to
- * describe, both Save and Release refused until the build stops, and work in progress is what is
- * given up. The idle case splits three ways on the tri-state — `true` says "has unsaved changes"
- * and offers Save, `false` is a clean stop with no unsaved-work claim and NO Save button, `null`
- * says "may have". Every arm leads with the app being STARTED, not the one being left, and NAMES
- * the project whose changes are lost, because "switch without saving" beside a build does not say
- * whose work goes. The other project is STOPPED, not moved: nothing travels between projects, and
- * no sentence here may imply that anything does.
+ * FOUR SITUATIONS, NOT TWO. A BUILDING project has an agent writing: no settled tree, both
+ * Save and Release refused until it stops, and work-in-progress is given up. The idle case
+ * splits three ways on the tri-state — `true` offers Save ("has unsaved changes"), `false`
+ * is a clean stop with no Save button, `null` says "may have". Every arm leads with the app
+ * being STARTED (not the one being left) and NAMES the project whose changes are lost — the
+ * other project is STOPPED, not moved, and no sentence here may imply otherwise.
  */
 function copyFor(
   blocked: ReclaimBlocked,
@@ -124,13 +122,11 @@ function copyFor(
 }
 
 /**
- * WHAT THE DIALOG SAYS WHILE IT WORKS, because these take real time. It is a STATUS SURFACE, not
- * just a question: a spinner on a button for the thirty seconds a stop-then-start takes reads as
- * a dialog that has hung, and this one stands in front of a message the citizen has typed. Plain
- * language throughout, naming no mechanism.
- *
- * It ends at "Starting your app…": the navigate that opens the chat unmounts the surface
- * publishing this dialog, so a fifth line could never be read. The chat narrates its own arrival.
+ * WHAT THE DIALOG SAYS WHILE IT WORKS, because these take real time — a STATUS SURFACE, not
+ * just a question: a spinner alone for the thirty seconds a stop-then-start takes reads as a
+ * hung dialog standing in front of a message the citizen has typed. Plain language, no
+ * mechanism named. Ends at "Starting your app…": the navigate that opens the chat unmounts
+ * this surface, so a fifth line could never be read — the chat narrates its own arrival.
  */
 const STEP_SAYS: Record<HandoverStep, string> = {
   stopping: 'Closing the other app…',

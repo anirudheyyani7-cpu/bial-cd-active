@@ -1,29 +1,14 @@
-"""The frozen sandbox-client surface: the `SandboxClient` ABC, the
-`SandboxHandle` value type, the typed `FileOp` request union + result value types,
-and the typed exceptions. This is the control-plane-side wrapper over the supervisor's
-HTTP API (`sandbox/supervisor/app.py`).
+"""The frozen sandbox-client surface: the `SandboxClient` ABC, `SandboxHandle`, the typed
+`FileOp` request union + results, and the typed exceptions — the control-plane wrapper over
+the supervisor's HTTP API (`sandbox/supervisor/app.py`).
 
-Mirrors the `ObjectStorage` port: an `abc.ABC`, NOT a `Protocol`, so
-nominal subtyping makes an IDE jump land on the concrete backend and an incomplete
-implementation fails at instantiation with a runtime `TypeError`.
-
-No vendor type crosses this port. Every supervisor call the client makes goes to
-`https://{handle.fqdn}/_sup/<endpoint>` with `Authorization: Bearer {handle.token}` (Caddy
-strips `/_sup`, so the supervisor sees its own bare paths).
-
-TWO ADDRESSES, AND THEY ARE NOT INTERCHANGEABLE. A generated app is served to a person through
-the platform's router, on one public hostname with the app's key in the path
-(`/a/sbx-<28 hex>/`), because per-app subdomains would need a wildcard certificate BIAL
-refused — and BIAL's Container Apps environment is internal, so its own domain resolves for
-nobody outside the VNet. So:
-
-  `handle.preview_url`   PUBLIC. The router address a browser is given. Carries the key.
-  `handle.app_root_url`  PRIVATE. Where this container serves the app's own pages, direct.
-  `handle.fqdn`          PRIVATE. The container's ACA ingress host; `/_sup/*` composes from it.
-
-The control plane uses the private pair and must keep doing so: a probe that followed
-`preview_url` would leave the VNet, traverse the public gateway, and work only in a development
-environment whose Container Apps environment happens not to be internal.
+An `abc.ABC`, not a `Protocol` (mirrors `ObjectStorage`): an incomplete implementation fails
+at instantiation. No vendor type crosses this port; every call goes to
+`https://{handle.fqdn}/_sup/<endpoint>` with `Authorization: Bearer {handle.token}`.
+TWO ADDRESSES, NOT INTERCHANGEABLE: `preview_url` is PUBLIC — the router address a browser
+gets, carrying the key (per-app subdomains would need a wildcard cert BIAL refused).
+`app_root_url`/`fqdn` are PRIVATE, direct to the container — BIAL's ACA has no public DNS.
+The control plane always uses the private pair; `preview_url` would leave the VNet.
 """
 
 from __future__ import annotations
@@ -74,13 +59,11 @@ orphan reconciler quietly report nothing."""
 def base_path_for(app_name: str) -> str:
     """The path a generated app is served under, e.g. `/a/sbx-<28 hex>`.
 
-    THE KEY IS THE CONTAINER'S OWN NAME, which is what makes an app's address a string
-    composition rather than a lookup — the router at the edge holds no registry, and an unknown
-    key therefore fails as a DNS miss rather than as a missing row.
+    THE KEY IS THE CONTAINER'S NAME: the router holds no registry, so an unknown key fails
+    as a DNS miss, not a lookup miss.
 
-    NO TRAILING SLASH, and that is measured rather than stylistic: Next redirects `/<base>/` to
-    `/<base>` with a 308, so a slashed value would make every probe read a redirect instead of
-    the app, and would be rejected outright as a `basePath`.
+    NO TRAILING SLASH — measured, not stylistic: Next 308-redirects `/<base>/` to `/<base>`,
+    so a slashed value reads as a redirect, not the app, and is rejected as a `basePath`.
     """
     return f"/a/{app_name}"
 
@@ -217,21 +200,13 @@ class SandboxIdentity:
     @property
     def escalate_only(self) -> bool:
         """No owner, no app, no age, or NOT OURS TO JUDGE ⇒ REPORT IT, NEVER DESTROY IT.
-
-        This is the escalate-never-destroy invariant in one predicate, and it is the reason the
-        backfill refuses to guess an owner from a lossy name. A container the platform cannot prove
-        it owns stays here forever, which is a bill an operator can see and act on — strictly
-        better than the alternative, which is deleting somebody's unsaved work on a near-miss name
-        match.
-
-        THE CONTROL-PLANE CLAUSE BELONGS HERE RATHER THAN IN THE CLASSIFIER. A
-        container stamped by a different control plane is not this one's to reason about: a dev
-        deployment pointed at a resource group that also holds production-stamped sandboxes can
-        read them, and must not be able to sentence them. Leaving that check to whoever consumes
-        this property would make the safety of the fleet depend on every future caller remembering
-        a rule the property's own name says it already enforces. Failing this clause open — an
-        `ENVIRONMENT` rename, say — makes the whole fleet escalate-only and destroys nothing, which
-        is the correct direction to be wrong in."""
+        The escalate-never-destroy invariant in one predicate — why the backfill refuses to guess
+        an owner from a lossy name. An unprovable container stays here forever (a visible bill),
+        never deleting someone's unsaved work on a near-miss.
+        THE CONTROL-PLANE CLAUSE LIVES HERE, NOT IN THE CLASSIFIER: a dev deployment sharing a
+        resource group with production-stamped sandboxes can read them but must never sentence
+        them. Failing this clause open (e.g. an `ENVIRONMENT` rename) makes the whole fleet
+        escalate-only — the correct direction to be wrong in."""
         return (
             self.user_id is None
             or self.app_id is None
@@ -268,28 +243,14 @@ def identity_from_tags(tags: Mapping[str, str] | None) -> SandboxIdentity:
 
 @dataclass(frozen=True)
 class FleetMember:
-    """One container app as a reclamation pass sees it — the whole of what Azure is allowed to
-    tell us about a sandbox.
+    """One container app as a reclamation pass sees it — all Azure will tell us about a sandbox.
 
-    THE PROJECTION IS THE SECURITY BOUNDARY, not a convenience. ARM's list endpoint returns
-    `properties.template.containers[].env` in **plaintext** for every app in the group —
-    `SUPERVISOR_TOKEN`, `BIAL_DATABASE_URL`, `BIAL_BLOB_SAS` — unrequested and unredacted (only
-    `configuration.secrets` are masked). Every reclamation pass enumerates the whole fleet, and
-    passes log, report and escalate. Narrowing to these five fields at the boundary keeps those
-    values out of every caller, every log line and every operator report *by construction*, rather
-    than by each downstream reader remembering. That is why this is a frozen dataclass and not the
-    SDK's `ContainerApp`.
-
-    `tags` is NORMALIZED and never `None`: ARM omits the key entirely on an untagged app, and that
-    shape is precisely the orphan population.
-
-    `arm_created_at` is Azure's `systemData.createdAt`, and it is **evidence for a human, never an
-    age for the tier clock** — the platform deliberately distrusts it for that purpose. Azure's
-    behaviour when a name is recreated is undocumented, so a container that looks nineteen days
-    old may not be. The clock runs off the self-stamped `bial-created-at` tag
-    (`identity.created_at`). This field earns its place on the escalation path only, where "this
-    unowned container has existed since March" is exactly what the person adjudicating it wants
-    to know and nothing is destroyed on the strength of it."""
+    THE PROJECTION IS THE SECURITY BOUNDARY: ARM's list endpoint returns `containers[].env` in
+    PLAINTEXT (tokens, DB URL, blob SAS), unrequested and unredacted — only
+    `configuration.secrets` is masked. These five fields keep secrets out of every caller, log
+    line and operator report *by construction* — a frozen dataclass, not the SDK's `ContainerApp`.
+    `tags` is normalized, never `None`. `arm_created_at` is evidence for a HUMAN only — never the
+    tier clock's age, which runs off `identity.created_at`."""
 
     name: str
     tags: Mapping[str, str]
@@ -306,13 +267,12 @@ class FleetMember:
 def control_plane_segment() -> str:
     """This process's environment segment — the `TAG_CONTROL_PLANE` value.
 
-    Delegated to `src.core.runtime_env`, a leaf with no module-scope imports: `src.config` reaches
-    `src.settings.api`, which reaches the sandbox config, so asking it directly at module
-    level here would close that cycle.
+    Delegated to `src.core.runtime_env` (a leaf, no module-scope imports) to avoid the import
+    cycle: `src.config` → `src.settings.api` → sandbox config would close at module level here.
 
-    Kept as its own named function rather than calling the accessor at each site: what this
-    answers is which control plane is entitled to JUDGE a container, which is a different question
-    from which environment's coordination keys to read, and the two are free to diverge."""
+    Its own function, not an inline accessor call: this answers WHICH control plane may JUDGE a
+    container — a different question from which environment's coordination keys to read, and the
+    two are free to diverge."""
     from src.core.runtime_env import environment_segment
 
     return environment_segment()
@@ -340,21 +300,14 @@ def sandbox_tags(*, user_id: uuid.UUID, app_id: uuid.UUID) -> dict[str, str]:
 
 
 def published_app_tags(*, app_id: uuid.UUID) -> dict[str, str]:
-    """Identity for a PUBLISHED app — deliberately a shorter set than `sandbox_tags`.
-
-    Two omissions, both on purpose:
-
-    * **No `TAG_CREATED_AT`.** `aca_publish.create_or_update` is a full `PUT` on every redeploy,
-      so a timestamp here would be rewritten on each publish. An age that resets whenever the
-      citizen ships is not an age; publishing a field that lies is worse than omitting it.
-    * **No `TAG_USER_ID`.** Reclamation covers build sandboxes only (an origin scope boundary), and
-      the deploy seam carries no user_id — threading one through purely to stamp it would add a
-      query and a signature change for a field nothing reads.
-
-    What IS here is the part that earns its place: `TAG_KIND` makes "this is a citizen's live
-    application, not a sandbox" a RECORD rather than a `pub-` naming convention, which is the
-    distinction any future destructive pass has to get right. And it is on the envelope rather than
-    applied out of band precisely because that `PUT` would otherwise strip it."""
+    """Identity for a PUBLISHED app — deliberately shorter than `sandbox_tags`. Two omissions:
+    no `TAG_CREATED_AT` (every publish is a full `PUT`, so a timestamp here would be rewritten
+    each time — an age that resets on ship is not an age); no `TAG_USER_ID` (reclamation covers
+    build sandboxes only, and nothing reads it on a published app).
+    `TAG_KIND` IS here: it makes "citizen's live app, not a sandbox" a RECORD rather than a
+    `pub-` naming convention — the distinction any future destructive pass must get right, and
+    it must ride the envelope because the `PUT` would otherwise strip anything applied out of
+    band."""
     return checked_tags(
         {
             TAG_KIND: KIND_PUBLISHED_APP,
@@ -465,19 +418,12 @@ class CompileState(enum.StrEnum):
 class CompileReport:
     """Mirrors the supervisor's `GET /dev/compile`.
 
-    `errors` is the de-coloured, secret-redacted compile output, bounded in the container.
-    NOTHING READS IT YET, and the docstring says so rather than describing an intention: the
-    only consumer today is the preview cover, which needs `state` alone. The field is carried
-    because the container is the only place the text exists in structured form and re-deriving
-    it later would mean re-reading a log tail — but a reader looking for where the agent gets
-    compile detail will find it on the `tsc` / dev-server-tail path, not here.
-
-    When it does get a consumer it is AGENT INPUT, never user output — it is app-authored text.
-    `reason` says WHY the state is `UNKNOWN` and is None when it is not.
-
-    `connect_generation` counts the supervisor's successful socket
-    connects, so the control plane raises the protocol-drift alarm once per connect rather
-    than once per poll."""
+    `errors` is de-coloured, secret-redacted, bounded — NOTHING READS IT YET (only `state` is
+    consumed today; kept because re-deriving it later means re-reading a log tail). When it
+    does get a consumer it is AGENT INPUT, never user output — it is app-authored text.
+    `reason` says WHY `state` is `UNKNOWN`, else `None`. `connect_generation` counts the
+    supervisor's successful socket connects, so the drift alarm fires once per connect, not
+    once per poll."""
 
     state: CompileState
     errors: tuple[str, ...] = ()
@@ -527,21 +473,14 @@ derived health verdict."""
 
 @dataclass(frozen=True)
 class ServedPage:
-    """What the app's OWN root answered, head only.
-
-    "Its own root" is `/a/<app-name>`, not the container root. Once an app runs under a base
-    path the container root belongs to no route, so a probe left at `/` reads the framework's
-    404 and reports it as what the app is serving — see `SandboxHandle.app_root_url`.
-
-    The SERVING half of the health verdict. Its sibling `someone_has_to_go_first` reads headers
-    and stops; this one reads a bounded prefix of the body as well, because "the app answered"
-    and "what the app answered with" are different questions and only the second one can be
-    stored as evidence.
-
-    `None` from the method — never a `ServedPage` with a made-up status — is how "we could not
-    ask" is said, and it is the input that makes a verdict `INDETERMINATE` rather than
-    `UNHEALTHY`. An app that is in fact serving must never be called broken because our own
-    request timed out."""
+    """What the app's OWN root answered, head only — `/a/<app-name>`, not the container root
+    (which belongs to no route once a base path is set, so a naive `/` probe would read the
+    framework's 404; see `SandboxHandle.app_root_url`).
+    The SERVING half of the health verdict; unlike `someone_has_to_go_first` (headers only)
+    this also reads a bounded body prefix, since "it answered" and "what it answered" differ.
+    `None` from the method (never a made-up status) means "we could not ask" — the verdict
+    reads that as `INDETERMINATE`, never `UNHEALTHY`: a serving app must never read as broken
+    because our own request timed out."""
 
     status: int
     head: str
@@ -717,50 +656,34 @@ class SandboxClient(abc.ABC):
     # --- outside the frozen set: a courtesy, not a contract ------------------
 
     async def compile_state(self, handle: SandboxHandle) -> CompileReport:
-        """What the app's dev server is compiling right now — the supervisor's `GET /dev/compile`.
+        """What the app's dev server is compiling — the supervisor's `GET /dev/compile`.
 
-        DELIBERATELY NOT abstract, for the same reason as `someone_has_to_go_first` below:
-        `test_abstractmethod_set_equals_the_pinned_contract` pins the abstract set so the contract
-        cannot drift, and adding a member to that frozen set is a cross-track break. Follow
-        the precedent — a new capability arrives non-abstract with a safe default — rather
-        than amending `_C2_METHODS`.
-
-        The default declines, and declining is `UNKNOWN`. A client fronting no real container
-        has no dev server to ask, and the whole contract of this signal is that "no idea" is a
-        first-class answer which callers must hold on rather than read as clean."""
+        DELIBERATELY NOT abstract, same reason as `someone_has_to_go_first` below:
+        `test_abstractmethod_set_equals_the_pinned_contract` pins the abstract set, so a new
+        capability arrives non-abstract with a safe default rather than amending it.
+        The default declines to `UNKNOWN`. A client fronting no real container has no dev server
+        to ask, and "no idea" is a first-class answer callers must hold on to, not read as
+        clean."""
         return CompileReport(state=CompileState.UNKNOWN, reason="no_sandbox_client")
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         """The app's public root, status plus a bounded head of what it answered.
 
-        DELIBERATELY NOT ABSTRACT, and for the same reason as `someone_has_to_go_first` below
-        rather than for convenience: every abstract method on this class mirrors one supervisor
-        endpoint, and `test_abstractmethod_set_equals_the_pinned_contract` pins that set so the
-        surface cannot drift. This is not a supervisor call — it is an ordinary GET at the app's
-        own root through the same Caddy the citizen's iframe uses.
-
-        WHY NOT `someone_has_to_go_first`. That method is contractually non-load-bearing —
-        it gates nothing, and its docstring says no caller may make a preview conditional on what
-        it returns. The health verdict is precisely a caller making a decision on the answer, so
-        reusing it would quietly convert a promise into a lie. It also stops at the headers, and
-        the verdict's evidence field needs the body's opening.
-
-        The default declines. A client fronting no real container has no root to ask, and `None`
-        is the honest answer — which the verdict reads as `INDETERMINATE`, never as broken."""
+        DELIBERATELY NOT ABSTRACT, same reason as `someone_has_to_go_first` below: it mirrors
+        no supervisor endpoint (the pinned-contract test would break) — an ordinary GET at the
+        app's own root through the citizen's own Caddy.
+        NOT `someone_has_to_go_first`: that method is non-load-bearing and stops at headers; a
+        health verdict IS a gating decision and needs the body too.
+        Default: `None` (no root to ask) — read as `INDETERMINATE`, never broken."""
         return None
 
     async def someone_has_to_go_first(self, handle: SandboxHandle) -> int | None:
         """Pay the app's first route compile so the citizen's browser does not.
 
-        DELIBERATELY NOT abstract, and the reason is a real distinction rather than
-        convenience: every method above mirrors one supervisor endpoint, and
-        `test_abstractmethod_set_equals_the_pinned_contract` pins that set so the surface
-        cannot drift. This is not a supervisor call at all — it is an ordinary GET at the
-        app's public root, through the same Caddy the citizen's iframe uses. Adding it to
-        the frozen set would claim the supervisor grew an endpoint it did not.
-
-        The default declines. A client that fronts no real container has no first route to
-        compile, and `None` says exactly that. Non-load-bearing by construction: an
-        implementation that overrides it must still never let the call raise, and no caller
-        may make a preview frame conditional on what it returns."""
+        DELIBERATELY NOT abstract: every method above mirrors one supervisor endpoint, and the
+        pinned-contract test keeps that set frozen. This is an ordinary GET at the app's public
+        root (same Caddy the iframe uses) — adding it would claim an endpoint the supervisor
+        never grew.
+        Default: `None` (no container to compile for). NON-LOAD-BEARING BY CONSTRUCTION: an
+        override must never raise, and no caller may gate a preview frame on its return."""
         return None

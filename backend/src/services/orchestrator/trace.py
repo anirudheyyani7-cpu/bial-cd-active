@@ -1,17 +1,13 @@
 """Optional flight-recorder for the build harness — white-box agent observability (dev/E2E only).
 
-A build's live progress already streams as C7 `step` envelopes over SSE, but that feed omits
-`read_file`, carries redacted labels instead of raw tool arguments, and is not durable past the
-~5-minute post-terminal retention window. When the `BRAIN_TRACE_DIR` environment variable is set,
-this module records the FULL agent path to `<BRAIN_TRACE_DIR>/<app_id>.jsonl`: every model step's
-tool calls (name + raw args, `read_file` included) and, per run, the complete pydantic-ai message
-history (every tool call, every tool return, and the model's own reasoning). It also trace-logs
-each tool call through structlog so a build can be tailed live from stdout.
+The live SSE `step` feed omits `read_file`, redacts tool arguments, and expires ~5 minutes after
+terminal. When `BRAIN_TRACE_DIR` is set, this module records the FULL agent path to
+`<BRAIN_TRACE_DIR>/<app_id>.jsonl` — every tool call (name + raw args) and, per run, the complete
+pydantic-ai message history — and trace-logs each call through structlog for live tailing.
 
-OFF by default: with no env var there is no directory, no file write, and no log line, so the
-production path is byte-for-byte unchanged. This is test instrumentation, never a prod feature —
-which is why every entry point fails soft (a trace error is logged and swallowed, mirroring the
-harness's best-effort `_record_step`): observability must never be able to fail a real build.
+OFF by default: no env var means no directory, no write, no log line — the production path is
+byte-for-byte unchanged. Test instrumentation only: every entry point fails soft (logged and
+swallowed), because observability must never be able to fail a real build.
 """
 
 from __future__ import annotations

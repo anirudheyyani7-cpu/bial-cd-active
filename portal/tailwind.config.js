@@ -9,16 +9,12 @@ export default {
   theme: {
     extend: {
       /**
-       * THE STACKING THRESHOLD, AS THE BOARD NUMBERS IT.
-       *
-       * `ResizeBounds` is explicit: the handle is "ignored below 1100px of window — there is not
-       * enough room for two useful columns, so the app pane stacks under the conversation and the
-       * handle disappears rather than becoming a control that cannot help."
-       *
-       * Its own screen rather than Tailwind's `lg` (1024px), because the number is a design
-       * decision with a stated reason and borrowing a framework default would make it look like
-       * one. Named `wide` rather than `xl` so it cannot be mistaken for a position in the stock
-       * ramp — it sits between `lg` and `xl` and belongs to one layout.
+       * THE STACKING THRESHOLD, per `ResizeBounds`: the handle is "ignored below 1100px of
+       * window — there is not enough room for two useful columns, so the app pane stacks under
+       * the conversation and the handle disappears rather than becoming a control that cannot
+       * help." Its own screen rather than Tailwind's `lg` (1024px) — a design decision, not a
+       * framework default — and named `wide` rather than `xl` so it cannot be mistaken for a
+       * position in the stock ramp.
        */
       screens: {
         wide: '1100px',
@@ -105,15 +101,12 @@ export default {
         warning: '#EAB308',
         danger: '#EF4444',
         /**
-         * THE UX CANVAS'S OWN PALETTE — the roles the brand ramp has no name for. Every value
-         * below is a hex read directly off the UX canvas board designs; nothing here is invented,
-         * and nothing here is a second name for a colour the brand ramp already owns (the
-         * canvas's ink #1A2B34 is `primary-900`, its hairline #E2E8F0 is `bial-border`, its
-         * muted text #6B7280 is `neutral`, its teal #0D7377 is `primary`).
-         *
-         * They live as tokens rather than as `bg-[#B45309]` literals because the status panel
-         * and the chip beside a chat title have to agree state by state, and nine hard-coded
-         * pairs in two files is exactly how they would stop agreeing.
+         * THE UX CANVAS'S OWN PALETTE — roles the brand ramp has no name for. Every value below
+         * is a hex read directly off the canvas board designs, none invented and none a second
+         * name for a colour the ramp already owns (ink #1A2B34 = `primary-900`, hairline #E2E8F0
+         * = `bial-border`, muted text #6B7280 = `neutral`, teal #0D7377 = `primary`). Tokens, not
+         * `bg-[#B45309]` literals, because the status panel and a chat-title chip have to agree
+         * state by state — nine hard-coded pairs in two files is how they'd stop agreeing.
          */
         canvas: {
           label: '#9CA3AF',        // the small-caps section and row labels
@@ -192,16 +185,12 @@ export default {
       },
       animation: {
         /**
-         * THE APP PANE LEAVING AND RETURNING. `T2Sliding` is a whole board about
-         * this one movement — "the app card is sliding out to the right and fading as it goes" —
-         * and its annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing
-         * about the app is stopped or reloaded — it is only taken off the screen."
-         *
-         * A TRANSITION, NOT A LIBRARY. There is no motion library in this project and none is
-         * added: the pane is one element whose visibility the shell already toggles, so a
-         * keyframe pair is the whole mechanism. Both are suppressed under
-         * `prefers-reduced-motion` in `index.css`, which is where every other one in this build
-         * is suppressed too.
+         * THE APP PANE LEAVING AND RETURNING — `T2Sliding`'s whole board is this movement ("the
+         * app card is sliding out to the right and fading as it goes"), annotated to say it is
+         * the MOVEMENT, not a broken screen: "nothing about the app is stopped or reloaded — it
+         * is only taken off the screen." A TRANSITION, NOT A LIBRARY: the pane is one element
+         * whose visibility the shell already toggles, so a keyframe pair is the whole mechanism —
+         * suppressed under `prefers-reduced-motion` in `index.css`, like every other one here.
          */
         'pane-leave': 'pane-leave 0.24s ease-in forwards',
         'pane-return': 'pane-return 0.24s ease-out',

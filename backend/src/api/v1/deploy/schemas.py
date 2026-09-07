@@ -23,28 +23,12 @@ from src.services.deploy.service import FAIL_ROUTED_FOR_REVIEW
 
 class DataClassificationAnswers(CamelModel):
     """What the citizen declares their app handles, answered fresh at every deploy.
-
-    All six categories are required booleans. A partly-answered set never reaches this
-    schema — the portal only builds one once every question has a Yes or a No — so
-    "unanswered" is a pre-submission state on the client and not something this boundary
-    has to represent. Making them required rather than defaulting to False also means a
-    caller cannot under-declare by omission, which a default would have made invisible.
-
-    NO REVIEW FIELD, BY CONSTRUCTION. The platform's own review of the saved code
-    is read from the store inside the publish request, keyed by app and version; a
-    browser-supplied copy is not a field this schema has, and `CamelModel`'s pydantic
-    default (`extra="ignore"`) drops any unknown key a caller smuggles in — so no shape
-    of request body can put words in the review's mouth.
-
-    THE NOTES GATE MOVED OUT OF THIS SCHEMA, deliberately. It used to be a
-    `model_validator` here, keyed on the citizen's own answers — but the explanation is
-    obliged exactly when the MERGED answer set routes, and the merge reads
-    the stored review, which a request schema cannot see. Worse, keeping it here would
-    422 the one publish that must succeed without it: an approved app (ladder rule 3)
-    ships a weighted-Yes declaration and needs no fresh explanation — the one on file
-    with the approved submission already answered it. The gate enforces the requirement
-    at ladder rule 6, where the merged outcome exists (`api/v1/deploy/router.py`).
-    """
+    All six are required booleans — the portal only builds this once every question is
+    answered, so a default would let a caller under-declare by omission.
+    NO REVIEW FIELD, BY CONSTRUCTION: the platform's own review is read from the store
+    inside the publish request, and `CamelModel`'s `extra="ignore"` drops any unknown key
+    — no request body can put words in the review's mouth. The notes gate lives at ladder
+    rule 6 (`deploy/router.py`), which reads the MERGED answers this schema cannot see."""
 
     credentials_secrets: bool
     health_data: bool
@@ -68,20 +52,14 @@ class DataClassificationAnswers(CamelModel):
 
 
 class DeployRequest(CamelModel):
-    """`saveFirst` is the citizen's explicit "save and deploy".
-
-    Default False, and that is the safe default: a deploy ships the last SAVED version, so
-    deploying over unsaved work without being asked publishes something they never chose and
-    gives them no way to notice.
-
-    `answers` is REQUIRED, which is what makes the questionnaire a gate rather than a
-    prompt: there is no shape of this request that deploys without a declaration, so no
-    caller can reach the pipeline by simply not asking for the modal. It is re-answered at
-    every deploy rather than remembered on the app, because the agent edits the app between
-    deploys — a declaration made three deploys ago is not evidence about what is shipping
-    now. A client that wants one-click redeploys prefills the form from the previous
-    answers; that is a client affordance and still arrives here as a fresh declaration.
-    """
+    """`saveFirst` is the citizen's explicit "save and deploy". Default False, the safe
+    default: a deploy ships the last SAVED version, so deploying over unsaved work without
+    being asked would publish something they never chose, with no way to notice.
+    `answers` is REQUIRED — no shape of this request deploys without a declaration, so no
+    caller reaches the pipeline by skipping the modal. Re-answered every deploy, never
+    remembered on the app, since the agent edits it between deploys and an old declaration
+    is not evidence about what's shipping now; a redeploy client may prefill the form, but
+    it still arrives here as a fresh declaration."""
 
     save_first: bool = False
     answers: DataClassificationAnswers
@@ -104,7 +82,6 @@ class DeployRoutedResponse(CamelModel):
     """The 200 body when the publish gate ROUTES the app to an administrator instead
     of deploying (ladder rules 4-6: no current review, a standing rejection, or a
     weighted Yes on the merged answers).
-
     An OUTCOME, not a failure — this renders as an informational state (the app is
     waiting in the queue, pinned to `commit_sha`) and must never paint the red failure
     badge over it: the platform did exactly what it said it would. Wire shape
@@ -132,21 +109,13 @@ class UnpublishResponse(CamelModel):
 
 class ApprovalState(CamelModel):
     """The app's APPROVAL lifecycle, carried on the deploy status response.
-
-    WHY IT RIDES HERE AND NOT ON A SECOND CALL. The citizen has two publish surfaces —
-    the project-page card and the builder toolbar button — and the toolbar one is
-    mounted with a project id and NO app id, so an app-scoped approval read is not
-    even addressable from there. Both surfaces already poll THIS response through one
-    hook, so hanging the approval state off it is what lets them inherit that hook's
-    generation guard and its visibility/focus refresh instead of growing a second,
-    fetch-once-and-rot lifetime of their own. Two surfaces, one source, one staleness
-    story.
-
-    `submitted_sha`/`submitted_at` describe the submission currently in the QUEUE (the
-    waiting state); `approved_commit_sha` + `approval_route` are what rule 3 of
-    the publish gate consumes — a `runbook` approval authorises the manual go-live
-    runbook and never self-publishing, so a client that renders "you may publish
-    this" must read the lineage as well as the pin."""
+    RIDES HERE, NOT A SECOND CALL: the toolbar publish surface has a project id and no
+    app id, so an app-scoped read isn't addressable there. Both surfaces poll this
+    response through one hook, so hanging approval off it means inheriting that hook's
+    staleness/refresh handling, not growing a second, fetch-once-and-rot lifetime.
+    `submitted_sha`/`submitted_at` describe what's in the QUEUE; `approved_commit_sha` +
+    `approval_route` are what ladder rule 3 consumes — a `runbook` approval never
+    self-publishes, so a client rendering "you may publish" must read the lineage too."""
 
     status: AppStatus
     # NULL is a real state, not a gap: a never-approved app has no pin, and a
@@ -179,18 +148,14 @@ class ApprovalState(CamelModel):
 
 
 class PublishState(StrEnum):
-    """THE single publish state the status chip renders — thirteen values,
-    authored here and nowhere else, so no client recombines `status` + `unpublished_at`
-    + `failure_code` + the approval route + the pin to guess at a state the server
-    already knows. An **API** StrEnum like `PreviewLifeState`
-    (`build_sessions/schemas.py`): nothing persists it, and the wire value equals the
-    member's own string. The chip's narrowing throws on a value it does not recognise,
-    so this list is the one place a thirteenth (or fourteenth) member gets added.
-
-    UNKNOWN IS NEVER SPELLED "UP TO DATE" — `LIVE_DRIFT_UNKNOWN` exists for exactly the
-    case where a storage HEAD could not answer or a bundle predates the metadata stamp,
-    the same tri-state discipline `SaveState.dirty` already uses, where `null` is never
-    read as clean (L12)."""
+    """THE single publish state the status chip renders — thirteen values, authored here
+    and nowhere else, so no client recombines `status` + `unpublished_at` + `failure_code`
+    + the approval route + the pin to guess at a state the server already knows. An
+    **API** StrEnum, like `PreviewLifeState`: nothing persists it, the wire value equals
+    the member's own string, and the chip's narrowing throws on anything it doesn't
+    recognise — so this is the one place a new member gets added.
+    UNKNOWN IS NEVER "UP TO DATE" — `LIVE_DRIFT_UNKNOWN` covers a storage HEAD that could
+    not answer, the same tri-state discipline `SaveState.dirty` uses (`null` != clean, L12)."""
 
     # No app row for the project at all — the only member with no approval block.
     NOTHING_BUILT = "nothing_built"
@@ -237,26 +202,14 @@ _ROUTED_FAILURE_CODES: frozenset[str] = frozenset({FAIL_ROUTED_FOR_REVIEW})
 def compute_publish_state(
     app: AppRegistry, deployment: Deployment | None, saved_head: str | None
 ) -> PublishState:
-    """THE pure mapping: three plain values in, one
-    `PublishState` out — no I/O, no storage handle, so it cannot acquire a hidden input
-    later. The single object-store metadata HEAD this depends on is read by the CALLER
-    (`latest_deployment`, exactly where the two shipped readers — the deploy router's
-    `_shipping_head` and `classification/router.py`'s `_saved_version` — already read it),
-    and a storage failure is turned into `saved_head=None` there — this
-    function never learns why the value is absent, only that it is.
-
-    ADDS NO POLICY AND REMOVES NONE: the seven-rule publish ladder (`deploy_project`)
-    stands exactly as it is. This only PRESENTS facts the ladder and the pipeline
-    already wrote — `app`'s lifecycle columns and `deployment`'s terminal state — as one
-    of the thirteen `PublishState` values.
-
-    ORDER IS THE POLICY HERE. `DISABLED` and `PENDING` win outright, "whatever its
-    deployment row says" — an administrator's lockout or a citizen's pending
-    submission is the most current, most actionable fact about the app, and must not be
-    masked by an OLDER deployment row still sitting in the append-only `deployments`
-    table (a routed-then-withdrawn app, or one disabled while still technically live).
-    Only once those are ruled out does a deployment row get to describe what is
-    actually running."""
+    """THE pure mapping: three plain values in, one `PublishState` out — no I/O, so it
+    can't acquire a hidden input later; the one metadata HEAD it depends on is read by the
+    CALLER, which turns a storage failure into `saved_head=None` before this ever sees it.
+    ADDS NO POLICY: the seven-rule publish ladder stands as-is, this only presents facts
+    already written as one of the thirteen states.
+    ORDER IS THE POLICY: `DISABLED`/`PENDING` win outright over the deployment row —
+    an admin's lockout or a pending submission is the most current fact, and must not be
+    masked by an OLDER row in the append-only `deployments` table."""
     if app.status is AppStatus.DISABLED:
         return PublishState.SWITCHED_OFF
     if app.status is AppStatus.PENDING:
@@ -321,7 +274,6 @@ class DeploymentResponse(CamelModel):
 
     Empty rather than a 404: "this app has never been deployed" is a normal state a client
     renders as a Deploy button, not an error.
-
     `publish_state` is the one field a client should actually branch on — see
     `PublishState`. Every other field here still rides along for the status chip's own
     rendering (the URL, the timestamps, the raw approval block), but none of them needs to be

@@ -1,24 +1,21 @@
 """The Redis error TAXONOMY, and the single place it becomes an HTTP status.
 
-Two Redis failure modes look alike and are not alike, and collapsing them is an
-anti-pattern this repo has already shipped and been burned by: a uniform "unavailable
-⇒ 503" 503'd every build start on deployments that had deliberately switched the
-dependency off, with the whole suite green because the fixture always bound one.
+WHY THIS EXISTS: two Redis failure modes look alike and are not, and collapsing them is an
+anti-pattern this repo already shipped and was burned by — a uniform "unavailable ⇒ 503"
+503'd every build start on deployments that had deliberately switched Redis off, with the
+whole suite green because the fixture always bound one.
 
-* `RedisNotConfiguredError` is a CERTAIN answer. Redis is genuinely optional outside
-  production (`settings.redis: RedisConfig | None`), and with no Redis there is no
-  build-session subsystem at all — so no lock can be held, and the caller PROCEEDS.
-* `RedisError` is AMBIGUITY. The store exists and failed to answer, so a check over it
-  decided nothing → 503 (fail-first: any error or ambiguity denies).
+* `RedisNotConfiguredError` is a CERTAIN answer: Redis is genuinely optional outside
+  production, and with none there is no build-session subsystem at all, so the caller
+  PROCEEDS.
+* `RedisError` is AMBIGUITY: the store exists and failed to answer, so a check over it
+  decided nothing → 503 (fail-first).
 
-Anything else propagates untouched — this is a taxonomy, never a catch-all.
+Anything else propagates untouched — a taxonomy, never a catch-all.
 
-WHY THIS LIVES IN `services/redis/` and not `services/build_sessions/`: the
-build-sessions package has a real module-level import cycle
-(`build_sessions/__init__ → locks → api.build_sessions.schemas → its router → deps →
-back into the half-initialized package`), which `apps/router.py` works around with a
-lazy import. `services/redis/` is cycle-free, so a helper here is importable from any
-call site without one.
+Lives in `services/redis/`, not `services/build_sessions/`, because that package has a real
+import cycle (`build_sessions/__init__ → locks → ... → back into the half-initialized
+package`); this module is cycle-free and importable from any call site.
 """
 
 from __future__ import annotations
@@ -51,21 +48,11 @@ BUILD_COORDINATION_UNAVAILABLE_MSG: Final = (
 def build_coordination_or_503() -> Iterator[None]:
     """Run a build-coordination check under the two-tier taxonomy above.
 
-    Wrap the `get_redis()` call TOGETHER with the commands that follow it, so both tiers
-    are read at one seam::
-
-        with build_coordination_or_503():
-            redis = get_redis()
-            if await lock_is_held(redis, user_id):
-                raise AppApiError(status.HTTP_409_CONFLICT, "...")
-
-    Note the flow-control shape: an unconfigured Redis SKIPS THE REST OF THE BLOCK and
-    resumes after it — the caller proceeds as if the check had passed, because it has
-    (there is nothing to hold a lock). Put nothing in the block that must run regardless.
-
-    Deliberately a plain `contextmanager` rather than an async one: `with` composes with
-    an `await`-bearing body just fine, and a sync generator is the smaller surface.
-    """
+    Wrap `get_redis()` and the commands that follow it inside the block — both tiers are
+    read at one seam. An unconfigured Redis SKIPS THE REST OF THE BLOCK and resumes after
+    it, as if the check passed (nothing to hold a lock); put nothing in the block that must
+    run regardless. Deliberately a plain `contextmanager`: `with` composes fine with an
+    `await`-bearing body, and a sync generator is the smaller surface."""
     try:
         yield
     except RedisNotConfiguredError:
@@ -80,23 +67,11 @@ def build_coordination_or_503() -> Iterator[None]:
 
 def coordination_is_gone() -> AppApiError:
     """The 503 to raise on the line AFTER a `build_coordination_or_503()` block, for routes
-    where Redis IS the operation rather than a check on it.
+    where Redis IS the operation, not a check on it.
 
-    Pairs with the skip-the-body flow above: `RedisNotConfiguredError` resumes after the
-    block, so reaching that line means the body never ran. A route that merely ASKS Redis a
-    question (submit: "is a build live?") should treat that as a pass and proceed. A route
-    that cannot do its job without Redis at all — take a lock, register a session,
-    enumerate the registry — has nothing to return, and falling off the end instead yields
-    an implicit `None` against a non-optional response model and a 500 from response
-    validation. So those routes end with::
-
-        with build_coordination_or_503():
-            ...
-            return SomeResponse(...)
-        raise coordination_is_gone()
-
-    Lives beside the seam so the two are found together: the trailing raise is invisible in
-    the `with` statement's own signature, and the one route that shipped without it
-    (`admin.reconcile_sandboxes`) returned a 500 where its own `responses=` promised a 503.
-    """
+    Pairs with the skip-the-body flow above: `RedisNotConfiguredError` resumes past the
+    block, so reaching this line means the body never ran. A route only ASKING Redis a
+    question should treat that as a pass; one that cannot work without Redis has nothing
+    to return, and falling off the end yields an implicit `None` — a 500 from response
+    validation, as `admin.reconcile_sandboxes` once shipped without this raise."""
     return AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, BUILD_COORDINATION_UNAVAILABLE_MSG)

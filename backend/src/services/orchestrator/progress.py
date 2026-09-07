@@ -1,29 +1,14 @@
 """The single `seq` source + the only path to `on_progress`.
 
 One `ProgressEmitter` per run owns one counter behind one `_emit` coroutine: every envelope's
-`seq` is assigned there and nowhere else, so the stream is strictly `+1` and gap-free. Nothing
-calls `on_progress` directly. Typed helpers construct the five progress members BRAIN may emit
-(step, error, preview_ready, escalation, quota_exceeded) plus the `preview_reconnecting` signal;
-`error` carries a `BuildError` already de-noised + redacted by `errors.declutter`.
+`seq` is assigned there and nowhere else, so the stream is strictly `+1` and gap-free. Typed
+helpers construct the five progress members BRAIN may emit plus `preview_reconnecting`; nothing
+calls `on_progress` directly. Deliberately NO `ended` helper: the terminal frame is the build-
+session manager's, continuing this run's `seq` at `last_seq + 1`, so nothing here can race it.
 
-There is deliberately NO `ended` helper: the terminal frame is the build-session manager's, emitted
-from `_do_finalize` AFTER its snapshot and continuing this run's `seq` at `last_seq + 1` (handed
-over on `BuildResult.last_seq`), so the chain stays gap-free across the handoff. With no method to
-call here, nothing in this package can race that frame or ship a `snapshot_committed` that predates
-its snapshot: the value on the wire is always the manager's, never this engine's.
-
-The sink is contractually non-throwing (an unbounded `asyncio.Queue.put`); a raising sink is
-swallowed-and-logged so a lost frame never breaks the loop.
-
-CONCURRENT EMITTERS ARE SEQ-SAFE. The build loop is no longer the ONLY emitter: the early
-readiness watcher (`harness._watch_preview`) is a second coroutine that emits `preview_ready` /
-`preview_reconnecting` on the SAME emitter while the loop runs. This stays gap-free because `_emit`
-assigns `seq` and reaches the sink with NO `await` between the assignment and the sink call, and
-the manager sink buffers + bumps its `last_seq` synchronously before its own first await — so
-two coroutines interleave only at `await` boundaries that fall AFTER each `seq` is already fixed.
-The watcher is torn down (cancelled + awaited) before the terminal funnel reads `last_seq`, so no
-concurrent emit can land after the verdict's `seq` baton is captured.
-"""
+CONCURRENT EMITTERS ARE SEQ-SAFE: the readiness watcher emits while the build loop runs, but
+`_emit` assigns `seq` with no `await` before the sink, so interleaving only happens after each
+`seq` is fixed; the watcher is torn down before the terminal funnel reads `last_seq`."""
 
 from __future__ import annotations
 

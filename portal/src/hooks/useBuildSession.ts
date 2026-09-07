@@ -1,45 +1,27 @@
 /**
- * The single owner of a build session's lifecycle: it RE-ATTACHES to a session, stops or
- * force-ends it, subscribes to its SSE feed and derives the `BuildSessionStatus`. Every cockpit
- * surface (LivePreview, the conversation surface's banners) reads from here.
+ * Owns a build session's lifecycle: RE-ATTACHES to a session, stops or force-ends it,
+ * subscribes to its SSE feed, and derives `BuildSessionStatus`. Every cockpit surface
+ * (LivePreview, the conversation surface's banners) reads from here.
  *
- * IT NO LONGER STARTS ONE, AND IT NO LONGER RELAUNCHES ONE. `start()` went with the client wrapper
- * it called: a composer send is a TURN, and the build lives inside the turn's own transaction.
- * `relaunch()` went because its only caller was wired to `LivePreview`'s `onRelaunch`, a prop the
- * pane accepts and never reads — the live restore path is `relaunchPreview` called directly by
- * `StartAppControl` / `RailComposer`. Both took the `blocked` state with them: it had two producers
- * (each function's own 409) and no reachable one, so the banner it fed and that banner's force-end
- * button are gone too. `reattach` is the surviving entry point.
+ * It no longer STARTS or RELAUNCHES a session — a composer send is a TURN and the build
+ * lives inside the turn's transaction; the live restore path is `relaunchPreview`, called
+ * directly by `StartAppControl`/`RailComposer`. `blocked` went with them (each function's
+ * own 409, now unreachable here); `reattach` is the surviving entry point.
  *
- * NOTHING IN THE BROWSER EXTENDS A SANDBOX'S DEADLINE. No keep-alive timer, no heartbeat, no lock
- * renewal — the client functions and the routes behind them are both gone — so an open tab cannot
- * hold a container up, and neither can tab visibility, a framed preview or an open feed. What does:
- * the server renews the lock and heartbeat itself on every non-terminal progress envelope, so a
- * build in flight renews as fast as it produces frames under a wall-clock lease a sweep in another
- * process can read; and save / stop / relaunch / deploy extend as a side effect of the request they
- * already make. A builder who reads for half an hour without acting does lose the container and
- * gets it back on their next prompt behind a labelled wait — a bounded, deliberate cost.
+ * WHY THIS EXISTS: no client keep-alive extends a sandbox's deadline — no timer, heartbeat,
+ * or lock renewal reaches from here into the container. The server renews the lock on every
+ * non-terminal progress envelope, so a build in flight renews as fast as it produces frames;
+ * save/stop/relaunch/deploy extend the lease as a side effect of the request they already
+ * make. Reading without acting for the full lease window loses the container — a bounded,
+ * deliberate cost recovered on the next prompt behind a labelled wait.
  *
- * KEY BEHAVIOURS:
- *
- *  - **Status derivation** from the envelope stream: the first non-terminal envelope moves
- *    `provisioning → building`, `preview_ready` moves it to `ready`, and which terminal an
- *    `ended` settles on is read off `ended.status`, never off `reason`.
- *  - **Missed `preview_ready`**: `reattach` seeds `previewUrl` from the status response, so a
- *    `preview_ready` that fired BEFORE the client connected still frames the app — readiness
- *    comes from authoritative status, not solely the live envelope.
- *  - **Force-end override**: the terminal transition comes from `ForceEndResponse.status`,
- *    overriding the envelope-derived status.
- *  - **There is no `reclaimed` state.** Nothing on the client can tell that a container was taken
- *    back; the frozen-tab case is covered by the preview poll's `asleep` state in `LivePreview`.
- *  - **Feed-disconnected**: a bounded `EventSource` reconnect exhaustion (or an admission
- *    failure) raises a distinct `feedDisconnected` flag with a manual `reconnect()` — heartbeat /
- *    renew may still be succeeding, so nothing else signals the dead feed.
- *
- * `buildLock` is NOT consulted here — its `blockedBy` pre-check lives at the composer; the
- * authoritative barrier is the server's 409. This hook no longer surfaces that 409 at
- * all: `blocked` went with the `start` client above, so the two callers that can still provoke
- * one — `relaunchPreview` and the turn stream — each render it in their own surface's words.
+ * Status derives from the envelope stream (`provisioning → building → ready`; terminal read
+ * off `ended.status`, never `reason` — though force-end overrides with `ForceEndResponse.status`).
+ * `reattach` seeds `previewUrl` from the status response, so a `preview_ready` fired before
+ * connecting still frames the app. There is no `reclaimed` state — the frozen-tab case is
+ * `LivePreview`'s own `asleep` poll state — and `feedDisconnected` is a distinct, bounded
+ * reconnect-exhaustion flag with manual `reconnect()`. `buildLock` is not consulted here: the
+ * composer pre-checks it; the 409 barrier is server-side.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../utils/apiError'

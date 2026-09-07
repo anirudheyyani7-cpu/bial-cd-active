@@ -1,95 +1,27 @@
 """Evaluate the classification review's budgets and its misses.
 
-WHAT THIS MEASURES. The review ships with PROVISIONAL ceilings — the wall-clock ceiling,
-the request budget and the 8,000-token final-step output cap in
-`src/services/classification/constants.py` — sized from nine ad-hoc runs that measured
-cost and said nothing about accuracy. This script runs the real scan-first review loop
-over a chosen corpus of saved app bundles and reports, per run: wall-clock, model
-requests, tool calls, the four raw token classes, THE FINAL STEP'S OUTPUT-TOKEN COUNT
-SEPARATELY (the 8,000 cap is later re-set from that distribution), the six verdicts,
-catch/miss per seeded finding, and the Foundry deployment the run used — ceilings belong
-to the deployment they were measured on and do not transfer.
+WHY THIS EXISTS: the review ships with PROVISIONAL ceilings (wall-clock, request budget, the
+8,000-token final-step cap) sized from ad-hoc runs that measured cost, not accuracy. This runs
+the real review loop over saved bundles and reports wall-clock, requests, tool calls, token
+classes — the final step's output count SEPARATELY, since the cap is later re-set from it — the
+six verdicts, catch/miss per seeded finding, and the deployment used (ceilings don't transfer).
+It also scores the model-free credential scan: Tier A/B precision-recall SEPARATELY, gated on
+Tier A reaching 100% precision — a Tier A false positive becomes a verdict nobody reviewed.
 
-It also measures the model-free credential scan against a labeled corpus: Tier A and
-Tier B precision/recall SEPARATELY (they carry different weight — Tier A stands in when
-the model is down; Tier B is only a lead), and it prints the Tier A precision gate:
-Tier A must reach 100% precision on the corpus, because a Tier A false positive becomes
-a verdict nobody reviewed. Narrowing Tier A if the gate fails is a later design
-decision, not this script's.
+Two named figures: the FALSE-POSITIVE ROUTING RATE (known-clean bundles that would route — any
+weighted-Yes or run failure, counting a failure as a route, deliberately cautious) and the MISS
+RATE (seeded findings a completed review did not answer Yes on).
 
-Two named summary figures:
-  * the FALSE-POSITIVE ROUTING RATE — known-clean bundles that would route: any
-    weighted-Yes verdict OR any run failure (counting a run failure as a route is the
-    deliberately cautious choice); and
-  * the MISS RATE — seeded findings a completed review did not answer Yes on.
+Drives `scan_snapshot` + `agent.run_review` directly, NOT `ClassificationReviewService` — the
+service's own ceilings would censor the very distributions this eval measures, and it needs no
+database or running control plane. The one service rule reused is the evidence-downgrade rule (a
+Yes with no real cited location becomes unanswered), imported from the service so catch/miss is
+judged on what production would actually store, not raw model output production would discard.
 
-WHY THE AGENT LAYER, NOT THE SERVICE. The script drives `scan_snapshot` +
-`agent.run_review` directly over extracted trees, deliberately NOT
-`ClassificationReviewService`:
-  * the service's provisional ceilings would CENSOR the very distributions this eval
-    exists to measure — a ceiling cannot be set from data it already clipped, so runs
-    here go out under the script's own generous, flag-settable bounds;
-  * runs need no database rows and no running control-plane — local bundles evaluate
-    anywhere, and app-id pulls need only the backend env for object storage;
-  * every report field is observable at this layer (a metering wrapper around the model
-    records requests, tool calls and per-step usage; the structured output carries the
-    verdicts).
-What is NOT replicated from the service: the guided truncation retry, the Tier A
-failure floor, and row storage — those are service behaviour pinned by its own tests.
-Here a truncation or model error is a FAILURE ROW (never an abort of the sweep), which
-the routing rate counts exactly as the publish ladder would route it. The one service
-rule that IS applied is the evidence-downgrade rule — a Yes whose every cited location does
-not exist becomes unanswered — imported from the service itself so the eval judges
-catch/miss on the verdicts production would actually store, not on raw model output
-that production would discard.
-
-ENVIRONMENT. Run from `backend/` with the backend env loaded (`ENV_FILE=.env` or
-exported variables) — the platform modules the sweep imports resolve the full Settings,
-so every sweep needs it (only `--help` and argument errors are env-free). Model runs
-additionally need the `FOUNDRY__*` block; `--scan-only` does not touch the model and
-runs without Foundry access.
-
-INVOCATION (both forms work):
-    uv run python scripts/eval_classification_review.py ...
-    uv run python -m scripts.eval_classification_review ...
-
-    # The real measurement run — object-storage bundles, live Foundry:
-    ENV_FILE=.env uv run python scripts/eval_classification_review.py \\
-        --app-id 01890a5d-... --app-id 01890a5e-... \\
-        --seeded ~/bial-eval/seeded.json \\
-        --known-clean ~/bial-eval/known-clean.json \\
-        --scan-labels ~/bial-eval/scan-labels.json \\
-        --out ~/bial-eval/report.jsonl
-
-    # A local sweep over downloaded / fixture bundles:
-    ENV_FILE=.env uv run python scripts/eval_classification_review.py \\
-        --bundle-dir ~/bial-eval/bundles --out ~/bial-eval/report.jsonl
-
-    # Scan-only corpus measurement (no model, no Foundry, no spend — the 20-30
-    # bundle Tier A/B precision-recall sweep):
-    ENV_FILE=.env uv run python scripts/eval_classification_review.py \\
-        --bundle-dir ~/bial-eval/bundles --scan-labels labels.json \\
-        --scan-only --out scan-report.jsonl
-
-MANIFESTS (all optional; every id they name must match a discovered bundle — a typo'd
-id would silently measure nothing, so it errors instead). A bundle's id is its file
-stem for `--bundle`/`--bundle-dir` sources and the app UUID string for `--app-id`.
-  * `--seeded` — which bundle is seeded with which finding category:
-        {"seeded-health-app": ["health_data"], "seeded-creds": ["credentials_secrets"]}
-  * `--known-clean` — bundles known to hold nothing weighted:
-        ["visitor-log", "meeting-rooms"]
-  * `--scan-labels` — the labeled scan corpus: per bundle, the paths holding GENUINE
-    hardcoded secrets and the paths holding credential-SHAPED non-secrets (login
-    forms — the false-positive population that matters):
-        {"crm-app": {"secrets": ["app/lib/db.ts"],
-                     "credential_shaped": ["app/login/page.tsx"]}}
-
-OUTPUT. `--out` gets JSON Lines: one `row_type: "run"` object per bundle (a bundle that
-fails to extract is a failure ROW, never an abort of the sweep) and one final
-`row_type: "summary"` object carrying the named figures. The human summary prints to
-stdout. THE REPORT IS AN OPERATOR ARTIFACT: rows carry file paths from citizen-built
-apps (never values — the scan's hit shape structurally cannot carry one), so like the
-exception register's workbooks it lives in a working directory OUTSIDE the repo tree.
+Run from `backend/` with the backend env loaded (only `--help` and argument errors are env-free);
+model runs additionally need `FOUNDRY__*`, which `--scan-only` does not. Each manifest flag's
+`--help` carries its JSON shape. OUTPUT is an operator artifact: rows carry citizen file paths
+(never values), so — like the exception register's workbooks — it lives OUTSIDE the repo tree.
 """
 
 # `--help` prints the hand-written `description=` in `_build_parser`, not this docstring.
@@ -549,13 +481,11 @@ def _apply_evidence_rule(
 class EvalRow(TypedDict):
     """One `row_type: "run"` report row — the wire shape, named once.
 
-    A TypedDict rather than a dataclass on purpose: this IS the on-disk JSONL record, so a
-    structure that has to be converted before writing would add a second shape to keep in
-    step with the first. What was missing was never the object, it was the CONTRACT — an
-    18-parameter builder returning `dict[str, Any]` read back by string key in three
-    summarisers, where a typo is silent at every gate. Every key is always present (a
-    consumer greps a field name and gets every run, `None` where it could not apply), so
-    `total=True` is the honest declaration."""
+    A TypedDict on purpose, not a dataclass: this IS the on-disk JSONL record, so converting
+    before write would add a second shape to keep in step. The real gap was never the object,
+    it was the CONTRACT — an 18-parameter builder returning `dict[str, Any]`, read back by
+    string key in three summarisers, where a typo is silent at every gate. Every key is always
+    present (`None` where it could not apply), so `total=True` is the honest declaration."""
 
     row_type: str
     bundle_id: str

@@ -1,20 +1,15 @@
 """The concrete `SandboxClient` — the control-plane wrapper over the container's supervisor.
 
 Two halves, behind the frozen ABC in `base.py`:
+* The `/_sup/*` supervisor HTTP layer (`exec`/`files`/`dev_start`/`dev_status`/`dev_logs`/
+  `wait_ready`) — calls `https://{handle.fqdn}/_sup/<endpoint>` with a bearer token; Caddy
+  strips the prefix. A non-zero `ExecResult.exit` is a normal return, never an exception.
+* The ACA lifecycle (`provision_new`/`attach_existing`/`restore_from_snapshot`/`teardown`) —
+  container create/delete via `aca.py`, the registry hash, the in-process `token_ref` map.
 
-* **The `/_sup/*` supervisor HTTP layer** (`exec` / `files` / `dev_start` / `dev_status` /
-  `dev_logs` / `wait_ready`). Each call goes to `https://{handle.fqdn}/_sup/<endpoint>` with
-  `Authorization: Bearer {handle.token}`; Caddy strips `/_sup`, so the supervisor sees its own
-  paths. A non-zero `ExecResult.exit` is a NORMAL return, never an exception.
-* **The ACA lifecycle** (`provision_new` / `attach_existing` / `restore_from_snapshot` /
-  `teardown`) — the container create/delete (via `aca.py`), the registry hash, the in-process
-  `token_ref` map, and the restore pull.
-
-Accessor mirrors `services/redis/client.py`: a module singleton, a lazy `settings` import
-(avoids the `src.config` cycle) and an isolated `aclose`. `set_sandbox_for_tests` lets the
-reaper's client — which reads the singleton rather than a `Depends` — be injected in tests.
-NEVER log a token or a `token_ref`.
-"""
+Accessor mirrors `services/redis/client.py`: module singleton, lazy `settings` import (avoids
+the `src.config` cycle), isolated `aclose`. `set_sandbox_for_tests` injects it for the reaper,
+which reads the singleton rather than a `Depends`. NEVER log a token or a `token_ref`."""
 
 from __future__ import annotations
 
@@ -252,13 +247,12 @@ def _public_app_url(app_name: str) -> str:
 def _apps_hostname() -> str:
     """The public hostname every generated app is served from, e.g. `citizenapps.bialairport.com`.
 
-    Read lazily, for the same import-cycle reason `get_sandbox` gives at the bottom of this file:
-    `src.config` reaches back into the service packages, so a module-level import here is a cycle.
+    Read lazily — same import-cycle reason as `get_sandbox` below (`src.config` reaches back
+    into the service packages, so a module-level import here would cycle).
 
-    A HOST, never an origin. It becomes Next's `serverActions.allowedOrigins`, which compares the
-    browser's `Origin` against the forwarded host — and a value carrying a scheme fails CLOSED and
-    SILENTLY, aborting every form post in the app as a CSRF attempt with no other symptom.
-    """
+    A HOST, never an origin: it becomes Next's `serverActions.allowedOrigins`, compared against
+    the browser's `Origin` — a value carrying a scheme fails CLOSED and SILENTLY, aborting
+    every form post as a CSRF attempt with no other symptom."""
     from src.config import settings  # lazy: avoid an import cycle via src.config
 
     return settings.apps_hostname
@@ -300,21 +294,13 @@ class AcaSandboxClient(SandboxClient):
         return self._aca_lazy
 
     async def list_sandbox_fleet(self) -> list[FleetMember]:
-        """Every sandbox container ARM knows about, carrying the identity that lets each one be
-        judged with the coordination store gone — the fleet view the Redis-driven reaper cannot
-        produce (`build_sessions/inventory.py` explains why it is needed).
+        """Every sandbox container ARM knows about — the fleet view the Redis-driven reaper cannot
+        produce when the coordination store is gone (see `build_sessions/inventory.py`).
 
-        Deliberately NOT on the `SandboxClient` ABC, which is a frozen contract: this is an
-        operator-facing capability rather than part of the per-sandbox lifecycle every caller
-        depends on, so it satisfies `inventory.FleetLister` by shape instead of by inheritance.
-
-        `AcaError` is translated to `SandboxError` here because this is the PORT: no vendor type
-        crosses it, and a caller that had to know about `azure.core` to catch a failure would
-        be importing the SDK to talk to the abstraction that exists to hide it. The predecessor
-        `list_sandbox_app_names` omitted this translation, so an ARM throttle during
-        `reconcile-sandboxes` escaped the route's `except SandboxError` and surfaced as a 500
-        instead of the documented retryable 503 — a bug this collapse removes rather than
-        inherits."""
+        NOT on the frozen `SandboxClient` ABC (operator-facing, not per-sandbox lifecycle) —
+        satisfies `inventory.FleetLister` by shape. `AcaError` -> `SandboxError` at this PORT:
+        the predecessor `list_sandbox_app_names` skipped that translation, so an ARM throttle
+        surfaced as a 500 instead of the documented retryable 503."""
         try:
             return await self._aca.list_sandbox_fleet()
         except AcaError as exc:
@@ -497,17 +483,12 @@ class AcaSandboxClient(SandboxClient):
     async def compile_state(self, handle: SandboxHandle) -> CompileReport:
         """Ask the supervisor what the dev server is compiling — `GET /dev/compile`.
 
-        NEVER RAISES, and that is the contract rather than a convenience. Every failure this
-        call can have — a supervisor image predating the endpoint (404), a transport error, a
-        malformed body — means the same thing: we do not know. Returning `UNKNOWN` is how that
-        reaches the caller, because the alternative (an exception) would have to be handled at
-        every call site, and the one handler that forgot would take a turn down over a
-        diagnostic signal. `reason` keeps the distinction observable.
+        NEVER RAISES: every failure (pre-endpoint image 404, transport error, malformed body)
+        means the same thing — we do not know — and returns `UNKNOWN` rather than an exception,
+        so no call site can forget to handle it. `reason` keeps the distinction observable.
 
-        THE 404 ARM IS LOAD-BEARING. Containers provisioned from an image built before this
-        endpoint existed answer 404 forever, and `/health` returns only `{"ok": true}`, so the
-        control plane cannot tell by asking. Those containers must read `UNKNOWN` — which the
-        portal's cover holds on — until they are next provisioned or restored."""
+        THE 404 ARM IS LOAD-BEARING: images built before this endpoint existed answer 404
+        forever and `/health` gives no way to tell, so those must read `UNKNOWN` until restored."""
         try:
             resp = await self._get(handle, "dev/compile", timeout=_COMPILE_TIMEOUT_SECONDS)
         except SandboxError:
@@ -541,26 +522,12 @@ class AcaSandboxClient(SandboxClient):
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         """The app's public root: status plus a bounded head of the body.
 
-        The SERVING half of the health verdict, and the reason it goes in the front door rather
-        than through `/exec` + `curl` is the same reason its sibling below does: one Caddy on one
-        FQDN fronts both, so the supervisor hop is the identical round trip plus a process spawn —
-        and going in the front door asks about exactly what the citizen's iframe will load.
-
-        SAME HOSTILE-RESPONSE RULES AS `someone_has_to_go_first`, with one deliberate difference.
-        No redirect following (a 3xx already proves the route compiled and answered, and
-        following one would let generated code choose the control plane's next URL). A total
-        `asyncio.timeout` rather than httpx's per-operation one, so a slow trickle cannot reset
-        the budget forever.
-        The difference is the body: this reads a bounded PREFIX of it, because the verdict stores
-        what the app was actually serving as raw evidence beside the derived answer. The bound is
-        `SERVED_HEAD_MAX_CHARS` and the loop breaks on it — the app does not get to choose how much
-        of the control plane's memory its response occupies.
-
-        NEVER RAISES, and unlike its sibling that is load-bearing here rather than merely polite:
-        `None` is a value the verdict reads, and it means `INDETERMINATE`. An app that is in fact
-        serving must not be called broken because our own request timed out. The blind
-        `except` is the requirement; `CancelledError` is a `BaseException`, so a stopped turn still
-        stops."""
+        The SERVING half of the health verdict, fetched through the front door so it sees what the
+        iframe would. It reads a bounded PREFIX of the body (`SERVED_HEAD_MAX_CHARS`): the verdict
+        keeps what the app was serving as raw evidence, and the app does not choose how much memory
+        that costs. That text is SCRUBBED first — the sandbox env holds secrets a rendered page
+        could leak into it. NEVER RAISES, and `None` is load-bearing: it means INDETERMINATE, so an
+        app that is serving is never called broken because our own request timed out."""
         try:
             async with (
                 asyncio.timeout(_SERVING_TIMEOUT_SECONDS),
@@ -610,51 +577,25 @@ class AcaSandboxClient(SandboxClient):
             return None
 
     async def someone_has_to_go_first(self, handle: SandboxHandle) -> int | None:
-        """Pay the first Turbopack route compile so the citizen's browser does not.
+        """Pay the first Turbopack route compile so the citizen's browser does not — at the app
+        root over the public ingress the browser uses, not `/exec`+curl.
 
-        Straight at the app root over the SAME public ingress the browser uses — deliberately
-        NOT through the supervisor's `/exec` + `curl`. One Caddy on one FQDN fronts both
-        (`/_sup/*` → supervisor, `/*` → next dev), so `/exec` is not a cheaper local hop: it is
-        the identical round trip plus a process spawn, and it warms a path no user ever takes.
-        Going in the front door means this request compiles exactly what the citizen will load.
-
-        NON-LOAD-BEARING BY CONSTRUCTION. It gates nothing and raises nothing, and it
-        carries its own timeout: the frame this precedes is worth more than the compile it pays
-        for, so a warm request that hangs must cost the preview NOTHING. The status code comes
-        back for callers that want the signal — a 500 here is a real compile error — but no
-        caller may make the frame conditional on it.
-
-        A non-2xx is LOGGED here rather than left to the callers, because every one of them
-        currently discards the return value. Only the exception path was observable, so a root
-        route answering 500 on every build looked identical in telemetry to a healthy one — and
-        `selfheal.verify` decides green/red from five hard-coded text markers, so a 500 that
-        prints none of them ships green. This does not change any outcome; it makes the outcome
-        visible.
-
-        TREAT THE RESPONSE AS HOSTILE. It is produced by unreviewed, agent-authored code
-        running in the citizen's sandbox, and this is the one call in this client that leaves
-        the supervisor's bearer-guarded surface for the app's own. Two consequences are baked
-        into the shape below and must not be relaxed:
-
-        - NO REDIRECT FOLLOWING. A 3xx already proves the route compiled, which is the whole
-          job here. Following one would let generated code choose the next URL and turn this
-          into a blind SSRF pivot from the control plane's network position — on every preview
-          frame, every relaunch and every self-heal iteration.
-        - HEADERS ONLY, NEVER THE BODY. `stream` returns as soon as the status line lands and
-          the context manager closes without reading further, so a hostile app cannot make the
-          control plane buffer an unbounded body. (The supervisor's own probe stops at headers
-          for the same reason.) `asyncio.timeout` is what makes the budget a TOTAL ceiling —
-          httpx's own timeout is per-network-operation, so a slow trickle resets it forever.
-
-        The blind `except` is the requirement, not an oversight: any exception escaping here
-        would hold a preview hostage to an optimization, and narrowing it has bitten this file
-        before (see `_make_it_a_repo` — a narrow catch let a `KeyError` through and killed a
-        provision that had already succeeded). `CancelledError` is a `BaseException`, so a
-        cancelled turn still cancels; only the timeout's own expiry is swallowed here.
-        """
+        NON-LOAD-BEARING BY CONSTRUCTION: gates nothing, raises nothing, carries its own timeout,
+        so a hang costs the preview NOTHING. The status is returned (a 500 is a real compile error)
+        but no caller may condition the frame on it. Logged here, since every caller discards the
+        return value and `selfheal.verify`'s text markers would otherwise ship a broken root green.
+        Treat the response as HOSTILE — see the request below."""
         try:
             async with (
                 asyncio.timeout(_WARM_TIMEOUT_SECONDS),
+                # TREAT THE RESPONSE AS HOSTILE: unreviewed, agent-authored sandbox code, and
+                # the one call here that leaves the supervisor's bearer-guarded surface for the
+                # app's own. NO REDIRECT FOLLOWING — a 3xx already proves the compile, and
+                # following one would let generated code choose the next URL, a blind SSRF pivot
+                # from the control plane. HEADERS ONLY — `stream` closes without reading the
+                # body, so a hostile app cannot force an unbounded buffer, and the
+                # `asyncio.timeout` above makes the budget a TOTAL ceiling, not per-op.
+                #
                 # The app's own pages, for the same reason as `what_is_it_serving`: a warm
                 # request against a base-path app's root warms the 404 route and leaves the
                 # first real visitor waiting on the cold compile this call exists to absorb.
@@ -670,6 +611,9 @@ class AcaSandboxClient(SandboxClient):
                     )
                 return resp.status_code
         except Exception:  # noqa: BLE001 - R6: nothing from here may ever reach the caller
+            # The blind `except` is required, not an oversight — narrowing it has bitten this
+            # file before (see `_make_it_a_repo`). `CancelledError` is a `BaseException`, so a
+            # cancelled turn still cancels; only the timeout's own expiry is swallowed here.
             # `exc_info` is not decoration: the whole detection story depends on this request
             # reaching the route, and a silent swallow makes restricted egress or a wedged
             # ingress look identical to a healthy build. Without the reason, the one telemetry
@@ -706,18 +650,12 @@ class AcaSandboxClient(SandboxClient):
     async def _read_registry(self, user_uuid: uuid.UUID) -> dict[str, str] | None:
         """Read the sandbox record, falling back to the legacy key and migrating what it finds.
 
-        A MISSING RECORD IS ACTED ON DESTRUCTIVELY, which is why the fallback belongs in the
-        point read and not only in the scan. Two callers treat this `None` as fact:
-        `attach_existing` turns it into `SandboxGoneError`, whose caller RESTORES — tearing the
-        live container down and rolling the builder back to their last save; and
-        `restore_from_snapshot` skips its defensive teardown of the existing container and
-        provisions over it, orphaning a running container with nothing pointing at it.
-
-        `build_sessions.locks.read_registry` is the other point read and must behave identically.
-        The two are kept separate on purpose — `services/sandbox/` may not import
-        `services/build_sessions/` — so the thing stopping them from drifting is
-        `tests/services/build_sessions/test_key_migration.py`, not a shared module.
-        """
+        A MISSING RECORD IS ACTED ON DESTRUCTIVELY: `attach_existing` turns `None` into
+        `SandboxGoneError` (restores the last save over the container), and
+        `restore_from_snapshot` provisions over the existing one — so this fallback belongs
+        in the point read, not only the scan. `build_sessions.locks.read_registry` mirrors it
+        and must behave identically; kept separate (`services/sandbox/` may not import
+        `services/build_sessions/`), guarded against drift by `test_key_migration.py`."""
         raw = await get_redis().hgetall(registry_key(user_uuid))
         if raw:
             return {str(k): str(v) for k, v in raw.items()}
@@ -777,20 +715,14 @@ class AcaSandboxClient(SandboxClient):
             self._token_refs.pop(ref, None)
 
     async def _recover_token(self, token_ref: str, app_name: str) -> str | None:
-        """Re-read a container's supervisor bearer from its own ACA env and re-bind it to the
-        registry's `token_ref`, or `None` when it cannot be recovered.
+        """Re-read a container's supervisor bearer from its ACA env, re-bound to the registry's
+        `token_ref`, or `None` when it cannot be recovered.
 
-        AN UNRESOLVABLE REF SAYS NOTHING ABOUT THE CONTAINER. `_token_refs` is process memory,
-        so every control-plane restart empties it — and while that emptiness was read as
-        `SandboxGoneError`, the caller heard "gone" and restored, which tears the live container
-        down before pulling the last SAVED bundle. A routine deploy therefore rolled every
-        citizen with an open sandbox back to their last save.
-
-        The token is minted per container and injected into its ACA env at create, so the
-        container app spec is its durable home and this process's map was only ever a cache.
-
-        Never logged, and never returned to a caller that would log it.
-        """
+        AN UNRESOLVABLE REF SAYS NOTHING ABOUT THE CONTAINER: `_token_refs` is process memory, so a
+        restart empties it — and reading that as `SandboxGoneError` used to roll every citizen with
+        an open sandbox back to their last save on a routine deploy. The token is minted per
+        container into its ACA env at create; that env is its durable home and this process's map
+        was only ever a cache. Never logged."""
         try:
             token = await self._aca.get_app_env_value(name=app_name, key=_SUPERVISOR_TOKEN_ENV)
         except (AcaError, AcaTransientError):  # fmt: skip  # ruff py314 strips parens
@@ -808,15 +740,11 @@ class AcaSandboxClient(SandboxClient):
         """Best-effort ACA delete for a self-clean path. Returns True when the container is
         CONFIRMED gone, False when ARM refused.
 
-        The return value is load-bearing, not informational: a caller that reads "I tried" as
-        "it is gone" and then drops the ownership record leaves a running container with nothing
-        pointing at it — unreachable by the product, invisible to the Redis-enumerating sweep,
-        and billing forever.
-
-        "A timeout is not a death certificate": only positive confirmation may authorise a step
-        that assumes the container is gone. ARM's DELETE returns 204 for a resource that does
-        not exist, so a successful call genuinely means absent.
-        """
+        LOAD-BEARING, not informational: a caller that reads "I tried" as "it is gone" and
+        drops the ownership record leaves a container running, unreachable by the product,
+        invisible to the reaper, and billing forever. Only positive confirmation may authorise
+        that step — ARM's DELETE returns 204 for a resource that does not exist, so a successful
+        call genuinely means absent; a timeout is not a death certificate."""
         try:
             await self._aca.delete_app(name=app_name)
         except (AcaError, AcaTransientError):  # fmt: skip  # ruff py314 strips parens

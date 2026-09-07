@@ -2,24 +2,14 @@
 live error envelopes, plus a builder that turns explicit `(code, model,
 description)` tuples into the `responses=` mapping FastAPI expects.
 
-The API has two error envelopes, deliberately NOT unified (a merge would reshape
-existing bodies — a behavior change):
-
-* `ErrorEnvelope` — `{"error": {"message", "code?"}}` — rendered by
-  `app_api_error_handler` for every `AppApiError` (app lifecycle, admin, build
-  sessions) and by the rate-limiter's handler.
-* `DetailBody` — `{"detail": str}` — the bare `HTTPException` raises from the
-  `current_user` (401 / suspension 403) and `requires_superadmin` (403)
-  dependencies, and the global unhandled-exception 500.
-
-`DailyTokenLimitBody` documents claude's daily-token 429, which carries
-`limit`/`used`/`remaining` beyond the plain envelope (`DailyTokenLimitExceededError`)
-— documenting it as a plain `ErrorEnvelope` would understate the real body.
-
-These models exist for the OpenAPI schema only; the actual responses are rendered
-by the exception handlers / hand-built `JSONResponse`s. Keys are single-word, so a
-plain `BaseModel` reproduces the wire shape without the camelCase base.
-"""
+Two error envelopes, deliberately NOT unified (a merge would reshape existing
+bodies — a behavior change): `ErrorEnvelope` (`{"error": {"message","code?"}}`,
+from every `AppApiError` and the rate limiter) and `DetailBody` (`{"detail": str}`,
+from bare-`HTTPException` auth deps and the global 500). `DailyTokenLimitBody`
+documents the daily-token 429's extra `limit`/`used`/`remaining` fields, a plain
+`ErrorEnvelope` would understate. Schema-only: actual responses render via the
+exception handlers or hand-built `JSONResponse`s; single-word keys mean a plain
+`BaseModel` reproduces the wire shape without the camelCase base."""
 
 from __future__ import annotations
 
@@ -127,16 +117,11 @@ def error_responses(
 def raw_body_doc(model: type[BaseModel]) -> dict[str, Any]:
     """The `openapi_extra=` entry documenting a RAW-PARSED request body from its model.
 
-    A route that parses `await request.json()` itself — so that a malformed body renders the
-    data-plane `{"error": {...}}` envelope instead of FastAPI's `422 {"detail": [...]}` — declares
-    no Pydantic body parameter, and FastAPI therefore documents no request body at all. This puts
-    the shape back in the schema WITHOUT re-enabling the 422 path, which is the whole reason the
-    body is parsed by hand.
-
-    Shared rather than copied because it is the same six lines at every such route, and a schema
-    entry that drifts between two of them is a lie in exactly the document people read to learn
-    the contract.
-    """
+    A route that parses `await request.json()` itself — so a malformed body renders the
+    data-plane `{"error": {...}}` envelope instead of FastAPI's `422 {"detail": [...]}` —
+    declares no Pydantic body parameter, so FastAPI documents none either. This puts the shape
+    back in the schema WITHOUT re-enabling the 422 path. Shared rather than copied: a schema
+    entry that drifts between routes is a lie in the document people read for the contract."""
     return {
         "requestBody": {
             "required": True,

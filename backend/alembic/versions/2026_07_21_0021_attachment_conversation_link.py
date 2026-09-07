@@ -4,25 +4,18 @@ Revision ID: 0021_attachment_conv_link
 Revises: 0020_drop_app_registry_name
 Create Date: 2026-07-21
 
-`attachments` had NO link to anything but a client-minted token buried in a message's
-`parts` JSONB, so a file uploaded and never sent was reachable by no delete path and
-consumed the owner's quota forever. This adds a nullable `conversation_id` FK,
-populated at upload time, so an orphan reclaimer has a candidate set and the row has a
-referential backstop.
+WHY THIS EXISTS. `attachments` had no link to anything but a client-minted token buried in a
+message's `parts` JSONB — a file uploaded and never sent had no delete path and consumed the
+owner's quota forever. This adds a nullable `conversation_id` FK, populated at upload time, as
+a referential backstop for an orphan reclaimer.
 
 The FK is `ON DELETE SET NULL`, deliberately NOT the `ON DELETE CASCADE` that
-`conversations.project_id` uses: under CASCADE, deleting a conversation would destroy
-the attachment ROW while its object-store blob survives — manufacturing exactly the
-permanent orphan this migration exists to prevent. Blob-aware cleanup stays with the
-conversation-delete service (`services/conversations/delete.py`); this FK is only a
-row-integrity backstop that NULLs a dangling link.
+`conversations.project_id` uses: CASCADE would destroy the attachment ROW while its object-store
+blob survives — manufacturing the permanent orphan this migration exists to prevent. Blob-aware
+cleanup stays with `services/conversations/delete.py`.
 
-Nullable is required: existing rows have no conversation, and backfilling the link from
-`parts` JSONB is a separate exercise. A NULL link means *legacy*, never *never-sent* —
-the reclaimer's eligibility is decided by the `parts` reference scan, not by NULL.
-
-DESTRUCTIVE + SCHEMA-ONLY ROUND-TRIP: `downgrade` drops the FK, index, and column
-(structure only — it reconstructs no link data). Hand-finalized.
+NULL means *legacy* (existing rows, unbackfilled), never *never-sent* — eligibility is decided by
+the `parts` reference scan. `downgrade` is a schema-only round-trip: it reconstructs no link data.
 """
 
 from __future__ import annotations

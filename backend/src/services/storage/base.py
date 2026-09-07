@@ -57,10 +57,9 @@ class ObjectStorage(abc.ABC):
     a Protocol): nominal subtyping makes F12 on a concrete factory result land on
     the concrete method, and an incomplete backend fails with a runtime `TypeError`.
 
-    Provider-specific features (tagging, versioning, snapshots, block staging,
-    signed UPLOAD URLs, ranged reads) are deliberately not exposed on this
-    interface. Reachable only by downcasting to the concrete backend.
-    """
+    Provider-specific features (tagging, versioning, snapshots, block staging, signed
+    UPLOAD URLs, ranged reads) are deliberately not exposed here — reachable only by
+    downcasting to the concrete backend."""
 
     def __init__(self, *, provider: str) -> None:
         # provider is "azure" — carried so StorageError correlation is filled
@@ -112,14 +111,12 @@ class ObjectStorage(abc.ABC):
 
     async def signed_read_url(self, key: str, *, expires_in: timedelta) -> str:
         """A time-limited read URL (an Azure Blob SAS). CONCRETE so the
-        ≤ MAX_SIGNED_URL_TTL ceiling is one invariant the backend can neither skip
-        nor silently clamp: it is rejected fail-closed here BEFORE the backend runs.
+        ≤ MAX_SIGNED_URL_TTL ceiling is one invariant the backend can neither skip nor
+        silently clamp: it is rejected fail-closed here BEFORE the backend runs.
 
-        SECURITY: the returned `str` is a BEARER credential — it embeds the `sig=`
-        SAS token. Callers MUST treat it like a secret and never log or persist it
-        in plaintext (the type system can't enforce this on a `str`; the contract
-        carries the guarantee).
-        """
+        SECURITY: the returned `str` is a BEARER credential (embeds the `sig=` SAS
+        token) — callers MUST treat it like a secret and never log or persist it in
+        plaintext; the type system can't enforce this on a `str`."""
         validate_sas_ttl(expires_in, provider=self.provider, key=key)
         return await self._signed_read_url_impl(key, expires_in=expires_in)
 

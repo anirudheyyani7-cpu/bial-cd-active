@@ -5,11 +5,10 @@ Revises: 0024_messages_native_reset
 Create Date: 2026-08-06
 
 WHY THIS EXISTS
-A citizen can publish a generated app with one click, no admin approval — but
-`app_registry.deployed_*` is written only by the approval-gated `mark-deployed`
-runbook, so a self-deployed app (which stays `draft`) is never described by it.
-Publish gets its own append-only lineage instead: one row per ATTEMPT, so a
-failed deploy never overwrites the record of what is still serving traffic.
+A citizen can publish with one click, no admin approval — but `app_registry.deployed_*`
+is written only by the approval-gated `mark-deployed` runbook, so a self-deployed app
+(which stays `draft`) is never described by it. Publish gets its own append-only
+lineage instead: one row per ATTEMPT, so a failed deploy never overwrites what is live.
 
 `image_digest` is the load-bearing column: the reconciler may only promote a row
 when ARM reports that digest live, and may never delete a container app it cannot

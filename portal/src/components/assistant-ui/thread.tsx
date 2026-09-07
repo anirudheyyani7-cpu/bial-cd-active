@@ -1,58 +1,51 @@
 /**
  * THE THREAD, hand-ported from the assistant-ui registry's `thread` source to Tailwind v3.
  *
- * It could not be `shadcn add`ed. The registry source is authored for Tailwind v4 and the CLI both
- * fails silently AND rewrites `src/index.css` with v4-only `@custom-variant` declarations and a
- * `tw-shimmer` import. So it was fetched as reference and rewritten here, and
- * `src/__tests__/tailwind-tokens.test.js` is what stops a v4 token creeping back in — every one of
- * them renders as NOTHING on 3.4.17 with no build error and no failing test.
+ * WHY THIS EXISTS. It could not be `shadcn add`ed: the registry source is authored for
+ * Tailwind v4, and the CLI both fails silently AND rewrites `src/index.css` with v4-only
+ * `@custom-variant` declarations — so it was fetched as reference and rewritten here.
+ * `__tests__/tailwind-tokens.test.js` is what stops a v4 token creeping back in; every one
+ * renders as NOTHING on 3.4.17, with no build error and no failing test otherwise.
  *
- * `tw-shimmer` IS THE ONE WORTH NAMING, because the registry's `tool-group` labels a running group
- * with its `ShimmerLabel` and reaching for the package is the obvious move. DO NOT INSTALL IT: it
- * declares `peerDependencies: { tailwindcss: ">=4.0.0-0" }` and ships `@property`, `@theme inline`
- * and `@utility`, none of which 3.4.17 understands — so its CSS would pass through this build as
- * dead text, the label would not animate, and nothing would say so. If one needs a shimmer, it is
- * a keyframe to write, not a dependency to add.
+ * `tw-shimmer` IS THE ONE TRAP WORTH NAMING: the registry's `tool-group` uses its
+ * `ShimmerLabel`, so reaching for the package is the obvious move. DO NOT INSTALL IT — it
+ * requires `tailwindcss: ">=4.0.0-0"` and ships `@property`/`@theme inline`/`@utility`, none
+ * of which 3.4.17 understands; its CSS would pass through as dead text with nothing saying
+ * so. A shimmer here is a keyframe to write, not a dependency to add.
  *
- * ══ ONLY WHAT RENDERS WAS PORTED ══
- *
- * Dropped ON ARRIVAL rather than carried through the rewrite and then deleted — applying the v4→v3
- * table to a block that is about to be removed is the expensive way to ship nothing:
- *
- *   Composer, ComposerAction   — our own composer replaces them.
- *   ComposerPrimitive.Send     — it ships a real `disabled`; ours is hand-built without one.
- *   ThreadPrimitive.ScrollToBottom
- *                              — the BUTTON only; it ships the same real `disabled`. The hook is
- *                                kept and drives our own return control.
- *   EditComposer, UserActionBar, BranchPicker
- *                              — driven by `edit`, `feedback` and `switchToBranch`, all three
- *                                pinned FALSE by the exact-equality capability snapshot. Vendoring
- *                                UI for a capability we have a test asserting is absent is dead
- *                                code by construction.
- *   ToolFallback               — 627 lines whose entire payload is a `<pre>` of the tool's raw
- *                                arguments and a `<pre>` of `JSON.stringify(result)` in `text-xs`:
- *                                the exact fields this portal redacts, dumped in the raw. Nothing
- *                                here imports it. `ToolGroup` renders our own row instead.
- *   ThreadWelcome, Suggestions, follow-ups, history skeleton
- *                              — no requirement mounts them.
- *
- * ══ THE FLAT LOOK IS THE LIBRARY'S, NOT OURS ══
- *
- * An assistant reply is plain flush text on the page background — no bubble, no avatar, no card.
- * Only the USER message gets a muted rounded fill. That is the registry's own treatment and it is
- * what the boards draw, so nothing here re-styles it into panels.
- *
- * ══ THE v4→v3 REWRITE APPLIED HERE ══
- *
- *   `@container`                    → dropped (v4 only; nothing depended on it)
- *   `max-w-(--thread-max-width)`    → `max-w-[44rem]`, and the CSS variable goes with it
- *   `wrap-break-word`               → `break-words`
- *   `-mb-7.5` / `pb-7.5` / `min-h-7.5` → the action bar's reserved space, rewritten as arbitrary
- *                                      rem values; v3 has no fractional spacing above 3.5
- *   `var(--color-foreground)` etc.  → not carried; this portal declares `--foreground`, and the v4
- *                                      spelling resolves to nothing and paints elements transparent
- *   `data-open:` / `duration-(--x)` → none survived into what we kept
+ * What was ported vs. dropped, and the full v4→v3 token rewrite, are recorded in the two
+ * comment blocks immediately below rather than repeated here.
  */
+// ONLY WHAT RENDERS WAS PORTED. Dropped ON ARRIVAL rather than carried through the rewrite
+// and then deleted — applying the v4→v3 table to a block about to be removed ships nothing:
+//   Composer, ComposerAction   — our own composer replaces them.
+//   ComposerPrimitive.Send     — it ships a real `disabled`; ours is hand-built without one.
+//   ThreadPrimitive.ScrollToBottom — the BUTTON only; the hook is kept and drives our own
+//                                    return control.
+//   EditComposer, UserActionBar, BranchPicker — driven by `edit`, `feedback` and
+//                                    `switchToBranch`, all three pinned FALSE by the
+//                                    exact-equality capability snapshot; vendoring UI for an
+//                                    absent capability is dead code by construction.
+//   ToolFallback               — 627 lines dumping the tool's raw arguments and
+//                                `JSON.stringify(result)` in `text-xs` — the exact fields
+//                                this portal redacts. Nothing imports it; `ToolGroup`
+//                                renders our own row instead.
+//   ThreadWelcome, Suggestions, follow-ups, history skeleton — no requirement mounts them.
+//
+// THE FLAT LOOK IS THE LIBRARY'S, NOT OURS: an assistant reply is plain flush text, no
+// bubble/avatar/card; only the user message gets a muted rounded fill. That is the
+// registry's own treatment and what the boards draw — nothing here re-styles it into panels.
+//
+// THE v4→v3 REWRITE APPLIED HERE:
+//   `@container`                       → dropped (v4 only; nothing depended on it)
+//   `max-w-(--thread-max-width)`       → `max-w-[44rem]`; the CSS variable goes with it
+//   `wrap-break-word`                  → `break-words`
+//   `-mb-7.5` / `pb-7.5` / `min-h-7.5` → the action bar's reserved space, rewritten as
+//                                        arbitrary rem values; v3 has no fractional spacing
+//                                        above 3.5
+//   `var(--color-foreground)` etc.     → not carried; this portal declares `--foreground`,
+//                                        the v4 spelling resolves to nothing
+//   `data-open:` / `duration-(--x)`    → none survived into what we kept
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -147,13 +140,11 @@ const ThreadMessage: FC = () => {
 }
 
 /**
- * The in-thread error, authored FLAT.
- *
- * The registry ships `border-destructive bg-destructive/10 … rounded-md border p-3` — a bordered
- * tinted box, which is the nested-panel look this surface does without. The border and the fill
- * go; the colour and the `role="alert"` that `ErrorPrimitive.Root` sets both stay, because those
- * carry the meaning. `elements-error-state` was rejected for the same reason plus a second one: it uses raw
- * `red-500` rather than the `destructive` token.
+ * The in-thread error, authored FLAT. The registry ships a bordered, tinted box
+ * (`border-destructive bg-destructive/10 … rounded-md border p-3`) — the nested-panel look
+ * this surface does without. Border and fill go; the colour and `role="alert"` (from
+ * `ErrorPrimitive.Root`) stay, since those carry the meaning. `elements-error-state` was
+ * rejected too: it uses raw `red-500`, not the `destructive` token.
  */
 const MessageError: FC = () => (
   <MessagePrimitive.Error>
@@ -229,22 +220,12 @@ const AssistantText: FC<{ Component: ThreadComponents['TextPart'] }> = ({ Compon
 }
 
 /**
- * Every assistant message carries a copy action, and ONLY a copy action.
- *
- * `hideWhenRunning` is deliberately NOT set, and that is the whole of the difficulty.
- * `useActionBarFloatStatus` reads `hideWhenRunning && s.thread.isRunning` — the THREAD, not the
- * message — and a hidden Root returns `null`. Setting it would remove copy from EVERY assistant
- * message for the whole of every turn, so a citizen watching a build could not copy the plan they
- * are reading. That directly undercuts the reason copy exists here: it is what makes "build it
- * again next week" real without any storage.
- *
- * `autohide="not-last"` IS set and is non-default: persistent on the latest turn, hover-revealed on
- * history. Its consequence belongs in the tests rather than in a comment nobody reads — without
- * hover the Root returns `null`, so there is no element and no attribute, and a hover test must
- * drive `message.isHovering` and assert presence or absence.
- *
- * No Reload, no Edit, no feedback, no More menu (which carries ExportMarkdown), no branch picker.
- * Rendering only Copy is simply rendering only Copy.
+ * Every assistant message carries ONLY a copy action, deliberately. `hideWhenRunning` is
+ * NOT set: it reads the THREAD's running state, not the message's, so setting it would hide
+ * copy on every assistant message for a whole turn — undercutting why copy exists here
+ * (rebuilding a plan later, with no storage). `autohide="not-last"` IS set (non-default):
+ * persistent on the latest turn, hover-revealed on history, tested not just commented. No
+ * Reload, Edit, feedback, More menu, or branch picker.
  */
 const AssistantActionBar: FC = () => (
   <ActionBarPrimitive.Root

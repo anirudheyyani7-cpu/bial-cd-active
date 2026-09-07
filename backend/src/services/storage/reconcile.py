@@ -1,46 +1,27 @@
-"""Operator-invoked reconciling sweep: diff object storage against the database and
-reclaim keys that a failed cleanup stranded.
+"""Operator sweep: diff object storage against the DB and reclaim keys a failed cleanup stranded.
 
-Today the ONLY trail of a failed post-commit sweep is a `_log.warning` (`sweep.py:43`,
-`:66`, `projects/delete.py:168`) with no persisted failure list — so a reconciler cannot
-replay it. Instead it DIFFS the store against the DB: enumerate every key under a prefix,
-resolve each to an owning row, and delete only a key with NO owner AND older than the grace
-period. Safe to run at any time, idempotent (two runs converge, the second a no-op), and
-recoverable — a failed cleanup becomes a swept orphan on the next operator run.
+WHY THIS EXISTS: the only trail of a failed post-commit sweep is a `_log.warning` with no
+failure list to replay — so this DIFFS the store against the DB: every key resolved to an
+owning row, deleting only one with NO owner AND past grace. Idempotent; safe to run any time.
 
-THE 24h GRACE IS THE ENTIRE CORRECTNESS ARGUMENT. It is what makes the sweep safe to
-run mid-submit / mid-upload: a blob a request is about to record a row for (`put` lands
-before the `commit`) is FRESH, so the grace protects it. Get the polarity right — the ONLY
-path to "eligible" runs through the grace check (`_reconcile_prefix` below), so a within-grace
-or unknown-age blob is NEVER deleted, even with no owning row. An unknown age (`head()` returns
-`last_modified is None`) FAILS CLOSED to within-grace: deleting a blob whose age we cannot prove
-is exactly the irreversible mistake this unit must not make.
+THE 24h GRACE IS THE ENTIRE CORRECTNESS ARGUMENT: it protects a blob whose row hasn't landed yet
+(`put` before `commit`). The ONLY path to "eligible" runs through the grace check, so an unknown
+age (`head()` returns no `last_modified`) FAILS CLOSED to within-grace — deleting a blob whose
+age we cannot prove is the one mistake this unit must not make.
 
-Per-prefix rules (get every one right):
+Per-prefix rules:
+- `att/{user_id}/` — owned-set from `Attachment.storage_key`, NEVER a PK-derived key (uploads
+  mint a fresh uuid7 unrelated to the row's PK); built via `_blob_keys_for` so a deck's derived
+  `.pdf` sibling is owned too, or the sweep deletes the only form the model reads.
+- `snapshots/`, `recovery/` — reconciled against `AppRegistry` existence; delete-eligible.
+- `submissions/{app_id}/` — REPORT-ONLY: the immutable approval record. "No app row" is NOT a
+  licence to delete — an append-only audit row outlives the app and still names the bundle via
+  `detail.submissionId`.
+- `apps/{app_id}/` — REPORT-ONLY. `app_files` was dropped in migration 0017 so `app_file_key`
+  has no writer, and whether anything exists here in a deployed env cannot be answered from the
+  repo. Report first; decide after someone with tenant access looks.
 
-- `att/{user_id}/` — owned-set built from the persisted `Attachment.storage_key` column, NEVER
-  a PK-derived key. `attachment_key(user_id, uuid.uuid7())` mints a FRESH uuid7 at upload
-  (`attachments/router.py`), unrelated to the PK, so `attachment_key(user_id, att.id)` matches
-  no stored object for any row — a PK-derived diff would flag 100% of `att/` blobs as unowned.
-  A PPTX upload also writes a derived `{storage_key}.pdf` sibling that no column points at, so
-  the owned-set is built with `_blob_keys_for` (the SAME helper the conversation cascade and the
-  never-sent-upload reclaim use), which yields both `storage_key` and `storage_key + ".pdf"` for
-  a deck — or the sweep permanently deletes the only rendered form the Azure-hosted model reads.
-- `snapshots/{app_id}/` — reconciled against `AppRegistry`: a bundle whose `app_id` resolves to
-  no row is unowned. Owner diff + grace → delete eligible.
-- `submissions/{app_id}/` — REPORT-ONLY until submission-bundle retention is decided. These are
-  the immutable record of what was approved; deleting them is a governance call, and the report
-  names the ownerless bundles (`ownerless_submissions`) for it. "No app row" is NOT a licence to
-  delete: an append-only `audit_logs` row (`resource_id` is a plain String, no FK) can outlive
-  the app and still name the bundle via `detail.submissionId`.
-- `apps/{app_id}/` — REPORT-ONLY. `app_files` was dropped in migration 0017 so `app_file_key` has
-  no writer; whether anything exists here in a deployed env cannot be answered from the repo.
-  Report first, decide after someone with tenant access looks.
-
-FAILURES SURFACE, they are not swallowed. Unlike the best-effort post-commit `sweep_blobs`, a
-`StorageError` from the walk / head / delete propagates UP (→ 503 at the endpoint, retryable) —
-the whole point of this unit is to stop losing failures to a log line. Idempotence guarantees a
-retry converges, so a partial run followed by a retry is safe.
+Failures SURFACE: a `StorageError` propagates (→ 503, retryable) instead of being logged away.
 """
 
 from __future__ import annotations
@@ -157,20 +138,14 @@ async def _reconcile_prefix(
     cutoff: datetime.datetime,
     delete_eligible: bool,
 ) -> PrefixCounts:
-    """Walk one prefix to exhaustion (paginated; a `StorageError` RAISES upward, never reads as
-    empty), bucket every key, and — only on a delete-enabled prefix — delete the eligible ones.
+    """Walk one prefix to exhaustion, bucket every key, and — only on a delete-enabled prefix —
+    delete the eligible ones. Owned keys short-circuit before any age check; an unowned key
+    reaches `eligible` only after `head()` proves a known `last_modified` older than `cutoff` —
+    an unknown age (or a key that vanished mid-walk) falls to `within_grace`, fail closed.
 
-    The grace check is UNAVOIDABLE on the way to `eligible`: an owned key short-circuits before
-    any age test, and an unowned key reaches `eligible` ONLY after `head()` proves a known
-    `last_modified` strictly older than `cutoff`. A `None` last_modified (unknown age, or an
-    object that vanished between the list and the head) falls to `within_grace` — fail closed.
-
-    Owned keys are bucketed first (a pure predicate, no I/O), then the unowned keys' head()/delete
-    run CONCURRENTLY under a bounded semaphore (mirroring `sweep.py`) rather than one strictly
-    sequential await per key. Concurrency changes only throughput: classification is per-key and
-    order-independent, so the counts (`scanned == owned + within_grace + eligible`,
-    `deleted <= eligible`) are identical to the sequential walk. A `StorageError` from any head or
-    delete still propagates (gather's default), so a mid-sweep failure surfaces retryably."""
+    Unowned keys' head()/delete run CONCURRENTLY under a bounded semaphore; classification is
+    per-key and order-independent, so counts match the sequential walk. A `StorageError` from
+    any head or delete still propagates, surfacing a mid-sweep failure retryably."""
     keys = await all_keys_under(storage, prefix)
     owned = 0
     unowned: list[str] = []
@@ -216,15 +191,12 @@ async def reconcile_orphaned_storage(
 ) -> StorageReconcileReport:
     """Diff the whole object store against the database and reclaim ownerless, past-grace blobs.
 
-    A GLOBAL operator sweep (superadmin): the app-keyed prefixes reconcile against
-    `AppRegistry` existence, and an orphan is precisely a key whose app row is GONE — there is no
-    surviving `user_id` to scope by, so the sweep cannot be per-user for those. Cross-user SAFETY
-    is preserved by per-key attribution instead: an `att/{user_id}/…` blob is owned only by a row
-    whose persisted `storage_key` matches it, and `storage_key` embeds the owner id, so one user's
-    rows can never protect or expose another user's blob.
+    A GLOBAL operator sweep (superadmin): no `user_id` scopes the app-keyed prefixes, so
+    cross-user SAFETY is per-key — an `att/{user_id}/…` blob is owned only by a row whose
+    `storage_key` embeds that owner id: one user's rows can never protect or expose another's.
 
-    `now` is injectable for tests; `cutoff = now - RECONCILE_GRACE`. Deletes blobs only — the
-    caller owns the audit + commit. `StorageError` propagates (retryable), never swallowed."""
+    `now` is injectable; deletes blobs only — the CALLER owns the audit row and the commit.
+    `StorageError` always propagates (retryable), never swallowed."""
     cutoff = (now or datetime.datetime.now(datetime.UTC)) - RECONCILE_GRACE
 
     # Owned-set for `att/`: the persisted blob keys, NEVER a PK-derived key (`_blob_keys_for`

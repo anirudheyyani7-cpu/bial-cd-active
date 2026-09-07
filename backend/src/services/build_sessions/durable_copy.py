@@ -71,22 +71,12 @@ async def confirm_durable_copy(
 ) -> CopyVerdict:
     """Is this container's work provably preserved?
 
-    `container_head` is the container's current `HEAD`, or `None` when it could not be read —
-    which is the ordinary case for the population this gate exists to judge, since an orphan has
-    no registry record and may not be reachable at all.
-
-    `container_dirty` is whether that container's working tree has uncommitted changes, and it is
-    KEYWORD-REQUIRED WITH NO DEFAULT on purpose. A permissive default here authorises a delete on
-    an unestablished fact; a caller that does not know must say `None` and be refused, not stay
-    silent and be believed. `None` means the probe did not answer.
-
-    A HEAD MATCH ALONE IS NOT "PRESERVED". A turn's work is uncommitted until the platform commits
-    it (`snapshot.py`), so the tree has to be judged alongside `HEAD` — which is why this gate
-    makes the caller answer a second question.
-
-    FAILS TOWARD SPARING, ALWAYS. Every branch that could not establish a fact returns
-    `UNCONFIRMED`, and `UNCONFIRMED` never authorises a delete. A timeout is not a death
-    certificate, and neither is a storage blip."""
+    `container_head` is `None` when it could not be read — ordinary for an orphan with no
+    registry record. `container_dirty` is KEYWORD-REQUIRED, NO DEFAULT: a caller that does not
+    know must pass `None` and be refused, never stay silent and be believed. A HEAD match alone
+    is not "preserved" — a turn commits only at `snapshot.py`, so the tree must be judged too.
+    FAILS TOWARD SPARING, ALWAYS: every branch that cannot establish a fact returns
+    `UNCONFIRMED`, which never authorises a delete — a timeout is not a death certificate."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:

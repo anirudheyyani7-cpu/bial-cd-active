@@ -4,21 +4,12 @@
  * the server (media-type allowlist + magic-byte check); these checks are UX.
  */
 /**
- * THE LINE IS A RULE, NOT A LIST: what needs no conversion.
- *
- * Images and PDFs upload as themselves. Plain text (CSV, TXT) rides INSIDE the message as a fenced
- * text block, which is why it shares this allowlist even though it is not a binary attachment.
- * Everything that required a conversion step — Word, Excel, PowerPoint — is gone from the client:
- * the picker does not offer it, the validator refuses it, and the wire has no part shape for it.
- *
- * Word and Excel were never what they appeared to be. The server extracted them to Markdown and
- * the model only ever saw that text, so a citizen who attached a spreadsheet and asked about its
- * layout was talking about something the model could not see. PowerPoint was gated off behind a
- * build-time flag and never reached anyone.
- *
- * THE SERVER'S EXTRACTION MACHINERY IS STILL THERE and is deliberately out of scope — no work
- * here touches `backend/`. That leaves a reachable-but-unreferenced upload path, which is
- * recorded as an unshipped server-side half rather than quietly claimed as removed.
+ * THE LINE IS A RULE, NOT A LIST: images/PDFs upload as themselves; text (CSV/TXT) rides
+ * inline as a fenced block, so it shares this allowlist despite not being binary. Anything
+ * needing conversion — Word/Excel/PowerPoint — is gone client-side: the server used to
+ * extract them to Markdown, so a citizen asking about a spreadsheet's layout was describing
+ * something the model never saw. That extraction machinery still exists server-side,
+ * deliberately out of scope here — a reachable-but-unreferenced path, unshipped not removed.
  */
 export const ALLOWED_MEDIA_TYPES = [
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
@@ -45,27 +36,22 @@ export const MAX_FILES_PER_MESSAGE = 5
 export const MAX_ATTACHMENTS_PER_CONVERSATION = 20
 
 /**
- * ADVICE IS ONLY HONEST WHILE IT LEADS SOMEWHERE.
- *
- * The two legacy reject messages used to say "save as .docx" and "save as .pptx". Both stopped
- * being followable the moment those formats were refused too — a citizen who did what they said
- * would be rejected a second time and told nothing new. So there is one refusal now, and it names
- * what IS accepted. That is the reasoning this file already recorded for the flag-off deck case,
- * applied to the permanent one.
+ * ADVICE IS ONLY HONEST WHILE IT LEADS SOMEWHERE: the two legacy reject messages said "save
+ * as .docx"/"save as .pptx", but both stopped being followable once those formats were
+ * refused too — a citizen who complied got rejected again, told nothing new. So there is one
+ * refusal now, naming what IS accepted — the reasoning this file already used for the
+ * flag-off deck case, applied to the permanent one.
  */
 export function unsupportedFileMessage(fileName: string): string {
   return `"${fileName}" ${unsupportedFormatMessage()}`
 }
 
 /**
- * THE SAME ADVICE WITH NO NAME TO HANG IT ON.
- *
- * The composer's own validator always knows which file it refused. The LIBRARY's accept filter does
- * not tell us: it runs before the adapter is called and its event carries a reason and its own
- * sentence, not the file. Rather than let that path speak the library's words — "File type
- * application/vnd… is not accepted. Accepted types: image/png,image/jpeg,…", a MIME list read out
- * at someone who dragged in a spreadsheet — it speaks this. One author for the advice; the name is
- * the only thing that varies.
+ * THE SAME ADVICE, WITH NO NAME TO HANG IT ON: the library's own accept-filter reason
+ * doesn't carry the file, only its own sentence — "File type application/vnd… is not
+ * accepted. Accepted types: image/png,…" — a raw MIME list read at someone who dragged in
+ * a spreadsheet. Rather than let that path speak the library's words, it speaks this one:
+ * one author for the advice, the file name the only thing that varies.
  */
 export function unsupportedFormatMessage(): string {
   return "isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, or a text file (CSV, TXT)."
@@ -87,17 +73,12 @@ export function resolveMediaType(file: File): string {
 }
 
 /**
- * Validate a batch of newly selected files against the per-message rules.
- * Returns `{ error }` with a user-facing message on the first violation, or
- * `{ ok: true }` when all pass. The media type is RESOLVED first (so an
- * OS-mislabeled CSV isn't rejected before canonicalization), and both the
- * allowlist check and the size cap run against that resolved type. Caps are
- * measured on the original File.size.
- *
- * `existingTextBytes` is the byte total of text attachments ALREADY pending in
- * the composer, so the text budget is enforced across multiple picks in one
- * message — not just within a single selection (otherwise stacking picks would
- * bypass it).
+ * Validate a batch of newly selected files against the per-message rules. Returns
+ * `{ error }` with a user-facing message on the first violation, or `{ ok: true }`. The
+ * media type is RESOLVED first (so an OS-mislabeled CSV isn't rejected pre-canonicalization),
+ * and both the allowlist and size cap run against that resolved type, measured on the
+ * original `File.size`. `existingTextBytes` is the byte total already pending in the
+ * composer, so the text budget is enforced across multiple picks — not just one selection.
  */
 export type AttachmentValidationResult = { error: string } | { ok: true }
 

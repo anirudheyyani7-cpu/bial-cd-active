@@ -1,18 +1,15 @@
 """Is the scheduled worker alive, and did the reap it performed secure anything?
 
-THE ONLY HONEST DETECTOR OF A DEAD WORKER IS SILENCE. Every alarm the reclamation pass raises is
-emitted *by the pass* — the fleet-count warning, the store-fault error, the candidate lines. A
-crashlooping worker emits none of them, which reads exactly like a healthy quiet fleet. So the
-pass writes a record on every outcome, and this module reads the ABSENCE of one as the alarm.
+THE ONLY HONEST DETECTOR OF A DEAD WORKER IS SILENCE: every alarm the reclamation pass raises
+is emitted *by the pass*, so a crashlooping worker emits none and reads like a healthy quiet
+fleet. The pass writes a record on every outcome; this module reads the ABSENCE of one as the
+alarm.
 
-WHY A WRITER LIVES HERE TOO. The reaper takes a durable copy before it reclaims, and the failure
-mode it inherits is the same one: a container whose copy cannot be taken is SPARED, and a spared
-container is indistinguishable from a fleet with nothing in it. It bills forever and nothing says
-so — which is the state the platform was found in, at the two `confirm_durable_copy` call sites
-that only ever logged. So the attempt writes a `worker_passes` row on every outcome, exactly as
-the pass above does, and for exactly the same reason: the row is the only thing an operator can
-look for that does not depend on the failing component to speak up.
-"""
+WHY A WRITER LIVES HERE TOO: the reaper's durable copy shares the failure mode — a container
+whose copy cannot be taken is SPARED, indistinguishable from an empty fleet, and bills forever
+silently (the `confirm_durable_copy` call sites once only logged this). So this writes a
+`worker_passes` row on every outcome too, for the same reason: it's the only thing an operator
+can look for that does not depend on the failing component to speak up."""
 
 from __future__ import annotations
 
@@ -39,13 +36,12 @@ STALE_AFTER_INTERVALS = 3
 class UnschedulableCadenceError(RuntimeError):
     """The reclamation cron is not a plain `*/N` minute step, so no staleness window follows.
 
-    RAISED AT IMPORT, and that is the point. Every other shape of minute field is silently wrong
-    rather than absent: a bare `0` parsed to a zero-minute cadence, which made `STALE_AFTER` zero
-    and every pass — including one that finished a second ago — read as stale, so the only alarm
-    that can detect a dead worker would fire constantly and be tuned out. A list (`0,30`) or a
-    range raised a bare `ValueError` from `int()`, naming nothing. Failing here names the cron and
-    stops the process, which is the correct end for a scheduling constant that cannot be honoured.
-    """
+    RAISED AT IMPORT, and that is the point: every other shape of minute field failed silently
+    wrong rather than absent (a bare `0` made `STALE_AFTER` zero, so every pass — including one
+    that finished a second ago — read as stale, and the only dead-worker alarm would fire
+    constantly and be tuned out; a list or range raised a bare, unnamed `ValueError`). Failing
+    here names the cron and stops the process — the correct end for a scheduling constant that
+    cannot be honoured."""
 
 
 def _minutes_between_passes(cron: str) -> int:
@@ -69,14 +65,12 @@ STALE_AFTER = dt.timedelta(minutes=_MINUTES_PER_PASS * STALE_AFTER_INTERVALS)
 async def reclamation_pass_freshness(db: AsyncSession) -> tuple[dt.datetime | None, bool]:
     """`(when the last pass finished, is that stale)`.
 
-    NEVER-RAN IS STALE. A `None` last-pass is not "no news is good news" — it is a fresh
-    deployment whose worker has not started, or one whose worker has never successfully completed
-    a single pass. Different causes, same consequence: nothing is watching the fleet.
-
-    ANY OUTCOME COUNTS AS A PASS, including `declined` and `failed`. The question this answers is
-    "is the worker running", not "is it happy" — a pass that fails every tick is a different
-    problem from a worker that is not there, and conflating them would hide the second behind the
-    first."""
+    NEVER-RAN IS STALE: a `None` last-pass is not "no news is good news" — it is a fresh
+    deployment or a worker that has never completed a pass. Same consequence either way:
+    nothing is watching the fleet.
+    ANY OUTCOME COUNTS AS A PASS, including `declined`/`failed` — this answers "is the worker
+    running", not "is it happy", since conflating the two would hide a crashing worker behind
+    a merely unhappy one."""
     row = await db.execute(
         sa.select(WorkerPass.finished_at)
         .where(WorkerPass.task_name == RECLAMATION_TASK_NAME)
@@ -190,22 +184,12 @@ _SPARED: Final = frozenset({CopyAttempt.UNREACHABLE, CopyAttempt.REFUSED, CopyAt
 async def record_durable_copy_attempt(attempt: CopyAttempt) -> None:
     """Write the row for ONE container's copy-before-reclaim attempt. Never raises.
 
-    ON EVERY OUTCOME, including the boring one. A reap that found the copy already current writes
-    too — otherwise the only rows in the table are the unhappy ones, and an operator reading an
-    empty result cannot tell "nothing went wrong" from "nothing ran at all". That is the same
-    inference `workers/reclamation._record_pass` protects, one level down.
-
-    ITS OWN SESSION, and the factory is imported INSIDE the function rather than at module scope.
-    That is not style: `tests/conftest.py` REBINDS `src.db.base.async_session_factory` onto a
-    NullPool engine before any consumer can bind it by value, because pytest-asyncio runs each
-    test on its own loop and a pooled asyncpg connection belongs to the loop that opened it. A
-    module-level `from ... import async_session_factory` captures the pooled original and hands
-    every test a connection from the wrong loop.
-
-    BOOKKEEPING NEVER FAILS THE REAP. A reap that correctly spared a container must not raise
-    because its record could not be written — but it is logged with a traceback rather than
-    swallowed, because the whole value of this table is that its silence means something, and a
-    quiet write failure would make a working reaper look like one that stopped."""
+    ON EVERY OUTCOME, including "already current" — else empty rows can't be told from a worker
+    that never ran (same inference `_record_pass` protects, one level down).
+    Imports its session factory INSIDE the function — `tests/conftest.py` rebinds it onto a
+    per-test engine, and a module-level import would hand tests a connection from the wrong loop.
+    NEVER FAILS THE REAP: logged, not swallowed — a silent write failure would make a working
+    reaper look stopped."""
     from src.db.base import async_session_factory
 
     try:

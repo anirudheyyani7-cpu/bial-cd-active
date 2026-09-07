@@ -1,24 +1,17 @@
 """The Pydantic AI chat agent.
 
 ONE module-level `Agent`, built without a bound model — the Foundry model is passed per-run
-(`agent.run_stream(prompt, model=…)`) so import never depends on a configured Foundry (dev/test
-boot without it) and tests inject a `TestModel`. `ChatDeps` is built per request and scopes any
-tool to the caller's `user_id` (a dropped scope predicate is a cross-user leak).
+(`model=…`) so import never depends on a configured Foundry, and tests inject a `TestModel`.
+`ChatDeps` is built per request and scopes any tool to the caller's `user_id` (a dropped scope
+predicate is a cross-user leak).
 
-The per-run system prompt has two sources, selected by `deps.kind`:
-
-- `kind is None` — a server-composed prompt applied verbatim. This is NOT dead: it is the
-  path `services/projects/describe.py` runs on (`POST /{project_id}/description:generate`),
-  which composes its own one-shot prompt and carries no tools. It outlived the retired legacy
-  relay — do not remove it with one.
-- `kind` set — a turn on the turn engine (which always sets it): BASE + that kind's segment
-  composed by `mode_prompts.compose_kind_prompt` from `deps.prompt_context`. BOTH kinds: a
-  Build turn is an ordinary turn with more tools, so it composes here like
-  a Plan turn and carries a `SandboxSession` in `deps.sandbox`.
-
-Either way the text is applied through `instructions`, NOT `system_prompt`: instructions are
-never baked into stored message history, so prompts evolve without rewriting history — the
-same boundary that keeps ephemeral reminders out of the DB.
+WHY THIS EXISTS: the per-run prompt has two sources, by `deps.kind`. `None` is a
+server-composed prompt applied verbatim — the path `describe.py` runs for
+`POST /{project_id}/description:generate`, composing its own prompt with no tools; it is NOT
+dead code. A set `kind` composes BASE + that kind's segment via
+`mode_prompts.compose_kind_prompt` — Build is an ordinary turn with more tools and a
+`SandboxSession`, composed the same way as Plan. Applied through `instructions`, NOT
+`system_prompt`, so prompts evolve without rewriting stored message history.
 """
 
 from __future__ import annotations
@@ -37,22 +30,13 @@ from src.services.orchestrator.deps import SandboxSession
 
 @dataclass
 class ChatDeps:
-    """Per-request agent dependencies. `user_id` scopes any tool to the caller.
-
-    `system` is the server-composed prompt of a kindless run (`describe.py`). A turn on the
-    turn engine sets `kind` + `prompt_context` instead. Setting a kind without its context is a
-    programming error, caught fail-first at instruction time (never a silently empty
-    prompt).
-
-    `db` is OPTIONAL because no tool reads it (the describe path passes one only because it
-    already holds it). A Write turn runs for minutes, and holding a pooled connection open
-    across a model call would pin it idle-in-transaction for the whole build — the exact
-    thing the build harness opens short-lived sessions to avoid.
-
-    `workspace` is the turn-pinned read surface a run's toolsets resolve through (the turn
-    engine sets it; a kindless `describe.py` run never does — it carries no tools). `sandbox`
-    is set on a BUILD turn only — the live session the eight sandbox tools act through. Both
-    are `None` off their paths, and both accessors fail-first rather than degrade.
+    """Per-request agent dependencies. `user_id` scopes any tool to the caller. `system` is
+    the kindless run's prompt (`describe.py`); a turn-engine run sets `kind` + `prompt_context`
+    instead — a kind without context is a fail-first error, never a silent empty prompt. `db`
+    is OPTIONAL (no tool reads it) since holding a pooled connection across a minutes-long
+    Write turn would pin it idle-in-transaction, what short-lived harness sessions avoid.
+    `workspace` and BUILD-only `sandbox` are `None` off their paths; both accessors fail-first
+    rather than degrade.
     """
 
     user_id: uuid.UUID

@@ -1,19 +1,13 @@
 """The `users` table — the long-awaited target `OwnedByUserMixin` already FKs.
 
-A user is provisioned fresh on first Entra sign-in and keyed by the stable Entra
-Object ID (`azure_oid`), NEVER by email (email is mutable and reassignable).
-No password and no `role` (roles are computed from the env allowlist).
+Provisioned fresh on first Entra sign-in, keyed by the stable Entra Object ID (`azure_oid`),
+NEVER by email (mutable, reassignable). No password, no `role` (computed from the env allowlist).
 
-`suspended_at` is a LOCAL governance suspension, not a mirror of Entra
-account state: a super-admin blocks a user platform-side while the Entra account
-stays whatever IT made it. Entra offboarding itself is still honored by the
-absolute session lifetime — this column never tries to shadow the identity
-provider, so there is nothing to drift.
-
-`token_version` is the instant-revocation lever: the session JWT carries it,
-`current_user` compares it against this column on every authenticated request, and
-logout — and now deactivation — bumps it, invalidating every live session JWT for
-the user at once.
+`suspended_at` is a LOCAL governance suspension, not a mirror of Entra state — a super-admin
+blocks a user platform-side while the Entra account stays whatever IT made it, so there is
+nothing to drift. `token_version` is the instant-revocation lever: the session JWT carries it,
+`current_user` compares it every request, and logout (or deactivation) bumps it, invalidating
+every live session JWT at once.
 """
 
 from __future__ import annotations

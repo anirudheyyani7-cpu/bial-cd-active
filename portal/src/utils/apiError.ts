@@ -1,20 +1,14 @@
 /**
  * The one place that reads a backend error message.
  *
- * The control-plane emits THREE error envelopes and deliberately does not unify
- * them, so every caller that does `body.error?.message || fallback` is blind to
- * two thirds of them — including the `{"detail": …}` shape used by 401, the
- * 403 suspension gate, the 403 super-admin gate, and 500:
+ * The control-plane emits THREE error envelopes and does not unify them, so
+ * `body.error?.message || fallback` alone is blind to two of them:
+ *   1. `{"error": {"message", "code"?}}` — most domains, pagination 422s, rate limits
+ *   2. `{"detail": "string"}` — 401, 403 suspension/super-admin gates, 500
+ *   3. `{"detail": [{type, loc, msg}]}` — FastAPI-native 422 from Pydantic validation
  *
- *   1. `{"error": {"message", "code"?}}`      most domains, pagination 422s,
- *                                             rate limits, the daily-token 429
- *   2. `{"detail": "string"}`                 401, 403 "Account suspended",
- *                                             403 "Super-admin privileges required.", 500
- *   3. `{"detail": [{type, loc, msg}]}`       FastAPI-native 422 from Pydantic
- *                                             body validation
- *
- * Bodies arrive as `unknown` (they are untrusted network input) and are narrowed
- * with type guards — never cast, never `any`.
+ * Bodies arrive as `unknown` (untrusted network input), narrowed with type guards — never
+ * cast, never `any`.
  */
 
 /** An HTTP failure carrying the status and the backend's own error code, so callers can branch on 409 / 429 / 503 without re-parsing the body. */
@@ -48,14 +42,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * A nullable string field off an untrusted body: absent, null, or the wrong type all
- * read as `null`.
- *
- * Lives here beside `isRecord` because it is the same kind of thing — the narrowing
- * every typed client starts from — and because two clients had written it identically,
- * under the same name, in the same feature. A field that is genuinely REQUIRED does not
- * use this: it throws at its own boundary (`readString`), because a missing required
- * field is a server contract break, not an absent value.
+ * A nullable string field off an untrusted body: absent, null, or the wrong type all read as
+ * `null`. Lives beside `isRecord` as the narrowing every typed client starts from. A field
+ * that is genuinely REQUIRED does not use this — it throws at its own boundary
+ * (`readString`), because a missing required field is a contract break, not an absent value.
  */
 export function optionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null

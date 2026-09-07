@@ -23,16 +23,11 @@ _OSSRDBMS_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
 def attach_entra_token(async_engine: AsyncEngine) -> None:
     """Wire Microsoft Entra managed-identity auth onto an async engine.
 
-    Azure Database for PostgreSQL Flexible Server with Entra auth has no static
-    password: the app presents a short-lived Entra access token as the password.
-    The token rotates, so it must be set on every NEW physical connection — an
-    already-open connection stays valid past token expiry, because Postgres validates
-    the token only at connect. A `do_connect` listener is that seam; it also pins a
-    verify-full TLS context (system CAs + hostname check), since Entra never rides
-    plaintext. One credential + one SSL context are built here and reused across
-    connects (re-instantiating per call defeats the token cache). Callable on any
-    engine — the app engine and Alembic's migration engine share it.
-    """
+    Entra Postgres auth has no static password: the app presents a short-lived access token as the
+    password, rotated on every NEW physical connection — an open one stays valid past token expiry,
+    since Postgres validates only at connect. `do_connect` is that seam, and it pins verify-full
+    TLS, since Entra never rides plaintext. Credential and SSL context are built once and reused;
+    re-instantiating per call defeats the token cache."""
     import ssl
 
     from azure.identity import DefaultAzureCredential

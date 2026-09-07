@@ -4,53 +4,22 @@ Revision ID: 0035_chat_kind
 Revises: 0034_project_description_fts
 Create Date: 2026-08-30
 
-WHAT THIS IS. `conversation_kind` (planning / assistant / builder) and `conversation_mode`
-(ask / plan / write) were two independent three-valued enums that between them decided one
-thing: what a run is allowed to do. They become one two-valued `chat_kind` (plan / build),
-fixed at creation, on both `conversations` and `messages`.
+`conversation_kind` (planning/assistant/builder) and `conversation_mode` (ask/plan/write)
+together decided one thing — what a run may do — and collapse into `chat_kind` (plan/build).
+`messages.mode` is RENAMED to `kind`, not reused, so no reader keeps the retired name alive.
 
-THE MAPPING IS HONEST, NOT CLEVER: **every existing row on both tables becomes `build`**.
-Until now any conversation could be switched into building at any moment, so "was this a Plan
-chat?" is not a question the stored rows can answer — a conversation stamped `plan` was one
-mode switch away from writing files, and the per-row `mode` stamp records where a batch ran,
-not what the chat was for. Claiming otherwise would invent a distinction the data does not
-carry. Every migrated chat therefore opens as a Build chat, with its full transcript intact.
+WHY THIS EXISTS. Every row becomes `build`: any conversation could switch into building at
+any moment, so "was this a Plan chat?" is unanswerable from stored rows, and claiming
+otherwise would invent a distinction the data never carried. Two data steps ride with the
+DDL so a migrated transcript isn't left holding something new code can't answer: hidden
+mode-switch marker rows are deleted, and every outstanding plan-options card is resolved
+`refine` so a migrated Build chat never draws a live Build-it button for a tool its new
+toolset lacks (the overlay mirrors what `plan_options.record_build_failure` used to write,
+before this change retired it).
 
-`messages.mode` is RENAMED to `messages.kind` rather than reused under the old name: every
-reader changes anyway, and leaving a column called `mode` behind is how a deleted vocabulary
-survives. A rename is one statement, preserves the data, and burns no fresh `pg_attribute`
-slots on the shared test database the way add-copy-drop would.
-
-TWO DATA STEPS RIDE WITH THE DDL, and both exist because a migrated transcript must not be
-left holding something the new code cannot answer:
-
-  * **The mode-switch marker rows are deleted.** They were hidden, they rendered nothing
-    (`services/messages/projection.py` skipped them), and their whole job was to tell the model
-    where in history the mode changed. There are no mode boundaries any more. Once no row
-    carries the label, the `mode_switch` member goes from the Python enum; the PG label is left
-    in place and inert, because swapping the type to remove one unreferenced label would
-    rewrite the largest table for no behavioural gain.
-
-  * **Every outstanding plan-options card is resolved as `refine`.** Not because a migrated
-    conversation would wedge — it would not: `repair_dangling_tool_calls` is the one choke
-    point where history is assembled and its first documented case is "no answer anywhere → a
-    synthesized 'interrupted' result is stitched in". The reason is the CARD: a migrated Build
-    chat would otherwise project a live Build-it offer for a tool its new toolset does not
-    contain, and the citizen would press a button nothing can answer. The overlay written here
-    is exactly the shape `plan_options.record_build_failure` wrote before this same change
-    retired it (it is called "the retired recorder" further down this file, and it is not
-    in `src/` any more — the shape is quoted here rather than pointed at) — `entry_kind =
-    system_event`, `visibility = hidden`, empty payload, `meta.kind = plan_options_resolved`,
-    `choice = refine`. Deliberately NOT a `ToolReturnPart`: no historical payload is rewritten
-    and no `ToolReturnPart` is synthesized, because the model-history half is already covered.
-
-`downgrade` restores the STRUCTURE, not the distinctions: both retired types come back and both
-columns return to them, with every row reading `builder` / `write`. The deleted markers and the
-resolution overlays do not come back. This is the same one-way-door posture as 0024, and it is
-deliberate — the distinctions were never recoverable from the rows.
-
-Hand-finalized. This revision uses native Postgres enums and owns all three type lifecycles
-explicitly (`create_type=False` on every one).
+`downgrade` restores the STRUCTURE, not the distinctions — same one-way-door posture as
+0024, because the distinctions were never recoverable from the rows. Hand-finalized; owns
+all three enum lifecycles explicitly (`create_type=False`).
 """
 
 from __future__ import annotations
@@ -89,45 +58,25 @@ _OVERLAY_SCHEMA_VERSION = 2
 
 
 def _is_open(resolution: str | None) -> bool:
-    """A card is still ACTIONABLE — and so still presses a dead button after the migration —
-    when it has no resolution at all. Closing only the newest per conversation would not be
-    enough: an older unresolved card projects as `pending` too, so it draws its own live offer.
+    """A card is still ACTIONABLE, and so still presses a dead button, when it has no
+    resolution. Closing only the newest per conversation isn't enough — an older unresolved
+    card projects as `pending` too, drawing its own live offer.
 
-    THE `build_failed` ARM IS BELT AND BRACES, not load-bearing, and it is kept deliberately. A
-    `build_failed:<reason>` string left by the retired recorder already reads as TERMINAL at
-    every live reader (`plan_options._is_open_resolution`, `projection._plan_options_state`), so
-    those cards draw no button and need no overlay. But this revision is a one-way door that
-    cannot be re-run against a database it has already passed over, and the extra hidden row it
-    writes for one is inert — the wrong side to err on is the one that leaves a dead button."""
+    The `build_failed` arm is belt-and-braces: those cards already read TERMINAL at every
+    live reader, so they need no overlay — kept anyway because this revision can't be re-run,
+    and the wrong side to err on is the one that leaves a dead button.
+    """
     return resolution is None or resolution.startswith("build_failed")
 
 
 def _resolve_outstanding_plan_options() -> None:
     """Write one `refine` overlay per outstanding card, newest seq onward, per conversation.
 
-    Done in Python rather than as one statement because the resolutions live in two places —
-    row `meta` for synthesized/overlay records and a `ToolReturnPart` inside the native JSONB
-    payload for real ones — and walking the payload in SQL would encode `_scan`'s reading of
-    the wire shape into a second, unversioned place. `messages.id` carries a `uuidv7()` server
-    default, so the ids these inserts mint are UUIDv7 without the revision minting them itself.
-
-    THE PAYLOAD COMES BACK ONLY FOR ROWS THAT COULD CONTAIN AN ANSWER, and that is a memory
-    bound rather than a nicety. `payload` is a whole turn's model messages — a build's rows
-    carry every `write_file` argument and result — and this is one buffered result set, so
-    selecting the column unconditionally would pull the entire history of every conversation
-    into the migration process at once. The probe is a plain substring test on the serialized
-    JSON, which is a strict SUPERSET of what the walk below matches: a row holding a
-    `present_plan_options` return necessarily contains the tool's name. Rows failing it come
-    back with `NULL` and skip the walk exactly as an empty payload always did.
-
-    AND ONLY THE CONVERSATIONS THAT HOLD A CARD ARE READ AT ALL, which is the bound that
-    matters at deploy time. Everything this loop computes — the owner, the high-water `seq`, the
-    resolutions — is consumed under `pendings`, and a conversation is only in `pendings` if it
-    has a `plan_options_pending` row. Reading the rest was work whose result was thrown away,
-    and it was not free: this revision runs inside one transaction with the `ALTER COLUMN kind`
-    that already holds ACCESS EXCLUSIVE on `messages`, so every row scanned here extends the
-    window in which nobody can chat or build. The subquery costs one pass over `meta`; the outer
-    scan then touches a handful of conversations instead of the platform's entire history.
+    Python, not SQL: resolutions live in two places — row `meta` for overlays, a
+    `ToolReturnPart` inside JSONB `payload` for real ones — and walking JSONB in SQL would
+    re-encode the wire shape in an unversioned place. The payload LIKE-probe and the
+    `pendings`-only scope both bound memory and lock time: this runs in the same transaction
+    that holds ACCESS EXCLUSIVE on `messages`, so every row read here extends the outage.
     """
     bind = op.get_bind()
     rows = bind.execute(

@@ -243,12 +243,11 @@ async def _create_role(conn: AsyncConnection, *, role: str, password: str) -> No
 def _scrubbed_role_failure(step: str, exc: DBAPIError) -> AppDatabaseError:
     """Replace a role-DDL error with one that does not carry the password.
 
-    The password cannot be a bind parameter in `CREATE ROLE ... PASSWORD '<literal>'`, and
-    SQLAlchemy's `StatementError.__str__` appends `[SQL: <statement>]` — so the exception is
-    itself a credential, and anything that logs it writes the role's password to disk. The
-    original never leaves this function. `from None` drops it from the traceback chain
-    entirely rather than merely detaching `__cause__`; the SQLSTATE is the diagnostic an
-    operator actually acts on.
+    `CREATE ROLE ... PASSWORD '<literal>'` can't bind the password as a parameter, and
+    SQLAlchemy's `StatementError.__str__` appends `[SQL: <statement>]` — the exception IS
+    a credential, so the original never leaves this function. `from None` drops it from the
+    traceback chain entirely rather than merely detaching `__cause__`; the SQLSTATE is the
+    diagnostic an operator acts on.
     """
     return AppDatabaseError(
         f"{step} failed while provisioning a project database (sqlstate={_sqlstate(exc)})"

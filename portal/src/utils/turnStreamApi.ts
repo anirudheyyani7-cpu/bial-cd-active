@@ -20,13 +20,12 @@ import { readApiError } from './apiError'
 // ---------------------------------------------------------------------------------------
 
 /**
- * A step, and DELIBERATELY WITHOUT A `detail`. `StepDetail` carried the tool's own arguments
- * and result, and it is gone from the server (`services/messages/projection.py`, which now
- * pins its emitted field set in a test) because nothing rendered it: it was a platform
- * internal that crossed to the browser and sat there, one refactor away from an expander.
- * Re-adding the field here would rebuild the client half of that seam and give the next
- * contributor something to wire up — which is why this comment names it rather than leaving
- * a silent omission. It belongs to the progress-envelope egress rule.
+ * A step, DELIBERATELY WITHOUT A `detail`. `StepDetail` carried the tool's own arguments
+ * and result and is gone from the server (`services/messages/projection.py`, which pins
+ * its emitted field set in a test) because nothing rendered it — a platform internal that
+ * crossed to the browser and sat there, one refactor from an expander. Re-adding it here
+ * would rebuild that seam's client half, which is why this comment names the omission
+ * rather than leaving it silent (the progress-envelope egress rule).
  */
 export interface StepItem {
   type: 'step'
@@ -191,19 +190,14 @@ export interface PreviewFrame {
   previewUrl?: string | null
 }
 
-/** An in-narrative build diagnostic. NOT a failure: a repair run follows, and rendering it as
- *  an error would tell the user their build died on its way to succeeding.
- *
- *  ONE AUDIENCE NOW. This frame used to carry the model's half beside the citizen's —
- *  `title`, the compiler's own first meaningful line, and `cleanedStack`, the de-noised log —
- *  described as safe to transmit but not a product surface. That distinction is not one a wire
- *  format can hold, and the sentence "safe to render verbatim" that preceded it is what once
- *  put a stack trace under a file-path title in a citizen's chat. The server stopped sending
- *  both; this stopped parsing them, because a parser for a field nothing sends is a field one
- *  refactor away from being rendered.
- *
- *  `userMessage` / `userAction` are what crosses, and both always arrive non-empty: the server
- *  derives them from the error class when its producer supplies none. */
+/** An in-narrative build diagnostic — NOT a failure (a repair run follows; rendering it
+ *  as an error implies the build died on its way to succeeding). ONE AUDIENCE NOW: this
+ *  frame used to also carry the model's half (`title`, the compiler's own line;
+ *  `cleanedStack`) as "safe to transmit but not a product surface" — a distinction no
+ *  wire format can hold, and what once put a stack trace under a file-path title in a
+ *  citizen's chat. The server stopped sending both; this stopped parsing them.
+ *  `userMessage` / `userAction` are what crosses, always non-empty: the server derives
+ *  them from the error class when its producer supplies none. */
 export interface DiagnosticFrame {
   type: 'diagnostic'
   seq: number
@@ -385,13 +379,11 @@ function toProjectionItems(value: unknown): ProjectionItem[] {
 
 /**
  * Parse-don't-validate at the wire boundary (the `buildSessionEvents.ts::toProgressEnvelope`
- * precedent). Every KNOWN frame type is narrowed field by field before its literal object is
- * built — a blanket `as TurnFrame` cast made the whole union a promise the wire never kept, so
- * a `step` frame missing `item` reached consumers as `undefined` and threw at render time,
- * inside a stream reader, where the failure reads as a dropped connection.
- *
- * Unknown `type`s keep the spread and are surfaced verbatim: streams stay forward-extensible
- * (an added server frame must never break an older client). Returning null drops the frame.
+ * precedent): every KNOWN frame is narrowed field by field before its object is built — a
+ * blanket `as TurnFrame` cast once let a `step` frame missing `item` reach consumers as
+ * `undefined` and throw at render time, inside a stream reader, reading as a dropped
+ * connection. Unknown `type`s keep the spread and surface verbatim, so streams stay
+ * forward-extensible; returning null drops the frame.
  */
 function asWorkspaceState(value: unknown): 'preparing' | 'ready' | 'unavailable' | null {
   return value === 'preparing' || value === 'ready' || value === 'unavailable' ? value : null
@@ -559,18 +551,12 @@ export function parseSseText(buffer: string): ParsedChunk {
 // ---------------------------------------------------------------------------------------
 
 /**
- * The one transport every turn call rides.
- *
- * This module used to call raw `fetch` at six sites and hand-roll its own `credentials`
- * and CSRF header — a second, weaker copy of what `authFetch` already owns, and one that
- * had no 401 → refresh → retry at all. An expired session therefore killed the entire
- * chat transport: start, stop, Build-it, plan-resolve and the SSE reader all died where
- * every other call in the app quietly recovered.
- *
- * One shared expression, N readers — the rule from the daily-token-double-count learning.
- * `authFetch` owns the refresh retry, the per-attempt CSRF token, the suspension gate and
- * `credentials: 'include'`; nothing here recomputes any of them. Tests inject the raw
- * `fetchImpl` through `deps`, so they exercise that real behaviour rather than bypass it.
+ * The one transport every turn call rides. This module used to hand-roll `fetch` at six
+ * sites with its own `credentials` and CSRF header — a weaker copy of what `authFetch`
+ * owns, with no 401 → refresh → retry — so an expired session killed the whole chat
+ * transport (start, stop, Build-it, plan-resolve, the SSE reader) where every other call
+ * quietly recovered. One shared expression, N readers: `authFetch` owns the retry, CSRF
+ * token, suspension gate and credentials; tests inject `fetchImpl` via `deps` to exercise it.
  */
 export type AuthFetchDeps = NonNullable<Parameters<typeof authFetch>[2]>
 
@@ -581,15 +567,12 @@ export interface StartTurnMessage {
 }
 
 /**
- * THE PARENTAGE OF A CHAT THAT DOES NOT EXIST YET.
- *
- * Sent only with a chat's FIRST message. Until this existed, the row was created by a separate
- * `POST /conversations` a round trip earlier — and that call's only workspace awareness was a
- * project-ownership check, so a message the workspace then refused left a real, titled, empty
- * conversation in the project's list, named after the text that had just been refused.
- *
- * Carrying it here lets the server check first and create second, inside one transaction, so a
- * refusal rolls the row back with it.
+ * THE PARENTAGE OF A CHAT THAT DOES NOT EXIST YET — sent only with a chat's FIRST
+ * message. Before this, a separate `POST /conversations` a round trip earlier created the
+ * row with only a project-ownership check for workspace awareness, so a message the
+ * workspace then refused left a real, titled, empty conversation named after the refused
+ * text. Carrying it here lets the server check first and create second in one
+ * transaction, so a refusal rolls the row back too.
  */
 export interface NewConversationParentage {
   projectId: string
@@ -667,19 +650,12 @@ export interface BuildFromPlanOutcome {
 }
 
 /**
- * Build-it: the HANDOFF. The plan chat is left exactly as it stands and a NEW build chat is
- * created, seeded with the plan and started, in one call.
- *
- * THE ID IS MINTED BY THE CALLER, and that is what makes a double-press safe. Two presses send
- * the same `chatId`, so the second finds the first's conversation already there and answers
- * `already_started` naming it — where a server-minted id would have produced two build chats
- * for one plan and left the citizen looking at the empty one.
- *
- * A TYPED failure, because the caller has to tell these apart and each has a different remedy:
- * 409 `already_building_here` (this user's one workspace is committed to another chat — wait or
- * go there), 503 `workspace_unavailable` (nothing to build in — not the citizen's fault and not
- * their fix), 429 (the daily cap), 400 (the offer carried no usable plan). A bare `Error`
- * collapses four remedies into one sentence, and the sentence is wrong for three of them.
+ * Build-it: the HANDOFF — the plan chat is left as-is and a NEW build chat is created,
+ * seeded with the plan and started, in one call. THE ID IS MINTED BY THE CALLER, so a
+ * double-press is safe: the second press shares `chatId` and answers `already_started`
+ * naming the first chat, not a second empty one. A TYPED failure, since each remedy
+ * differs — 409 `already_building_here` (wait or go there), 503 `workspace_unavailable`,
+ * 429 (daily cap), 400 (no usable plan) — a bare `Error` is wrong for three of the four.
  */
 export async function buildFromPlan(
   conversationId: string,
@@ -840,14 +816,12 @@ export async function readTurnStream(options: ReadStreamOptions): Promise<Stream
 }
 
 /**
- * One awaited step raced against the stall watchdog and the caller's abort — with the
- * timer and listener torn down whichever way the race settles (no per-iteration leaks).
- *
- * Generic over the work because BOTH halves of a subscribe need the same bound: the
- * request that produces the response, and each `reader.read()` that drains it. Two
- * watchdogs would be two answers to "how long may this hang", free to drift — and the
- * half that had none is exactly where the defect lived. `T` is a `Response` or a read result,
- * never a string, so the `'stall' | 'abort'` sentinels stay unambiguous.
+ * One awaited step raced against the stall watchdog and the caller's abort — timer and
+ * listener always torn down, whichever way the race settles (no per-iteration leaks).
+ * Generic over the work because BOTH halves of a subscribe need the same bound (the
+ * request, and each `reader.read()`) — two watchdogs would be two answers to "how long
+ * may this hang," free to drift, and the half that had none is where the defect lived.
+ * `T` is a `Response` or read result, never a string, keeping `'stall' | 'abort'` unambiguous.
  */
 async function raceAgainst<T>(
   work: Promise<T>,

@@ -1,17 +1,14 @@
 """Conversations wire-shape schemas — the SPA's Mongo-style `_id` + camelCase envelopes.
 
-Every conversations route returns a pre-built `JSONResponse` (to emit the exact Express
-wire shape and the `{"error":{"message"}}` envelope), so the RESPONSE models here are
+Every Express-era conversations route returns a pre-built `JSONResponse` (to emit the exact
+wire shape and `{"error":{"message"}}` envelope), so those RESPONSE models are
 DOCUMENTED-ONLY: FastAPI advertises them in OpenAPI but never validates or reshapes the
-response — the characterization tests are the byte-identical guard. `_id` needs an
-explicit alias because Pydantic treats a leading-underscore field name as private.
-
-The legacy message-append/read schemas died with their endpoints (a destructive reset);
-the projection read shape now goes through the single history→display derivation.
+response — characterization tests are the byte-identical guard. `_id` needs an explicit
+alias because Pydantic treats a leading-underscore field name as private.
 
 Net-new routes (the turn surfaces, the Build-it handoff) parse their bodies through models
-normally — only the Express-era routes keep the byte-matched JSONResponse discipline.
-"""
+normally instead. The legacy message-append/read schemas died with their endpoints; the
+projection read shape now goes through the single history→display derivation."""
 
 from __future__ import annotations
 
@@ -141,30 +138,14 @@ reads the same turn in a different order from one who never left."""
 
 
 class SnapshotFrame(CamelModel):
-    """The catch-up snapshot — always the first frame of a subscription that cannot prove gap-free
-    continuity (fresh subscribe, F5, cursor fallen out of the ring). `items` are the turn's
-    PERSISTED rows projected through the one history→display derivation. A client renders snapshot
-    state then applies the live tail from `seq`.
-
-    `parts` is the in-memory tail the DB does not hold yet — the turn's prose and its steps
-    in one ordered list, hidden steps included (`hidden` is a render hint, and filtering it
-    here once cost a mid-turn reconnect the very steps the other two paths kept).
-
-    `error_message` carries the WHY of a failed turn. The in-band `error` frame lives only in
-    the ring, so a subscriber that arrives after the failure — or whose cursor fell past it —
-    would otherwise read `turnStatus: "failed"` with no reason to show the user.
-
-    The workspace/preview trio is the same catch-up reasoning applied to a Write turn: a
-    `preview` frame that fired BEFORE the client connected lives only in the ring, so a
-    mid-Write reconnect would otherwise have to re-read the sandbox over REST to learn the
-    url it already missed. Carrying the three facts here makes the snapshot self-sufficient.
-    `compile_state` is the fourth fact and it is carried for a sharper version of the same
-    reason: compile frames are emitted ON CHANGE, so a tab that reloads while the app is sitting
-    broken would learn nothing until the NEXT change — and until then its preview cover would be
-    down over the error screen the cover exists to hide. The snapshot is what makes a refresh
-    mid-build land covered.
-
-    All four are optional and default to None — a chat turn has no workspace to describe."""
+    """The catch-up snapshot — always the first frame of a subscription that cannot prove
+    gap-free continuity (fresh subscribe, F5, cursor fallen out of the ring). `items` are the
+    turn's PERSISTED rows via the projection; `parts` is the in-memory tail not yet in the DB
+    (prose + steps, ordered, hidden steps included — dropping them once cost a mid-turn
+    reconnect the very steps the other two paths kept). `error_message` recovers a failed
+    turn's WHY for a subscriber who missed the ring-only `error` frame. The workspace/preview/
+    `compile_state` trio applies the same reasoning to a Write turn, so a reconnect never
+    re-polls the sandbox or sits under a stale cover. All four are optional."""
 
     type: Literal["snapshot"] = "snapshot"
     seq: int
@@ -201,10 +182,8 @@ class WorkingFrame(CamelModel):
     """The model is REASONING — and this is the whole of what reasoning becomes.
 
     A BOOLEAN, NEVER THE TEXT. Reasoning blocks are stored so the provider can be given them
-    back on the next turn (it rejects a tool call whose reasoning block is missing), and they
-    are never projected, never framed and never sent to the browser. What the citizen reads is
-    one status line saying the agent is working.
-
+    back on the next turn (it rejects a tool call whose reasoning block is missing) but are
+    never projected, framed, or sent to the browser — the citizen reads one status line.
     EDGE-TRIGGERED: emitted when the flag CHANGES, not per reasoning delta, which would put
     thousands of identical frames through a ring sized for a turn's whole narrative."""
 
@@ -276,16 +255,12 @@ class PreviewFrame(CamelModel):
 
 
 class CompileFrame(CamelModel):
-    """What the app's dev server is compiling right now, so the preview pane can
-    cover its frame instead of letting the framework's full-screen error screen fill it.
-
-    Emitted ON CHANGE, not on every poll: the watcher asks once a second for the whole turn,
-    and a frame per poll would be several hundred per build on a ring sized for narrative.
-
-    `unknown` is a real value and the client MUST hold its current cover on it rather than
-    clearing — see `CompileState`. The signal reaches a container only once it runs an image
-    carrying `/dev/compile`; until then every poll is `unknown`, which is precisely why an
-    absent signal may never read as clean."""
+    """What the app's dev server is compiling right now, so the preview pane can cover its
+    frame instead of letting the framework's full-screen error screen fill it. Emitted ON
+    CHANGE, not on every poll (a frame per poll would be several hundred per build on a ring
+    sized for narrative). `unknown` is a real value the client MUST hold its cover on rather
+    than clear — the signal only reaches a container once it runs an image carrying
+    `/dev/compile`, so an absent signal may never read as clean."""
 
     type: Literal["compile"] = "compile"
     seq: int
@@ -299,18 +274,11 @@ class DiagnosticFrame(CamelModel):
     """An in-narrative build diagnostic. Deliberately NOT an `error` frame: the turn is not
     failing — a repair run follows.
 
-    ONE AUDIENCE RIDES THIS FRAME, and it did not used to be that way. `title` and
-    `cleaned_stack` — the compiler's own first meaningful line and the de-noised log — travelled
-    here beside the citizen's half, described in this very docstring as "safe to transmit; NOT a
-    product surface". That distinction is not one a wire format can hold: the sentence "safe to
-    render verbatim" is what once put a stack trace under a file-path title in a citizen's chat,
-    and the note warning against it was already in place when that happened.
-
-    So the model's half stays SERVER-SIDE, where the repair run reads it off the `BuildError`
-    that produced it. It is not lost, it is not redacted, and it is not sent. What crosses is
-    `user_message` / `user_action`: a plain sentence about the citizen's app and something they
-    can do about it, which is the only half any surface ever rendered.
-    """
+    ONE AUDIENCE RIDES THIS FRAME. `title`/`cleaned_stack` used to travel here beside the
+    citizen's half as "safe to transmit, NOT a product surface" — a distinction no wire format
+    can hold, and it once put a stack trace under a file-path title in a citizen's chat. The
+    model's half now stays SERVER-SIDE, read off the `BuildError` by the repair run — not lost,
+    not redacted, never sent. What crosses is `user_message`/`user_action` alone."""
 
     type: Literal["diagnostic"] = "diagnostic"
     seq: int
@@ -359,18 +327,12 @@ class QuotaFrame(CamelModel):
 
 class TurnEndedFrame(CamelModel):
     """The semantic terminal — exactly one per turn; the transport closes right after
-    (`data: [DONE]`).
-
-    `reason` names WHY a non-`completed` turn stopped (`quota_exceeded`,
+    (`data: [DONE]`). `reason` names WHY a non-`completed` turn stopped (`quota_exceeded`,
     `self_heal_budget_exhausted`, `sandbox_gone`, `wall_clock_deadline_exceeded`,
     `request_limit`, `build_wrote_nothing`, `stopped_by_user`). `snapshot_committed` is
-    deliberately TRI-STATE:
-    `true`/`false` are the finalize's answer, and `null` means UNKNOWN — a non-Write turn
-    with nothing to snapshot, or a terminal that never reached the finalize. `null` is not
-    `false`; a client that collapses the two claims lost work that may well be saved.
-
-    All three are optional additions — the portal narrows this frame field by field, so old
-    and new frames must both keep parsing."""
+    TRI-STATE: `true`/`false` is the finalize's answer, `null` is UNKNOWN (nothing to
+    snapshot, or a terminal that never reached finalize) — a client that collapses `null`
+    into `false` loses work that may well be saved. All three fields are optional additions."""
 
     type: Literal["turn_ended"] = "turn_ended"
     seq: int

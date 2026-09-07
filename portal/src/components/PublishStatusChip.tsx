@@ -1,51 +1,27 @@
 /**
- * THE publishing surface. One chip beside the project name, one server-computed field,
- * one sentence and at most one action.
+ * THE publishing surface. One chip beside the project name, one server-computed field, one
+ * sentence and at most one action.
  *
- * IT REPLACES THREE CONTROLS THAT COULD DISAGREE — the Publish card, the Review & approval
- * card and the builder's toolbar button — and, more to the point, it replaces the thing
- * that made them disagree: each of them re-decided, in the browser, something the server
- * had already decided. That mirror has produced the same class of bug four times in this
- * one feature, most recently promising "this can publish automatically" beside a Publish
- * button moments before the server routed the app to an administrator. Nine labels were
- * nine assertions about server behaviour. They now have one source.
+ * WHY THIS EXISTS. It replaces three controls that could disagree — the Publish card, the
+ * Review & approval card and the builder toolbar button — because each re-decided in the
+ * browser something the server had already decided. That mirror produced the same class of
+ * bug four times, most recently promising "this can publish automatically" beside a Publish
+ * button moments before the server routed the app to an administrator. Nine labels were nine
+ * assertions about server behaviour; they now have one source (`presentationFor`, switching
+ * on `publishState` alone — see its call site below). Publishing behaviour itself is
+ * unchanged: the seven-rule ladder, the questionnaire and the two successes are as they were.
  *
- * SO THE ONE RULE HERE IS: `presentationFor` switches on `publishState` and on NOTHING
- * ELSE. No status, no `unpublishedAt`, no failure code, no approval lineage, no pin. The
- * other fields on the response are still read — but only to fill in a version row the
- * state has already asked for, never to decide which state it is.
+ * THE CONTRACT A FUTURE WORKSPACE HEADER INHERITS, so it can re-parent this component
+ * without reading its internals: takes a project id only (no router/rail/chat state);
+ * renders INLINE at intrinsic size (no absolute/fixed/sticky); its popover is PORTALLED to
+ * `document.body` — load-bearing today, the builder mount sits under four nested
+ * `overflow-hidden` ancestors; it owns its own read/refresh lifetime, so a second mount is
+ * correct, not merely tolerated (today's two mounts are sibling routes under one Outlet, so
+ * only ever one is live). The header's only job is to place it and drop the builder mount.
  *
- * PUBLISHING BEHAVIOUR IS UNCHANGED. The seven-rule ladder, the classification
- * questionnaire and the two successes are exactly as they were; what changed is that the
- * interface stopped guessing which of them a press will produce. The button states the
- * CEILING of what it will attempt, and the server's answer states what happened —
- * publishing directly where the button said "Send update for review" reads as the better
- * outcome, not as a contradiction.
- *
- * ── THE CONTRACT THE FUTURE WORKSPACE HEADER INHERITS ───────────────────────────────
- * Stated here so the workspace header can re-parent this component without reading a line
- * of its internals:
- *   · It takes a project id and nothing else. It reads no router state, no rail mode and
- *     no chat.
- *   · It renders INLINE at its intrinsic size — no absolute positioning, no fixed width,
- *     no sticky behaviour — so a container may lay it out however it likes.
- *   · Its popover is PORTALLED to the document body, so a header with clipped overflow or
- *     its own stacking context cannot hide it. This is load-bearing today: the builder
- *     mount sits under four nested `overflow-hidden` ancestors.
- *   · It owns its own read and its own refresh lifetime, so a SECOND mount would be correct
- *     rather than merely tolerated. There are two mount SITES today — this project page and
- *     the builder's pane toolbar — but they are sibling routes under one Outlet, so only
- *     ever one of them is live.
- *   · The future workspace header's only obligation is to place it beside the project name
- *     and drop the mount that dies with the builder page. Nothing here changes when the
- *     project page and the builder page collapse into one screen.
- * ────────────────────────────────────────────────────────────────────────────────────
- *
- * WHERE THE COPY COMES FROM. Nine sentences are the design canvas's own, from its
- * "The status chip, nine states" board. Four states have no artboard and their copy is
- * carried across from the tree or written here, each marked at its arm. Three deliberate
- * departures from the canvas are marked the same way — the canvas is authoritative for
- * register and wording, never for a claim the endpoints cannot honestly serve.
+ * Nine copy sentences are the design canvas's own ("The status chip, nine states"); four
+ * states with no artboard, and three deliberate departures from it, are marked at their arm —
+ * the canvas governs register and wording, never a claim the endpoints cannot honestly serve.
  */
 import { useCallback, useEffect, useId, useState } from 'react'
 import { ChevronDown, ExternalLink } from 'lucide-react'
@@ -72,15 +48,12 @@ import type { DeployOutcome, PublishState } from '../utils/deployApi'
    provenance rows are new there and belong to the same decision. */
 
 /**
- * The answer to a press, and there is exactly ONE treatment for it because there is only
- * ever one kind of thing here: a success. Both of the ladder's outcomes resolve — `202
- * started` and `200 routed_for_review` — and being sent for review is a success, not a
- * failure of the thing the citizen just asked for. Every REFUSAL throws instead, and the
- * questionnaire renders it beside its own button with the answers still on screen, which
- * is where a citizen who has to change something is already looking.
- *
- * So this region is never red and never carries an alert role. That is not a styling
- * choice to be tidied later — it is the property three retired tests pinned.
+ * The answer to a press: exactly ONE treatment, because there is only one kind of thing
+ * here — a success (both ladder outcomes, `202 started` and `200 routed_for_review`,
+ * resolve; review-routing is a success, not a failure of what the citizen asked for). Every
+ * REFUSAL throws instead and the questionnaire renders it beside its own button. So this
+ * region is never red and never carries an alert role — not a styling choice, but a
+ * property three retired tests pinned.
  */
 const STARTED_ANSWER = 'Publishing now — this takes a few minutes.'
 
@@ -132,6 +105,10 @@ export default function PublishStatusChip({
   )
 
   const state: PublishState | null = deployment?.publishState ?? null
+  // THE ONE RULE: `presentationFor` switches on `publishState` alone — no status, no
+  // `unpublishedAt`, no failure code, no approval lineage, no pin. Other response fields
+  // are still read, but only to fill a version row the state already asked for, never to
+  // decide which state it is.
   const presentation = state === null ? null : presentationFor(state)
   // The pill's own colour pair, from the same one field. `lookFor` is exhaustive over the
   // union, so a state the server adds is a compile error rather than an unpainted chip.
@@ -178,21 +155,12 @@ export default function PublishStatusChip({
   }, [saving, saveAndPublish, speak])
 
   /**
-   * ONE permanently-mounted, initially-empty polite live region, rendered in every arm
-   * below. A region injected together with its text is frequently not announced at all —
-   * the portal already states this convention at `LivePreview.tsx` — which is why it is
-   * mounted before it has anything to say and never unmounted.
-   *
-   * IT SPEAKS THE STATE, NOT ONLY THE ANSWERS. Both retired controls derived their live
-   * region straight from the loaded state, so a state that arrived while the citizen was
-   * looking at something else — a version approved overnight, a publish that routed from
-   * another tab, an administrator switching the app off — announced itself. Filling this
-   * only from `speak()` would have made it silent for any mount that did not itself press
-   * something, which is most of them. The answer wins while there is one, because it is
-   * the more specific thing to say about a press that just happened.
-   *
-   * It sits OUTSIDE the popover on purpose: an announcement is owed whether or not the
-   * popover happens to be open.
+   * ONE permanently-mounted, initially-empty polite live region (see `LivePreview.tsx` for
+   * why: text injected together with the mount is often not announced). Speaks the STATE,
+   * not only answers — a state arriving while the citizen looked elsewhere (approved
+   * overnight, routed from another tab, switched off by an admin) still announces itself;
+   * `speak()` alone would leave any mount that never itself pressed something silent. The
+   * answer wins while there is one (more specific). Sits OUTSIDE the popover: owed either way.
    */
   let announcement = answer ?? ''
   if (answer === null && loadError !== null) announcement = 'Publish status: unavailable'

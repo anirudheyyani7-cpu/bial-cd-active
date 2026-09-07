@@ -20,30 +20,17 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { Select, SelectValue, SelectTrigger, SelectContent, SelectItem } from '../ui/select'
 import { SYSTEM_PROMPT_RESERVE } from '../../utils/contextLimits'
 
-// The model's real context window — a per-conversation hard limit can be lowered below this
-// but never raised past it. The clamp is the SERVER's (`services/usage/limits.effective_context`),
-// so typing a larger number here does not widen anything; this constant only keeps the hint
-// truthful about what will happen.
-//
-// THIS COMMENT USED TO SAY the opposite of what was true — "the server is the real boundary;
-// this is a friendly client-side guard" — while the server enforced nothing and the client had
-// stopped enforcing anything either. Both halves are now correct: the server refuses a turn
-// past the per-conversation max (`enforce_context_limit`, a 413 the citizen reads a sentence
-// from), and the browser's own warning at the soft threshold is the friendly guard.
+// The model's real context window: a per-conversation hard limit may be lowered below this,
+// never raised past it. The clamp is the SERVER's (`services/usage/limits.effective_context`),
+// so a larger number here widens nothing — this constant only keeps the hint truthful. Both
+// enforcement halves are real: the server 413s past the max (`enforce_context_limit`), and
+// this browser warning is the friendly guard at the soft threshold, not the boundary itself.
 const MODEL_CONTEXT_WINDOW = 200_000
 // The lowest per-conversation max that still leaves a usable chat, mirroring the server's
-// `CONTEXT_HARD_FLOOR`.
-//
-// DERIVED FROM THE RESERVE, exactly as the server derives it, rather than written out as a
-// number — `contextLimits.SYSTEM_PROMPT_RESERVE` is already the twin of the server's, so the
-// floor cannot drift from it on one side only.
-//
-// A NUMBER THE FORM HAS TO KNOW, not a duplicated rule. The server refuses anything below it
-// with a message naming it, so the two can never disagree about the OUTCOME; what this copy
-// buys is that an administrator is told before they submit rather than after. Below this the
-// context gate refuses every chat that person opens — including a brand-new empty one — and
-// the sentence they read tells them to start a new chat, which is the one thing that also
-// fails.
+// `CONTEXT_HARD_FLOOR`. Derived from `SYSTEM_PROMPT_RESERVE` exactly as the server derives
+// it — not a written-out number — so the two can't drift apart on one side only. Below this,
+// the server's context gate refuses every chat the admin's target user opens, even a brand
+// new empty one; this constant exists only so an admin is told BEFORE they submit, not after.
 const CONTEXT_HARD_FLOOR = SYSTEM_PROMPT_RESERVE * 2
 // The wire page size (how many rows one fetchUsers call asks for — capped at the
 // server's MAX_PAGE_SIZE=100) is deliberately larger than the table's on-screen page
@@ -275,44 +262,21 @@ interface UsersKeysetPage extends KeysetPage<UserLimitsOut> {
 }
 
 /**
- * Admin "Users & Limits" panel — the super-admin roster. Server-side keyset
- * pagination + search (via useKeysetList over fetchUsers, whose item key is
- * `users`, not `items`; `defaults` rides on the resolved page as `lastPage.defaults`),
- * a per-user usage-today + suspension column, a raise/reset-limits modal, and
- * deactivate / reactivate / reset-usage row actions with optimistic state +
- * reconcile-on-failure.
- *
- * Sorting, role/status filtering, and pagination are TanStack Table (client-side)
- * over the search-scoped roster: since the backend has no sort/role/status params
- * and no offset pagination (keyset only), the panel keeps chaining `loadMore()` in
- * the background until the current search's full result set is loaded, so a column
- * sort is never silently wrong about rows that haven't loaded yet. The search box
- * itself stays server-side (`q`) exactly as before — that's not a TanStack concern.
- *
- * The self-and-peer-super-admin guard (a super-admin is never suspendable, and the
- * caller is always a super-admin) is surfaced as a MISSING action on an ACTIVE
- * super-admin's row — a visible affordance, not a 403 discovered after the click.
- * A SUSPENDED super-admin is the one exception: role is derived at read time from
- * the env allowlist, so that state is reachable with no 403 bypass (e.g.
- * suspended as a citizen, later added to the allowlist), and the server's
- * reactivate_user has no super-admin guard — so suspended wins over the guard and a
- * live Reactivate is offered instead of a permanent "Protected" dead end
- * (columns.tsx). RBAC is still enforced server-side; this is purely UI.
+ * Admin "Users & Limits" roster: keyset pagination + search, usage/suspension columns, a
+ * limits edit modal, and deactivate/reactivate/reset-usage actions with optimistic state +
+ * reconcile-on-failure. Sorting/filtering/pagination run client-side (TanStack), so the
+ * panel background-chains `loadMore()` until the full search result set has loaded — a sort
+ * must never be silently wrong about rows not yet arrived. The self/peer-super-admin
+ * suspend guard is a MISSING row action, not a 403 after the click; RBAC stays server-side.
  */
 export default function UsersLimitsPanel({ onToast }: UsersLimitsPanelProps) {
-  // One controller per mount, aborted on unmount, so the background bulk-load chain
-  // doesn't keep firing requests after the admin tabs away (AdminPage unmounts this
-  // panel on tab switch) or navigates elsewhere. `fetchPage` reads `.signal` via
-  // closure on every call — `useKeysetList` itself is untouched, it stays blind to
-  // cancellation and just calls whatever `fetchPage` the caller supplied.
-  //
-  // The controller is created INSIDE the effect, not lazily on the ref at render time
-  // (`if (!abortRef.current) abortRef.current = new AbortController()`) — StrictMode's
-  // dev-only mount→cleanup→remount simulation would abort that one lazily-created
-  // controller on the simulated unmount and then never replace it (the ref is already
-  // non-null on the simulated remount), permanently dooming every real fetch with
-  // "signal is aborted without reason". Creating a fresh controller in the effect body
-  // itself means the simulated remount's effect run creates a second, live one.
+  // One AbortController per mount, aborted on unmount, so the background bulk-load chain
+  // stops firing once the admin tabs away or navigates elsewhere (`fetchPage` reads
+  // `.signal` via closure). Created INSIDE the effect, not lazily on the ref at render
+  // time: StrictMode's mount→cleanup→remount simulation would abort a lazily-created
+  // controller on the simulated unmount and never replace it (the ref stays non-null on
+  // remount), permanently dooming every real fetch with "signal is aborted without
+  // reason". Creating it in the effect body means the remount creates a fresh, live one.
   const abortRef = useRef<AbortController | null>(null)
   useEffect(() => {
     const controller = new AbortController()
@@ -348,34 +312,22 @@ export default function UsersLimitsPanel({ onToast }: UsersLimitsPanelProps) {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: TABLE_PAGE_SIZE })
 
-  // An AbortError (the unmount-cancellation controller above firing) is not a REAL
-  // failure — it's this component's own cancellation, not the server's. Most visibly:
-  // React StrictMode's dev-only mount→cleanup→remount simulation aborts the very
-  // request the first (simulated) mount's effects kicked off, and by the time that
-  // rejection is processed the remount's effects have already run and created a
-  // fresh, live controller — so the "failure" is stale before it's even observed.
-  // Treated as a real error, it would prevent auto-retry the same way a genuine
-  // failure correctly does, permanently stranding the panel on "Couldn't load users
-  // / signal is aborted without reason" for a cancellation nothing actually asked to
-  // surface. `error.name` is 'AbortError' whether the abort came from AbortController
-  // or fetch() itself, per the standard.
+  // An AbortError is this component's OWN cancellation, not the server's — most visibly,
+  // StrictMode's mount→cleanup→remount simulation aborts the first (simulated) mount's
+  // request after a fresh, live controller already replaced it, so the "failure" is stale
+  // before it's even observed. Treated as real, it would block auto-retry and permanently
+  // strand the panel on "signal is aborted without reason" for a cancellation nobody asked
+  // to surface. `error.name` is 'AbortError' whether it came from AbortController or fetch().
   const isAbortError = error?.name === 'AbortError'
 
-  // useKeysetList does not self-load, and the backend has no offset/sort/filter
-  // params — so this chains loadMore() to completion for the CURRENT search: it
-  // re-fires whenever `loading`/`hasMore` change (i.e. after every successful page),
-  // and stops on `hasMore === false`, a REAL failed page (`error` truthy and not an
-  // abort, so a stuck request never retries in a tight loop), or the
-  // MAX_LOADED_USERS ceiling. An abort is the one error that DOES retry — see above.
+  // useKeysetList doesn't self-load and the backend has no offset/sort/filter params, so
+  // this chains loadMore() to completion for the CURRENT search, stopping on `hasMore ===
+  // false`, a REAL failed page (not an abort — those retry, see above), or MAX_LOADED_USERS.
   //
-  // The `appliedQuery === null || appliedQuery === q` guard closes a race: `q`
-  // updates synchronously on every keystroke but `appliedQuery` (and the hook's
-  // internal cursor) only catches up once the debounced search actually lands. Without
-  // this guard, a background page landing mid-keystroke calls loadMore() with the
-  // OLD cursor and the NEW query text — a mismatched slab gets appended under the new
-  // search. `appliedQuery === null` is the one-time exception: nothing has landed yet,
-  // so there is no cursor to race against, and blocking here would stall the very
-  // first page load.
+  // `appliedQuery === null || appliedQuery === q` closes a race: `q` updates every keystroke
+  // but `appliedQuery`/the cursor only catch up once the debounced search lands — without it,
+  // a page landing mid-keystroke would append the OLD cursor's rows under the NEW query text.
+  // `null` is the one exception: nothing has landed yet, so blocking would stall page one.
   useEffect(() => {
     if (
       !loading &&
@@ -452,15 +404,10 @@ export default function UsersLimitsPanel({ onToast }: UsersLimitsPanelProps) {
     }
   }
 
-  // Idempotent server-side (no 409) — resetting an already-zero day is a no-op — so
-  // unlike deactivate/reactivate there is no "conflicting state" branch to reconcile.
-  //
-  // instanceof ApiError narrowing extended here too, past
-  // this action's original merge: release/1.5.0 added onResetUsage with the same
-  // duck-typed `e?.status === 404` the review flagged on deactivate/reactivate.
-  // Leaving this one site unnarrowed while the other two were fixed would be worse
-  // than not fixing any of them — disclosed as a delta alongside the other four in
-  // the PR body, not silent.
+  // Idempotent server-side (no 409): resetting an already-zero day is a no-op, so unlike
+  // deactivate/reactivate there is no "conflicting state" branch to reconcile. The
+  // `instanceof ApiError` narrowing here matches the other two actions', not a duck-typed
+  // `e?.status === 404` — kept consistent rather than leaving this one site un-narrowed.
   const onResetUsage = async (u: MergedUser) => {
     const original = u.usageToday
     setActionError(null)

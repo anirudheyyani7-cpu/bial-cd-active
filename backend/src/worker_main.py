@@ -1,45 +1,27 @@
 """The worker process: `python -m src.worker_main`.
 
-ONE process runs BOTH taskiq roles — the receiver that executes tasks and the scheduler loop
-that enqueues cron ticks — as two supervised asyncio tasks. A scheduler without a receiver would
-enqueue work nothing consumes, behind a container that looks healthy, so the receiver is the
-mandatory role and the scheduler rides along.
+ONE process runs BOTH taskiq roles — the receiver that executes tasks and the scheduler loop that
+enqueues cron ticks — as two supervised asyncio tasks. A receiverless scheduler would enqueue work
+nothing consumes behind a healthy-looking container, so the receiver is mandatory and the scheduler
+rides along.
 
-WHAT IS ON A TIMER, AND WHAT IS NOT. This container holds the platform's only clock, and three
-passes are on it: deploy reconciliation every five minutes, the sandbox sweep that snapshots
-and reaps idle build containers every five, and the reclamation pass that classifies the Azure
-fleet against the coordination store every fifteen (report-only unless its destroy flag is on,
-and it is off everywhere today). Everything else that sweeps is OPERATOR-INVOKED and stays that
-way by decision — the object-store reconcile, the per-app-database reconcile and the full
-sandbox reconciliation endpoint each run only when a superadmin calls them. Two things are
-neither: `main.py`'s boot one-shot settles a deploy that straddled a restart before the first
-request is served, which no cron can do, and the in-process ended-session map is evicted
-opportunistically, being per-process state a shared scheduler could not reach anyway.
+WHAT IS ON A TIMER: deploy reconciliation and the sandbox sweep every five minutes, the fleet
+reclamation pass every fifteen (report-only — its destroy flag is off everywhere today).
+Everything else that sweeps is OPERATOR-INVOKED, run only when a superadmin calls it; `main.py`'s
+boot one-shot and the in-process ended-session eviction are neither — one settles a deploy before
+cron can run, the other is per-process state a shared scheduler couldn't reach.
 
-WHY THIS EXISTS INSTEAD OF `taskiq worker` / `taskiq scheduler`
----------------------------------------------------------------
-Both CLI-based designs were tried on paper and both are broken:
+WHY THIS EXISTS instead of `taskiq worker` / `taskiq scheduler`: both were tried and both are
+broken — a `WORKER_STARTUP` handler that starts the scheduler recurses without bound
+(`run_scheduler` → `TaskiqScheduler.startup()` → `broker.startup()` → re-fires `WORKER_STARTUP`),
+and `taskiq worker`'s worker-count (default 2) forks children that fire it too, past any replica
+pin. Owning the entrypoint makes "one scheduler" true BY CONSTRUCTION, and a fatal error exits
+visibly instead of crash-looping.
 
-1. **`taskiq worker` + a `WORKER_STARTUP` handler that starts the scheduler is fatally
-   recursive.** `run_scheduler` calls `TaskiqScheduler.startup()`, which calls
-   `broker.startup()`, which fires `WORKER_STARTUP` when `is_worker_process` — so the handler
-   re-fires the thing that spawned it, without bound. It also reconfigures the root logger and,
-   on cancellation, shuts down the co-resident receiver's connection pool.
-
-2. **`taskiq worker` cannot give a single-scheduler guarantee anyway.** Its worker-count argument
-   defaults to **2**, so the CLI forks two children, each firing `WORKER_STARTUP`. A replica pin
-   of `minReplicas = maxReplicas = 1` says nothing about child processes inside one replica.
-
-Owning the entrypoint makes "exactly one scheduler" true BY CONSTRUCTION. One interpreter also
-halves the memory the container is sized against, and a fatal error exits the process so ACA
-restarts the container visibly, rather than a child crash-looping inside a container that never
-exits.
-
-WHAT THE REPLICA PIN DOES AND DOES NOT BUY. Even with one scheduler per process and one replica,
-ACA drains the old revision while the new one starts, so **two schedulers exist during every
-deploy window**. Taskiq has no leader election of any kind. The pin is a defence, never an
-exclusivity guarantee — which is why every scheduled pass must be idempotent and single-flighted
-in its own right.
+Even with one scheduler per process and one replica, ACA drains the old revision while the new one
+starts, so TWO SCHEDULERS EXIST DURING EVERY DEPLOY WINDOW — taskiq has no leader election. The
+replica pin is a defence, not an exclusivity guarantee, which is why every scheduled pass must be
+idempotent and single-flighted in its own right.
 """
 
 from __future__ import annotations
@@ -116,15 +98,12 @@ async def _run_receiver_forever() -> None:
 async def _run_scheduler_forever() -> None:
     """Drive the scheduler loop directly rather than through `taskiq.api.run_scheduler_task`.
 
-    `skip_first_run=True` is MANDATORY and the API helper does not expose it. Cron last-run state
-    is an in-memory dict that is never persisted, so on restart the first iteration evaluates the
-    cron against the current minute and fires if it matches — at a five-minute cadence that is a
-    1-in-5 chance per restart, i.e. most revision rolls. For a destructive pass, a spurious extra
-    run at deploy time is exactly the wrong failure.
+    `skip_first_run=True` is MANDATORY (the API helper hides it): cron last-run state is an
+    in-memory dict, never persisted, so a restart's first tick fires on a 1-in-5 chance at this
+    five-minute cadence — a spurious destructive run at deploy time, exactly the wrong failure.
 
-    `SchedulerLoop(scheduler).run(...)`, never `scheduler.startup()`: startup would call
-    `broker.startup()` a second time and re-fire the worker-startup event.
-    """
+    `SchedulerLoop(scheduler).run(...)`, never `scheduler.startup()`, which would call
+    `broker.startup()` a second time and re-fire the worker-startup event."""
     while True:
         try:
             await SchedulerLoop(scheduler).run(skip_first_run=True)

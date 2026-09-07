@@ -1,15 +1,14 @@
 """Azure Blob Storage configuration model.
 
-The control-plane persists attachments and generated-app files to Azure Blob
-Storage only. `Settings.object_store` is typed `StorageConfig | None`, where
-`StorageConfig` is a plain alias for `AzureStorageConfig`; pydantic-settings
-validates one `OBJECT_STORE__*` env block against it. This single funnel is the
-ONLY place dynamic input becomes a typed config member — there is no hand-written
-`TypeAdapter` on the env path.
+The control-plane persists attachments and generated-app files to Azure Blob Storage only.
+`Settings.object_store` is typed `StorageConfig | None`, where `StorageConfig` is a plain alias for
+`AzureStorageConfig`; pydantic-settings validates one `OBJECT_STORE__*` env block against it — the
+ONLY place dynamic input becomes a typed config member, with no hand-written `TypeAdapter` on the
+env path.
 
-Every credential is a `SecretStr`, unwrapped only at the SDK boundary in the
-backend (per security.md). Knob fields keep a default only where the empty/None
-value has a DEFINED meaning the code branches on.
+Every credential is a `SecretStr`, unwrapped only at the SDK boundary in the backend (per
+security.md). Knob fields keep a default only where the empty/None value has a DEFINED meaning the
+code branches on.
 """
 
 from __future__ import annotations

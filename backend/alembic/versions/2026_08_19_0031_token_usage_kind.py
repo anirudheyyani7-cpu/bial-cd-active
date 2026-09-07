@@ -4,38 +4,25 @@ Revision ID: 0031_token_usage_kind
 Revises: 0030_approval_route_declaration
 Create Date: 2026-08-19
 
-`token_usage` was one row per (user, IST day) with no dimension for what the spend
-was FOR. The pre-publish classification review needs its spend recorded against the
-citizen (attribution — knowing who generates review cost is the point of recording
-it) without counting toward the budget their own builds are measured against (a
-heavy build day must never make an app unpublishable, and opening the publish
-dialog must never silently spend build time). One column carries both:
+WHY THIS EXISTS — `token_usage` was one row per (user, IST day) with no dimension for what the
+spend was FOR. Review spend must be attributed to the citizen without counting toward their
+build budget (a heavy build day must never block a publish; opening the publish dialog must
+never silently spend build time). One column carries both:
 
-  * `kind` — a native enum (`build` | `review`), NOT NULL, defaulting to
-    `build` because that is the DEFINED meaning of an unspecified kind: every
-    writer that predates the dimension was a build writer.
-  * the uniqueness moves from `(user_id, usage_date)` to `(user_id, usage_date,
-    kind)` — at most one row per kind per day, so `record_usage`'s atomic
-    `INSERT … ON CONFLICT … DO UPDATE` fold keeps working unchanged with `kind`
-    added to its inference target.
+  * `kind` — native enum (`build` | `review`), NOT NULL, defaulting to `build`: every writer
+    that predates the dimension was a build writer.
+  * uniqueness moves to `(user_id, usage_date, kind)` — one row per kind per day, so
+    `record_usage`'s `INSERT … ON CONFLICT … DO UPDATE` keeps working with `kind` added.
 
-The `kind == 'build'` filter lands in the expression's two READERS (the daily
-gate's `_used_today` and the admin roster), never inside `billable_spend()` itself
-— that expression carries the fix for two production accounting incidents and is
-left untouched.
+The `kind == 'build'` filter lives in the two READERS (`_used_today`, the admin roster), never
+inside `billable_spend()` itself — that expression carries the fix for two production
+accounting incidents and stays untouched.
+BACKFILL: every existing row becomes `build` — that is what it has always been.
 
-BACKFILL: every existing row becomes `build`. That is what it has always been —
-the review kind did not exist to be recorded.
-
-`downgrade` DELETES `review` rows before restoring the old `(user_id, usage_date)`
-uniqueness: the pre-kind schema keys one row per (user, day) and cannot hold a
-second same-day row, and folding review spend into the build row would do
-retroactively exactly what this migration exists to prevent — bill the citizen for
-reviews. Attribution records the old schema cannot represent are dropped with the
-schema that cannot represent them.
-
-Hand-finalized.
-"""
+`downgrade` DELETES `review` rows before restoring the old uniqueness: the pre-kind schema
+holds one row per (user, day), and folding review spend into it would retroactively do
+exactly what this migration exists to prevent — bill the citizen for reviews.
+Hand-finalized."""
 
 from __future__ import annotations
 

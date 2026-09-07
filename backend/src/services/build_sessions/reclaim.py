@@ -1,28 +1,24 @@
 """The confidence-tier classifier — fleet + spare-list in, tiered verdicts out.
 
 WHY THIS EXISTS
-Pure and I/O-free, the same shape as `appdb/reconcile.py::classify_databases` and for the same
-reason: this is the safety argument for every destructive unit downstream, so every dangerous
-combination has to be provable against a synthetic fleet holding all of them at once, with no
-Azure, no Redis and no database in the way. The caller gathers the evidence; this decides.
+Pure and I/O-free, like `appdb/reconcile.py::classify_databases`: this is the safety argument for
+every destructive unit downstream, so every dangerous combination must be provable against a
+synthetic fleet holding all of them at once, with no Azure, Redis, or database in the way. The
+caller gathers evidence; this decides.
 
-How long an unclaimed container waits is set by how many independent signals concur, not by a
-single duration: a lone age threshold defends only against "created but not yet recorded" (a
-window the provisioning retry policy already bounds at ~20 minutes) and buys no protection
-against a lost or wrong store.
+How long an unclaimed container waits is set by how many signals concur, not a single duration — a
+lone age threshold only defends "created but not yet recorded" (a window the provisioning retry
+policy already bounds at ~20 minutes), not a lost or wrong store.
 
-A fact you cannot read does not become true by waiting. Every path that stands for a signal which
-could not be read leads to `ESCALATE`; none of them defaults to destroy. A timeout is not a death
-certificate.
+A fact you cannot read does not become true by waiting. Every unreadable signal leads to
+`ESCALATE`, never DESTROY — a timeout is not a death certificate.
 
-One workspace per user, and nobody takes it by force — the rule this classifier serves, and the
-interactive paths obey it too. The registry is keyed by user, so a live container belonging to
-another of that user's projects is why theirs is not up. Reclaiming it is the citizen's call,
-never the platform's: a relaunch or turn that would displace it refuses with a 409 naming the
-project holding the slot (`manager.py::SandboxReclaimBlockedError`), and the portal offers to
-save that project's work rather than silently tearing the incumbent down. The scheduled pass
-below applies the same principle from the other side: a container any signal still claims is
-spared, never collected.
+One workspace per user, and nobody takes it by force. The registry is keyed by user, so a live
+container belonging to another of that user's projects is why theirs is not up; reclaiming it is
+the citizen's call, never the platform's — a relaunch or turn that would displace it refuses with a
+409 (`manager.py::SandboxReclaimBlockedError`), and the portal offers to save the incumbent's work
+instead. The scheduled pass below applies the same principle in reverse: a container any signal
+still claims is spared, never collected.
 """
 
 from __future__ import annotations
@@ -140,19 +136,12 @@ class RegistryClaim:
     def combined_with(self, other: RegistryClaim) -> RegistryClaim:
         """One container, two records naming it: the record that SPARES wins.
 
-        The claim map is keyed by CONTAINER NAME and the signals are keyed by USER, so two
-        records can name one container — a stale entry, or a crossed one. A plain assignment
-        makes the scan's last writer win, and an unrelated user's empty record then erases a live
-        builder's claim.
+        Claims are keyed by user while the claim map is keyed by container name, so two records
+        can name one container (a stale or crossed entry); a plain assignment lets the last
+        writer win and an unrelated user's empty record erase a live claim.
 
-        NOT A FIELD-WISE `or`. OR-ing would let one record's lock and another record's heartbeat
-        add up to a liveness nobody actually holds — a claim invented by the merge rather than
-        made by any record. Preferring the sparing record keeps every claim something a real
-        record really asserted, and points the ambiguity the same way every other gate here
-        points it: toward sparing.
-
-        When both spare or neither does, `self` stands. They can then differ only in which
-        signals are set, and both land in the same tier either way."""
+        NOT a field-wise `or` — that would invent a liveness no record asserts by combining one's
+        lock with another's heartbeat. Ties keep `self`; both land in the same tier regardless."""
         return other if other.spares_the_container and not self.spares_the_container else self
 
 
@@ -308,13 +297,12 @@ def classify_fleet(
 ) -> ReclamationPlan:
     """Bucket every enumerated container.
 
-    `claims` maps app name → what the coordination store says. A name ABSENT from it is
-    unregistered; a name present with every signal lapsed is the fifth tier, which runs
-    through the identical durable-copy → staging → ceiling → destroy chain rather than sitting
-    outside the gates.
+    `claims` maps app name to what the coordination store says; an absent name is unregistered,
+    and a present name with every signal lapsed is the fifth tier — it runs the same
+    durable-copy → staging → ceiling → destroy chain, not a separate path.
 
     `known_app_names` is the set of container names with a matching app record, or `None` when the
-    product database could not be read — in which case the whole fleet escalates."""
+    product database could not be read, in which case the whole fleet escalates."""
     members = list(fleet)
     store_fault = _the_registry_looks_wrong(len(members), len(claims))
     if store_fault:

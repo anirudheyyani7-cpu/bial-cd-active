@@ -1,16 +1,14 @@
 """Build-session schemas — the frozen control surface plus the brain interface.
 
-The portal↔session-API control API is `BuildSessionStatus` plus the `start` / `stop` /
-`status` and lock-op bodies; they cross the JSON wire, so they subclass `CamelModel`
-(snake_case Python ⇄ camelCase wire). The status is an API `StrEnum`, not a native PG
-enum — no durable build-session row is persisted, so no migration lands with it.
+The portal↔session-API control API (`BuildSessionStatus`, `start`/`stop`/`status`, lock-op
+bodies) crosses the JSON wire, so it subclasses `CamelModel` (snake_case ⇄ camelCase). The
+status is an API `StrEnum`, not a native PG enum — no durable row is persisted.
 
 The brain seam is the tagged-union progress envelope, `BuildResult`, and the `run_build`
-protocol typing. It keeps snake_case field names AND snake_case `type` literals because it
-is a streaming frame that must stay byte-stable from emit through relay to the portal: those
-models subclass plain `BaseModel` with no alias generator and discriminate on `type` the way
-`FileOp` discriminates on `action`. Freezing them here as shared read-only code stops both
-sides inventing the shape separately.
+protocol. It keeps snake_case fields AND `type` literals — a streaming frame that must stay
+byte-stable emit→relay→portal-consume — so these subclass plain `BaseModel` with no alias
+generator, discriminating on `type` like `FileOp` on `action`. Freezing them here as shared
+read-only code stops both sides inventing the shape separately.
 """
 
 from __future__ import annotations
@@ -139,19 +137,13 @@ TURN_ENDED_UNCHANGED_STAY_SECONDS = 300  # 5 min
 
 
 class PreviewLifeState(enum.StrEnum):
-    """What is (or is not) serving a project's preview right now.
+    """What is (or is not) serving a project's preview right now. An **API** StrEnum like
+    `BuildSessionStatus`, not a native PG enum — wire value equals the member's lowercase name.
 
-    An **API** StrEnum like `BuildSessionStatus`, not a native PG enum: nothing persists it.
-    The wire value equals the member's lowercase name.
-
-    It exists because `preview-state` used to answer `alive: false` for four situations that
-    a builder experiences as completely different things, one of which was not a situation at
-    all but an ERROR — a registry read that threw came back as "your preview is gone", and the
-    portal dutifully pulled a perfectly live app off the screen.
-
-    An unknown gets its own member and its own UI. It is never folded into a neighbour, for
-    exactly the reason `SaveState.dirty` is tri-state: the reassuring answer is the one you
-    must never give on someone else's behalf."""
+    Exists because `preview-state` once collapsed four different situations into one `alive:
+    false`, including a registry-read ERROR misread as "gone" — pulling a live app off screen.
+    UNKNOWN keeps its own member, never folded in, for the same reason `SaveState.dirty` is
+    tri-state: never give the reassuring answer for someone else."""
 
     ALIVE = "alive"  # a container is serving THIS project; `preview_url` is framable.
     # Built before, nothing serving it now. The next prompt brings it back from the durable
@@ -173,22 +165,14 @@ class PreviewLifeState(enum.StrEnum):
 
 
 class PreviewStateAction(enum.StrEnum):
-    """What a citizen may be OFFERED in response to a `PreviewLifeState` — the readiness→action
-    mapping, written down here as data rather than left as a claim in a docstring, because
-    this is the one path in the codebase with a recorded data-loss incident.
-
-    THREE BUCKETS, and `REMEDY` is the one that matters. `RETRY` is "press start/relaunch again" —
-    starting is never destructive, so it costs nothing to offer on
-    an ambiguous read. `NEITHER` is "nothing to offer" — already alive, already starting, or
-    nothing was ever built. `REMEDY` is the one bucket that can be consequential: SLOT_TAKEN's
-    remedy is releasing ANOTHER project's container, which is `release_project_sandbox` — "the
-    only route that destroys a container on purpose" — taken on a CONFIRMED fact (the
-    marker or the registry names the occupying project outright), never a guess.
-
-    THE RULE THIS ENUM EXISTS TO LET A TEST ENFORCE: no state built from an ambiguous or
-    timed-out read may map to `REMEDY`. `UNKNOWN` maps to `RETRY`, never `REMEDY` — the exact
-    discipline the incident above was missing, where a readiness TIMEOUT was read as a death
-    certificate and routed straight into a teardown-then-restore."""
+    """What a citizen may be OFFERED for a `PreviewLifeState` — kept as data, not a docstring
+    claim, because this path has a recorded data-loss incident. THREE BUCKETS: `RETRY` (never
+    destructive, safe even on an ambiguous read); `NEITHER` (nothing to offer); `REMEDY`
+    (consequential — releases ANOTHER project's container via `release_project_sandbox`, only
+    on a CONFIRMED occupying-project fact, never a guess). THE RULE A TEST ENFORCES: `UNKNOWN`
+    maps to `RETRY`, never `REMEDY` — an ambiguous or timed-out read must never route to a
+    consequential remedy, the discipline missing when a readiness TIMEOUT was once read as
+    death and routed straight into teardown-then-restore."""
 
     RETRY = "retry"  # try again; by construction this can never destroy anything.
     REMEDY = "remedy"  # a specific, nameable fix exists — and it may be consequential.
@@ -354,18 +338,14 @@ writer is a crashing browser inside an app whose code we did not author. Anythin
 
 
 class WorkspaceCheckResponse(CamelModel):
-    """`POST /v1/build-sessions/projects/{projectId}/workspace-check` → 200.
+    """`POST /v1/build-sessions/projects/{projectId}/workspace-check` → 200. Does the container
+    still hold this app? — asked by an IDLE tab, so a reversion is caught at the preview poll
+    rather than waiting for a turn that may never come.
 
-    Does the container still hold this app? — asked by an IDLE tab, so a reversion that happens
-    while nobody is sending messages is caught at the preview poll rather than at a turn that may
-    never come.
-
-    `reverted` IS THE WHOLE ANSWER for the client, and it is a separate field from `state` rather
-    than something the client derives. Only one of the four states may be acted on, and leaving
-    the client to write `state !== "intact"` is leaving it to retract a completion claim on the
-    two states that mean "we could not tell" — which is the mistake the server side of this
-    verdict is built to make impossible. The state is carried for the operator surface and for
-    diagnosis; the client reads the boolean."""
+    `reverted` IS THE WHOLE ANSWER — a separate field from `state`, not something the client
+    derives. Deriving `state !== "intact"` would retract a completion claim on the two states
+    that mean "we could not tell", the mistake this verdict is built to make impossible. `state`
+    is for the operator surface and diagnosis only."""
 
     state: WorkspaceState
     reverted: bool
@@ -374,13 +354,12 @@ class WorkspaceCheckResponse(CamelModel):
 class CompileStateResponse(CamelModel):
     """`GET /v1/build-sessions/projects/{projectId}/compile-state` → 200.
 
-    The compile signal for a tab with NO LIVE TURN. During a turn the state arrives on the turn
-    stream as a `compile` frame; the moment the turn ends that producer stops, so a tab that
-    reloads afterwards would otherwise have nothing to cover a broken preview with.
+    The compile signal for a tab with NO LIVE TURN — during a turn it arrives on the turn stream
+    as a `compile` frame; once the turn ends that producer stops, so a reloading tab would
+    otherwise have nothing to cover a broken preview with.
 
-    `unknown` is a real answer and the caller must HOLD its current cover on it — never read it
-    as clean. It is what an app with no live container, no app row, or a container predating the
-    signal all answer."""
+    `unknown` is a real answer: the caller must HOLD its current cover, never read it as clean.
+    It is what no live container, no app row, or a container predating the signal all answer."""
 
     state: CompileState
 
@@ -439,18 +418,14 @@ class ErrorSource(enum.StrEnum):
 
 
 class BuildError(BaseModel):
-    """The structured, self-heal-relevant error shape — `{source, title,
-    cleaned_stack}`, reused by the `error` envelope, `escalation.last_error`, and
-    `BuildResult.error`.
+    """The structured, self-heal-relevant error shape — `{source, title, cleaned_stack}`,
+    reused by the `error` envelope, `escalation.last_error`, and `BuildResult.error`.
 
-    THIS SHAPE IS THE MODEL'S, and it was deliberately left alone. `title` is BUILT to be the
-    compiler's own first meaningful line — that is what makes it useful to a repair run, and
-    what made rendering it the most developer-looking thing a citizen ever read. The fix was to
-    stop rendering it, not to soften it: the citizen-facing sentence + next action live in
-    `errors.user_facing` and travel on `DiagnosticFrame`, so `title` and `cleaned_stack` stay
-    byte-identical for a given raw input and the self-heal loop reads exactly what it always
-    did. Anyone tempted to make these two fields friendlier is about to break the repair prompt.
-    """
+    THIS SHAPE IS THE MODEL'S — deliberately left alone. `title` is the compiler's own first
+    line, which made rendering it the most developer-looking thing a citizen read; the fix
+    was to stop RENDERING it, not soften it. Citizen text lives in `errors.user_facing` on
+    `DiagnosticFrame`, so these two fields stay byte-identical and self-heal reads exactly what
+    it always did — do not make them friendlier, or the repair prompt breaks."""
 
     model_config = ConfigDict(extra="forbid")
 

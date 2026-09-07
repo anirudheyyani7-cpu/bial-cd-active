@@ -1,30 +1,26 @@
 """Record a finished build in its thread — the durable counterpart to the live `ended` frame,
 native-store edition.
 
-WHY THE SERVER WRITES THIS. The plan had the PORTAL append the outcome at its terminal, with a
-reconciliation pass for the closed-tab case. That pass turned out to be unimplementable: sessions
-live only in `SessionManager._sessions`, are evicted `_ENDED_RETENTION_SECONDS` (5 min) after the
-terminal, and do not survive a restart — so "the project's latest build session" is not a question
-anything can answer once the tab is gone. Since builds take minutes and users close tabs, the
-portal-only design would have missed exactly the users the record exists for. The thing that
-always knows a build finished is the thing that finished it, so it writes.
+WHY THIS EXISTS. The plan had the portal append the outcome at its terminal, with a
+reconciliation pass for the closed-tab case — unimplementable: sessions live only in
+`SessionManager._sessions`, are evicted 5 minutes after the terminal, and do not survive a
+restart, so "the project's latest build session" is unanswerable once the tab is gone. Builds
+take minutes and users close tabs, so a portal-only design would miss exactly the users the
+record exists for. The thing that always knows a build finished is the thing that finished
+it, so the server writes.
 
-SHAPE. The outcome is a `system_event` row in the native message store: the PAYLOAD is a
-synthesized assistant text (`ModelResponse(TextPart(summary))`) — plain factual prose, because
-it replays to the model as history on the user's next turn — and the build METADATA
-(`sessionId` / `startedSeq` / `previewUrl` / `status` / `reason` / `snapshotCommitted`) lives in
-the row's `meta` column, OUTSIDE the payload, so the payload stays pure native. Idempotency keys
-on `meta->>'sessionId'`; the attachment-consumption boundary reads `meta->>'startedSeq'`
-(`attachments.py`). Seq allocation and the two-writer retry now live in ONE place — the store's
-`append_batch` — instead of being reimplemented here.
+SHAPE. A `system_event` row: PAYLOAD is synthesized assistant text (plain prose — it replays
+to the model as history); build METADATA (`sessionId`/`startedSeq`/`previewUrl`/`status`/
+`reason`/`snapshotCommitted`) lives in `meta`, outside the payload. Idempotency keys on
+`meta->>'sessionId'`; the attachment boundary reads `meta->>'startedSeq'` (`attachments.py`).
+Seq allocation and the two-writer retry live in the store's `append_batch`.
 
-TODO: when the orchestrator persists its full transcript per step, this summary row becomes the
-terminal lifecycle entry of that stream (provisioned/quota/stopped/reaped entries join it) —
-re-home the writer accordingly.
+Written BEFORE the terminal frame: `_do_finalize` calls this immediately before emitting
+`ended`, so the row exists before any client learns the build is over — reversed, this would
+race every reader.
 
-WHY IT WRITES BEFORE THE TERMINAL FRAME. `_do_finalize` calls this immediately before emitting
-`ended`, so by the time any client learns the build is over, the row is already there. The
-reverse order would race every reader.
+TODO: once the orchestrator persists a full per-step transcript, this row becomes that
+stream's terminal lifecycle entry; re-home the writer then.
 """
 
 from __future__ import annotations
@@ -134,17 +130,12 @@ def build_outcome_meta(
 ) -> dict[str, Any]:
     """The outcome row's `meta` — the build's structured record, OUTSIDE the native payload.
 
-    `startedSeq` is the build's START marker — the transcript's high-water seq at the moment the
-    build began — and it is what makes the attachment boundary TEMPORAL rather than positional.
-    This row is allocated at build END, so it can land AFTER a turn that was recorded while the
-    build ran. The composer is now gated shut for the whole of a build (one "the agent is
-    working" gate), but the server may not assume that: a stale or reloaded client, the
-    conversation-less `POST /build-sessions` start, and a crashed build that never writes an
-    outcome at all can each put a turn inside the window. A reader that started collecting after
-    this row's POSITION would skip those turns permanently and silently — the files a user
-    attached would drop from every later build. `_boundary` (`attachments.py`) reads this field
-    instead. Omitted when the start recorded no marker.
-    """
+    `startedSeq` (the transcript's high-water seq at build START) makes the attachment
+    boundary TEMPORAL, not positional: this row lands at build END, so a turn recorded while
+    the build ran can precede it. A reader keyed on this row's POSITION would silently drop
+    those turns' attachments from every later build — a stale client, a crashed build, or the
+    conversation-less start can each put a turn in that window. `_boundary` (`attachments.py`)
+    reads this field; omitted when the start recorded no marker."""
     meta: dict[str, Any] = {
         "kind": "build_outcome",
         "status": status.value,
@@ -166,15 +157,13 @@ async def write_build_started(
     session_id: uuid.UUID,
     started_seq: int,
 ) -> bool:
-    """Append the `build_started` lifecycle row: a HIDDEN `system_event` marking the
-    moment a build began in this thread. Payload is an EMPTY native batch — the record is the
-    row itself (`meta.kind = 'build_started'`), it replays nothing to the model and renders
-    nothing to the user; the reload projection reads it to anchor "a build ran here" even when
+    """Append the `build_started` lifecycle row: a HIDDEN `system_event` marking the moment a
+    build began. Payload is an EMPTY native batch — the record IS the row (`meta.kind =
+    'build_started'`); the reload projection reads it to anchor "a build ran here" even when
     the build never reached its outcome (crash, kill -9). Returns True if written.
 
-    Best-effort by contract (the caller sits between lock adoption and task launch, where a
-    raise would leak the adopted container): a failure is the caller's to log-and-continue.
-    """
+    Best-effort by contract: the caller sits between lock adoption and task launch, where a
+    raise would leak the adopted container — a failure is the caller's to log-and-continue."""
     try:
         await append_batch(
             db,
@@ -212,18 +201,14 @@ async def write_build_outcome(
     reason: str | None,
     started_seq: int | None = None,
 ) -> bool:
-    """Append the build-outcome `system_event` row to its thread. Returns True if written.
+    """Append the build-outcome `system_event` row. Returns True if written.
 
-    Owner-scoped: the conversation must be the caller's, else this is a no-op rather
-    than a cross-user write. Idempotent on `session_id` — a build has exactly one outcome, so a
-    re-run of the end sequence must not add a second. Seq allocation + the two-writer retry live
-    in the store's `append_batch`; a retry budget exhausted there is logged, not raised (this
-    runs inside the end sequence, where a raise would hang every SSE feed).
-
-    `started_seq` is the transcript's high-water mark at build START, captured by the caller then
-    (`SessionManager.start`) because it is unrecoverable now: by the time this runs, a turn the
-    user sent DURING the build is already indistinguishable from one they sent before it.
-    """
+    Owner-scoped: the conversation must be the caller's, else this is a no-op, never a
+    cross-user write. Idempotent on `session_id` — one outcome per build; an exhausted seq
+    retry budget (`append_batch`) logs rather than raises, since raising here would hang
+    every SSE feed. `started_seq` is the build's START high-water mark, captured by the
+    caller then — unrecoverable later, once a mid-build turn looks no different from one
+    sent before it."""
     conversation = await db.scalar(
         sa.select(Conversation).where(
             Conversation.id == conversation_id, Conversation.user_id == user_id
@@ -293,13 +278,11 @@ async def newest_build_outcome_status(
     """The status of the NEWEST recorded build outcome across the project's threads, or None
     when no outcome was ever recorded (or the newest one is unreadable).
 
-    Owner- AND project-scoped. Best-effort by design: the outcome write itself is
-    best-effort (`_record_outcome` swallows failures rather than hang the terminal), so an
-    absent row must read as "nothing known" — None — never an error. Relaunch uses
-    this to label a restore whose newest build FAILED as "last saved version": `_do_finalize`
-    snapshots pass and fail alike, so the newest snapshot may well be that failed build's
-    workspace, and an unqualified "ready" would misrepresent what the user is looking at.
-    """
+    Owner- AND project-scoped. Best-effort by design: the outcome write itself can silently
+    fail, so an absent row reads as "nothing known" — None — never an error. Relaunch uses
+    this to label a restore whose newest build FAILED as "last saved version": a failed build
+    still snapshots, so the newest snapshot may be that build's workspace, and an unqualified
+    "ready" would misrepresent what the user is looking at."""
     meta = await db.scalar(
         sa.select(Message.meta)
         .join(Conversation, Message.conversation_id == Conversation.id)
@@ -333,16 +316,12 @@ async def newest_build_outcome_status(
 async def transcript_head_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int:
     """A thread's highest seq right now, or `EMPTY_TRANSCRIPT` (-1) when it holds no messages.
 
-    Scoped by conversation ALONE, deliberately: seq's uniqueness is `uq_messages_conversation_seq`,
-    so the conversation IS the seq space. Adding a `user_id` predicate would narrow the scan to a
-    different axis than the constraint it answers to — and every row in a conversation belongs to
-    its owner anyway (the callers establish that before asking). Ownership is the CALLER'S to check
-    first; this is arithmetic over an already-authorized thread.
+    Scoped by conversation ALONE, deliberately: `uq_messages_conversation_seq` makes the
+    conversation the seq space, so a `user_id` predicate would narrow the wrong axis — every
+    row already belongs to its owner, established by the caller before asking.
 
-    Two callers need this exact number for opposite reasons: the store allocates the slot after
-    it, and `SessionManager.start` records it as the build's START marker (`startedSeq`) so the
-    NEXT build knows which turns arrived while this one was running.
-    """
+    Two callers need this for opposite reasons: the store allocates the next slot after it,
+    and `SessionManager.start` records it as the build's START marker for the next build."""
     highest = await db.scalar(
         sa.select(sa.func.max(Message.seq)).where(Message.conversation_id == conversation_id)
     )

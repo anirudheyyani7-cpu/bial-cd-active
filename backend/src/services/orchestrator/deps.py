@@ -1,12 +1,11 @@
 """The per-run dependency bundles the sandbox tools and the build harness receive.
 
-Two dataclasses, split along the seam between what each consumer needs:
-
-* `SandboxSession` — EVERYTHING the eight sandbox tools touch, and nothing else. It is held by
-  `BuildDeps.sandbox` (the legacy `/build-sessions` harness) and, by a Write chat turn's
-  own deps, so ONE tool body serves both consumers (`tools.sandbox_toolset`).
-* `BuildDeps` — the harness-only surround: the owner `user_id`, the single `ProgressEmitter` (so
-  tools and the harness share ONE seq source), and the claim-once preview-frame guard.
+Two dataclasses split along the seam between what each consumer needs: `SandboxSession` is
+EVERYTHING the eight sandbox tools touch and nothing else — held by `BuildDeps.sandbox` (the
+legacy `/build-sessions` harness) and by a Write chat turn's own deps, so one tool body serves
+both (`tools.sandbox_toolset`). `BuildDeps` is the harness-only surround: owner `user_id`, the
+single `ProgressEmitter` (tools and harness share ONE seq source), and the claim-once
+preview-frame guard.
 
 There are deliberately NO caches: an uncached `view` is always correct; a cache without
 invalidation risks stale content mid-self-heal.
@@ -28,18 +27,13 @@ from src.services.sandbox import SandboxClient, SandboxHandle
 
 @dataclass(frozen=True)
 class HeldOutput:
-    """One command's output, held for this turn so `fetch_output_slice` can read the middle the
-    cap removed.
+    """One command's output, held so `fetch_output_slice` can read the middle the cap removed.
 
-    `lines` IS ALREADY REDACTED, AND THAT IS THE WHOLE SECURITY PROPERTY OF THIS CLASS. It is the
-    output of `scrub_untrusted` — capped, de-escaped, credential-masked — split on newlines, and
-    nothing else may ever be put in it. The returned artifact was only ever an already-redacted
-    head; a handle retains a SECOND artifact, and the middle it holds is precisely the part a
-    human never read. A buffer built from raw stdout would be a direct path to a secret that was
-    never shown and never masked, and a secret sitting entirely inside an elided middle is the
-    ordinary case, not a boundary one.
-
-    Frozen: a held capture is a historical fact about a command that already exited.
+    `lines` IS ALREADY REDACTED — THE WHOLE SECURITY PROPERTY OF THIS CLASS: it is
+    `scrub_untrusted`'s output (capped, de-escaped, masked) split on newlines, nothing else may
+    ever go in it. Raw stdout would be a direct path to an unmasked secret, and a secret sitting
+    entirely in an elided middle is the ordinary case here, not a boundary one. Frozen: a held
+    capture is a historical fact about an already-exited command.
     """
 
     #: The command this output came from, redacted and capped — model-facing header text only.
@@ -103,13 +97,12 @@ class SandboxSession:
     def note_command(self, redacted_command: str) -> bool:
         """Record that this command ran; True if an IDENTICAL one already ran this turn.
 
-        The memory is capped: past `REPEATED_COMMAND_MEMORY` distinct commands it stops recording
-        new ones, so a pathological turn cannot grow a set without bound. The consequence is
-        stated rather than hidden — beyond the cap a repeat may go uncounted, which understates an
-        adoption metric and never affects what the model can do. Entries are whole argv strings,
-        NOT hashed or shortened: a shortened key would collide two long commands into a repeat
-        that never happened, and a metric that invents its own events is worse than one that
-        misses a few. Each is already bounded by the argv redaction cap the caller applies."""
+        Capped at `REPEATED_COMMAND_MEMORY` distinct commands — past that it stops recording,
+        so a pathological turn cannot grow the set unbounded; a repeat may then go uncounted,
+        understating the metric but never affecting model behavior. Entries are whole argv
+        strings, not hashed or shortened — a shortened key could collide two different commands
+        into a false repeat, and an invented event is worse than a missed one.
+        """
         repeated = redacted_command in self.commands_seen
         if not repeated and len(self.commands_seen) < REPEATED_COMMAND_MEMORY:
             self.commands_seen.add(redacted_command)

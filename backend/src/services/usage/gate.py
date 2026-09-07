@@ -2,31 +2,26 @@
 
 The single source of truth the SPA cannot bypass. Three responsibilities:
 
-* `enforce_daily_limit` — pre-request check: raise `DailyTokenLimitExceededError` (rendered as
-  the byte-stable 429 `daily_token_limit_exceeded`) BEFORE any stream byte when today's
-  `used` is at/over the effective cap. `used >= limit`, matching Express's `>=`.
-* `record_usage` — post-response atomic upsert (`INSERT … ON CONFLICT … DO UPDATE` with the
-  add in SQL) so concurrent increments never lose an update. It does NOT close concurrent
-  overspend — that window is open by design (Redis token-bucket hardening deferred).
-* `usage_today` — the read behind `GET /v1/usage/today` (used/limit/remaining/resetsAt).
+* `enforce_daily_limit` — pre-request check: raise `DailyTokenLimitExceededError` (429
+  `daily_token_limit_exceeded`) BEFORE any stream byte when `used >= limit` (Express parity).
+* `record_usage` — post-response atomic upsert (`INSERT … ON CONFLICT … DO UPDATE`), so
+  concurrent increments never lose an update. Does NOT close concurrent overspend — that
+  window is open by design (Redis token-bucket hardening deferred).
+* `usage_today` — the read behind `GET /v1/usage/today`.
 
-IST day math (`Asia/Kolkata`, a fixed +05:30 with no DST) mirrors `server/usage-repo.js`:
-the day key is the IST calendar date, and the reset is the next IST midnight rendered as a
-UTC ISO string. `used` is the COST-WEIGHTED spend (`billable_spend`): fresh input + output at
-face value, cache reads at ~10%, cache writes at ~125% — the Anthropic pricing shape. Under
-pydantic-ai `input_tokens` is the GRAND-TOTAL prompt size with the two cache classes already
-folded in (`cache_read`/`cache_write` are sub-buckets INSIDE it, not additive siblings — the
-opposite of the raw Anthropic API, whose `input_tokens` is exclusive of cache), so fresh is
-input minus both cache classes. Two historical wrong turns pinned here: re-ADDING the cache
-columns double-counts the prefix (~2x, as the Express port did), and billing them at FACE
-value let one agentic build book ~956k of a 1M cap on 68 fresh tokens (2026-07-30). The raw
-four-class ledger stays untouched — weighting is read-side policy.
+IST day math (`Asia/Kolkata`, fixed +05:30, no DST) mirrors `server/usage-repo.js`: the day
+key is the IST calendar date, reset is the next IST midnight as a UTC ISO string. `used`
+counts `build` rows ONLY — the pre-publish classification review is metered under `review`
+for attribution, never against the citizen's cap.
 
-`used` also counts `build` rows ONLY: the pre-publish classification review records
-its spend on the `review` kind — metered against the citizen for attribution, never part of
-what their cap measures — so no sequence of reviews can change what `enforce_daily_limit`
-decides.
-"""
+WHY THIS EXISTS: `used` is the COST-WEIGHTED spend (`billable_spend`), not raw tokens.
+Under pydantic-ai, `input_tokens` is the grand-total prompt size with `cache_read`/
+`cache_write` already folded in as sub-buckets (unlike the raw Anthropic API, where
+`input_tokens` excludes cache) — so fresh = input minus both cache classes. Two wrong turns
+are pinned here, the second one live in prod: re-ADDING the cache columns double-counts the
+prefix (~2x, the Express port's bug), and billing cache reads at face value let one agentic
+build book ~956k of a 1M cap on 68 fresh tokens (2026-07-30). The raw four-class ledger
+stays untouched — weighting is read-side policy."""
 
 from __future__ import annotations
 
@@ -151,21 +146,12 @@ def weighted_spend(
 ) -> int:
     """`billable_spend`'s weighting, applied to an in-memory usage object rather than a row.
 
-    THE SECOND READER OF ONE POLICY, NOT A SECOND POLICY. `billable_spend` below is a SQL
-    column expression and cannot be evaluated against a live `RunUsage`, which is what a
-    running turn holds. Both spell the same arithmetic from the same two divisors, and the
-    test suite pins them to agree on the same numbers — a per-run bound that weighted tokens
-    differently from the daily meter would mean two ceilings measuring two different things
-    while both are described to the citizen as spend.
-
-    WHY WEIGHTED AT ALL, AND THIS IS THE PART THAT COST US ONCE. Under pydantic-ai
-    `input_tokens` is the grand-total prompt size and `cache_read`/`cache_write` are sub-buckets
-    ALREADY INSIDE it, so a naive `input + output` counts a cached prefix at full price on every
-    step. Billing reads at face value is what let one simple-calculator build book 956k of a 1M
-    daily cap while its real fresh input was 68 tokens (2026-07-30 prod incident). A per-run
-    bound reading the raw total would repeat that: it would end long-but-legitimate builds early
-    and be a function of how many steps a build took rather than how much work it did.
-    """
+    THE SECOND READER OF ONE POLICY, NOT A SECOND POLICY: `billable_spend` is a SQL column
+    expression and cannot evaluate against a live `RunUsage`. Both spell the same arithmetic
+    from the same two divisors, and the test suite pins them to agree — a per-run bound
+    weighting differently from the daily meter would mean two ceilings measuring two
+    different things while both are described to the citizen as spend. See the module
+    docstring's WHY THIS EXISTS for why weighting matters at all."""
     fresh = max(input_tokens - cache_read_tokens - cache_write_tokens, 0)
     return int(
         fresh
@@ -182,14 +168,9 @@ def billable_spend() -> sa.ColumnElement[int]:
 
     THE single source of truth both readers share (`_used_today` here and the admin roster in
     `api/v1/admin/router.py`), so a fix can never half-land with one reader still folding cache.
-    Under pydantic-ai `input_tokens` is the grand-total prompt size — `cache_read`/`cache_write`
-    are sub-buckets ALREADY inside it, not additive siblings — so `fresh` is input minus both
-    cache classes (clamped at 0 against malformed rows). Weighting matters because a Write-mode
-    build re-reads its whole cached prefix on every agent step: billing those reads at face
-    value let ONE simple-calculator build book 956k of a 1M daily cap while its real fresh
-    input was 68 tokens (2026-07-30 prod incident). The raw four-class ledger is untouched —
-    the weighting is read-side policy, so it corrects history too.
-    """
+    `fresh` is input minus both cache classes (clamped at 0 against malformed rows) — see the
+    module docstring's WHY THIS EXISTS for why weighting matters. The raw four-class ledger
+    is untouched; weighting is read-side policy, so it corrects history too."""
     fresh = sa.func.greatest(
         TokenUsage.input_tokens - TokenUsage.cache_read_tokens - TokenUsage.cache_write_tokens,
         0,
@@ -327,36 +308,12 @@ async def at_limit_ending(
 ) -> AtLimitEnding:
     """Make the citizen's work durable, THEN tell them why the turn is ending.
 
-    THE ORDER IS THE POINT. The copy is taken HERE, on the way out of the model loop, and it is
-    confirmed before the turn's `finally` pardons the container and hands it to the reclamation
-    path: a sentence that tells the citizen their changes are safe before anything has checked
-    is a claim, not a save. The write goes through `write_recovery_copy` rather than a raw
-    `put`, so it inherits that function's guard — a tree that is not a descendant of the copy
-    on record is diverted rather than promoted, and the one path that MOST wants to be helpful
-    still cannot overwrite good work with bad.
-
-    A FAILURE CHANGES THE SENTENCE AND RAISES AN ALARM — it does not raise an exception. The
-    citizen is at their limit either way and still has to be told, and failing the turn over a
-    safety net would turn a budget message into a crash. Both halves of that trade are what
-    `RECOVERY_WRITE_DID_NOT_LAND_EVENT` exists for.
-
-    `workspace` is `None` for a turn that never took a container, and it has nothing to secure.
-    That is the one case where the reassurance is withheld without anything having gone wrong,
-    which is why the wording of `COULD_NOT_KEEP_A_COPY` asks the reader to save rather than
-    announcing a fault. The arm is defensive rather than a traffic pattern — every caller is on
-    the Build path, which always attaches — so it is a shape this signature keeps, pinned by
-    `test_at_limit.py`'s two `at_limit_ending(None)` cases.
-
-    ★ TWO ENDINGS, ONE SECURING PATH, AND THAT IS WHY `sentence` IS A PARAMETER. The per-run
-    spend bound has to end a turn exactly the way the daily budget does, and it says something
-    different when it gets there. Writing a second function to do that would put a second
-    snapshot→teardown ordering on the one path in this codebase where getting the ordering
-    wrong loses a citizen's tree.
-
-    So the caller passes its own `copy.py` constant and everything above stays exactly as it
-    is. `sentence` must carry a `{kept}` field and nothing else; omitting it keeps the daily
-    budget's own wording.
-    """
+    ORDER IS THE POINT: securing is confirmed BEFORE the sentence claims it, via
+    `write_recovery_copy` (diverts rather than overwrites good work with bad). A FAILURE
+    CHANGES THE SENTENCE, NOT AN EXCEPTION — logs `RECOVERY_WRITE_DID_NOT_LAND_EVENT` and
+    degrades gracefully; the citizen must be told either way. `workspace=None` withholds
+    the reassurance without alarming. ★ ONE SECURING PATH FOR TWO ENDINGS — `sentence` lets
+    the per-run bound reuse it with its own copy; must carry only a `{kept}` field."""
     # FUNCTION-SCOPED FOR THE PACKAGE CYCLE, exactly as `orchestrator/selfheal.py` documents its
     # own. `src.services.build_sessions.__init__` reaches `manager` → `appdata` →
     # `services.projects` → `describe`, which imports THIS module at its top; and

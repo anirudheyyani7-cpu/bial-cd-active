@@ -1,24 +1,14 @@
 /**
- * The relay leg of the app's own client-error reporting.
+ * The relay leg of the app's own client-error reporting. A generated app can 200 and still
+ * die in the browser before it paints (bad hook order, null render, uncaught rejection) —
+ * invisible to every SERVER-side signal, so "Build complete" can go out over a blank page.
+ * Already captured by `window.onerror`/`unhandledrejection`/`console.*` (`error-capture.tsx`)
+ * and posted to the framing portal; this is the listener. Reaches the user: nothing — it only
+ * turns the build harness's verdict not-green and lets the agent act on it.
  *
- * A generated app can answer 200 and still die in the browser before it paints — a bad hook
- * order, a null read in a render, a rejected fetch nobody caught. Every health signal the
- * platform has runs against the SERVER, so that whole class of failure is invisible to it, and
- * "Build complete" goes out over a blank page. The app has always captured its own
- * `window.onerror` / `unhandledrejection` / `console.*`
- * (`sandbox/template/components/bial/error-capture.tsx`) and posted them to the framing portal;
- * until now nothing listened. This is the listener.
- *
- * WHAT REACHES THE USER FROM HERE: nothing. The report goes to the build harness, where it makes
- * the health verdict not-green, and to the agent, which can act on it. The user's only visible
- * consequence is that the completion claim does not appear. A JS stack trace under a file path
- * is not a product surface, and this module removes developer surfaces rather than adding one.
- *
- * TRUST BOUNDARY. The origin check that decides whether a message is even seen lives in
- * `LivePreview` and is not repeated here — this module is reached only for messages that
- * already passed it. What it does add is SHAPE validation: passing the origin check proves where
- * the bytes came from, not what they are, and the sender is unreviewed agent-authored code
- * running next to unreviewed npm.
+ * TRUST BOUNDARY: the origin check on whether a message is even seen lives in `LivePreview`,
+ * not here — this module only adds SHAPE validation, since the sender is unreviewed
+ * agent-authored code running next to unreviewed npm.
  */
 
 import { authFetch } from './api'
@@ -36,17 +26,11 @@ const MAX_TITLE = 1000
 const MAX_STACK = 20000
 
 /**
- * How many reports one page may relay before it stops talking.
- *
- * A crash loop is the ORDINARY shape of this input, not the exotic one: a component that throws
- * on render throws again on every re-render, and React will happily do that hundreds of times a
- * second. The server caps what it keeps per app, but a cap on the far side of the network still
- * means one broken page firing hundreds of requests a second from the user's own browser. The
- * first few reports carry the fault; the rest are copies.
- *
- * Counted per FRAMED APP rather than for the lifetime of the tab, so opening a second project —
- * or the same one after a rebuild — starts fresh. Otherwise one bad build would silence the
- * reporting for every app the user looked at afterwards.
+ * How many reports one page may relay before it stops talking. A crash loop is the ORDINARY
+ * shape here — React can re-throw hundreds of times a second, and a server-side cap alone
+ * still means hundreds of requests/sec from the user's own browser; first few reports carry
+ * the fault, rest are copies. Counted per FRAMED APP, not per tab, so a new project or a
+ * rebuild starts fresh — else one bad build silences reporting for every later app.
  */
 /* NB: the server keeps its own, LARGER cap under the same name
  * (`MAX_REPORTS_PER_APP = 10` in `backend/src/services/orchestrator/client_errors.py`). They are
@@ -95,23 +79,12 @@ export function asClientErrorPayload(data: unknown): ClientErrorPayload | null {
 }
 
 /**
- * Make a relay. The returned object's `relay` is what a frame-message handler calls; `reset`
- * starts a fresh budget and belongs at the start of a turn.
+ * Make a relay: `relay` runs per frame message; `reset` starts a fresh budget per turn.
  *
- * THE BUDGET IS PER TURN, NOT PER PAGE, and that is a correctness property rather than a policy
- * one. The scope key is the framed url, which is byte-identical across repair turns on the attach
- * arm — same container, same app, same url. A page-lifetime counter therefore never reset: eight
- * crashes into a session, the relay went quiet for good, and every later verify came back green
- * by manufactured absence. Silence that the platform itself caused reads exactly like health.
- *
- * COUNTED PER SCOPE, NOT AGAINST A LAST-SEEN POINTER. A single "which app was I counting"
- * pointer is reset by flapping between two apps, so alternating reports bypass the cap entirely.
- * A small bounded map costs nothing and cannot be flapped.
- *
- * Errors are SWALLOWED, and that is the requirement rather than an oversight: this is a
- * diagnostic side-channel about an app that is already broken. A failed report must cost the
- * citizen nothing — not an error toast, not an unhandled rejection in their console, and above
- * all not the preview they are looking at.
+ * Budget is PER TURN not per page — the scope key (framed url) is stable across repair
+ * turns, so a page-lifetime counter would go silent forever after 8 crashes. Counted PER
+ * SCOPE, not a last-seen pointer, so flapping between two apps can't bypass the cap. Errors
+ * are SWALLOWED by requirement — a failed report must cost the citizen nothing, ever.
  */
 export function makeClientErrorRelay(deps: AuthFetchDeps = {}) {
   let sentByScope = new Map<string, number>()

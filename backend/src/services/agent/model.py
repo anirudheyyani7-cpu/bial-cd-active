@@ -5,13 +5,11 @@ sanctioned chain is `AsyncAnthropicFoundry(resource, api_key | entra token provi
 `AnthropicProvider(anthropic_client=...)` → `AnthropicModel(deployment, provider=...)`. No
 custom Model subclass. `_assert_foundry_only` is the fail-closed guard: the built client's
 base URL must be an `*.services.ai.azure.com` Foundry endpoint and must NOT be the public
-`api.anthropic.com` — so a mistake in wiring can never silently reach the public API.
+`api.anthropic.com`, so a wiring mistake can never silently reach the public API.
 
-Auth: `api_key` mode is the tested default. `entra` mode (managed identity) builds a bearer-token
-provider; the exact token SCOPE is an open question (the official docs disagree), so it is a
-documented constant to confirm against the resource's RBAC before go-live — API-key auth
-sidesteps it initially.
-"""
+Auth: `api_key` mode is the tested default. `entra` mode (managed identity) builds a
+bearer-token provider; the token SCOPE is an open question (the official docs disagree), so
+it is a documented constant to confirm against the resource's RBAC before go-live."""
 
 from __future__ import annotations
 
@@ -48,15 +46,12 @@ def _assert_foundry_only(base_url: str) -> None:
 
 def build_foundry_client(config: FoundryConfig) -> AsyncAnthropicFoundry:
     """Build the Foundry-backed Anthropic client from typed config, then assert it targets
-    Foundry (never the public API).
-
-    The SDK client's socket is made FINITE and RETRIED here (both auth branches), so a dropped
-    or wedged server→model connection becomes a catchable `APITimeoutError`/`ModelHTTPError`
-    that both consumers already funnel to a clean error — instead of a hang. The SDK's own
-    defaults (a finite timeout + 2 retries) are already sane; this just tunes the shape to the
-    build harness's streaming turns (see `FoundryConfig` for the read-vs-connect rationale). A
-    `read` timeout is httpx's per-CHUNK idle timeout on a streamed response, so it bounds the
-    gap between model chunks, not the whole turn; `write`/`pool` inherit the `read` default."""
+    Foundry (never the public API). The SDK client's socket is made FINITE and RETRIED here
+    (both auth branches), so a dropped/wedged connection becomes a catchable
+    `APITimeoutError`/`ModelHTTPError` both consumers funnel to a clean error, instead of a
+    hang — tuning the SDK's already-sane defaults to the build harness's streaming turns
+    (`FoundryConfig` has the read-vs-connect rationale). `read` is httpx's per-CHUNK idle
+    timeout, bounding the gap between chunks, not the whole turn; `write`/`pool` inherit it."""
     # THE SDK'S OWN `Timeout`, NOT `httpx.Timeout`. The Anthropic client moved onto a vendored
     # httpx fork (`httpx2`) in 1.x, so the two `Timeout` classes are no longer the same type and
     # the plain httpx one stopped being accepted. Taking it from the SDK's public re-export

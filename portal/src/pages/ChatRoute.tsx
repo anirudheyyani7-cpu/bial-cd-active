@@ -1,39 +1,22 @@
 /**
- * `/chat/:chatId` — one flat chat URL for both chat kinds.
+ * `/chat/:chatId` — one flat URL for both chat kinds. The project is a breadcrumb, resolved
+ * from the chat's own `projectId`, never a path segment — so a chat keeps one stable address
+ * for its whole life.
  *
- * The project is NOT a path segment. It is a breadcrumb, resolved from the chat's
- * own `projectId`, so a chat keeps one stable address for its whole life.
+ * WHY THIS EXISTS — resolution order, and why each arm matters:
+ *  1. Conversation exists → server's `kind`/`projectId` win over `?kind=`, always: a stale or
+ *     hand-edited query must never render a build chat over a planning transcript. Kind no
+ *     longer picks a PAGE — one surface renders both, and `kind` is a single declaration inside
+ *     it (`ConversationSlot`) — resolved here only because the surface needs it.
+ *  2. 404 + `?projectId=` → a brand-new chat: its row is written inside the FIRST TURN's own
+ *     transaction (no separate create round-trip), so it opens at
+ *     `/chat/{clientId}?projectId=…&kind=…` and rewrites to the bare path once that turn commits.
+ *  3. 404 + no query → the chat is gone (or never real). Back to /projects.
  *
- * Resolution order, and why each arm exists:
- *
- *  1. The conversation exists → its `kind` and its `projectId` are authoritative. The
- *     SERVER wins over `?kind=`: a stale or hand-edited query must never render a build
- *     chat over a planning transcript. The kind no longer picks a PAGE — one surface
- *     renders both kinds, and what the kind decides is a single declaration inside it
- *     (see `ConversationSlot`'s own note). It is still resolved here because the surface
- *     needs it, not because it routes.
- *  2. It 404s but the URL carries `?projectId=` → this is a brand-new chat whose row
- *     does not exist yet. Not because no create endpoint exists — `POST /v1/conversations`
- *     is still served, deliberately, with no client caller — but because the row is now
- *     written inside the FIRST TURN's own transaction, so there is no separate round trip
- *     to make it appear. So a new chat opens at
- *     `/chat/{clientMintedId}?projectId={pid}&kind={plan|build}` and the page rewrites to
- *     the bare `/chat/{id}` once that first turn commits. This is what lets a flat path
- *     survive a reload and a cold open.
- *  3. It 404s with no query → the chat is gone (or was never real). Back to /projects.
- *
- * The breadcrumb's project name is resolved separately and never gates rendering: a
- * chat whose project vanished still shows its transcript, with `projectName: null`.
- *
- * Both pages keep their own hydration fetch, so this route's `getConversation` is a
- * second GET on open. That is deliberate and cheap at pilot scale — collapsing it
- * would mean restructuring both pages' hydration effects, which this phase defers.
- *
- * The ONE request we do skip is the one that cannot succeed: a chat this session just
- * minted has no row yet (creation happens in the send path's transaction), so its GET is a
- * guaranteed 404 — doubled by the two hydration fetches and doubled again by StrictMode
- * in dev. See `freshlyMinted` below for why the skip is keyed on router state and not on
- * the query.
+ * The breadcrumb's project name never gates rendering — a chat whose project vanished still
+ * shows its transcript, with `projectName: null`. Both pages keep their own hydration fetch, so
+ * this route's `getConversation` is a deliberate second GET, cheap at pilot scale; collapsing it
+ * would mean restructuring both pages' hydration effects, deferred past this phase.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
@@ -73,19 +56,14 @@ export default function ChatRoute() {
   const queryRef = useRef({ projectId: search.get('projectId'), kind: search.get('kind') })
   queryRef.current = { projectId: search.get('projectId'), kind: search.get('kind') }
 
-  // "THIS session just minted this id", set by every mint site (the planning surface's
-  // context-guardrail new-chat control and its Launch Builder, ProjectBuilder's Start Chat). Its
-  // row does not exist until the send path creates it, so its `getConversation` is a guaranteed
-  // 404 — the only request worth skipping.
-  //
-  // WHY ROUTER STATE AND NOT THE QUERY. `?kind=` is user-controllable, and a saved chat's URL is
-  // rewritten to the bare `/chat/{id}` only after its FIRST append — so a shared or bookmarked
-  // `/chat/{id}?kind=build` for an already-saved chat is a perfectly ordinary URL, and skipping
-  // on "the URL has query params" would hand it its kind from that attacker- or accident-supplied
-  // string instead of from the server. Router state cannot do that: it does not survive a reload
-  // and it does not travel in a link, so the marker can only ever be present on the one navigation
-  // that actually minted the id. Absence of the marker means "ask the server", which is the safe
-  // default in every ambiguous case.
+  // "THIS session just minted this id", set by every mint site (planning's new-chat control,
+  // Launch Builder, ProjectBuilder's Start Chat). Its row doesn't exist until the send path
+  // creates it, so its `getConversation` is a guaranteed 404 — the only request worth skipping.
+  // ROUTER STATE, NOT THE QUERY: `?kind=` is user-controllable and a saved chat's URL is only
+  // rewritten to the bare path after its first append, so a bookmarked `/chat/{id}?kind=build`
+  // for an already-saved chat is ordinary — skipping on "the URL has query params" would hand it
+  // an attacker- or accident-supplied kind instead of the server's. Router state cannot survive a
+  // reload or travel in a link, so absence always means "ask the server", the safe default.
   const location = useLocation()
   const freshlyMintedRef = useRef(false)
   freshlyMintedRef.current = (location.state as { freshlyMinted?: unknown } | null)?.freshlyMinted === true
@@ -172,42 +150,28 @@ export default function ChatRoute() {
     }
   }, [chatId])
 
-  // Read the project once: it names the breadcrumb AND it is how the builder learns
-  // whether the project already has an app (`project.appId`) without firing a mutating
-  // provision call to find out. A 404 here means the project was deleted out from under
-  // an open chat — show the transcript anyway, unnamed. Never redirect on this.
-  //
-  // WHILE THE CONVERSATION IS STILL RESOLVING, the URL's own `?projectId=` stands in. It is right
-  // whenever it is present: a chat that has not saved its first message yet carries it, and the
-  // resolution replaces it the moment the server answers.
-  //
-  // AND WHEN THE URL CARRIES NOTHING — which is the ORDINARY case, because the query is rewritten
-  // away the instant the first message lands, so every reload, bookmark and shared link into an
-  // existing chat is a bare `/chat/{id}` — what this tab was told last time stands in instead.
-  // Without it the row spent the whole fetch with no project to name and its back control sent a
-  // citizen out to the projects list, out of the project they were working in, while the label
-  // said so. A chat this browser has never seen still has neither, and keeps the neutral shape:
-  // this is a memory, never a guess.
+  // Read the project once: it names the breadcrumb AND tells the builder whether the project
+  // already has an app (`project.appId`), without a mutating provision call. A 404 means the
+  // project was deleted out from under an open chat — show the transcript anyway, unnamed, never
+  // redirect. While resolving, the URL's `?projectId=` stands in when present (an unsaved chat
+  // carries it); once nothing is in the URL — the ordinary case, since the query is rewritten
+  // away after the first message — this tab's own `remembered` value stands in instead, so the
+  // back control isn't sent to the projects list out of the project it's actually in. A chat this
+  // browser has never seen has neither, and keeps the neutral shape: a memory, never a guess.
   const remembered = useMemo(() => recallChatProject(chatId), [chatId])
   const projectId =
     resolution.status === 'ready'
       ? resolution.projectId
       : (queryRef.current.projectId ?? remembered)
 
-  // WHAT THE TOOLBAR ROW NAMES. Published from the ROUTE rather than from the
-  // surface below it, because this component is mounted for the whole life of the address —
-  // including the loading branch, where neither the conversation nor the project has resolved and
-  // the row still has to render at full height with a working back control.
-  //
-  // WHAT MAKES THE ROW DRAW A CHAT is the ADDRESS, which the shell reads off the pathname — not
-  // anything published here. Every field below is an ANSWER from a fetch, and each may legitimately
-  // be `null` on its own: a chat this session just minted has no row and so no title, and a chat
-  // whose project was deleted has no name. None of them decides the shape.
-  //
-  // THE KIND IS NOT GUESSED FROM THE QUERY the way the project is. `?kind=` is user-controllable
-  // and a saved chat's URL can legitimately still carry a stale one, so publishing it would let a
-  // hand-edited link flash the wrong pill over a real conversation. `null` costs the row its kind
-  // pill for one fetch and nothing else — the row's SHAPE comes from the address, not from here.
+  // Published from the ROUTE, not the surface below it — this component stays mounted for the
+  // address's whole life, loading branch included, where the row still needs full height and a
+  // working back control before anything resolves. The row's SHAPE comes from the address (the
+  // shell reads the pathname), not from here — every field below is an ANSWER that may
+  // legitimately be null (a freshly minted chat has no title, a deleted project has no name)
+  // without changing that shape. Kind is never guessed from the query the way the project is:
+  // `?kind=` is user-controllable and can be stale, so publishing it risks flashing the wrong
+  // pill — null just costs the row its pill for one fetch.
   usePublishHeading({
     projectId,
     projectName: project !== null && project.id === projectId ? project.name : null,
@@ -277,19 +241,14 @@ export default function ChatRoute() {
         kind: resolution.kind,
         projectId: resolution.projectId,
         projectName: resolved?.name ?? null,
-        // The builder's Relaunch affordance derives from PROJECT-level state, so a
-        // fresh conversation in a project with a saved build can still restore its preview.
-        //
-        // What travels is whether a Relaunch would actually FIND something — not `appId`.
-        // The app row is minted by provision, before anything is built, so keying the claim on
-        // its existence advertised a saved build for every project whose first build failed.
-        // `null` while the project is still resolving is the same "cannot say" the server sends,
-        // and it withholds the claim rather than guessing.
-        //
-        // The server now answers this from the recovery copy OR the saved bundle (the pair a
-        // restore actually consults), so the builder who never pressed Save is offered their work
-        // back. This is the COLD-LOAD value; once the preview poll lands, the surface prefers its
-        // `restorable`, which is the same predicate asked more recently.
+        // Relaunch affordance derives from PROJECT-level state, so a fresh conversation in a
+        // project with a saved build can still restore its preview. What travels is whether a
+        // Relaunch would actually FIND something — not `appId`, which is minted at provision
+        // before anything is built, so keying on its existence would advertise a saved build for
+        // every project whose first build failed. `null` while resolving is the server's own
+        // "cannot say", not a guess. The server answers from the recovery copy OR the saved
+        // bundle (what a restore actually consults) — this is the COLD-LOAD value; once the
+        // preview poll lands, the surface prefers `restorable`, the same predicate asked fresher.
         projectHasSavedBuild: resolved?.hasRelaunchableSnapshot ?? null,
       }}
     />

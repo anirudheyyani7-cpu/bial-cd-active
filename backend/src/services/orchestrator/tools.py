@@ -1,59 +1,23 @@
 """The eight sandbox tools — the model's ENTIRE action surface.
 
-Five file tools go through the sandbox client's `files()` op; `run_command` runs a general
-shell command over its `exec` transport — the vibe-coding pivot, so the model can
-`npm install`, run linters, and
-drive its own build. `run_command`'s containment is NOT a tool-level allowlist (it can write
-anywhere the workspace allows): it is the demoted `appuser`, the supervisor's fail-closed
-child-env, and secret-redacted + length-capped output — plus the destructive-SQL
-sentinel (`sql_guard.you_shall_not_pass`) that refuses improvised DML/DDL against the
-app's real database BEFORE the transport ever sees it. A non-zero command exit is a
-NORMAL return the model reads and fixes; a transport failure (incl. an install-timeout 504) is
-converted to a `ModelRetry` so the loop self-heals rather than hard-crashing — only a
-`SandboxGoneError` escalates. The three file mutators share one fail-closed write guard
-(absolute/`..` escape + `.git/` deny) applied BEFORE any `files()` call. A `str_replace`
-that fails to match exactly once is enriched into a `ModelRetry` so the model self-corrects in-run.
-Reads are bounded to `VIEW_MAX_LINES` and refuse the ignore set. No tool ever
-renders `session.handle` / `handle.token` into a result or an error.
+Five file tools use the sandbox client's `files()` op; `run_command` is a general shell
+(`npm install`, lint, `git`) over `exec`. Its containment is NOT a tool-level allowlist — it
+can write anywhere the workspace allows: it is the demoted `appuser`, the supervisor's
+fail-closed child-env, redacted+capped output, and the destructive-SQL sentinel
+(`sql_guard.you_shall_not_pass`), which refuses improvised DML/DDL against the app's REAL
+database BEFORE the transport ever sees it. A non-zero exit is a normal result; a transport
+failure becomes a self-healing `ModelRetry` — only `SandboxGoneError` escalates. File mutators
+share one fail-closed write guard (absolute/`..` escape + `.git/` deny). No tool ever renders
+`session.handle`/`handle.token`.
 
-`fetch_output_slice` is the seventh, and it exists because the output cap used to be
-HEAD-ONLY: a truncated failure lost the assertion at the bottom, and recovering the middle cost a
-re-run. Output is now cut to head AND tail under an exit-code-conditional budget, and the notice
-between them names a handle the model reads the elided middle back through. The buffer behind
-that handle holds `scrub_untrusted` output and NOTHING ELSE, lives on `SandboxSession` (so the
-harness's per-run reset is its whole lifetime), never reaches the database or blob, and answers an
-unknown handle with a plain re-run instruction rather than a `ModelRetry` — which would spend the
-round-trip the tool exists to save.
-
-`apply_schema_change` is the eighth, and it is the one tool here that is a SEQUENCE rather than an
-action: `drizzle-kit generate` then `npm run db:migrate`, the pair the prompt used to dictate step
-by step. It reports a per-step outcome read from what each step PRINTED, refuses to call a run
-successful when any step failed, and says which step failed and what state that left the workspace
-and the database in.
-
-EVERY TOOL DOCSTRING BELOW IS PROMPT COPY. pydantic-ai sends it to the model as the
-tool's description at registration, and the build prompt's `TOOL SURFACE` block is
-GENERATED from these same strings (`agent/toolsets.render_tool_surface`) — so a docstring edit
-here is a prompt edit, and `test_prompt.py`'s drift check goes red until the snapshot in
-`core/prompt_blocks.WRITE_TOOL_SURFACE` is regenerated. Write the FIRST SENTENCE as the line you
-want in the prompt; the rest is detail the model reads on the tool schema. Two sentences in
-particular are load-bearing beyond their own tool and must survive any trim: `run_command`'s
-don't-start-or-restart-the-dev-server rule (the only thing covering a second `next dev` started
-through `/exec`, which the supervisor's child env cannot tell from the real one) and
-`declare_done`'s terminal-on-a-passing-check statement (a model promised a follow-up
-round-trip withholds its closing message from `summary`, and there is no reply to put it in).
-
-They are built as a `FunctionToolset` FACTORY over a `sandbox_of` accessor — mirroring
-`agent/read_tools.read_only_toolset` — rather than `@build_agent.tool` decorators. ONE tool body,
-two consumers: the legacy `/build-sessions` harness (`BuildDeps.sandbox`) and a Write chat turn.
-The accessor closure is the only thing that knows the run's deps type.
-
-THE TWO CONSUMERS DO NOT COMPOSE THE SAME SURFACE, and the generated prompt block does not say
-so. `build_agent` takes THIS toolset and nothing else — eight tools. A Write chat turn takes it
-plus `list_files`/`search_files` off `read_only_toolset` and the two `CONVERSATION_TOOLSET` tools
-— twelve. `WRITE_TOOL_SURFACE` is a snapshot of the twelve and ships in BOTH prompts, so the
-harness is told about four tools it cannot call. Recorded, not fixed, at
-`core/prompt_blocks.WRITE_TOOL_SURFACE`; guarded by
+WHY THIS EXISTS: every tool docstring below is PROMPT COPY sent to the model by
+pydantic-ai, and `core/prompt_blocks.WRITE_TOOL_SURFACE` is a generated snapshot of them
+— edit one here and `test_prompt.py`'s drift check goes red until it is regenerated. Two
+sentences are load-bearing beyond their own tool: `run_command`'s don't-restart-the-dev-
+server rule, and `declare_done`'s terminal-on-a-passing-check statement. The two
+consumers also do NOT compose the same surface — Write's chat turn adds four tools the
+legacy harness cannot call, yet `WRITE_TOOL_SURFACE` ships that union in both prompts.
+Recorded, not fixed; guarded by
 `test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
 """
 
@@ -209,28 +173,12 @@ def _capture_limit_marker(dropped: int) -> str:
 def _within_the_capture_limit(text: str) -> tuple[str, str, int]:
     """The head and the tail of a raw capture, cut ON LINE BOUNDARIES — and what that cost.
 
-    TWO PROPERTIES, and the older single `text[:cap]` slice got both wrong.
-
-    SECURITY: the redactor is never handed half a line. A credential is a shape on ONE line —
-    `_URL_CRED_RE` needs the `@` that follows the password, the assignment families need their
-    terminator — so a cut landing inside one leaves a fragment that matches nothing and is
-    egressed in the clear. Whole lines in, whole lines out: a line is scanned entire or dropped
-    entire, and a single line longer than the window is therefore dropped rather than truncated.
-
-    THAT IS NOT THE WHOLE OF IT. It is false for the quoted arms, which
-    span newlines on purpose: a value that OPENS in the head and closes past the cut is not
-    masked-with-its-key-present, it matches nothing at all and renders verbatim — a line-boundary
-    cut does not help, because the value legitimately contains the newlines it is cut on. Both
-    ends of this cut therefore go through the same guard in `_redacted_lines`, one withholding
-    the tail and one cutting the head back to the credential's own line.
-
-    TRUTHFULNESS: a head-only cap silently deleted the END of every capture over the limit —
-    which is where `Failed to compile.` and the failing assertion live — and the notice below
-    then reported the surviving line count as the total. The tail is cut here so the tail is
-    what the model reads.
-
-    The two halves together stay inside `REDACT_INPUT_MAX_CHARS`, so the synchronous redaction
-    scan is bounded exactly as it was (the ReDoS guard)."""
+    SECURITY: a mid-line cut leaves a credential fragment that matches nothing and egresses in
+    the clear, so an over-long line is dropped whole rather than truncated — except the
+    redactor's quoted arms, which span newlines; `_redacted_lines` guards both ends of this
+    cut for those instead of trusting the boundary alone. TRUTHFULNESS: a head-only cap used to
+    silently drop the END of every over-limit capture, where `Failed to compile.` and the
+    failing assertion live. Both halves stay inside `REDACT_INPUT_MAX_CHARS` (the ReDoS bound)."""
     if len(text) <= REDACT_INPUT_MAX_CHARS:
         return text, "", 0
     half = REDACT_INPUT_MAX_CHARS // 2
@@ -253,16 +201,12 @@ def _scrubbed_lines(text: str, *, denoise: bool) -> list[str]:
 def _redacted_lines(text: str, *, denoise: bool) -> list[str]:
     """The SAFE artifact, and the ONLY thing that is ever buffered or returned.
 
-    REDACTION HAPPENS HERE, ONCE, AND NOWHERE DOWNSTREAM — everything past this point only ever
-    cuts text that is already masked. It has to be `scrub_untrusted` rather than the older
-    `redact_secrets(text[:cap])`, because a handle RETAINS this string for the rest of the turn
-    and the elided middle it hands back is text no human ever read: a buffer filled from anything
-    less than the full scrub is a direct path to a secret nobody ever saw.
+    REDACTION HAPPENS HERE, ONCE, NOWHERE DOWNSTREAM — a handle RETAINS this string for the rest
+    of the turn, and its elided middle is text no human ever reads, so anything less than a full
+    `scrub_untrusted` scrub is a direct path to an unseen secret.
 
-    `denoise` is the CALLER's answer to "is this text a build log?", never a guess made from the
-    text itself. Dropping a line is only ever right for dependency-manager chatter; the same
-    filter run over `cat`'s output silently deletes a line from a file the model asked to read,
-    and an `edit_file` composed from that read then fails to match with no visible cause."""
+    `denoise` is the CALLER's answer to "is this a build log?", never guessed from the text —
+    the same filter run over a `cat` read would silently delete a line the model asked to see."""
     head, tail, dropped = _within_the_capture_limit(text)
     # THE HEAD IS CUT WHEN IT ENDS INSIDE A CREDENTIAL — the same rule as the tail guard below,
     # at the other end of the same cut, and it is NOT covered by masking the head. The redactor's
@@ -314,18 +258,12 @@ def _elision_notice(
 ) -> str:
     """The truncation notice: WHAT was removed, and — inline — how to get it back.
 
-    NAMING THE TOOL AND THE HANDLE IN THE NOTICE ITSELF is the point. A capability described once
-    in a system prompt is a thing the model has to remember at the moment it is staring at a
-    truncated log; a call it can copy off the line in front of it is not.
-
-    The line numbers inside the call are printed WITHOUT thousands separators while the totals
-    around them keep theirs: the first pair are arguments to be copied verbatim into a tool call,
-    and `start_line=1,024` is not an integer.
-
-    `cut_line` IS PASSED RATHER THAN DERIVED (it used to be `first - 1`). The caller now names the
-    elided range from the first line it did not show WHOLE, so the two numbers stopped being one
-    apart — and a notice that computes a line number out of another notice's arithmetic goes wrong
-    silently, one truncation shape at a time."""
+    Naming the tool and handle IN the notice is the point: a call the model can copy off the
+    line in front of it beats a capability it has to remember from the system prompt. The line
+    numbers inside that call print WITHOUT thousands separators (they're copied verbatim into a
+    tool call; `start_line=1,024` is not an integer), while the surrounding totals keep theirs.
+    `cut_line` is PASSED rather than derived (`first - 1`) — deriving it let the two numbers
+    drift a line apart, wrong silently, one truncation shape at a time."""
     if elided_lines > 0:
         edge = " (the ends of that range are only partly shown here)" if partly_shown else ""
         what = (
@@ -448,18 +386,14 @@ async def _format_command_result(
     denoise: bool,
     budget: int | None = None,
 ) -> str:
-    """Render an `ExecResult` for the model: the exit code plus redacted stdout/stderr, capped by
-    what the exit code says the output is WORTH — a success is summarised, a failure is
-    dumped. Empty streams are omitted so a clean run reads tersely.
+    """Render an `ExecResult` for the model: exit code plus redacted stdout/stderr, capped by
+    what the exit code says the output is WORTH — success summarised, failure dumped. Empty
+    streams are omitted. A stream too big for its budget is HELD under its own handle BEFORE
+    it is cut, so the notice names something that resolves; one that fits is never held.
 
-    A stream that does not fit its budget is HELD under its own handle before it is cut, so the
-    notice the model reads names something that actually resolves. A stream that fits is not held
-    at all: there is nothing to recover, and the ring is worth more to the next truncation.
-
-    `budget` OVERRIDES the exit code's own answer, and exists for exactly one caller: the composite
-    step, whose whole point is that the underlying exit code lies. A step that exited 0 after
-    failing must be DUMPED, not summarised — sizing its output from `result.exit` would let the
-    misleading zero decide how much of the failure the model gets to read."""
+    `budget` OVERRIDES the exit code's own answer for exactly one caller — the composite step,
+    whose whole point is that its exit code lies. A step that exited 0 after failing must be
+    DUMPED, not sized from that misleading zero."""
     budget = output_budget_for_exit(result.exit) if budget is None else budget
     sections = [f"exit code: {result.exit}"]
     for stream, raw in (("stdout", result.stdout), ("stderr", result.stderr)):
@@ -591,20 +525,14 @@ def _the_two_steps(name: str) -> tuple[_CompositeStep, ...]:
 
 
 def _the_command_lied(result: ExecResult, markers: tuple[str, ...]) -> bool:
-    """Did this command FAIL while exiting zero? Scanned over the RAW capture, case-folded.
+    """Did this command FAIL while exiting zero? Over the RAW capture, case-folded: reading the
+    redactor's or noise filter's output would be one masking rule from going blind, and nothing
+    scanned here is ever returned.
 
-    Raw, not redacted: the redactor and the noise filter both rewrite lines, and a detector that
-    reads their output is one masking rule away from going quietly blind. Nothing scanned here is
-    ever returned — the report is built from `_redact_command_output`'s artifact, as always.
-
-    AND UNCAPPED, DELIBERATELY, unlike every regex on this path. The capture is app-controlled and
-    unbounded, so the instinct is to hand it the same head+tail window `_within_the_capture_limit`
-    cuts — but that window has a MIDDLE it throws away, and a marker dropped there turns a failed
-    step into a reported success. This detector fails OPEN when it misses, which is the one
-    direction that matters here. The cost that would buy: `.lower()` plus a substring search is
-    memchr-speed, measured at 3.7 ms over 6.4 MB (~0.6 ms/MB) — three orders of magnitude cheaper
-    per byte than the credential scan whose bound this would be copying, and not worth a detector
-    that can be silenced by padding."""
+    UNCAPPED, DELIBERATELY, unlike every regex on this path. The capture is app-controlled and
+    unbounded, so the instinct is `_within_the_capture_limit`'s head+tail window — but it has a
+    MIDDLE, and a marker dropped there turns a failed step into a reported success. Fails OPEN.
+    `.lower()` + substring is memchr-speed, ~0.6 ms/MB — well under the bound it would copy."""
     printed = f"{result.stdout}\n{result.stderr}".lower()
     return any(marker in printed for marker in markers)
 
@@ -674,18 +602,14 @@ async def _step(
     state: Literal["started", "ok", "failed"],
     hidden: bool = False,
 ) -> None:
-    """The legacy build-progress feed. `emitter is None` on the chat-turn path, where the
-    ENGINE emits a StepFrame per tool call from the run's own FunctionToolCall/Result events
-    using the same `classify_tool_call` label — emitting both would render every step twice.
+    """The legacy build-progress feed. `emitter is None` on the chat-turn path, where the ENGINE
+    emits a StepFrame per tool call itself — emitting both here too would render every step twice.
 
-    NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, the same rule the turn engine's `_resolve_step`
-    and the reload projection both apply, and `classify_command`'s docstring states for this
-    emitter by name. A housekeeping command is plumbing while it works and the whole story the
-    moment it does not, and a group's problem count has to name a row the citizen can find.
-    Enforced HERE rather than at each call site: the classifier's `hidden` and the step's state
-    are decided in different places, and a caller that has to remember to combine them is a
-    caller that will eventually forget on the failing arm — which is the arm nobody looks at
-    until it matters."""
+    NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG (same rule as `_resolve_step` and the reload
+    projection): a housekeeping command is plumbing while it works, the whole story the moment
+    it doesn't. Enforced HERE, not at each call site — `hidden` and the step's state are decided
+    in different places, and a caller left to combine them will eventually forget on the failing
+    arm, which is the one nobody looks at until it matters."""
     if session.emitter is None:
         return
     await session.emitter.step(
@@ -741,11 +665,10 @@ def sandbox_toolset[DepsT](
     on the deps type for the same reason `read_only_toolset` is: ONE tool body, two consumers (the
     legacy harness's `BuildDeps`, a Write chat turn's own deps).
 
-    The inner tools annotate `RunContext[Any]`: pydantic-ai resolves tool annotations with
-    `get_type_hints` at registration, and a PEP-695 type param of the ENCLOSING function is not in
-    scope there under deferred annotations. The factory signature carries the real typing; the
-    `cast` at the return is the one boundary where it narrows back.
-    """
+    The inner tools annotate `RunContext[Any]` rather than the enclosing PEP-695 type param,
+    because pydantic-ai resolves tool annotations with `get_type_hints` at registration and that
+    param is out of scope there under deferred annotations. The factory signature carries the
+    real typing; the `cast` at the return narrows back to it."""
 
     async def read_file(
         ctx: RunContext[Any], path: str, view_range: list[int] | None = None
@@ -876,14 +799,13 @@ def sandbox_toolset[DepsT](
 
     async def run_command(ctx: RunContext[Any], command: list[str]) -> str:
         """Run a shell command in the app workspace and get its output back. Pass the command as a
-        list of argv tokens — e.g. `["npm", "install", "zod"]`, `["npm", "run", "lint"]`,
-        `["ls", "app"]`. It runs as an unprivileged user; the output is secret-redacted and
-        length-capped before you see it. A non-zero exit code comes back as a normal result — read
-        the output and fix the cause. A long output is cut to its first and last lines, and the
-        notice in the middle names a handle — pass that handle to `fetch_output_slice` to read
-        what was cut, instead of running the command again.
-        Do NOT start or restart the dev server (`next dev`); it is
-        already running and the harness reads it for you."""
+        list of argv tokens — e.g. `["npm", "install", "zod"]`, `["npm", "run", "lint"]`, `["ls",
+        "app"]`. It runs as an unprivileged user; the output is secret-redacted and length-capped
+        before you see it. A non-zero exit code comes back as a normal result — read the output and
+        fix the cause. A long output is cut to its first and last lines, and the notice in the
+        middle names a handle — pass that handle to `fetch_output_slice` to read what was cut,
+        instead of running the command again. Do NOT start or restart the dev server (`next dev`);
+        it is already running and the harness reads it for you."""
         session = sandbox_of(ctx)
         # alias keeps the call off the JS-oriented exec guard
         transport = session.sandbox_client.exec
@@ -1048,15 +970,11 @@ def sandbox_toolset[DepsT](
         """Apply the schema edits you just made in `db/schema.ts` — this generates the migration
         and runs it in one call, and tells you truthfully which step failed if either did.
 
-        Pass `what_changed` as a short description of the edit ("add visitors table"); it names
-        the migration file, so pass something a person could still read six months from now. Make
-        ONE kind of schema change per call — drizzle-kit cannot tell a rename from a drop plus a
-        create, so it stops and asks, and there is no terminal here to answer it. Both commands
-        behind this call can print a failure and still exit 0, which is exactly what this call
-        exists to catch: it reports each step's outcome, and on a failure it names the step,
-        overrides the misleading exit code, and tells you what state your workspace and database
-        were left in. Trust what it says over any exit code inside it, and do not run the
-        generate or migrate commands yourself through `run_command`."""
+        Pass `what_changed` as a short, readable description ("add visitors table") that names
+        the migration file. Make ONE kind of schema change per call — drizzle-kit cannot tell a
+        rename from a drop+create and stops to ask, with no terminal here to answer it. Both
+        commands can print a failure and still exit 0: trust this call's report over any exit
+        code, and never run generate or migrate yourself through `run_command`."""
         session = sandbox_of(ctx)
         # THE ADOPTION QUESTION'S FIRST HALF, counted before anything can go wrong: "was the tool
         # reached for", not "did it succeed". A composite that failed was still adopted.

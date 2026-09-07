@@ -1,28 +1,13 @@
 /**
- * The marketplace — every app anyone on the platform has published.
+ * The marketplace — every published app, unscoped to the viewer, so someone with a need can
+ * find what exists instead of rebuilding it.
  *
- * The point of this page is that it is NOT scoped to you. Someone with a real need can see
- * what already exists instead of describing it into the builder and rebuilding a tool that
- * is already running, so the copy leans on "built by" rather than hiding authorship.
- *
- * IT DOES NOT USE `useKeysetList`, unlike `ProjectsPage`. That hook is cursor-shaped, and
- * this catalog paginates by OFFSET so it can offer page numbers, a total, and sort-by-name
- * (see the server's `MarketplaceListResponse` docstring for why the deviation is contained
- * to this one surface). The debounce that hook provided is kept here by hand — typing must
- * not fire a request per keystroke.
- *
- * ONE DISPATCHER, and it is the effect below. Every fetch this page makes comes from that
- * single `useEffect`, keyed on the COMMITTED state (`page`/`pageSize`/`sort`/`applied`).
- * The debounce commits `applied` and nothing else; it never calls the loader itself. That
- * is what makes the controls safe to interleave: an earlier design had the debounce firing
- * its own request with `pageSize`/`sort` captured at KEYSTROKE time, so changing rows-per-page
- * inside the 300ms window lost to a stale request that happened to be issued later and
- * therefore won the `requestId` guard — rendering rows fetched at the old page size while
- * the control read the new one.
- *
- * THE RULE THAT TIES THE CONTROLS TOGETHER: anything that changes what the result SET is —
- * a new query, a new page size, a new sort — resets to page 1. Without that you can be on
- * page 4 of a three-page result and see nothing, with no clue why.
+ * Paginates by OFFSET (page numbers, total, sort-by-name), not `useKeysetList` — see the
+ * server's `MarketplaceListResponse` docstring for why. The debounce only commits `applied`;
+ * the effect below is the ONE place a fetch is dispatched, keyed on the committed state. An
+ * earlier design fired the debounce's own request with pageSize/sort captured at keystroke
+ * time, so a stale request could land after a newer one and still win the requestId guard —
+ * rendering rows at the wrong page size. Anything that changes the result SET resets to page 1.
  */
 import { ExternalLink, Search, Store } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'

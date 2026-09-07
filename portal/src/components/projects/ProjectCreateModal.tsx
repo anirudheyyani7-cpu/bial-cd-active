@@ -1,15 +1,14 @@
 /**
- * Create-a-project modal. Two client-side length guards that mirror the server's
- * limits so the user is corrected before a round-trip, not after a 422:
- *   - name is required and capped at 8 WORDS — the server enforces the same
- *     rule with the same splitting, and 120 chars remains only as a paste backstop,
- *   - description is optional and capped at 2000.
- * The submit button stays disabled while either bound is exceeded, AND the submit
- * handler re-checks, so a programmatic 121-char value can never reach the network.
+ * Create-a-project modal. Two client-side length guards mirror the server's limits so
+ * the user is corrected before a round-trip, not after a 422: name is required and
+ * capped at 8 WORDS (server enforces the same split; 120 chars is only a paste
+ * backstop), description is optional and capped at 2000. The submit button stays
+ * disabled past either bound, AND the handler re-checks, so a programmatic 121-char
+ * value can never reach the network.
  *
- * When the server does reject, we surface the message the thrown `ApiError` carries
- * — which `readApiError` already pulled from whichever of the three envelopes the
- * backend chose — never a synthetic "Failed to create project (422)."
+ * On a server rejection, surface the message the thrown `ApiError` carries —
+ * `readApiError` already pulled it from whichever of the three envelopes the backend
+ * chose — never a synthetic "Failed to create project (422)."
  */
 import { useState } from 'react'
 import { countWords, MAX_PROJECT_NAME_WORDS } from '../../utils/words'

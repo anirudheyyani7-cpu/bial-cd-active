@@ -2,15 +2,13 @@
 
 New models compose these rather than re-declaring the columns:
 
-* `UUIDv7PrimaryKeyMixin` — time-sortable, index-friendly UUIDv7 PK. App-side
-  `uuid.uuid7()` default (Python 3.14 stdlib) plus a PostgreSQL 18 native
-  `uuidv7()` server default so raw SQL inserts also get a v7 key.
+* `UUIDv7PrimaryKeyMixin` — time-sortable, index-friendly UUIDv7 PK (app-side `uuid.uuid7()`
+  plus a PostgreSQL 18 `uuidv7()` server default, so raw SQL inserts also get a v7 key).
 * `TimestampMixin` — `created_at` / `updated_at`, server-defaulted to `now()`.
-* `OwnedByUserMixin` — the single-tenant ownership boundary: a non-nullable,
-  indexed `user_id` FK. BIAL has NO `org_id` — the user IS the isolation boundary.
-  Every query over a model carrying this mixin must filter by
-  `user_id`; a dropped predicate is a cross-user leak. The `users` table lands
-  with auth (a later phase); this mixin stays dormant until a model composes it.
+* `OwnedByUserMixin` — the single-tenant ownership boundary: a non-nullable, indexed
+  `user_id` FK. BIAL has NO `org_id` — the user IS the isolation boundary. Every query over
+  a model carrying this mixin must filter by `user_id`; a dropped predicate is a cross-user
+  leak. `users` lands with auth later; this mixin stays dormant until composed.
 """
 
 import uuid

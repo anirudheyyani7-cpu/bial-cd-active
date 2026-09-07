@@ -1,19 +1,15 @@
 """Write a deploy outcome into the citizen's chat.
 
-A build failure the citizen cannot see is a build failure they cannot ask the agent to fix,
-so the outcome goes where they are already looking rather than only into an API response.
+A build failure the citizen cannot see is a build failure they cannot ask the agent to fix, so
+the outcome goes where they are already looking, not only into an API response.
 
-`meta["kind"]` is deliberately `deploy_outcome`, NOT `build_outcome`. The projection gates
-its banner card on `build_outcome` plus a session id; an unknown visible kind falls through
-to the arm that renders it as plain assistant prose — an outcome that module documents as
-intended ("a future lifecycle entry should degrade to prose, not vanish"). That means this
-needs no projection change and no frontend work, at the cost of a plain message instead of
-a card. Worth revisiting when the portal grows a Deploy surface; not worth blocking on now.
+`meta["kind"]` is deliberately `deploy_outcome`, NOT `build_outcome`: the projection gates its
+banner card on `build_outcome` plus a session id, so an unknown kind falls through to plain
+assistant prose by design — no projection or frontend change needed, at the cost of a plain
+message instead of a card. Revisit when the portal grows a Deploy surface.
 
-Owner-scoped: the conversation must belong to the caller, or this is a no-op rather than a
-cross-user write. Idempotent on the deployment id — a reconciler that promotes a row the
-pipeline also settled must not append a second message.
-"""
+Owner-scoped: the conversation must belong to the caller, or this is a no-op, not a cross-user
+write. Idempotent on the deployment id, so a reconciler racing the pipeline never double-writes."""
 
 from __future__ import annotations
 

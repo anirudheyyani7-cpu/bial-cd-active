@@ -59,17 +59,13 @@ _log = structlog.get_logger()
 @runtime_checkable
 class FleetLister(Protocol):
     """The one capability this module needs from a control plane. A Protocol rather than the
-    concrete `AcaControlPlane` so a test needs no Azure client, and so a future substrate
-    (ACA Sandboxes, say) satisfies it by shape. Deliberately NOT added to the `SandboxClient`
-    ABC, which is a frozen cross-track contract — the capability lives on the concrete
-    client and the route checks for it at runtime.
+    concrete `AcaControlPlane` so a test needs no Azure client and a future substrate satisfies
+    it by shape — deliberately not added to the frozen `SandboxClient` ABC.
 
-    ONE ENUMERATION FOR EVERY QUESTION. One method rather than a names-only and a names→tags
-    pair walking the same ARM pages: no two callers can hold different beliefs about the fleet,
-    and the fleet is walked once per pass rather than once per question. `FleetMember.tags` is
-    normalized to `{}` for a container ARM returned with no `tags` key at all: absent FROM the
-    list means the container does not exist, an empty `tags` means it exists carrying no
-    identity, and the backfill below depends on that difference."""
+    ONE ENUMERATION FOR EVERY QUESTION, not a names-only and a names→tags pair walking the same
+    ARM pages: no two callers can disagree about the fleet. `FleetMember.tags` normalizes to
+    `{}` for a container with no `tags` key: absent from the list means it does not exist, `{}`
+    means it exists with no identity — the backfill below depends on that difference."""
 
     async def list_sandbox_fleet(self) -> list[FleetMember]: ...
 
@@ -78,17 +74,12 @@ class FleetLister(Protocol):
 class FleetTagger(FleetLister, Protocol):
     """`FleetLister` plus the write half: stamp identity tags onto a container.
 
-    TWO PROTOCOLS, NOT ONE, deliberately. `take_sandbox_inventory` above needs only to enumerate,
-    and demanding a *stamper* for a read-only report would over-constrain a substrate that can list
-    but not write — and would turn every existing listing-only fake into a 503 for no gain. Because
-    this extends `FleetLister`, a client that can stamp can always list, which is the direction
-    that is actually true.
-
-    `stamp_tags` is a MERGE: it adds and overwrites the keys given and leaves every other tag
-    alone. That is a promise the IMPLEMENTATION has to keep, not one ARM keeps for it — the
-    `Microsoft.App` provider replaces the whole tag map on a PATCH, so the real client reads
-    before it writes. A substrate that cannot honour the merge cannot implement this protocol:
-    stamping here destroys identity, and identity is what the classifier judges by."""
+    TWO PROTOCOLS, NOT ONE: `take_sandbox_inventory` needs only to enumerate, and demanding a
+    *stamper* for a read-only report would 503 every listing-only fake for no gain. Extending
+    `FleetLister` keeps the direction that is actually true — a client that can stamp can always
+    list. `stamp_tags` is a MERGE, a promise the IMPLEMENTATION keeps rather than ARM:
+    `Microsoft.App` replaces the whole tag map on PATCH, so the real client reads before it writes,
+    and a substrate that cannot merge would destroy the identity the classifier judges by."""
 
     async def stamp_tags(self, *, name: str, tags: dict[str, str]) -> None: ...
 
@@ -98,14 +89,11 @@ class FleetDestroyer(FleetTagger, Protocol):
     """`FleetTagger` plus the one capability only a DESTROY path needs: re-reading a single
     container's tags immediately before acting on it.
 
-    THREE PROTOCOLS, NOT TWO, for the same reason there are two rather than one. The backfill
-    lists and stamps and never re-reads; widening `FleetTagger` to demand the capability of it
-    503s nine of its tests. Capability protocols earn their keep by being narrow.
-
-    `get_app_tags` returns `None` when ARM says the container does not exist — a DIFFERENT answer
-    from `{}` (it exists, carrying no identity). The destroy path depends on the difference:
-    absent means the delete already landed; untagged means somebody rewrote the resource and it
-    is no longer ours to judge."""
+    THREE PROTOCOLS, NOT TWO, for the same reason there are two rather than one: the backfill never
+    re-reads, and widening `FleetTagger` to demand it would 503 nine of its tests. `get_app_tags`
+    returns `None` when ARM says the container does not exist — different from `{}` (exists, no
+    identity), and the destroy path depends on the difference: absent means the delete already
+    landed; untagged means somebody rewrote the resource and it is no longer ours to judge."""
 
     async def get_app_tags(self, *, name: str) -> dict[str, str] | None: ...
 
@@ -178,24 +166,14 @@ async def take_sandbox_inventory(
 
 @dataclass(frozen=True)
 class TagBackfillReport:
-    """What one backfill pass did, in buckets that SUM.
+    """What one backfill pass did, in buckets that SUM to `scanned`.
 
-    `scanned == already_tagged + stamped + skipped_no_row + failed`, the `appdb/reconcile.py`
-    shape: a report whose buckets do not add up is a report nobody can check, and an operator is
-    about to decide whether the fleet is ready for a destructive flag on the strength of it.
-
-    `skipped_no_row` is the bucket that matters most and its name understates it: those containers
-    WERE stamped — with `kind` and `backfilled_at` and nothing else — because no app row matched
-    their name. They carry no owner, and they will be reported forever and destroyed by nothing.
-
-    `unowned` DELIBERATELY DOES NOT PARTICIPATE IN THE SUM. The four buckets above describe what
-    THIS PASS DID; `unowned` describes what the FLEET IS, and an operator needs the second one on
-    every pass, not just the first. Without it the escalate-forever population disappears after
-    its first stamping: those containers now carry `bial-kind`, so the next pass counts them in
-    `already_tagged`, and `already_tagged == scanned` — the endpoint's only clean-fleet signal —
-    reads identically for a fully-identified fleet and for one made entirely of containers no
-    human has adjudicated. That is the number an operator checks before flipping the destroy
-    flag, and it goes quiet exactly when that decision is being made."""
+    `scanned == already_tagged + stamped + skipped_no_row + failed`. `skipped_no_row` containers
+    WERE stamped (`kind` + `backfilled_at`, no owner) because no app row matched their name; they
+    report forever and nothing destroys them. `unowned` DOES NOT PARTICIPATE IN THE SUM — it says
+    what the FLEET IS, not what this pass did. Without it the escalate-forever population vanishes
+    after its first stamping, and `already_tagged == scanned`, the endpoint's only clean-fleet
+    signal, reads alike for an identified fleet and an unadjudicated one."""
 
     scanned: int
     already_tagged: int
@@ -208,22 +186,12 @@ class TagBackfillReport:
 async def _app_names_to_owners(db: AsyncSession) -> dict[str, tuple[uuid.UUID, uuid.UUID]]:
     """Map every app's DERIVED sandbox name back to `(app_id, user_id)`.
 
-    FORWARD-MATCHED, never reverse-parsed, and that is the whole safety argument. `app_name_for`
-    produces `sbx-` + `app_id.hex[:28]` — 28 of 32 hex characters, truncated to fit ACA's 32-char
-    name limit — so a sandbox name does NOT identify its app. Deriving the name for each known app
-    and comparing is exact; parsing an owner out of a name is a guess, and a guess here promotes an
-    unproven container into the destroy-eligible tiers.
-
-    FLEET-WIDE ON PURPOSE. Every other query in this codebase is scoped by `user_id`; this one
-    cannot be, because the question is "does ANY user own this container" and a per-user scope
-    would answer "no" for every container belonging to somebody else — turning every other
-    citizen's live sandbox into an unowned orphan. It reads two identifier columns and no user
-    data, and it is reachable only from a superadmin fleet endpoint, the same posture as the other
-    reconcilers.
-
-    `app_name_for` is imported in-function because it lives in `manager`, which pulls in the api
-    schema package and pydantic_ai; a module-level import would drag both into every consumer of
-    this module — including the out-of-process worker that has no business loading them."""
+    FORWARD-MATCHED, never reverse-parsed: `app_name_for` produces `sbx-` + 28 of the app_id's 32
+    hex chars, so deriving each known app's name and comparing is exact, while parsing an owner out
+    of a name is a guess that could promote an unproven container into the destroy-eligible tiers.
+    FLEET-WIDE ON PURPOSE — the one query here NOT scoped by `user_id`, because the question is
+    "does ANY user own this"; it reads two identifier columns, no user data, superadmin-only.
+    `app_name_for` is imported in-function to keep `manager`'s heavy imports out of the worker."""
     from src.services.build_sessions.manager import app_name_for
 
     rows = (await db.execute(sa.select(AppRegistry.id, AppRegistry.user_id))).all()
@@ -256,17 +224,11 @@ def _backfill_tags(owner: tuple[uuid.UUID, uuid.UUID] | None) -> dict[str, str]:
 async def backfill_sandbox_tags(db: AsyncSession, control_plane: FleetTagger) -> TagBackfillReport:
     """Stamp identity onto every sandbox container that predates identity stamping.
 
-    Idempotent: a container already carrying `bial-kind` is counted and LEFT ALONE. Re-stamping
-    would overwrite a real `bial-created-at` with `now` on every run, resetting the age clock of
-    the entire fleet each time an operator pressed the button — which would make the feature that
-    reclaims idle containers reclaim nothing, forever, while every test stayed green.
-
-    ONE CONTAINER'S FAILURE DOES NOT FAIL THE PASS. A refused PATCH is counted in `failed` and the
-    sweep moves on, because the operation is idempotent and the next run retries it; aborting on
-    the first failure would leave the fleet part-stamped with no report of what remains.
-
-    AN ENUMERATION FAILURE IS DIFFERENT AND PROPAGATES. A half-listed fleet reporting "nothing left
-    to stamp" is the exact false green that the destroy flag is gated on."""
+    Idempotent: a container already carrying `bial-kind` is counted and LEFT ALONE — re-stamping
+    would reset the whole fleet's age clock on every run, making idle-reclaim reclaim nothing
+    forever while every test stayed green. ONE CONTAINER'S FAILURE DOES NOT FAIL THE PASS (counted
+    in `failed`, retried next run) — but AN ENUMERATION FAILURE PROPAGATES: a half-listed fleet
+    reporting "nothing left to stamp" is the exact false green the destroy flag is gated on."""
     live = {member.name: member.tags for member in await control_plane.list_sandbox_fleet()}
     owners = await _app_names_to_owners(db)
     # END THE READ TRANSACTION BEFORE THE ARM LOOP. `owners` is already materialised as plain

@@ -1,16 +1,14 @@
 /**
- * One project in the `/projects` grid: name, a description snippet (or a muted
- * "No description yet" when the field is null), the status in the shared vocabulary, and
- * when the details were last updated — the same two facts the list row shows, so the two
- * views cannot describe one project differently.
+ * One project in the `/projects` grid: name, description (or muted "No description yet"),
+ * status in the shared vocabulary, and last-updated — the same facts the list row shows, so
+ * the two views cannot describe one project differently.
  *
- * A NAME TOO LONG FOR ITS TILE gets an ellipsis AND a tooltip. The 8-word cap is not
- * retroactive, so stored 120-character names are exactly the ones that clip, and the tooltip
- * is the only way to read them. Gated on the span being MEASURED as clipped, like the list's.
+ * A name too long for its tile gets an ellipsis AND a tooltip, gated on the span being
+ * MEASURED as clipped (like the list's) — the 8-word cap is not retroactive, so stored
+ * 120-character names are exactly the ones that clip.
  *
- * Purely presentational: the page owns navigation and deletion and injects them as
- * `onOpen` / `onDelete`, so this component is trivial to render in a test with no
- * router.
+ * Purely presentational: the page owns navigation/deletion and injects them as
+ * `onOpen`/`onDelete`, so this renders trivially in a test with no router.
  */
 import { Trash2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'

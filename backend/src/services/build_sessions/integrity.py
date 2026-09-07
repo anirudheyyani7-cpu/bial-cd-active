@@ -1,46 +1,20 @@
 """What the container still holds, asked of the container itself.
 
-TWO QUESTIONS LIVE HERE, and they are asked by different callers for different reasons.
+Two questions live here: the baseline-identity probe (is the app still serving the seeded starter
+page?) and the workspace-integrity verdict (does this container still hold this app's work —
+asked before every turn, the only answer that can authorise replacing a live workspace).
 
-**The baseline-identity probe** answers "is this app still serving the starter page the platform
-seeded at birth?" — the content half of the health verdict. The serving half can only say that a
-Next app is answering here, never that it is THIS citizen's app.
+WHY THIS EXISTS. The baseline check compares blob shas against the repo's root commit rather than
+a template marker or a length heuristic: a marker misses apps restored from a pre-marker bundle,
+and a 255-vs-341 character gap once read as "template, not app" and fired a false top-severity
+alarm. Blob-sha-against-root needs no image rebuild and nothing beyond git itself (the slim Node
+base has neither `cmp` nor `diff`). Every unanswerable case — no root commit, more than one, a root
+that isn't the seeded template, a failed exec — returns `UNANSWERABLE`, never "unchanged"; the
+health verdict retries rather than guessing.
 
-WHY A GIT IDENTITY FACT AND NOT A MARKER IN THE TEMPLATE. A marker written into
-`sandbox/template/app/page.tsx` reaches only apps provisioned from a rebuilt image — and an
-EXISTING app restored from its own pre-marker bundle checks out a markerless `page.tsx` too, so
-for the whole fleet that exists today the false claim would stay live. The repository's ROOT
-COMMIT is the `bial: golden template baseline` the sandbox client seeds at provision, it survives
-a restore because bundles carry complete history, and comparing against it needs no image rebuild,
-no prompt coordination and no marker the agent could be tempted to preserve. It is an explicit
-identity comparison rather than a length heuristic: a 255-vs-341 character gap once read as
-"template, not app" and produced a false top-severity alarm.
-
-THE COMPARISON IS BLOB SHA AGAINST BLOB SHA, not a diff. `git rev-parse <root>:<path>` is what the
-root commit stored; `git hash-object <path>` is what is in the tree now. Equal means byte-identical
-by construction, it needs nothing on the image but git itself (no `cmp`, no `diff`, neither of
-which the slim Node base is guaranteed to carry), and both sides pass through the same filter
-mechanism so neither can be made to disagree by configuration the other did not see.
-
-**Everything unanswerable is `UNANSWERABLE`, never "unchanged".** No root commit, more than one
-root, a root commit that never held the file, an exec that failed: each of those is a question we
-could not answer, and answering it as "still the template" would fail a working app while
-answering it as "diverged" would re-open the very claim this exists to close. The health verdict
-reads `UNANSWERABLE` as `INDETERMINATE` and re-checks.
-
-**The workspace-integrity verdict** answers a different question with the same posture: "does
-this container still hold this app's work?" — asked before the agent runs, and the only question
-in the system whose answer can authorise replacing a live workspace. It lives beside the
-baseline probe because both are facts the CONTAINER holds about its own git repository, and
-because the container-state primitives they share had to leave `manager.py` to be reachable from
-the reaper without dragging the FastAPI app in behind them.
-
-IT REACHES BACK INTO NEITHER `manager` NOR THE ORCHESTRATOR, and that is a load-bearing
-property rather than tidiness. `manager` imports `reaper`, and both import this module at module
-level, so an import in the other direction is a cycle; `services.orchestrator` reaches
-`build_sessions` through `agent.agent`, which is why `selfheal` and `harness` defer THEIR imports
-of this module into their call sites. `test_the_integrity_verdict_carries_nothing_heavy_of_its_own`
-pins it, and states plainly what it does not claim.
+Neither half imports `manager` or the orchestrator: `manager` imports `reaper`, and both import
+this module at module level, so the reverse would cycle. `selfheal` and `harness` defer their own
+imports of this module for the same reason.
 """
 
 from __future__ import annotations
@@ -244,14 +218,12 @@ async def anything_changed_since_the_watermark(
 ) -> bool | None:
     """Has anything in the workspace been written since `stamp_the_watermark`?
 
-    THE OPEN SANDBOX IS WHY THIS ASKS THE FILESYSTEM. The agent edits through `run_command` as
-    readily as through the file tools, so a watermark counted from tool calls would miss every
-    `sed`, every install and every shell redirect — and the claim resting on this answer is that
-    the loop acts only on problems newer than the agent's most recent change.
+    Checks the filesystem, not tool calls: the agent edits via `run_command` as freely as via the
+    file tools, so a tool-call watermark would miss every `sed`, install, or shell redirect.
 
-    `None` means we could not find out, and it is deliberately NOT folded into `False`: the caller
-    reads `None` as "change nothing", which is today's behaviour, so a container that cannot answer
-    costs the improvement rather than the correctness."""
+    `None` (could not tell) is deliberately NOT folded into `False`: the caller treats `None` as
+    "change nothing" — today's behaviour — so an unreadable container costs the improvement, not
+    correctness."""
     run_command = sandbox_client.exec  # aliased to keep the call off the JS-oriented exec guard
     try:
         result = await run_command(handle, ["sh", "-c", _CHANGED_SINCE_GUARDED], timeout_s=30)
@@ -264,37 +236,13 @@ async def anything_changed_since_the_watermark(
 
 
 async def has_ever_been_built(app_id: uuid.UUID) -> bool:
-    """Has any turn on this app ever done real work?
+    """Has any turn on this app ever done real work? Meaningless pre-build — a fresh project is
+    *supposed* to show the starter page.
 
-    THE CONTENT CHECK IS ONLY MEANINGFUL FOR AN APP THAT HAS BEEN BUILT. A brand-new project is
-    *supposed* to be showing the starter page, and calling that unhealthy would fail every first
-    look at a project nobody has asked for anything yet.
-
-    The durable fact that answers it is the presence of a RECOVERY COPY. There is no `turns` model
-    — turns are `message` rows with a `TURN` entry kind, and a row scan per verdict is neither
-    cheap nor obviously correct — but `finish_turn_sandbox` writes a recovery copy on any turn that
-    touched files, which is exactly why `_nothing_to_lose` already uses its absence to mean "no
-    turn ever did". One HEAD request, and the integrity gate resolves it once per turn anyway.
-
-    PLAIN PRESENCE, NOT `newest_restore_source(app_id) is not None`, which answers a different
-    question — "is the recovery copy NEWER than the saved bundle", returning `None` for an app
-    whose Save happens to be more recent than its last turn. Presence is the closer answer to
-    "has any turn ever done real work", and unlike its sibling it cannot raise on an unreadable
-    store, which matters on a path that must never fail a turn.
-
-    ITS ONE BLIND SPOT, stated rather than hidden: an app whose building turns ALL failed to write
-    a recovery copy reads as never-built. That is the failure the recovery-write alarm exists to
-    make visible; if it fires often, this wants a stronger source.
-
-    THE TWO "NO"s FAIL IN OPPOSITE DIRECTIONS, on purpose:
-
-    * Storage **unconfigured** is a confirmed absent — with no store there can be no recovery copy
-      for anyone — so `False`, and the content check is skipped.
-    * Storage **unreadable** is a transient blip, and it fails CLOSED — `True`, so the check still
-      runs. The worst case of checking an app that turns out to be brand-new is one honest
-      sentence saying it is still the starter page; the worst case of not checking is a completion
-      claim standing over an untouched template, during an outage nobody would connect it to.
-    """
+    Answered by RECOVERY-COPY presence (no `turns` model; `finish_turn_sandbox` writes one per
+    file-touching turn), not `newest_restore_source(...) is not None` (answers "newer than saved?",
+    a different question, and can raise). Unconfigured storage -> `False`; unreadable -> `True`,
+    fail-closed: a false "not built" beats a completion claim over an untouched template."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:
@@ -372,22 +320,13 @@ _STATE_FIELDS: Final = (
 
 def state_script(reference_sha: str | None) -> str:
     """The container-state probe, optionally asking where HEAD sits relative to `reference_sha`.
+    Four `@@`-fields always: HEAD, capped porcelain, commit count, ancestry.
 
-    FOUR `@@`-SEPARATED FIELDS ALWAYS, even when no reference is supplied: HEAD, the capped
-    porcelain, the commit count, and the ancestry answer. The fourth is empty when nobody asked,
-    which the parse reads as `NOT_ASKED` — a distinct thing from "asked and could not tell", and
-    conflating them is how a probe that silently stopped running would keep reporting healthy.
-
-    ANCESTRY NEEDS A PRIMITIVE THIS CODEBASE DID NOT HAVE. Nothing in `src/` or `sandbox/`
-    computed merge-base or is-ancestor before this unit, so it is built into the same exec rather
-    than costing a second round trip. Two exit codes, space-separated: `git cat-file -e` first
-    (is the reference even in this repository?), then `git merge-base --is-ancestor` (was HEAD
-    built on top of it?). The order matters to the reader: `--is-ancestor` against an object the
-    repository does not contain fails for a reason that has nothing to do with the lineage, and
-    reading that as "diverged" would accuse a healthy workspace.
-
-    `reference_sha` is trusted to be `_SHA_RE`-shaped; callers validate before they get here, and
-    a caller that cannot pass `None` instead."""
+    Ancestry empty means `NOT_ASKED`, distinct from "asked, couldn't tell" — conflating them lets
+    a probe that silently stopped running read as healthy. It's two exit codes, in ORDER: `git
+    cat-file -e` (is the reference even here?) then `--is-ancestor` — reversed, a missing object
+    misreads as "diverged" for reasons unrelated to lineage. `reference_sha` is trusted
+    `_SHA_RE`-shaped; callers validate first, or pass `None`."""
     if reference_sha is None:
         return _STATE_FIELDS
     return (
@@ -420,14 +359,10 @@ class Ancestry(enum.StrEnum):
 class ContainerState:
     """What the container says about itself.
 
-    `head is None` means there is NO `.git` AT ALL — not "nobody has saved yet". A provisioned
-    container is never commit-less: `client._INIT_REPO_SCRIPT` seeds `bial: golden template
-    baseline` at birth so a snapshot commit cannot fail on "not a git repository", and
-    `_nothing_to_lose` says the same thing from the other side ("a check for 'no commits' is
-    dead code that never fires"). So the only thing that produces `head is None` on a container
-    this platform provisioned is one running straight from its baked image, and reading it as the
-    normal state of an unsaved project is what lets a factory-reset container pass for a new
-    one."""
+    `head is None` means NO `.git` AT ALL, not "nobody has saved yet" — a provisioned container
+    is never commit-less (`client._INIT_REPO_SCRIPT` seeds a baseline commit at birth). So only a
+    container running straight from its baked image produces `head is None`; reading it as an
+    unsaved project's normal state is what lets a factory-reset container pass for a new one."""
 
     head: str | None
     uncommitted: bool
@@ -764,15 +699,11 @@ async def workspace_integrity(
 ) -> IntegrityVerdict:
     """Does this container still hold this app's work?
 
-    `restore_source_key` names the bundle to compare against — THE ONE THE CALLER WOULD ACTUALLY
-    RESTORE, so the question the verdict answers and the tree the user would get back are the
-    same tree. `None` means the saved bundle, matching `newest_restore_source`'s own convention
-    (it returns the recovery key or `None`), so a caller can pass its result straight in. For a
-    user who clicked Save between turns the two bundles can disagree and the answer changes —
-    which is why this is the caller's choice rather than a rule buried here.
-
-    NEVER RAISES on anything the container or the store does. Every failure is one of the two
-    unanswerable states, because a probe that could throw would fail a turn for a blip."""
+    `restore_source_key` names the bundle to compare against — the one the caller would actually
+    restore, so the verdict's answer matches the tree the user would get back. `None` means the
+    saved bundle (matches `newest_restore_source`'s convention, so its result passes straight
+    in); Save-between-turns can make the two bundles disagree, which is why this is the caller's
+    choice. Never raises: every failure is unanswerable, so a blip can't fail a turn."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:

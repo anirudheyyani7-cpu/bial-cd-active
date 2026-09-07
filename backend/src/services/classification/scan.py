@@ -1,32 +1,23 @@
 """The model-free credential scan over an extracted snapshot.
 
-Runs FIRST, before the model, and its hits go into the review's prompt as directed
-evidence — a path, a pattern family and a line, structurally never a value
-(`CredentialHit` has nowhere to carry one). It is fast and deterministic, which is why it
-sits on the critical path by choice.
+Runs FIRST, before the model; hits go into the review's prompt as directed evidence — a
+path, pattern family and line, structurally never a value (`CredentialHit` has nowhere to
+carry one). Fast and deterministic, so it sits on the critical path by choice. The walk
+mirrors the read tools' jail (`IGNORED_DIRS`/`IGNORED_FILES`, no symlink descent) since it
+does not go through the model's tools — the tree came from a bundle the citizen's AI drove,
+so a planted link must not lead the scan out of the extraction.
 
-THE WALK MIRRORS THE READ TOOLS' JAIL, deliberately: the scan does not go through the
-model's tools, so it applies `IGNORED_DIRS` and `IGNORED_FILES` itself — without the
-file-level set the lockfile (the single largest file in a generated app) would sit in the
-path of the one check that must not be starved. Symlinks are never listed and
-symlinked directories are never descended into, same as `ExtractedSnapshotWorkspace`:
-the tree came from a bundle the citizen's AI drove, so a planted link must not lead the
-scan out of the extraction.
+WHY THIS EXISTS: TRUNCATION IS INCOMPLETENESS, NEVER CLEANLINESS. `SCAN_INPUT_MAX_CHARS` is
+a per-file ceiling; an over-ceiling file is scanned only on its prefix and marked
+`truncated`, which marks the WHOLE sweep `incomplete` — the runner treats that as the
+credentials floor unsatisfied, because a truncated scan reading as a clean no-hit would
+silently turn the one un-appealable answer into an appeal nobody made. The read is bounded
+at `SCAN_INPUT_MAX_CHARS * 4 + 4` bytes: UTF-8 spends at most 4 bytes/char, so that many
+bytes always decode to strictly more characters than the ceiling when the file holds more —
+the detector flags its own truncation from the one place that owns the ceiling.
 
-TRUNCATION IS INCOMPLETENESS, NEVER CLEANLINESS. The detector's ceiling
-(`SCAN_INPUT_MAX_CHARS`) is per file; a file whose text exceeds it is scanned only on its
-prefix and reported `truncated`, and ONE truncated file marks the whole sweep
-`incomplete`. The runner treats an incomplete sweep as leaving the credentials floor
-unsatisfied — a truncated scan must never read as a clean no-hit, or the one
-un-appealable answer silently degrades to an appeal nobody made. The read is bounded at
-`SCAN_INPUT_MAX_CHARS * 4 + 4` bytes: UTF-8 spends at most four bytes per character, so
-that many bytes always decode to strictly more characters than the ceiling when the file
-holds more — the detector then flags the truncation itself, from the one place that owns
-the ceiling.
-
-Everything — the walk, the reads, the regex sweep — happens off the event loop (the
-`snapshot_read.py` convention for filesystem work that is not "fast enough to inline").
-"""
+Everything — walk, reads, regex sweep — runs off the event loop (the `snapshot_read.py`
+convention for filesystem work not "fast enough to inline")."""
 
 from __future__ import annotations
 

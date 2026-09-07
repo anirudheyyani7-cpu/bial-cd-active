@@ -1,22 +1,14 @@
 """The environment a PUBLISHED app runs with.
 
-Three of the four values are identical to what the sandbox gets, and that is the point: the
-app the citizen tested is the app that ships, pointed at the same database and the same
-object-store container. Only the Blob CREDENTIAL differs, and that difference is
-load-bearing.
+Three of four values match the sandbox — same DB, same object-store container — so the app the
+citizen tested is the app that ships. Only the Blob CREDENTIAL differs, and it is load-bearing:
+the sandbox's builder mints a 7-day SESSION SAS, but a published app outlives that, so publish
+mints the LONG-LIVED credential instead (the one that already exists for the manual runbook;
+revocable via a per-app stored access policy rather than an inlined expiry).
 
-`provision_app_storage` (the sandbox's builder) mints a SESSION SAS capped at seven days,
-because a sandbox never outlives that. A published app does. Handing it a seven-day
-credential would give every deployed app a silent, staggered failure exactly one week after
-it went live — file uploads breaking on a Tuesday with nothing in the logs to connect it to
-a deploy. So publish mints the LONG-LIVED credential instead, which already exists for the
-manual runbook and is revocable by construction (it signs against a per-app stored access
-policy rather than inlining its own expiry).
-
-One consequence, stated rather than buried: each mint REPLACES the container's whole policy
-set, so a redeploy revokes the previous credential — fine, that container is being replaced
-— and an admin minting a runbook credential for the same app will cut a live one-click
-deploy off from its storage, and vice versa. One live credential per app, by construction.
+CONSEQUENCE: each mint REPLACES the container's whole policy set — a redeploy revokes the
+previous credential (fine, it's being replaced), but minting a runbook credential for the same
+app cuts off a live one-click deploy's storage, and vice versa. One live credential per app.
 """
 
 from __future__ import annotations
@@ -44,13 +36,11 @@ async def build_published_env(
 ) -> tuple[dict[str, str], str | None]:
     """`(env, container_url)` for the published container.
 
-    `container_url` comes back separately because it is NOT a secret and rides the spec as a
-    plain value, while the SAS and the database DSN ride ACA secret references.
-
+    `container_url` comes back separately: it is NOT a secret and rides the spec as a plain
+    value, while the SAS and DB DSN ride ACA secret references.
     The Blob base is deliberately the SIGNING ACCOUNT's own host, not the sandbox-facing
-    override: that override exists so a container inside a local Docker network can reach
-    Azurite, and a published app is never in that position. Reusing it would inject a
-    development host into production.
+    override (which exists only so a container on a local Docker network can reach Azurite) —
+    reusing it would inject a development host into production.
     """
     # Lazily imported: `src.services.build_sessions.__init__` reaches the API deps module,
     # which imports back into the partially-initialized package, so a module-level import

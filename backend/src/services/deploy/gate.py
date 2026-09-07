@@ -1,18 +1,14 @@
 """The publish gate's shared reading: one stored review + one answer set -> one record.
 
 THE ROUTE STILL OWNS THE LADDER. `deploy/router.py` decides which rung answers; this
-module holds the three things that decision is *written in* — how a stored review is read
-against the commit about to ship, how the three sources are handed to the merge, and the
-declaration document every outcome records. They live here rather than in the route
-because the route is no longer their only writer: on the drift path the DETACHED PIPELINE
-re-checks the new version and must produce the same document, in the same shape, for the
-same queue. A pipeline that cannot import a route
-(the route imports the pipeline) would otherwise have grown a second copy of a shape the
-route's own docstring calls contract — and two copies of a contract is how `differences`
-quietly stops meaning the same thing in the two places an administrator reads it.
+module holds what that decision is *written in* — reading a stored review against the
+shipping commit, handing sources to the merge, and the declaration document every
+outcome records. It lives here because the DETACHED PIPELINE (the drift re-check) is a
+second writer that cannot import the route, and two copies of a route-owned contract is
+how `differences` quietly stops meaning the same thing in both places an admin reads it.
 
-Nothing here decides anything. There is no ladder in this module, no status check, no
-routing: it reads, it merges, it formats. Both callers keep their own decision.
+Nothing here decides anything: it reads, merges, formats. Both callers keep their own
+decision.
 """
 
 from __future__ import annotations
@@ -43,23 +39,14 @@ ladder and the pipeline's post-re-check decision alike. See `append_gate_audit`.
 
 @dataclass(frozen=True)
 class ReviewAtHead:
-    """The stored review SITUATED against the commit about to ship — the reading rule 4
-    is written in terms of, computed once so the ladder, the merge and the record can
-    never disagree about what "there is a review" means.
+    """The stored review SITUATED against the shipping commit, computed once so the ladder, merge
+    and record agree on what "there is a review" means.
 
-    `complete` is rule 4's predicate and is deliberately narrower than the bare status
-    word: COMPLETE status AND the runner's own `answers_complete` signal AND not aged
-    out AND stamped exactly this commit. A complete-but-flagged-partial row is FAILED
-    for the ladder — the review runner already classes partial as a failure, and reading
-    the bare status here would make the two disagree about the same row.
-
-    `verdicts` and `scan` are populated whenever the stored document exists AND is
-    stamped this commit, even on a FAILED row: that is the Tier A scan floor arriving (the
-    model never returned, a complete scan's high-confidence hit stands in as the
-    credentials answer), and dropping it would discard the one signal origin kept for
-    when the model is unavailable. A row stamped ANOTHER commit contributes nothing at
-    all — a stored answer about an older version must never be read as this version's.
-    """
+    `complete` (rule 4's predicate) is narrower than the bare status: COMPLETE AND
+    `answers_complete` AND not aged out AND stamped exactly this commit — a complete-but-partial
+    row reads FAILED, as the runner does. `verdicts`/`scan` populate whenever the document is
+    stamped this commit, even a FAILED row (the Tier A scan floor); a row stamped ANOTHER commit
+    contributes nothing — an answer about an older version must NEVER be read as this one's."""
 
     complete: bool
     available: bool
@@ -110,18 +97,13 @@ def review_at_head(readout: ReviewReadout | None, head_sha: str | None) -> Revie
 
 def merge_inputs(flags: dict[str, bool], review: ReviewAtHead) -> list[QuestionMergeInput]:
     """One `QuestionMergeInput` per questionnaire key: the citizen's answer, the stored
-    verdict (None when no completed verdict is on record for this version — the merge's
-    documented convention), the scan signal, and the policy weight.
+    verdict (None when no completed verdict is on record — the merge's convention), the
+    scan signal, and the policy weight.
 
-    THE VERDICTS ARE ONLY CONSULTED WHEN THE REVIEW IS COMPLETE FOR THIS COMMIT, with
-    exactly one exception: the Tier A floor (`source == "scan_floor"`), which lives on a
-    FAILED row by construction. Feeding a running row's absent verdicts through as No
-    would be the bypass rule 4 exists to close — but rule 4 routes that state anyway, so
-    the merge here is about what gets RECORDED, not about whether to route.
-
-    The scan signal is meaningful for credentials alone (the merge's own convention) and
-    is read off the stored scan block's booleans — never from a location, which stays
-    internal."""
+    VERDICTS ARE CONSULTED ONLY WHEN THE REVIEW IS COMPLETE FOR THIS COMMIT, except the
+    Tier A floor (a FAILED row by construction) — feeding a running row's absent verdicts
+    through as No would reopen the bypass rule 4 closes. The scan signal is meaningful
+    for credentials alone, read off the stored booleans, never a location."""
     # A FLOOR row is not a review that answered — it is the record of one that never
     # returned, with the scan's Tier A hit written in as the credentials answer. Its
     # verdicts are therefore NOT handed to the merge as verdicts: `review_verdict=None` is
@@ -212,60 +194,12 @@ def declaration_document(
 ) -> dict[str, Any]:
     """THE DECLARATION — the one payload every branch records and the queue carries.
 
-    Written once, read by three consumers, so its shape is contract rather than
-    convenience: the registry's `declaration` column (the admin review screen renders
-    it), the `publish_gate` audit detail (the per-decision record), and the routed
-    response's provenance. Keys are snake_case INSIDE the JSON document — it is stored
-    data, not a wire schema, and the questionnaire keys it is keyed by are snake_case
-    everywhere else in the system (the deployment row's `classification`, the review
-    row's `verdicts`).
-
-        {
-          "commits": {"shipping": "<40-hex>" | null,
-                      "reviewed": "<40-hex>" | null},
-          "citizen":  {"answers": {<key>: bool, ...}, "explanation": str | null},
-          "review":   {"available": bool, "complete": bool, "status": str | null,
-                       "failureCode": str | null, "source": "review"|"scan_floor"|null,
-                       "answers": {<key>: "yes"|"no"|"unanswered", ...},
-                       "reasons": {<key>: str, ...},
-                       "scan": {"tierAHit": bool, "tierBHit": bool,
-                                "incomplete": bool, "tierADispute": bool}},
-          "merged":   {"answers": {<key>: bool, ...}, "anyWeightedYes": bool},
-          "differences": {<key>: ["review_yes_over_citizen_no", ...], ...},
-
-          # PRESENT ONLY ON THE DRIFT PATH — absent, not null, otherwise:
-          "drift":    {"answeredAbout": "<40-hex>" | null,
-                       "shipping": "<40-hex>" | null,
-                       "newlyRaised": [<key>, ...],
-                       "routedBy": "pipeline_recheck"}
-        }
-
-    `differences` carries the merge module's `DisagreementKind` VALUES verbatim and only
-    for questions that recorded one — renaming one of those strings is a data migration,
-    not a refactor. Evidence locations are structurally absent: the administrator sees
-    the plain-language reason and the dispute, never where it was found.
-
-    `reasons` is that plain-language half, carried HERE rather than looked up later: the
-    review store holds one row per app and is overwritten by the next run, so an
-    administrator reading a queue item next week would otherwise be shown prose about a
-    version nobody submitted. The durable history lives in the record written at routing
-    time, and that holds for the reason exactly as it does for the verdict. The strings
-    are already redacted and already written for a non-technical reader (the runner puts
-    every one through the shared redactor before storing it), so the projection adds no
-    new exposure; the `evidence` document, which is where locations live, is never read
-    on this path at all. It matters twice over on the drift path: the reasons stored
-    there are the RE-CHECK's, about the version actually queued, and the row they came
-    from is overwritten by the citizen's very next save.
-
-    `drift` is present only on the drift path and its presence is itself the signal: this
-    queue item was routed by the pipeline after a save, with nobody at the form.
-    `answeredAbout` is the commit the citizen's answers and explanation describe,
-    `shipping` is the commit actually examined and pinned into the queue, `newlyRaised`
-    names the weighted categories the citizen's answers never covered (possibly none — see
-    `DriftFacts`, it is not the routing reason), and `routedBy` records that no human
-    submitted this. The admin review screen renders all four; adding a key here is
-    additive, renaming one is a migration.
-    """
+    Written once, read by three consumers, so its shape is CONTRACT: the registry's
+    `declaration` column, the `publish_gate` audit detail, and the routed response's
+    provenance. `differences` carries `DisagreementKind` VALUES verbatim — renaming one
+    is a data migration. Evidence locations are structurally absent; only the
+    plain-language `reasons` ships, carried HERE because the review store is overwritten
+    by the next run. `drift`, present only on the drift path, is itself the signal."""
     document: dict[str, Any] = {
         "commits": {
             "shipping": head_sha,
@@ -366,23 +300,12 @@ async def append_gate_audit(
 ) -> None:
     """ONE audit action for every gate outcome, APP-SCOPED. Commit-less.
 
-    App-scoped is the whole point: the refusal row this replaces was scoped to the
-    PROJECT with no app id anywhere in it, so it was invisible to the admin app audit
-    drawer — which matches on `resource_id` or `detail->>'appId'` — so the only record the
-    platform kept was unfindable where an administrator looks. Both are set here.
-
-    One action with a `decision` field rather than four actions: the audit vocabulary is
-    open (no migration needed either way), but a reader asking "what did the gate
-    decide for this app, and on what" wants one query, not a union of four. The
-    `declaration` carries both answer sets, the differences and whether a review was
-    available; `email` is denormalised because the actor REFERENCE is nulled when a user
-    is removed and the trail must keep saying who published.
-
-    TWO CALLERS, and the second one is not a request. The route writes the
-    ladder's decision; the detached pipeline writes its post-re-check decision on the
-    drift path, with the same actor (the citizen who pressed Publish) and the same shape.
-    A reader asking that one question still gets one query.
-    """
+    App-scoped is the fix: the refusal row this replaces was PROJECT-scoped with no app
+    id, invisible to the admin app audit drawer (`resource_id`/`detail->>'appId'`). One
+    action with a `decision` field, not four, so one query answers "what did the gate
+    decide for this app". `email` is denormalised because the actor REFERENCE is nulled
+    on user removal. TWO CALLERS — the route's ladder and the detached pipeline's drift
+    re-check — write the same shape under the same actor, so one query still covers both."""
     detail: dict[str, Any] = {
         "appId": str(app_id),
         "projectId": str(project_id),

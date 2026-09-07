@@ -1,51 +1,27 @@
 /**
- * THE PANE'S DEPARTURE, HELD OPEN LONG ENOUGH TO BE SEEN.
+ * THE PANE'S DEPARTURE, HELD OPEN LONG ENOUGH TO BE SEEN — the moment `T2Sliding` documents: the
+ * app card slides out and fades while the conversation settles toward the middle; nothing about
+ * the app is stopped or reloaded, it is only taken off screen.
  *
- * `T2Sliding` is an entire artboard of this one moment, caught halfway, with an annotation that
- * says exactly what it is: "the app card is sliding out to the right and fading as it goes … a
- * moment later the app is gone", and "nothing about the app is stopped or reloaded — it is only
- * taken off the screen." Underneath it "the conversation is already settling towards the middle of
- * the window", which is why the two overlap on the board.
+ * WHY THIS EXISTS: applying `animate-pane-leave` alone does nothing — the instant a surface stops
+ * declaring the pane, the column goes to zero size and `visibility:hidden` in the same frame, and
+ * an element that isn't rendered can't be watched fading. So the exit is a brief state of its own:
+ * the column keeps its size, plays the keyframe, then collapses. `AppPane` owns this and hands the
+ * answer down to `AppPaneHost` so the column and the frame inside it can't disagree. It's a TIMER,
+ * not an `animationend` listener, because `prefers-reduced-motion` suppresses the animation in
+ * `index.css` — `animationend` would never fire and the pane would stay forever; the cost is a
+ * reduced-motion reader waits {@link PANE_EXIT_MS} for a layout change instead of getting it
+ * instantly. Nothing unmounts or re-keys — same element throughout, only a class change, which is
+ * what makes the movement safe over a live iframe.
  *
- * ═══ WHY A HOLD IS NEEDED AT ALL ═══
- *
- * The keyframes and their reduced-motion suppression already exist, and `animate-pane-leave` was
- * never applied to anything — because applying it changes nothing on its own. The moment a
- * surface stops declaring the pane, the column goes to zero size and
- * `visibility:hidden` in the same frame, and an element that is not rendered cannot be watched
- * fading. So the exit is a state of its own, briefly: the column keeps its size, plays the
- * keyframe, and only then collapses.
- *
- * ═══ ONE AUTHOR, AND WHY IT IS A TIMER ═══
- *
- * `AppPane` owns this and hands the answer down to `AppPaneHost`, so the column and the frame
- * inside it cannot disagree about whether they are still leaving. It is a timer rather than an
- * `animationend` listener for one reason that decides it: under `prefers-reduced-motion` the
- * animation is suppressed in `index.css`, so `animationend` never fires and the pane would stay
- * on screen for ever. A timer always ends. The cost is that a reader who asked for less motion
- * waits {@link PANE_EXIT_MS} for a layout change instead of getting it instantly, which is a
- * quarter of a second of stillness rather than a quarter of a second of movement.
- *
- * NOTHING HERE UNMOUNTS OR RE-KEYS ANYTHING. The pane is the same element throughout, with a class
- * change — the whole reason the movement is safe over a live iframe.
- *
- * ═══ THE ONE COST, AND HOW IT IS PAID ═══
- *
- * `visibility:hidden` is what takes the framed app out of the TAB ORDER (see `hiddenSubtree.ts`),
- * and it cannot be applied while the card is still being watched leave — an invisible element has
- * nothing to animate. So for {@link PANE_EXIT_MS} the departing app was announced as gone
- * (`aria-hidden` lands immediately) and still reachable by Tab: a quarter of a second in which a
- * keyboard could land on the skip control, or inside the frame of an app that is no longer on the
- * screen. `hiddenSubtree.ts` names that pairing for what it is — a WCAG 4.1.2 violation.
- *
- * `inert` is the attribute for exactly this: it removes a subtree from the tab order and the
- * accessibility tree while leaving it PAINTED, which is the pair the animation needs. This file
- * used to say React 18 had no supported prop for it and leave it for the React 19 upgrade. That
- * was half true — a boolean `inert` is dropped with a warning, and `@types/react` 18 declares no
- * such prop — but the attribute's own serialisation is the EMPTY STRING, and React passes a
- * string-valued unknown attribute through exactly as given. {@link inertWhile} hands it over that
- * way, through a spread, which is the one form TypeScript accepts without a cast. On React 19 it
- * becomes `inert={unreachable}` and the helper goes away.
+ * THE ACCESSIBILITY COST, AND HOW IT IS PAID: `visibility:hidden` takes the app out of the tab
+ * order (see `hiddenSubtree.ts`) but can't apply while still being watched leave — an invisible
+ * element has nothing to animate. So for {@link PANE_EXIT_MS} the app is `aria-hidden` (announced
+ * gone) yet still Tab-reachable — a WCAG 4.1.2 violation. `inert` fixes it (out of the tab order
+ * AND the a11y tree, while staying painted): `@types/react` 18 declares no such prop, but `inert`'s
+ * own serialisation is the empty string, so {@link inertWhile} spreads it as a string-valued
+ * unknown attribute — the one form TypeScript accepts without a cast. React 19 replaces this with
+ * `inert={unreachable}` and the helper goes away.
  */
 import { useEffect, useRef, useState } from 'react'
 

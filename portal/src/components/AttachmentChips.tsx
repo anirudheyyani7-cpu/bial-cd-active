@@ -6,16 +6,12 @@ import AttachmentPreview from './chat/AttachmentPreview'
 import type { AttachmentDescriptor } from '../utils/attachmentStore'
 
 /**
- * Render one persisted attachment descriptor `{ attachmentId, kind, name,
- * mediaType, format?, truncated? }` (derived from a message's parts). Images
- * fetch their bytes from the server object store as an object URL and show an
- * inline thumbnail that opens a lightbox; PDFs open in a new tab on click;
- * text/CSV show a labelled file-icon chip (no byte read — the content travelled
- * inline in the prompt); Word/Excel show a labelled chip that re-downloads the
- * ORIGINAL file (the model only ever saw extracted text); a PowerPoint deck
- * shows a labelled chip that re-downloads the ORIGINAL .pptx (the conversion is
- * internal — the chip never reveals it); an image whose bytes are gone/forbidden
- * shows an "unavailable" placeholder.
+ * Renders one persisted attachment descriptor by `kind`. Images fetch bytes as an
+ * object URL for an inline lightbox thumbnail; PDFs open in a new tab; text/CSV get a
+ * chip with no byte read (the content already travelled inline in the prompt);
+ * Word/Excel/deck chips re-download the ORIGINAL file, since the model only ever saw
+ * extracted text or converted pages — the conversion stays invisible in the UI; a
+ * missing image falls back to an "unavailable" placeholder.
  */
 function AttachmentChip({ att }: { att: AttachmentDescriptor }) {
   const isText = att.kind === 'text'

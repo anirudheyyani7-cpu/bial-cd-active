@@ -4,12 +4,11 @@ Configures structlog at import, then `create_app()` wires the middleware
 (security headers + credentialed CORS), the boundary exception handlers, and the
 v1 router. The lifespan opens AND PROBES the Redis coordination pool when configured
 (the sandbox lock/heartbeat/registry) and, on shutdown, closes the Redis pool +
-the sandbox client + the object-store client(s) so no aiohttp session / connection
-pool leaks.
+the sandbox client + the object-store client(s) so no aiohttp session / connection leaks.
 
-Nothing recurring runs here. A sweep put back into this lifespan would run in every API
-replica beside the copy the worker already schedules; the one thing on the boot path,
-`_reconcile_interrupted_deploys`, is a one-shot rather than a loop.
+Nothing recurring runs here: a sweep here would run in every API replica beside the copy
+the worker already schedules; the one boot-path item, `_reconcile_interrupted_deploys`,
+is a one-shot, not a loop.
 """
 
 import asyncio
@@ -66,25 +65,13 @@ REDIS_PROBE_FAILED_EVENT: Final = "redis_startup_probe_failed"
 
 async def _probe_redis() -> None:
     """PING the coordination pool at startup so a misconfigured Redis is visible to an
-    OPERATOR at deploy time, instead of to the first citizen developer whose build fails.
+    OPERATOR at deploy time, not to the first citizen developer whose build fails —
+    construction alone proves nothing (`redis.asyncio` connects lazily), only a command does.
 
-    Why a PING and not just `get_redis()`: `create_redis` opens no socket — `redis.asyncio`
-    connects lazily on the first command — so merely CONSTRUCTING the client proves
-    nothing about reachability. Only a command does.
-
-    Why the singleton and not a throwaway probe client: a dedicated client would validate
-    a connection no real caller ever uses while leaving the actual pool unproven, and
-    `aclose_redis()` tracks only the singleton, so a second client would add teardown
-    surface nothing closes. The probe therefore inherits the configured retry policy by
-    design — which is precisely why it needs `REDIS_PROBE_CEILING_SECONDS` around it.
-
-    Boot is NOT blocked. This warns loudly and returns; it must never raise out of the
-    lifespan, or a Redis blip becomes a container restart loop and the API stops serving
-    the many routes that need no Redis at all. The broad catch is the sanctioned kind
-    (same shape as the health probe): it converts a failure into an operator signal, it
-    does not swallow it. `asyncio.CancelledError` is a `BaseException` and still
-    propagates, so a shutdown during boot is not eaten.
-    """
+    Uses the singleton, not a throwaway client, so it validates the pool real callers
+    actually use. Boot is NOT blocked: warns and returns, never raises — a blip must not
+    restart-loop the container — and `CancelledError` still propagates so a shutdown
+    isn't eaten."""
     try:
         await asyncio.wait_for(get_redis().ping(), timeout=REDIS_PROBE_CEILING_SECONDS)
     except Exception as exc:

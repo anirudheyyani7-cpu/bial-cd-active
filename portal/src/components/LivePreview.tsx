@@ -147,15 +147,11 @@ const GONE_TITLE: Record<GoneState, string> = {
 
 /** What the citizen should do about it, and what it costs them (nothing). */
 /**
- * Copy for the three not-alive states.
- *
- * `restorable` is honoured, not decorative. This used to promise "nothing is lost" / "your work
- * is saved" UNCONDITIONALLY — but `restorable === false` is a reachable backend state (the server
- * holds neither a recovery slot nor a saved bundle), and telling a builder their work is safe
- * when the server has just said it is not is the one thing this unit exists to stop. The
- * tri-state is deliberate: `null` means the object store was unreachable, so we claim NOTHING
- * rather than guessing in either direction — the same discipline the relaunch affordance already
- * follows ("the claim is made ONLY when the server confirmed a restorable snapshot").
+ * Copy for the three not-alive states. `restorable` is honoured, not decorative — this used
+ * to promise "nothing is lost" unconditionally, but `restorable === false` is a reachable
+ * backend state (no recovery slot or bundle), and reassuring a builder then is what this unit
+ * exists to stop. Tri-state: `null` means the object store was unreachable, so nothing is
+ * claimed either way.
  */
 function goneBody(
   state: GoneState,
@@ -179,33 +175,21 @@ function goneBody(
 }
 
 /**
- * `RelaunchAffordance` IS GONE, and its four render sites with it.
- *
- * Exactly ONE control starts the app, pressed deliberately, and that control is
- * `components/workspace/StartAppControl.tsx` — rendered by `AppPane` from the one computed
- * workspace state, whose action union contains no destructive verb at all. Four more start
- * buttons scattered through this file's placeholder arms, each with its own copy and its own
- * `hasSavedBuild === true` gate, is the same requirement satisfied five times over — and they
- * spoke a different vocabulary ("Relaunch preview", "Bring it back") from the one the client
- * settled on ("Launch Application"), because "preview" is the developer's word for the thing and
- * the person's word is their app.
- *
- * The placeholders keep their sentences: they still explain what happened, and they name no
- * control they do not have.
+ * `RelaunchAffordance` IS GONE, and its four render sites with it. Exactly ONE control
+ * starts the app — `components/workspace/StartAppControl.tsx`, rendered by `AppPane` from
+ * the one computed workspace state, whose action union has no destructive verb. The four
+ * placeholder-arm buttons this replaced said the same thing five times over, each in a
+ * different vocabulary ("Relaunch preview") than the one the client settled on ("Launch
+ * Application"). The placeholders keep their sentences: they name no control they lack.
  */
 
 /**
  * The calm wait: an opaque full-bleed card with the pane's bouncing dots and one sentence.
  *
- * ONE component for both waits on this pane — the frame-load wait and the compile cover — because
- * their visual identity is the point, not a coincidence: the citizen is in one situation ("my app
- * has not opened yet") and two subtly different cards would be the pane talking about itself. It
- * was two verbatim copies of this markup, kept in step by a comment; this keeps them in step by
- * construction. Deliberately NOT shared with the frame-stall card below, which uses the
- * spinner-plus-warning tint reserved for a dev server that is genuinely down — that one means
- * something different and must stay able to diverge.
- *
- * The two call sites keep their own guards. Only the chrome is shared, never the condition.
+ * Shared by the frame-load wait and the compile cover so they can't visually drift — it was
+ * two copies of the same markup kept in step by a comment; now kept in step by construction.
+ * Deliberately NOT shared with the frame-stall card below (a dev server genuinely down is a
+ * different fact). Callers keep their own guards; only the chrome is shared.
  */
 function BouncingWait({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -228,67 +212,30 @@ function BouncingWait({ children, className = '' }: { children: ReactNode; class
 }
 
 /**
- * The live-preview pane.
- *
- * Phase-2 model: the agent builds a REAL running Next.js app inside a per-user sandbox, and
- * this pane frames that app's genuinely CROSS-ORIGIN `previewUrl` once the dev server is
- * up. All single-file machinery — the `jsx:preview` fence, `previewCode` threading, the
- * outbound `postMessage` of `{previewCode, config, accessToken, user}`, the `generationStage`
- * progress theater, and the "View Code" source panel — is GONE. The app gets its data
- * credentials server-side at provision; the portal feeds the app nothing.
- *
- * Driven entirely by the build session:
- *   - `previewUrl` — the sandbox `next dev` root (status / `preview_ready`). Framed once set.
- *   - `status`     — the lifecycle; drives loading / framed / terminal visuals.
- *   - `iterating`  — true while the loop keeps emitting step/log envelopes AFTER the preview
- *                    went live (a refine turn holding at `ready`); shows a subtle overlay.
- *   - `onFrameMessage` — the client-error receiver seam. The inbound `message`
- *                    listener validates BOTH `e.origin` against the preview origin AND `e.source`
- *                    against this pane's own iframe window, and
- *                    forwards only messages that pass both; the conversation surface relays
- *                    them to the harness, where a reported browser crash makes the health verdict not-green.
- *                    The source half is what survives every app sharing one hostname — origin
- *                    alone no longer tells this pane's app from any other app in the document.
- *                    Together they prove PROVENANCE, not content — the shape check lives on the
- *                    receiving side. Note `scripts/skeleton/frame-proof` is a standalone Chromium
- *                    rig with its OWN inline origin guard: it never renders this component, so it
- *                    neither exercises nor regression-catches the gate written here.
- *
- *   - `restoredFromFailedBuild` — a restore of the last SAVED version, because the newest build
- *                    FAILED (server-confirmed); a small
- *                    overlay says so, so older code is never presented as the latest build.
- *   - `completedLive` — the session ended as a SUCCESS and the server pardoned its container
- *                    (it stays up under an idle lease), so `ended` + `previewUrl` means
- *                    "done, preview live" and the pane keeps framing the app instead of collapsing
- *                    to the placeholder. Only stop / force-end / failure / reclaim collapse.
- *   - `reconnecting` — the dev-server PROCESS crashed after the preview was framed (a
- *                    backend `preview_reconnecting` signal — the frontend can't poll /dev/status).
- *                    DISTINCT from the "Building…" loading bounce and from `feedDisconnected` (the
- *                    SSE feed dropping): the pane shows a "Reconnecting…" state over the dead frame
- *                    until a fresh `preview_ready` re-frames. After a COMPLETED build (no loop left
- *                    to recover it) it is BOUNDED — a cap collapses it to "preview unavailable" +
- *                    Relaunch, never an unbounded spinner.
- *   - `hasSavedBuild` — does the PROJECT have a snapshot a Relaunch could actually restore, so
- *                    even a conversation with no build history of its own offers Relaunch from
- *                    the EMPTY state: relaunch derives from project-level snapshot state, not
- *                    from this transcript. THREE-STATE, and each state means something
- *                    different: `true` = there is one, `false` = confirmed there is not,
- *                    `null` = the server could not reach the object store, so it declines to
- *                    claim anything and this pane says nothing either. Only `true` makes a claim.
- *
- *                    It replaces `projectHasApp`, which keyed on the mere EXISTENCE of an app
- *                    registry row — and that row is minted by PROVISION, before anything is
- *                    built, so every project whose first build failed advertised a saved build
- *                    and then 404'd on the click.
- *
+ * The live-preview pane. Phase-2 model: the agent builds a real Next.js app in a per-user
+ * sandbox; this pane frames its cross-origin `previewUrl` once the dev server is up. All
+ * single-file machinery (the `jsx:preview` fence, `previewCode` threading, postMessage
+ * credentials, generation-stage theater, "View Code") is GONE — credentials come server-side
+ * at provision. Driven entirely by the build-session props below; `onFrameMessage`'s
+ * origin+source gate is explained at its `useEffect`.
  */
 export interface LivePreviewProps {
   previewUrl?: string | null
   status?: BuildSessionStatus | null
   iterating?: boolean
   onFrameMessage?: (data: unknown) => void
+  // A restore of the last SAVED version, because the newest build FAILED (server-confirmed).
+  // A small overlay says so, so older code is never presented as the latest build.
   restoredFromFailedBuild?: boolean
   completedLive?: boolean
+  // THREE-STATE, the same discipline as `previewState`/`compileState` below, and each state
+  // means something different: `true` = the PROJECT has a snapshot a Relaunch could restore,
+  // `false` = confirmed there is not, `null` = the server could not reach the object store, so
+  // it declines to claim anything and this pane says nothing either. Only `true` makes a claim.
+  //
+  // It replaced a check on the mere EXISTENCE of an app registry row — and that row is minted by
+  // PROVISION, before anything is built, so every project whose first build failed advertised a
+  // saved build and then 404'd on the click.
   hasSavedBuild?: boolean | null
   reconnecting?: boolean
   // The server's verdict on THIS project's container, in five

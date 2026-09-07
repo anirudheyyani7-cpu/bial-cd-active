@@ -1,19 +1,14 @@
 /**
  * The BIAL brand mark (Kempegowda International Airport Bengaluru), served from /public.
+ * ONE component so every screen renders it identically — shared by the navbar and the
+ * login panel. The `<img>` defaulted to `display: inline`, sitting on the text baseline
+ * with descender space that reads as "the logo looks off" (`block` removes it); with no
+ * `shrink-0` the mark also compressed before the nav links at narrow widths, changing its
+ * aspect screen to screen.
  *
- * ONE component, so every screen renders it identically. It already was shared —
- * the navbar and the login panel both use it — but two things made it sit badly:
- *
- *  1. THE IMAGE WAS INLINE. An `<img>` defaults to `display: inline`, so it sits on the
- *     text baseline and carries a few pixels of descender space underneath. Against a
- *     wordmark centred by flexbox, that reads as the mark being a touch high — the classic
- *     cause of "the logo looks off" that no amount of padding fixes. `block` removes it.
- *  2. IT COULD BE SQUEEZED. With no `shrink-0` the mark compressed before the nav links did
- *     at narrow widths, so its aspect changed from screen to screen.
- *
- * `dark` sits the colour mark on a white pill and turns the wordmark white, for the dark
- * login panel; the default suits white backgrounds. BASE_URL keeps the src correct under a
- * sub-path deploy.
+ * `dark` puts the colour mark on a white pill and turns the wordmark white, for the dark
+ * login panel; the default suits white backgrounds. BASE_URL keeps the src correct under
+ * a sub-path deploy.
  */
 export interface BIALLogoProps {
   dark?: boolean

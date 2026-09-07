@@ -4,13 +4,11 @@ Revision ID: 0007_attachments
 Revises: 0006_conversations
 Create Date: 2026-07-06
 
-One row per uploaded image/PDF. Bytes live in the object store under
-`att/{user_id}/{uuid}`; this row is the metadata + per-user quota ledger (summing `size` is
-drift-free, unlike Express's counter). The client-minted `attachment_id` token is unique per
-owner (idempotent re-upload). Chains off the `0006_conversations` branch; the parallel
-app-data branch reconciles via `alembic merge heads` at integration. Hand-finalized;
-no enums, so no DROP TYPE.
-"""
+One row per uploaded image/PDF. Bytes live in the object store under `att/{user_id}/{uuid}`;
+this row is the metadata + per-user quota ledger (summing `size` is drift-free, unlike
+Express's counter). The client-minted `attachment_id` token is unique per owner (idempotent
+re-upload). Chains off `0006_conversations`; the parallel app-data branch reconciles via
+`alembic merge heads` at integration. Hand-finalized; no enums, so no DROP TYPE."""
 
 from __future__ import annotations
 

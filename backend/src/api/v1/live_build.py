@@ -1,27 +1,18 @@
-"""The shared "is a build session live right now?" guard, used by every destructive
-owner-facing route that a concurrent build would race.
+"""The shared "is a build session live right now?" guard, used by every destructive owner-facing
+route a concurrent build would race — copying a snapshot mid-build captures the wrong tree, and
+deleting mid-build destroys uncommitted work. Asked in one place, by the submit service, the
+deploy route, and `projects.delete_project`.
 
-Copying a snapshot out from under a live build captures the previous build's bundle — valid
-bytes, wrong tree, undetectable by any header check — and deleting a project mid-build destroys
-every file change the running turn has not committed yet. The submit service, the deploy route
-and `projects.delete_project` all need that one question answered, so it is asked in one place.
+SCOPE. The lock is keyed on the USER, not the app — a bare `lock_is_held` answers "is this user
+building ANYTHING?", the wrong question when one user has several projects. Pass `app_id` for the
+narrow per-app answer; every current caller does. Omitting it is a decision to justify.
 
-SCOPE — read this before reusing the helper. The lock is keyed on the USER and carries no app or
-project axis, so a bare `lock_is_held` answers "is this user building ANYTHING?", which is the
-wrong question for a per-resource guard: with one app per project and many projects per user,
-building project A would 409 a delete of unrelated project B. Callers that own a specific app
-pass `app_id` and get the narrow answer, and every current caller does. `app_id` stays optional
-for a future caller that genuinely wants the per-user answer, but omitting it is a decision to
-justify, not the default.
-
-WHAT THIS GUARD DOES **NOT** COVER — a passing guard is not "no container is serving this app".
-A relaunched preview holds no lock, so `lock_is_held` is False exactly when a container is still
-serving: this guard returns without refusing and the delete proceeds with the container left
-running and serving a deleted project's UI. That gap is STILL OPEN — closing it means reading
-the preview's stay of execution and calling sandbox teardown from the delete path, which needs a
-`SandboxDep` `delete_project` does not have. It is pinned by
-`test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_down`; do not mark it
-closed because this guard shipped.
+WHY THIS EXISTS — A GAP STILL OPEN. A passing guard is not "no container is serving this app": a
+relaunched preview holds no lock, so `lock_is_held` is False while a container still serves it,
+and a delete proceeds with that container left running a deleted project's UI. Closing it needs
+the preview's stay of execution and a sandbox teardown call the delete path has no `SandboxDep`
+for. Pinned by `test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_down` — do
+not mark it closed because this guard shipped.
 """
 
 from __future__ import annotations
@@ -77,13 +68,11 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
     """Format the blocked-reclaim 409. Every entry point that can raise it comes through here,
     so they cannot drift into differently-worded answers.
 
-    `dirty=None` — we reached the container but it would not answer — reads as unsaved on
-    purpose: the copy hedges rather than promising, because claiming work is safe when nobody
-    could check is the one wrong answer available here.
-
-    TWO SENTENCES, because only one of the two situations is about saving. A project whose agent
-    is mid-build cannot be released until the build stops, so "has unsaved changes" would point
-    that user at a Save button the server will refuse."""
+    `dirty=None` (the container would not answer) reads as unsaved on purpose — the copy hedges
+    rather than promising, since claiming work is safe when nobody could check is the one wrong
+    answer here. Two message shapes because only one situation is about saving: a project whose
+    agent is mid-build cannot be released until the build stops, so "has unsaved changes" would
+    point the user at a Save button the server will refuse."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:
@@ -112,16 +101,13 @@ async def refuse_while_build_session_live(
     app_id: uuid.UUID | None = None,
     conflict_code: str | None = None,
 ) -> None:
-    """Raise 409 `conflict_message` while this user has a live build session, 503 when
-    Redis cannot say, and return normally otherwise.
+    """Raise 409 `conflict_message` while this user has a live build session, 503 when Redis
+    cannot say, and return normally otherwise.
 
-    Pass `app_id` to narrow the refusal to a live session building THAT app; omit it for
-    the coarse per-user refusal (any live build blocks the action).
-
-    `conflict_code` gives the refusal a stable machine-readable code. Optional because the
-    two older callers never had one; the publish route passes it so an agent can tell
-    "a build is running, wait and retry" from every other 409 on that endpoint without
-    string-matching prose.
+    Pass `app_id` to narrow the refusal to a live session building THAT app; omit it for the
+    coarse per-user refusal. `conflict_code` gives the refusal a stable machine-readable code —
+    optional since the two older callers never had one; the publish route passes it so an agent
+    can tell "a build is running, wait and retry" from every other 409 without string-matching.
     """
     # Lazy import: a module-level `services.build_sessions` import cycles at load time
     # (build_sessions/__init__ → locks → api.build_sessions schemas → its router → deps
@@ -142,22 +128,12 @@ async def _the_live_session_is_this_app(
 ) -> bool:
     """Does the live session the lock represents belong to `app_id`?
 
-    The lock carries no app axis, so the app identity is recovered from the sandbox
-    REGISTRY hash, whose `app_name` field is a pure, stable function of the app id
-    (`app_name_for`, written by the sandbox client at provision time). Equal name ⇒ the live
-    session is this app's.
-
-    FAILS CLOSED, deliberately. "The lock is held but the registry does not resolve to an
-    app" is AMBIGUITY, not evidence of innocence, and it has a real cause: `_start_locked`
-    takes the lock BEFORE it provisions the container that writes the registry hash, so
-    that window reads exactly this way — lock held, registry absent. Proceeding there lets
-    the delete land mid-provision, so an unresolvable registry returns True and the caller
-    refuses. Only a registry that positively names a DIFFERENT app buys a proceed.
-
-    (A Redis ERROR while reading the registry is not this branch: `read_registry` is bare
-    by module policy, so it propagates to `build_coordination_or_503` and becomes a 503 —
-    "cannot answer" and "answers something else" stay distinct.)
-    """
+    The lock carries no app axis, so identity comes from the sandbox REGISTRY hash's `app_name`
+    (a pure function of the app id). FAILS CLOSED: "lock held but registry unresolved" is
+    AMBIGUITY, not innocence — exactly how `_start_locked`'s lock-before-provision window reads —
+    so it returns True (refuse) rather than let a delete land mid-provision. Only a registry
+    naming a DIFFERENT app proceeds. (A Redis error is not this branch — `read_registry` is bare
+    and propagates to a 503.)"""
     from src.services.build_sessions import app_name_for, read_registry
 
     registry = await read_registry(redis, user_id)

@@ -1,21 +1,14 @@
 """Entra ID OIDC client + fail-closed identity validator.
 
-`build_oauth()` registers the single `entra` provider against the TENANT-SPECIFIC
-discovery document (`{tenant_id}/v2.0`, never `common`/`organizations` — a
-templated issuer defeats the exact `iss` match), with PKCE (`S256`) and the
-`openid profile email` scopes. `get_oauth()` is the injectable seam: the
-endpoints depend on it, and tests override it (or pre-seed `.entra.server_metadata`)
-so no live tenant or forged JWKS is needed.
+`build_oauth()` registers `entra` against the TENANT-SPECIFIC discovery document
+(`{tenant_id}/v2.0`, never `common`/`organizations` — a templated issuer defeats the exact
+`iss` match), PKCE (`S256`), `openid profile email`. `get_oauth()` is the seam tests override.
 
-`validate_entra_token` is the fail-closed gate. Authlib's
-`authorize_access_token` does NOT raise when the token response lacks an
-`id_token` — it returns a dict with no `userinfo` and performs ZERO OIDC
-validation. `userinfo` is populated only AFTER Authlib fully validates the
-signature / `iss` / `aud` / `exp` / `nonce`, so its presence is the proof of
-validation. We then hard-assert `oid` + `sub` present and `tid == tenant_id`, and
-derive a non-null email (the `email` claim is optional even with the `email`
-scope; `preferred_username` is the reliable fallback for work accounts) — else
-`AuthError`. Any failure denies: no session, no user row.
+`validate_entra_token` is the fail-closed gate: Authlib's `authorize_access_token` does NOT
+raise when the response lacks an `id_token` — it returns a dict with no `userinfo` and ZERO
+validation performed; `userinfo` appears only AFTER signature/`iss`/`aud`/`exp`/`nonce` are
+validated, so its presence IS the proof. We hard-assert `oid`/`sub`/`tid == tenant_id` and a
+non-null email (`preferred_username` fallback) — else `AuthError`: no session, no user row.
 """
 
 from __future__ import annotations

@@ -1,16 +1,10 @@
-"""Refresh tokens — opaque generation + hash-at-rest (crypto), and the
-DB-backed family issuance + atomic rotation with reuse detection.
+"""Refresh tokens — opaque generation + hash-at-rest (crypto), and the DB-backed family issuance +
+atomic rotation with reuse detection (`issue_new_family`, `rotate_refresh_token` — the single
+compare-and-swap that closes the rotation race the POC deferred to the backend).
 
-This module holds the pure crypto primitives now; `issue_new_family` and
-`rotate_refresh_token` — the single compare-and-swap that closes the
-rotation race the POC deferred to the backend — land alongside the
-endpoints that use them.
-
-A refresh token is a 256-bit random secret handed to exactly one client, NOT a
-password: only its SHA-256 hash is stored, and a fast unsalted hash is
-correct — lookup is by exact hash match and there is nothing to brute-force that
-guessing the 256-bit token wouldn't already break.
-"""
+A refresh token is a 256-bit random secret handed to exactly one client, NOT a password: only its
+SHA-256 hash is stored, and a fast unsalted hash is correct — lookup is by exact hash match and
+there is nothing to brute-force that guessing the 256-bit token wouldn't already break."""
 
 from __future__ import annotations
 
@@ -101,16 +95,14 @@ async def revoke_all_sessions(db: AsyncSession, user_id: uuid.UUID) -> None:
 
 
 async def rotate_refresh_token(db: AsyncSession, presented_hash: str) -> RotationResult:
-    """Atomically rotate a refresh token, detecting reuse and enforcing the
-    absolute lifetime. Returns a `RotationResult` on success; raises
-    `AuthError` (fail closed) on not-found / revoked / expired / reuse — after
-    revoking the whole family on reuse, which the caller must commit.
+    """Atomically rotate a refresh token, detecting reuse and enforcing the absolute lifetime.
+    Returns a `RotationResult` on success; raises `AuthError` (fail closed) on not-found /
+    revoked / expired / reuse — revoking the whole family, which the caller must commit.
 
-    The single compare-and-swap `SET used_at = now() WHERE id = :id AND used_at IS
-    NULL` is the ONLY reuse detector: a replay of an already-rotated token (whether
-    a sequential attacker replay or a concurrent race) claims 0 rows and triggers a
-    family revoke. This closes the read-then-write race the POC deferred to
-    the backend."""
+    The single compare-and-swap `SET used_at = now() WHERE id = :id AND used_at IS NULL` is the
+    ONLY reuse detector: a replay of an already-rotated token (attacker or a concurrent race)
+    claims 0 rows and triggers a family revoke — closing the read-then-write race the POC deferred
+    to the backend."""
     row = await db.scalar(select(RefreshToken).where(RefreshToken.token_hash == presented_hash))
     if row is None:
         raise AuthError("refresh token not recognized", reason=REASON_INVALID_REFRESH)

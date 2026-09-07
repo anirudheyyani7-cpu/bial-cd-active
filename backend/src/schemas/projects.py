@@ -28,15 +28,12 @@ from src.schemas.base import CamelModel
 
 
 def _clean_name(value: str) -> str:
-    """The ONE name rule, shared by `ProjectCreate` and `ProjectPatch` — so create and
-    RENAME are both covered. Enforcing it only on create would leave the limit only half
-    real, since rename was the half with no client-side guard at all.
+    """The ONE name rule, shared by `ProjectCreate` and `ProjectPatch` (create AND rename);
+    enforcing it only on create would leave rename with no server-side guard.
 
-    The messages are written for a person. They used to reach the screen verbatim as
-    "Value error, name must be at most 120 characters", because the portal flattens
-    Pydantic's `detail[].msg` straight through — so a validator string IS product copy
-    here, whether or not anyone intended it to be.
-    """
+    Messages are written for a person: they reach the screen verbatim (the portal flattens
+    Pydantic's `detail[].msg` straight through), so a validator string IS product copy here,
+    intended or not."""
     value = value.strip()
     if not value:
         raise ValueError("Give the project a name.")
@@ -88,19 +85,12 @@ class ProjectPatch(CamelModel):
 
 
 def _clean_delete_remark(value: str) -> str:
-    """Why this project is being deleted — 5 to 50 WORDS.
+    """Why this project is being deleted — 5 to 50 WORDS, via `count_words` (pinned equal to
+    `portal/src/utils/words.ts`) so client and server enforce the same bound independently.
 
-    The same shared rule as the title cap: `count_words` here,
-    `portal/src/utils/words.ts` in the browser, both pinned against the same inputs. The
-    client keeps the person inside the limit and the server enforces it independently, so
-    neither side depends on the other to catch a bad value — unlike the rename path before
-    it gained its own server-side guard.
-
-    A lower bound is unusual and deliberate. The remark exists so an administrator reading
-    a deletion months later learns something; "no" and "done" satisfy a required field
-    without satisfying that, and a field that can be dismissed in one word is a field that
-    will be.
-    """
+    The lower bound is deliberate: the remark exists so an administrator reading a deletion
+    months later learns something, and "no" or "done" would satisfy a required field without
+    satisfying that."""
     value = value.strip()
     if not value:
         raise ValueError("Say why you are deleting this project.")
@@ -123,19 +113,13 @@ def _clean_delete_remark(value: str) -> str:
 
 
 class ProjectDeleteRequest(CamelModel):
-    """The body `DELETE /v1/projects/{id}` now requires.
+    """The body `DELETE /v1/projects/{id}` requires: deletion destroys the app, database,
+    files and all chats, permanently — a stated reason replaces an earlier type-the-name gate.
 
-    Deleting a project destroys its app, its database, its files and all of its chats, and
-    none of it comes back. This route replaced an earlier type-the-name gate with a plain
-    confirmation plus a stated reason: retyping a name proves you can read, not that you
-    meant it, and the reason is the part that is still useful a month later.
-
-    THE REASON IS THE ONLY THING THE CLIENT GETS TO SAY. The deletion also records WHO, but
-    that is stamped by the route from the authenticated session, not carried here. It was
-    briefly a body field and that was wrong: a name the client supplies can name somebody
-    who did not act, and the field exists precisely so an administrator can tell who did.
-    An extra `deletedByName` in the body is ignored, as Pydantic ignores any unknown key.
-    """
+    THE REASON IS THE ONLY THING THE CLIENT GETS TO SAY. WHO deleted it is stamped by the route
+    from the authenticated session, never carried in the body — it was briefly a body field, and
+    that was wrong: a client-supplied name can name somebody who did not act. An extra
+    `deletedByName` is silently ignored, as Pydantic ignores any unknown key."""
 
     remark: str
 
@@ -192,17 +176,12 @@ class ProjectResponse(CamelModel):
 
 
 class ProjectCountsResponse(CamelModel):
-    """The three numbers above the project list.
-
-    A DEDICATED route rather than a count derived from the listing, for the reason
-    `/admin/apps/counts` gives: the list projects rows and joins, and polling it for three
-    integers would pay that on a cadence. It is also the only honest option — the list is
-    PAGINATED, so a client holding 8 of 12 rows cannot compute any of these.
+    """The three numbers above the project list. A DEDICATED route, not a count derived from
+    the listing: the list joins rows and is PAGINATED, so a client holding 8 of 12 rows cannot
+    compute any of these, and polling the full list just for three integers pays that cost.
 
     `in_production` reads the SAME `live_app_ids` collapse the status column does, so the
-    headline number and the rows beneath it cannot disagree. That is the failure this shape
-    exists to prevent: a dashboard saying three are live above a list showing two.
-    """
+    headline number and the rows beneath it can never disagree."""
 
     # "Live = deployed / published — if the application is published and has url".
     # NOT `AppStatus.APPROVED`, which means an administrator said yes and nothing
@@ -218,23 +197,14 @@ class ProjectCountsResponse(CamelModel):
 
 
 class ProjectListResponse(CamelModel):
-    """An OFFSET page envelope — deliberately NOT the keyset one the admin rosters use.
+    """An OFFSET page envelope, deliberately NOT the keyset one admin rosters use: numbered
+    pages ("Page 1 of 2") need a `total`, which keyset declines to compute.
 
-    This list was keyset (`nextCursor` + `hasMore`, a forward-only "Load more") until a
-    later requirement called for numbered pages and a rows-per-page selector: `Showing 1-8 of 12`,
-    `Page 1 of 2`. Neither sentence is expressible without a `total`, and a total is exactly
-    what the keyset envelope declines to compute. The design is the requirement, so the
-    envelope changed rather than the design.
+    THE COST IS REAL, NOT ASSUMED AWAY: a row inserted underneath a page walk can duplicate or
+    skip an entry at a boundary, and `total` is a second read under READ COMMITTED rather than
+    one snapshot with the page. What makes it acceptable lives at `list_projects`, not here.
 
-    THE COST, STATED RATHER THAN ASSUMED AWAY. `pagination.py` refuses offset because a row
-    inserted underneath a page walk duplicates or skips an entry at a boundary, and because
-    `total` is a second read under READ COMMITTED rather than one snapshot with the page.
-    Both remain true here. What makes it acceptable is written at `list_projects`, and it is
-    NOT the marketplace's argument — see there.
-
-    `total` is the count AFTER `q` is applied, so "Showing 1-8 of 12" describes the search
-    the rows answer, never the whole collection.
-    """
+    `total` counts AFTER `q` is applied — it describes the search, never the whole collection."""
 
     items: list[ProjectResponse]
     page: int

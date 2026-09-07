@@ -37,25 +37,14 @@ async def nuke_app(
     app_id: uuid.UUID,
     container_store: AppContainerStore | None,
 ) -> None:
-    """Hard-delete an app: sweep its object-store artifacts — the snapshot bundle, EVERY
-    immutable submission bundle under `submissions/{app_id}/` (this prefix sweep is also
-    the purge lever for the retained-forever submissions), AND its per-app Blob CONTAINER —
-    then drop the registry row. The sweeps go FIRST, while
-    the app id still resolves them; the admin danger-op accepts this inline ordering (unlike the
-    rollback-safe project cascade). The sweeps themselves are best-effort and never
-    surface (a residual blob/container is a bounded, logged orphan) — but the submissions
-    ENUMERATION raises: proceeding past a failed listing would drop the row and strand blobs no
-    one can ever find again, so the admin's delete fails retryably instead (fail-first).
-
-    Both stores are INJECTED (not resolved inline) so a test can swap fakes for each — `storage`
-    for the blob sweep, `container_store` for the container sweep. `container_store` is `None` when
-    object storage is unconfigured (dev/test), in which case the container sweep is a no-op.
-
-    BLOB-ONLY, and staying that way: the project's own PostgreSQL database and login role
-    are NOT torn down here. `DROP DATABASE` cannot run inside a transaction block and this
-    function deliberately runs inside its caller's, so the database teardown is the CALLER's
-    POST-COMMIT step — `salt_the_earth`, after `db.commit()` (see `admin.hard_delete`). Adding it
-    here would not merely be misplaced, it would fail."""
+    """Hard-delete an app: sweep the snapshot bundle, every submission bundle under
+    `submissions/{app_id}/`, and the per-app Blob CONTAINER, then drop the registry row — sweeps
+    first, while the id still resolves them. Sweeps are best-effort (a residual blob/container is
+    a bounded, logged orphan) EXCEPT the submissions enumeration, which raises: proceeding past a
+    failed listing would drop the row and strand unfindable blobs, so the delete fails retryably
+    instead. BLOB-ONLY: the project's Postgres DB/role is the caller's POST-COMMIT
+    `salt_the_earth` step, after `db.commit()` — `DROP DATABASE` cannot run inside this
+    function's transaction, so putting it here would not merely be misplaced, it would fail."""
     submission_keys = await all_keys_under(storage, submissions_prefix(app_id))
     # `recovery_key` alongside `snapshot_key`: both carry the app's whole tree, and a hard
     # delete that leaves one of them behind has not deleted the app.

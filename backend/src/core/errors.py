@@ -23,21 +23,14 @@ logger = structlog.get_logger()
 
 
 class AppApiError(Exception):
-    """An app-lifecycle / platform error rendered as the ported
-    ``{"error": {"message": ...}}`` body the SPA already consumes (distinct from the
-    auth endpoints' ``{"detail": ...}`` shape).
+    """An app-lifecycle/platform error rendered as ``{"error": {"message": ...}}`` (distinct from
+    the auth endpoints' ``{"detail": ...}`` shape). Carries its own HTTP status so
+    lifecycle/admin/build-session routers fail closed with a stable, non-leaking message.
 
-    Carries its own HTTP status so the lifecycle, admin, and build-session routers can
-    fail closed with a stable, non-leaking message. An optional machine-readable
-    ``code`` is surfaced under ``error.code`` so the SPA can branch on it rather than
-    string-matching the message, and an optional structured ``detail`` is surfaced
-    under ``error.detail`` for the refusals a client must RENDER rather than merely
-    branch on (the waiting-for-review 409 carries the pending state, the submitted
-    version and the rejection note, so neither citizen surface needs a second call).
-    ``detail`` must be JSON-ready — plain strings/numbers/bools/None only, never an
-    un-serialisable object and never internal identifiers a citizen must not see.
-    Raised from a dependency or a route; rendered by ``app_api_error_handler``.
-    """
+    Optional ``code`` surfaces under ``error.code`` to branch without string-matching; optional
+    structured ``detail`` surfaces under ``error.detail`` for refusals a client must RENDER (e.g. a
+    409's pending state + rejection note). ``detail`` MUST be JSON-ready and never leak internal
+    IDs. Raised from a dependency or route; rendered by ``app_api_error_handler``."""
 
     def __init__(
         self,

@@ -66,17 +66,12 @@ _PROBE_TIMEOUT_SECONDS: Final = 2
 def _are_you_up_yet() -> list[aca_models.ContainerAppProbe]:
     """Startup + readiness probes against the supervisor's unauthenticated `/health`.
 
-    DELIBERATELY NO LIVENESS PROBE. A failing liveness probe makes ACA RESTART the container,
-    and a sandbox holds the citizen's un-snapshotted work — a self-restarting sandbox would
-    silently discard whatever the agent had written since the last snapshot, to fix a symptom
-    the control plane already handles (`selfheal`'s dead-child rescue restarts `next dev`
-    without touching the workspace). Restarting is strictly worse than reporting. If you are
-    here to "complete the set", that is the argument you have to beat.
+    DELIBERATELY NO LIVENESS PROBE: a failing one restarts the container, silently discarding
+    un-snapshotted work that `selfheal`'s dead-child rescue already recovers without a restart.
+    Restarting is strictly worse than reporting.
 
-    Note both probes watch the SUPERVISOR, never the generated app: whether `next dev` is up is
-    `/dev/status`'s question, and pointing these at the app would pull the whole revision —
-    `/_sup` included — out of rotation whenever a route was merely still compiling.
-    """
+    Both probes watch the SUPERVISOR, never the app: `/dev/status` covers `next dev`, and
+    probing the app would evict the whole revision whenever a route was merely still compiling."""
     knock = aca_models.ContainerAppProbeHttpGet(
         path=_SUPERVISOR_HEALTH_PATH,
         port=_INGRESS_TARGET_PORT,
@@ -138,17 +133,11 @@ _LRO_POLL_STEP_SECONDS: Final = 5.0
 def await_lro(poller: Any, *, ceiling: float | None = None) -> Any:
     """Block on an ARM long-running operation, but never past `ceiling`.
 
-    Raises `AcaTransientError` on expiry because the outcome is genuinely UNKNOWN — the
-    operation may still land. That classification is deliberate: both callers
-    (`begin_create_or_update`, `begin_delete`) are safe to repeat, and treating an unknown
-    outcome as a terminal failure would invite a caller to "clean up" a container app that
-    is in the middle of being created successfully.
+    Raises `AcaTransientError` (not terminal) on expiry — the outcome is UNKNOWN and both callers
+    are safe to repeat; treating it as terminal invites "cleaning up" a container still creating.
 
-    `ceiling=None` resolves the module default AT CALL TIME rather than through a default
-    argument. That is not a style preference: a default argument binds once, at definition,
-    so `_LRO_CEILING_SECONDS` could never be lowered for a test — and a test that thought it
-    had shortened the ceiling would instead sit through the real 300s and still pass, taking
-    five minutes to assert something that should take milliseconds."""
+    `ceiling=None` resolves the default AT CALL TIME: a default binds once, at definition, so a
+    test could never lower `_LRO_CEILING_SECONDS` and would sit out the real 300s regardless."""
     limit = _LRO_CEILING_SECONDS if ceiling is None else ceiling
     deadline = time.monotonic() + limit
     while not poller.done():
@@ -183,19 +172,12 @@ def fqdn_of(app: aca_models.ContainerApp) -> str | None:
 def _fleet_member_of(app: aca_models.ContainerApp) -> FleetMember:
     """Project one SDK `ContainerApp` down to the five fields a reclamation pass may judge on.
 
-    THE NARROWING IS THE POINT (see `FleetMember`): the list payload carries every app's container
-    env in plaintext, so anything that survives this function is something a log line or an
-    operator report may end up holding. Read only what is named here.
+    THE NARROWING IS THE POINT (see `FleetMember`): the payload carries every app's container
+    env in plaintext, so only what is named here may reach a log line or operator report.
 
-    NEVER RAISE WITH THE PAYLOAD IN THE MESSAGE. That rule is easy to state and easy to lose:
-    validation errors routinely echo the offending object, and the offending object here is the
-    thing carrying `SUPERVISOR_TOKEN`. So every leaf is coerced defensively rather than parsed
-    strictly — a missing `properties`, a null ingress, an unparseable timestamp all degrade to
-    `None`, which the tier logic already treats as "cannot be judged ⇒ escalate". Failing closed on
-    a malformed item is correct here; failing loudly with its contents is not.
-
-    `app.name` is checked by the caller before we get here (the prefix filter), so the `str()` is a
-    coercion of the SDK's loose typing, not a fallback."""
+    NEVER RAISE WITH THE PAYLOAD IN THE MESSAGE — it carries `SUPERVISOR_TOKEN`. Every leaf is
+    coerced defensively rather than parsed strictly, degrading to `None` (which the tier logic
+    treats as "cannot be judged ⇒ escalate") rather than failing loudly with its contents."""
     props = app.properties
     running = getattr(props, "running_status", None) if props else None
     created = getattr(app.system_data, "created_at", None) if app.system_data else None
@@ -211,13 +193,10 @@ def _fleet_member_of(app: aca_models.ContainerApp) -> FleetMember:
 def _plain(value: object) -> str | None:
     """Coerce an SDK leaf to a plain string, unwrapping an enum to its VALUE.
 
-    `azure-mgmt-appcontainers` types `running_status` as `ContainerAppRunningStatus`, not `str`,
-    and `str()` on a Python enum yields `"ContainerAppRunningStatus.RUNNING"` — the class name
-    and the member, not the wire value. Found by running the enumerator against the real dev
-    fleet, and invisible to every test here because a fake returns the plain string the real
-    client does not. That is the exact shape of "a fake that certifies a fiction": the projection
-    promises plain strings, so an operator report would have carried a Python repr where it
-    claimed to carry Azure's own status."""
+    `running_status` is typed `ContainerAppRunningStatus`, not `str`, and `str()` on the enum
+    yields `"ContainerAppRunningStatus.RUNNING"`, not the wire value — found against the real
+    dev fleet, invisible to every test here because a fake already returns the plain string
+    (a fake that certifies a fiction). An operator report would have carried a Python repr."""
     if value is None:
         return None
     unwrapped = getattr(value, "value", value)
@@ -361,25 +340,12 @@ class AcaControlPlane:
     async def list_sandbox_fleet(self) -> list[FleetMember]:
         """Every sandbox container app ARM knows about, projected to what may be judged on.
 
-        THE ONLY AZURE-SIDE VIEW OF THE FLEET. Every other enumeration starts from the Redis
-        registry and so can only ever collect containers it already holds a record of; this is
-        the one reader that can still see a container whose record is gone.
+        THE ONLY AZURE-SIDE VIEW OF THE FLEET (Redis only sees what it has a record of),
+        filtered to `SANDBOX_NAME_PREFIX` so it never touches published apps or other workloads.
 
-        ONE ENUMERATION, NOT ONE PER QUESTION. Every caller reads the same projection, so no two
-        of them can disagree about the fleet, and the fleet is walked once per pass.
-
-        PAGING IS THE SDK'S JOB, not ours. `list_by_resource_group` returns an
-        `ItemPaged[ContainerApp]` and follows `nextLink` itself; iterating it to exhaustion inside
-        the worker thread is what makes a two-page fleet return as one list. "Follow the URI
-        verbatim" is unsatisfiable through this surface and does not need to be satisfied.
-
-        Filtered to `SANDBOX_NAME_PREFIX`, so the platform never reports on — let alone offers to
-        delete — the published apps and unrelated workloads sharing the resource group.
-
-        A TRUNCATED FLEET MUST NEVER READ AS A CLEAN ONE. Transient ARM failures raise
-        `AcaTransientError` rather than returning a short list: a half-enumerated fleet reporting
-        "no orphans" (or "nothing left to stamp") is the worst possible output of this function,
-        because it is indistinguishable from success and it is what the destroy flag rests on."""
+        A TRUNCATED FLEET MUST NEVER READ AS CLEAN: transient ARM failures raise
+        `AcaTransientError` rather than a short list — a half-enumerated "no orphans" is
+        indistinguishable from success, and the destroy flag rests on it."""
 
         def _run() -> list[FleetMember]:
             apps = self._client.container_apps.list_by_resource_group(self._config.resource_group)
@@ -401,35 +367,12 @@ class AcaControlPlane:
     async def stamp_tags(self, *, name: str, tags: dict[str, str]) -> None:
         """MERGE identity tags onto an existing container app.
 
-        THE MERGE IS OURS, NOT ARM'S — and believing otherwise cost a live fleet its identity.
-        `begin_update` is `PATCH` and the schema documents JSON Merge Patch, but the
-        `Microsoft.App` provider treats `tags` as ONE property and REPLACES the whole map with
-        whatever the body carries. So stamping `bial-reclaim-staged-at` onto a staging candidate
-        deleted its owner, its app id and its created-at — and a container carrying no identity is
-        escalate-only, which means the second pass of the two-pass protocol could never reach
-        `Verdict.DESTROY` on a container the first pass had staged. The protocol destroyed its own
-        evidence. Observed twice against real Azure; no unit test could have caught it, because
-        every fake merged the way the documentation said the provider would.
+        THE MERGE IS OURS, NOT ARM'S: `begin_update` (`PATCH`) is documented as JSON Merge Patch,
+        but the provider REPLACES the whole `tags` map. That once wiped a container's identity and
+        broke the destroy protocol's second pass. READ the current tags, THEN WRITE THE UNION.
 
-        READ, THEN WRITE THE UNION. The window between the two is a real lost-update race, named
-        here rather than hidden: the writers are provision (create-time, before this container is
-        listable), the identity backfill, and this staging stamp. Two of them colliding costs a
-        re-stamp on the next pass. The alternative is a second ARM client for
-        `Microsoft.Resources/tags` — which does merge server-side — and a whole dependency for one
-        call is not worth a race this narrow.
-
-        `begin_create_or_update` is `PUT` and would REPLACE the resource — do not reach for it
-        here. That is not a style preference: tags sit outside `properties.template` and
-        `properties.configuration`, so a PATCH creates no revision and cannot disturb container
-        env, and container env is the durable home of the supervisor bearer. A PUT built from a
-        partial body would take a citizen's live sandbox down.
-
-        `location` is passed because the PATCH body schema marks it required, not because anything
-        is being moved.
-
-        The result is polled through `await_lro` like every other ARM operation here — ARM answers
-        a tag PATCH with 202 often enough that assuming it is synchronous would report success on
-        work that had not landed."""
+        Never `begin_create_or_update` (PUT) here — a partial body would wipe container env, the
+        supervisor bearer's durable home."""
         # Validated before the read, so an over-long tag is refused without spending an ARM call.
         stamp = checked_tags(tags)
 
@@ -439,6 +382,7 @@ class AcaControlPlane:
             # replace bug performed deliberately.
             current = self._client.container_apps.get(self._config.resource_group, name)
             envelope = aca_models.ContainerApp(
+                # Passed because the PATCH body schema marks it required — nothing is moving.
                 location=self._config.region,
                 tags={str(k): str(v) for k, v in (current.tags or {}).items()} | stamp,
             )
@@ -459,14 +403,12 @@ class AcaControlPlane:
     async def get_app_tags(self, *, name: str) -> dict[str, str] | None:
         """This container's CURRENT tags, or `None` when ARM says it does not exist.
 
-        A FRESH READ, deliberately per-container. The destroy path re-validates immediately
-        before each delete, and the enumeration snapshot is exactly what it must not trust:
-        `app_name_for` is deterministic, so between the two a builder's start can provision a
-        NEW container into the very name about to be destroyed.
+        A FRESH READ, deliberately per-container: the destroy path re-validates immediately
+        before each delete, since between an enumeration snapshot and the delete a builder's
+        start can provision a NEW container into the very name about to be destroyed.
 
-        `None` (absent) is a different answer from `{}` (present, untagged), and the caller
-        depends on the difference: absent means the delete already landed, untagged means
-        somebody rewrote the resource."""
+        `None` (absent) differs from `{}` (present, untagged): absent means the delete already
+        landed, untagged means somebody rewrote the resource."""
 
         def _run() -> dict[str, str] | None:
             app = self._client.container_apps.get(self._config.resource_group, name)

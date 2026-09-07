@@ -1,16 +1,14 @@
 """The between-runs self-heal verify.
 
-After each `agent.iter` run the harness runs a CHEAP verify — `tsc --noEmit` over the type-check
-command op plus the `dev_logs` cursor tail — and decides the gate. Completion is an OBJECTIVE
-signal, never the model's word; `next build` is not run here (the production build is a deploy
-concern); a bounded readiness poll tells a slow-but-healthy dev server from a stuck one before a
-run is burned; and a red signal becomes a redacted `BuildError` the loop re-seeds as the next
-prompt.
+After each `agent.iter` run the harness runs a CHEAP verify — `tsc --noEmit` plus the `dev_logs`
+tail — and decides the gate. Completion is OBJECTIVE, never the model's word; `next build` is not
+run here (a deploy concern); a bounded readiness poll tells a slow-but-healthy dev server from a
+stuck one; a red signal becomes a redacted `BuildError` the loop re-seeds as the next prompt.
 
-Server-side signals only answer "is a Next app running here", so verify also asks what the app's
+Server-side signals only answer "is a Next app running here", so verify also checks what the app's
 root actually serves, whether `app/page.tsx` is still the workspace's first commit, and what the
-browser's own error reporter caught. It is the ONE authority both loops consult, and a dead dev
-child is restarted once before its readiness is judged."""
+browser's own error reporter caught. It is the ONE authority both loops consult; a dead dev child
+is restarted once before its readiness is judged."""
 
 from __future__ import annotations
 
@@ -210,17 +208,11 @@ explains it. With no crash they are dropped, which is what "the app is noisy but
 def the_call_is_coming_from_inside_the_house(reports: list[ClientErrorReport]) -> BuildError:
     """The diagnostic for "every server-side check is clean and the app is still broken".
 
-    Named for what these reports mean: the dev server answered, `tsc` is clean, the log tail is
-    quiet, `/dev/status` says ready — and the app is dead anyway, because the failure was inside
-    the browser the whole time. That class is invisible to every signal the harness polls, which
-    is precisely why suppressing the framework's runtime overlay could otherwise turn a crash the
-    user could SEE into a success nobody could see at all.
-
-    The blob assembled here is app-authored text and is handled as such by `from_client`: redacted
-    on the same single path as any other sandbox output, then wrapped in a data-only frame. The
-    numbering matters more than it looks — a crash loop reports the same fault repeatedly, and an
-    explicit `[1] … [2] …` is what stops the model reading a repeated stack as several distinct
-    faults to chase."""
+    Named because the browser is where the failure hid: every server-side signal came back clean,
+    which is precisely why suppressing the framework's runtime overlay could otherwise turn a crash
+    the user could SEE into a success nobody could see. The blob assembled here is app-authored
+    text, redacted via `from_client` like any other sandbox output — the `[1] … [2] …` numbering
+    stops a crash loop's repeated fault from reading as several distinct faults to chase."""
     # Crashes first, then whatever else the browser said. A warning logged moments before a crash
     # is frequently the thing that explains it, so the context is worth carrying — but it is
     # carried BEHIND the crash, because the crash is what the agent has to fix.
@@ -394,25 +386,14 @@ async def verify(
     indeterminate_retries: int = VERIFY_INDETERMINATE_RETRIES,
     indeterminate_backoff_s: float = VERIFY_INDETERMINATE_BACKOFF_S,
 ) -> tuple[VerifyOutcome, int]:
-    """The health verdict, asked with patience: run `_verify_once`, and when it comes back
-    INDETERMINATE ask again rather than reporting a defect.
-
-    THE RETRY LIVES HERE, not at either loop, and that is deliberate. `selfheal` is the ONE health
-    authority both harnesses consult precisely so a verdict cannot mean two things depending on
-    which loop built the app; a patience budget applied in `turns/engine.py` and forgotten in
-    `harness.py` would be a health rule with an escape hatch. It is also why the retry cannot live
-    inside `_verify_once`, which has to stay a single honest pass so a test can observe one.
-
-    `log_cursor` is threaded through every attempt, so a retry reads only what is genuinely new
-    and a crash printed during the first pass is not re-reported by the second — and the browser
-    crash reports a discarded pass consumed are carried into the next one, or a pass that is
-    thrown away would take a real crash with it.
-
-    ONE CONVERSION HAPPENS AT EXHAUSTION and it is narrow: a readiness budget that has now run out
-    several times over has stopped being our impatience and become a fact about the app, so it
-    becomes the diagnosis this loop has always given for it. The other two unanswerable checks
-    describe an app that IS serving and are returned as they are — inventing a startup fault for
-    one of those is exactly the misdiagnosis this narrow conversion exists to prevent."""
+    """The health verdict, asked with patience: run `_verify_once`, retrying on INDETERMINATE
+    instead of reporting a defect. THE RETRY LIVES HERE — not in `_verify_once` (which must stay a
+    single honest pass a test can observe) and not in either loop, since `selfheal` is the ONE
+    health authority both harnesses consult. `log_cursor` threads through every attempt so a retry
+    reads only what's new, and a discarded pass's browser-crash reports carry into the next rather
+    than being lost. ONLY a readiness budget converts to a defect at exhaustion, once it has become
+    a fact about the app; the other two unanswerable checks describe an app that IS serving and
+    return as-is, never invented into a startup fault."""
     attempts_left = indeterminate_retries
     rechecked = False
     first_pass = True
@@ -508,15 +489,12 @@ async def _ask_the_container_what_it_is_showing(
 ) -> BaselineIdentity:
     """`integrity.baseline_identity`, reached through a function-scoped import.
 
-    THE IMPORT IS IN HERE BECAUSE THE PACKAGES ARE CIRCULAR, and the cycle is real rather than
-    incidental: `src.services.build_sessions.__init__` reaches `appdata` → `services.projects` →
-    `agent.agent` → `services.orchestrator.__init__` → this module. A module-level import here
-    therefore fails at interpreter start, not at call time. It is the ONE direction that is
-    circular: `build_sessions` may import from here-adjacent leaves freely, and does — `manager`
-    and `reaper` both import `integrity` at module level.
-
-    The type comes from `integrity_types`, a leaf module with no imports of its own, so the
-    signature is honest at import time and only the CALL is deferred."""
+    THE IMPORT IS HERE BECAUSE THE PACKAGES ARE CIRCULAR: `build_sessions.__init__` reaches
+    `appdata` → `services.projects` → `agent.agent` → `orchestrator.__init__` → this module, so a
+    module-level import here would fail at interpreter start — the ONE circular direction
+    (`build_sessions` imports `integrity` at module level freely elsewhere: `manager`, `reaper`).
+    The type comes from `integrity_types`, a leaf module with no imports, so the signature stays
+    honest at import time and only the CALL is deferred."""
     from src.services.build_sessions.integrity import baseline_identity
 
     return await baseline_identity(sandbox_client, handle)

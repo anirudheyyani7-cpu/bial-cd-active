@@ -1,23 +1,13 @@
 /**
- * Turn frames → the progress-envelope shape, plus what the surface asks ABOUT a turn.
+ * Turn frames → the progress-envelope shape, plus what the surface asks ABOUT a turn. A build is
+ * a Write turn now, so its narrative arrives as `step`/`diagnostic`/`quota` turn frames instead of
+ * progress envelopes; ADAPTING rather than rewriting is deliberate — one mapping is how the two
+ * transports agree by construction, not by discipline.
  *
- * A build is a Write turn now, so its narrative arrives as `step` / `diagnostic` / `quota` turn
- * frames instead of progress envelopes. ADAPTING rather than rewriting is deliberate: the two
- * transports must never tell different stories about what a build looks like, and one mapping is
- * how they agree by construction rather than by discipline.
- *
- * THE ENVELOPES HAVE ONE READER. The transcript draws activity from the message parts themselves
- * (`ActivityGroup`); what still needs the envelope shape is the legacy build-session feed and the
- * two questions the surface asks of a turn: what phase it is in (`turnPhase`, for the app pane)
- * and whether today's budget is spent (`atLimitSendState`, for the composer). Both belong here for
- * the same reason: envelopes are this module's vocabulary, and neither the pane nor the composer
- * should have to learn it.
- *
- * The mapping is small because the two vocabularies already describe the same thing. The one
- * place they genuinely differ is `diagnostic` → `error`: on the turn stream a diagnostic is
- * explicitly NOT a failure (a repair run follows), so its envelope carries `recovering: true`
- * and renders as a retry — collapsing it into the plain red `error` shape told the user their
- * build died four times on its way to succeeding.
+ * THE ENVELOPES HAVE ONE READER: the legacy build-session feed and the two questions the surface
+ * asks of a turn — `turnPhase` (app pane) and `atLimitSendState` (composer) — both live here so
+ * neither caller has to learn this module's vocabulary. The one place the two vocabularies
+ * genuinely differ (`diagnostic` → `error`) is explained at its mapping below.
  */
 import type { StepItem } from './turnStreamApi'
 import type {
@@ -109,21 +99,12 @@ export function narrativeEnvelopes(narrative: TurnNarrative): FeedEnvelope[] {
 }
 
 /**
- * The phase this turn is in, in the status vocabulary the app pane reads.
- *
- * `null` — nothing to say about the app, so the pane keeps whatever it already had. The ordering
- * below is the honest one: an unavailable workspace is terminal for this turn no matter what else
- * arrived, and a live preview outranks "still provisioning" because the user can SEE it.
- *
- * ══ NOTHING HERE ASKS WHAT KIND OF CHAT THIS IS ══
- *
- * There is ONE surface and it consults no kind anywhere, so a parameter whose only honest source
- * is "what sort of chat is this?" has no caller.
- *
- * The frames already carry the distinction. A turn that WORKED ON THE APP emits steps, or a
- * preview, or a diagnostic about one; a turn that only answered a question attaches the same live
- * container and emits nothing else. So the question is read off the narrative, and the two arms
- * are reached by evidence rather than by declaration.
+ * The phase this turn is in, in the status vocabulary the app pane reads. `null` means nothing
+ * to say — the pane keeps whatever it already had. Ordering is deliberate: an unavailable
+ * workspace is terminal no matter what else arrived, and a live preview outranks "still
+ * provisioning" because the user can SEE it. Takes no chat-kind parameter — the distinction
+ * between app work and a read-only answer is read off the frames themselves (see
+ * `touchedTheApp` below), not declared by a caller.
  */
 export function turnPhase(
   narrative: TurnNarrative,
@@ -168,16 +149,11 @@ export interface AtLimitSendState {
 }
 
 /**
- * The SEND control's state while today's budget is spent — `null` when it is not.
- *
- * IT LIVES HERE RATHER THAN IN THE COMPOSER because it reads FEED ENVELOPES, which is this
- * module's vocabulary and nothing a composer should have to know about: the surface asks the
- * question and hands the composer a finished sentence.
- *
- * IT DESCRIBES THE SEND CONTROL AND NEVER THE COMPOSER. A citizen refused mid-thought has usually
- * just typed something they want to keep, so the textarea stays live: they can select, copy and
- * paste their draft somewhere safe, and only the spending is refused. Take the composer down with
- * the send and the draft is hostage until midnight.
+ * The SEND control's state while today's budget is spent — `null` when it is not. Lives here
+ * (not in the composer) because it reads FEED ENVELOPES, this module's vocabulary; the surface
+ * asks and hands back a finished sentence. Describes the SEND control only, never the composer:
+ * a citizen refused mid-thought usually has a draft worth keeping, so the textarea stays live to
+ * select/copy/paste — take the composer down too and the draft is hostage until midnight.
  */
 export function atLimitSendState(envelopes: FeedEnvelope[]): AtLimitSendState | null {
   // NEWEST WINS, by seq rather than by array order. A reconnect replays the stream and a resumed
@@ -196,13 +172,11 @@ export function atLimitSendState(envelopes: FeedEnvelope[]): AtLimitSendState | 
 }
 
 /**
- * `resets_at` as a time a person can read, or `null` when it is not a usable instant.
- *
- * FALLS BACK RATHER THAN THROWING. The field is a wire value, and an unparseable one has already
- * reached a renderer in the existing tests — `new Date('x').toLocaleTimeString()` renders the
- * literal string "Invalid Date" into the citizen's banner, which is worse than saying nothing
- * specific at all. The caller's fallback ("after midnight") is true regardless of the wire value,
- * because the reset IS the next IST midnight.
+ * `resets_at` as a time a person can read, or `null` when it is not a usable instant. FALLS
+ * BACK rather than throwing: an unparseable wire value has already reached a renderer in the
+ * existing tests — `new Date('x').toLocaleTimeString()` renders the literal "Invalid Date" into
+ * the citizen's banner, worse than saying nothing. The caller's "after midnight" fallback is
+ * true regardless, since the reset IS the next IST midnight.
  */
 export function formatResetTime(isoUtc: string): string | null {
   const at = new Date(isoUtc)

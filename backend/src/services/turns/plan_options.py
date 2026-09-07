@@ -1,23 +1,15 @@
 """Plan-options resolution: the user's click IS the tool result.
 
-`present_plan_options` DEFERS (the run ends with the call unanswered); the choice arrives
-minutes later as a button click — or implicitly, when the user keeps typing instead
-(free text while options are pending resolves them as `refine`). The stored resolution is
-a plain `ToolReturnPart` row (`refine` or `build` — a migrated row may still hold a
-`build_failed:<reason>` string from the retired recorder, which reads as resolved), so the next
-run's history carries call + return natively, and the projection derives the card
-state from exactly what the model will see — one record, no drift.
+`present_plan_options` DEFERS; the choice arrives later as a button click, or implicitly when
+the user types instead (free text while pending resolves as `refine`). Resolution is a plain
+`ToolReturnPart` row (`refine`/`build`; a migrated row may hold a legacy `build_failed:<reason>`
+string, which reads as resolved) — the next run's history carries call + return natively, and
+the projection derives card state from exactly what the model sees.
 
-A SYNTHESIZED pending (the model never called the tool even when forced — the engine's
-fallback) has no real tool call to answer: its pending and resolution both live as
-`system_event` rows (`meta.kind = plan_options_pending / plan_options_resolved`) with an
-empty payload, so the model's wire history is never polluted with a return for a call
-that does not exist.
-
-Only the NEWEST pending is actionable (older cards render expired); a duplicate click or
-a second tab resolves idempotently to the already-stored choice — a reload can never show
-resolved-with-no-record.
-"""
+A SYNTHESIZED pending (tool never called, even when forced) has no real call to answer: its
+pending/resolution live as `system_event` rows instead, so history is never polluted with a
+return for a call that does not exist. Only the NEWEST pending is actionable; a duplicate
+click or second tab resolves idempotently — a reload can never show resolved-with-no-record."""
 
 from __future__ import annotations
 
@@ -256,15 +248,12 @@ def newest_card(rows: list[Message]) -> PendingPlanOptions | None:
 def stored_call(rows: list[Message], tool_call_id: str) -> ToolCallPart | None:
     """The offer's own stored tool call, rebuilt from the row that persisted it.
 
-    THIS IS WHERE THE PLAN LIVES, and it is the only place it lives. The call's `args` carry
-    the plan the agent wrote, so the handoff, the projection and anything else that needs it
-    all read the same string from the same row — which is what makes "the plan a user reads and
-    the plan a build starts from are the same text" a property of the storage rather than an
-    agreement between two functions.
-
-    Returns None for a call that was never stored with arguments — every card presented before
-    the plan became the tool's argument — so the caller can refuse by name rather than build on
-    a stand-in."""
+    THIS IS WHERE THE PLAN LIVES, and the only place it lives: the call's `args` carry the plan
+    the agent wrote, so the handoff, the projection, and everything else read the same string
+    from the same row — "the plan a user reads and a build starts from" is a property of the
+    storage, not an agreement between two functions. Returns None for a card presented before
+    the plan became the tool's argument, so the caller refuses by name rather than build on a
+    stand-in."""
     for row in rows:
         for message in row.payload if isinstance(row.payload, list) else []:
             if not isinstance(message, dict) or message.get("kind") != "response":
@@ -314,15 +303,13 @@ async def record_build_started(
     answered_already: bool = False,
 ) -> None:
     """The build genuinely started — the terminal resolution. A real card gets its ONE
-    ToolReturnPart ("build"); a synthesized card gets the system overlay (no real call
-    exists to answer). Written only after `manager.start` returned a live session:
-    resolved-with-no-build stays impossible by ordering.
+    ToolReturnPart ("build"); a synthesized card gets the system overlay instead. Written only
+    after `manager.start` returns a live session, so resolved-with-no-build stays impossible.
 
-    `answered_already` is the Build-it vs turn-start race guard (the caller re-checks the card
-    right before this write): when a concurrent turn-start already put a real `ToolReturnPart`
-    on the wire for this card, the build is recorded as a system overlay too — so the wire
-    never carries two returns for one call id, and the projection still reads "build" as the
-    newest resolution."""
+    `answered_already` is the Build-it vs turn-start race guard: when a concurrent turn-start
+    already wrote a real `ToolReturnPart` for this card, the build is recorded as a system
+    overlay too — so the wire never carries two returns for one call id, and the projection
+    still reads "build" as the newest resolution."""
     if pending.synthesized or answered_already:
         await append_batch(
             db,

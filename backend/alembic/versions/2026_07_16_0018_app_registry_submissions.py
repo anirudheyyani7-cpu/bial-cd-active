@@ -4,33 +4,24 @@ Revision ID: 0018_app_registry_submissions
 Revises: 0017_drop_app_files
 Create Date: 2026-07-16
 
-Retire the JSX-era snapshot JSONB (`source_snapshot` / `approved_snapshot`) and
-replace it with typed references to immutable per-submission git bundles: a
-submission is a *reference* — `(app_id, submission_id)` derives the blob key via
-the key builder, so no key is stored. Seven nullable columns land:
+Retire the JSX-era snapshot JSONB (`source_snapshot`/`approved_snapshot`) for typed references
+to immutable per-submission git bundles — `(app_id, submission_id)` derives the blob key, so no
+key is stored. Seven nullable columns land: `source_submission_id`/`source_commit_sha`/
+`submitted_at` (the submission under review), `approved_submission_id`/`approved_commit_sha`
+(the pinned artifact), and `deployed_submission_id`/`deployed_at` (a manual-runbook MARKER, not
+a status — `app_status` is untouched).
 
-  * `source_submission_id` / `source_commit_sha` / `submitted_at` — the submission
-    under review (the approve guard's predicate; the queue's order axis).
-  * `approved_submission_id` / `approved_commit_sha` — the pinned reviewed artifact.
-  * `deployed_submission_id` / `deployed_at` — the manual-runbook marker: a
-    marker, NOT a status, so `app_status` and the transition table are untouched.
-
-DESTRUCTIVE: `upgrade` drops both JSONB snapshot columns — the JSX-era compiled
-artifacts they hold are discarded and unrecoverable by construction (nothing can
-backfill a git bundle from a compiled-JSX blob). It also resets legacy `pending` /
-`approved` rows to `draft`: they hold artifacts the new gate cannot approve or
-serve, and leaving them APPROVED with a NULL ref manufactures the "approved app
-whose artifact does not exist" failure this schema exists to prevent. The
-reset deliberately SPARES `disabled` and `rejected`: those are the only statuses
-outside ACTIVE_STATUSES (the X-App-Key data plane refuses them with 403), and
-`draft` is active with `app_key` unchanged — a blanket reset would silently
-re-open a kill-switched or rejected app's data plane. A pre-drop export of
-`source_snapshot` / `approved_snapshot` MUST run in the target environment BEFORE
-this is applied there. `downgrade` recreates the STRUCTURE (the two JSONB columns)
-but NOT the data — the reset statuses also stay reset.
-
-Hand-finalized.
-"""
+WHY THIS EXISTS
+DESTRUCTIVE: `upgrade` drops both JSONB columns — the JSX-era artifacts they hold are discarded
+and unrecoverable by construction — and resets legacy `pending`/`approved` rows to `draft`,
+since they hold artifacts the new gate cannot approve or serve; leaving them APPROVED with a
+NULL ref would manufacture the "approved app whose artifact does not exist" failure this schema
+exists to prevent. The reset deliberately SPARES `disabled` and `rejected`: those are the only
+statuses outside ACTIVE_STATUSES (the X-App-Key data plane refuses them with 403), and `draft`
+is active with `app_key` unchanged — a blanket reset would silently re-open a kill-switched or
+rejected app's data plane. A pre-drop export of the two JSONB columns MUST run in the target
+environment before this applies there. `downgrade` recreates the STRUCTURE only, not the data.
+Hand-finalized."""
 
 from __future__ import annotations
 

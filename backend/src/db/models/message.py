@@ -1,24 +1,17 @@
 """The `messages` table — one row per persisted NATIVE pydantic-ai batch.
 
-Rebuilt in place by migration 0024 (destructive reset — the legacy SPA parts shape is gone).
-One row per persisted batch: a whole turn in a Plan chat, a single agent step in a Build chat
-(so a crash mid-build loses at most the in-flight step), or a system/lifecycle entry. The JSONB
-`payload` is 100% native `ModelMessagesTypeAdapter` serialization — the ONLY
-transformations applied at the seam are attachment-binary externalization and secret redaction
-(`services/messages/store.py`); everything else round-trips byte-faithfully.
+Rebuilt in place by migration 0024 (destructive reset). One row per batch: a Plan-chat turn, a
+Build-chat step (crash-safe per step), or a system/lifecycle entry. `payload` is 100% native
+`ModelMessagesTypeAdapter` serialization except attachment externalization and secret redaction
+(`services/messages/store.py`).
 
-Classification lives on the ROW, never in the payload (verified against pinned pydantic-ai
-2.5.0: `UserPromptPart` has no metadata field, extra payload keys are silently absorbed at the
-TypeAdapter boundary — an unknown dict coerces to `CachePoint`! — and `ModelRequest.metadata`
-is droppable by upstream's own history merge). `entry_kind` + `visibility` are SQL predicates:
-the history loader feeds hidden marker rows to the model like any message; the UI projection
-filters them with a WHERE clause, not a payload inspection.
+WHY THIS EXISTS — classification lives on the ROW, never in the payload: verified against pinned
+pydantic-ai 2.5.0, `UserPromptPart` has no metadata field, an unknown dict silently coerces to
+`CachePoint` at the TypeAdapter boundary, and `ModelRequest.metadata` is droppable by upstream's
+own history merge. `entry_kind`/`visibility` are SQL predicates instead, filtered by WHERE clause.
 
-`seq` is the server-owned, GAP-FREE per-conversation ordering key — allocated by the store's
-two-writer retry discipline, never by a client. `schema_version` stamps the payload's
-serialization contract (bump it when the pinned pydantic-ai's wire shape changes so old rows
-stay decodable). `meta` carries system-entry metadata (build session id, start marker,
-preview URL…) — row-side, so the payload stays pure native.
+`seq` is the server-owned gap-free ordering key (the store's two-writer retry, never a client).
+`schema_version` stamps the wire contract; `meta` carries system-entry metadata row-side.
 """
 
 from __future__ import annotations
@@ -38,18 +31,13 @@ from src.db.models.conversation import ChatKind, chat_kind_enum
 
 class MessageEntryKind(StrEnum):
     """What kind of batch this row holds. Native PG enum labels.
-
     * `turn` — a whole Plan-chat turn (user prompt + the run's new messages).
     * `step` — one Build-chat agent step (BRAIN persists per step for crash durability).
     * `system_event` — a lifecycle record (build outcome, provision/quota/stop events).
 
-    THE RETIRED `mode_switch` LABEL. There was a fourth: a hidden direction-aware marker
-    written by the mode-switch endpoint so the model could see where in history the mode
-    changed. There are no mode boundaries any more — a chat's kind is fixed at creation — so
-    revision 0035 deleted every such row and the member went with the endpoint. The PG label
-    is left in place and inert: nothing writes it, nothing reads it, and swapping the type to
-    remove one unreferenced label would rewrite the largest table for no behavioural gain.
-    """
+    THE RETIRED `mode_switch` LABEL: a hidden marker for the old mode-switch endpoint, deleted
+    in revision 0035 (a chat's kind is now fixed at creation). The PG label stays, inert —
+    removing it would rewrite the largest table for nothing."""
 
     TURN = "turn"
     STEP = "step"

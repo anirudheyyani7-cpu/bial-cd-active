@@ -1,22 +1,12 @@
 /**
- * STOP, MOVED TO WHERE THE COMPOSER IS.
- *
- * ── THE TWO ARMS ARE NOT A MODE BRANCH ──
- *
- * They discriminate on whether a TURN ID EXISTS, which is a transport fact, not a kind of chat.
- * A turn build is stopped through the turn endpoint with its conversation and turn ids; a legacy
- * build session has no turn id and is stopped through the session. Nothing here asks what kind of
- * chat this is.
- *
- * FORCE-END DELIBERATELY DID NOT MOVE. A turn build has no force-end equivalent, and a kill
- * switch that confirms "this kills in-progress work" and then does nothing is worse than no
- * kill switch.
- *
- * THE ACCESSIBLE NAME IS STABLE. The old button's label flipped "Stop" → "Stopping…", which
- * renames the control mid-interaction. The word stays "Stop" in every state; the in-flight state
- * is carried by the glyph and by `title`.
- *
- * It is mounted by `Composer`, and therefore reachable in both kinds of chat.
+ * STOP, MOVED TO WHERE THE COMPOSER IS. The two arms are not a mode branch — they discriminate on
+ * whether a TURN ID EXISTS (a transport fact): a turn build stops via the turn endpoint with its
+ * conversation/turn ids, a legacy build session (no turn id) stops via the session. Force-end
+ * deliberately did NOT move — a turn build has no force-end equivalent, and a kill switch that
+ * confirms "this kills in-progress work" and then does nothing is worse than none. The accessible
+ * name is stable: the old button flipped "Stop" → "Stopping…" mid-interaction; the word stays
+ * "Stop" in every state, with the in-flight state carried by the glyph and `title` instead. Mounted
+ * by `Composer`, so reachable in both kinds of chat.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Square } from 'lucide-react'
@@ -32,15 +22,12 @@ export interface StopTurnControlProps {
   /** A turn — or a legacy build session — is running. No run, no control: this renders `null`. */
   running: boolean
   /**
-   * Resolve the live turn AT PRESS TIME, returning `null` when there is no turn id — which means
-   * a legacy build session, not an error.
-   *
-   * A getter rather than a plain `turnId` prop, and that is not ceremony. The surface holds the
-   * live turn id in a REF, with a comment saying why: the stop handler is created once and would
-   * otherwise close over whichever turn was live at its first render. A prop read during render
-   * reintroduces exactly that staleness one layer up, and it would do so silently — stopping the
-   * previous turn, or falling to the session arm because the render happened to precede the frame
-   * that set the id. Reading at the moment of the press is the only version that cannot be stale.
+   * Resolve the live turn AT PRESS TIME, returning `null` when there is no turn id — a legacy
+   * build session, not an error. A getter rather than a plain `turnId` prop is not ceremony: the
+   * surface holds the live turn id in a ref because the stop handler is created once and would
+   * otherwise close over whichever turn was live at its first render — a prop read during render
+   * reintroduces that staleness one layer up, silently (stopping the previous turn, or falling to
+   * the session arm early). Reading at press time is the only version that cannot be stale.
    */
   resolveTarget: () => StopTarget | null
   /**

@@ -1,16 +1,14 @@
 """Reference `SandboxClient` over LOCAL Docker + an `ObjectStorage` port.
 
-This is the sandbox-side half of the snapshot/restore, wired to a real container and the frozen
-seams — NOT the backend session manager's shipped orchestration. It subclasses the frozen ABC,
-so it must implement all 10 abstract methods to instantiate (an incomplete impl -> `TypeError`) —
-a genuine signature-conformance guarantee. The snapshot/restore ride the frozen `/exec` + `/files`
-surface via the baked `snapshot.sh` / `restore.sh`; base64 is transport only — the stored
-object is a RAW git bundle.
+Sandbox-side half of the snapshot/restore — NOT the backend session manager's shipped
+orchestration. Subclasses the frozen ABC (all 10 abstract methods, so an incomplete impl
+raises `TypeError`) and drives the frozen `/exec` + `/files` surface via baked
+`snapshot.sh` / `restore.sh`; base64 is transport only — the stored object is a RAW git bundle.
 
 Scope-honest bound: the `snapshot -> teardown -> release-lock` ordering here uses a MOCK
-in-proc lock; the backend session manager re-verifies the shipped ordering against the real Redis
-lock + ACA teardown. A green result proves the sandbox-side mechanics + ABC conformance + a
-REFERENCE ordering.
+in-proc lock, not the real Redis lock + ACA teardown (the backend session manager
+re-verifies that). A green result proves sandbox mechanics + ABC conformance + REFERENCE
+ordering only.
 """
 
 from __future__ import annotations

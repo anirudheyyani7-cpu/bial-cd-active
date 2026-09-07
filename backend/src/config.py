@@ -1,31 +1,14 @@
 """The front door to application configuration.
 
-The settings themselves live in `src/settings/`: a `CoreSettings` of what every process needs, plus
-ONE MANIFEST PER ROLE — `api.py` and `worker.py`, each listing that role's complete environment in
-one place. This module stays because 105 modules import `settings` from it, and it resolves WHICH
-manifest this process gets.
+Settings live in `src/settings/`: a `CoreSettings` every process needs, plus ONE MANIFEST PER
+ROLE (`api.py`, `worker.py`). This module stays because 105 modules import `settings` from it.
 
-WHY `settings` IS LAZY, AND WHY THAT IS LOAD-BEARING
-----------------------------------------------------
-It used to be a module-level `settings = Settings()`. That is what made the whole settings object
-the union of every subsystem's needs: twelve modules in the *worker's* import closure —
-`db/base.py`, `redis/client.py`, `sandbox/client.py`, `storage/accessor.py` among them — do
-`from src.config import settings`, so an eager construction would build the API profile inside the
-worker and demand an Entra client id, a super-admin allowlist and a frontend URL in a process that
-has no request to authenticate and serves no browser.
-
-So construction is deferred to first attribute access, by which time the process knows its role
-(`BIAL_ROLE`) and can be handed the one manifest that role's environment is expected to satisfy,
-rather than the union of every role's.
-
-TYPING
-------
-`settings` is annotated as `ApiSettings` because that is what it is in the API process, which is
-every call site that reads an API-only field. In a worker process the underlying object is a
-`WorkerSettings`, so reading an API-only field there raises `AttributeError` at runtime rather
-than failing a type check. That is a deliberate, single-line trade: the alternative was migrating
-105 call sites off the global. Worker code should read its own profile via
-`src.settings.WorkerSettings` when it needs to be explicit.
+`settings` is LAZY, and that's load-bearing: eager construction would build the union of every
+role's needs — twelve worker imports do `from src.config import settings`, forcing API-only
+fields (an Entra client id) into a process with no request to authenticate. It defers to first
+attribute access, once `BIAL_ROLE` is known, and is typed `ApiSettings` even in a worker (a
+deliberate trade over migrating 105 call sites — worker code wanting safety uses
+`src.settings.WorkerSettings` explicitly).
 """
 
 from __future__ import annotations
@@ -51,13 +34,10 @@ _profile: ApiSettings | WorkerSettings | None = None
 def build_profile() -> ApiSettings | WorkerSettings:
     """Construct the profile for THIS process's role, from the environment alone.
 
-    Read from the environment rather than passed in, because on Python 3.14 the POSIX
-    multiprocessing start method is `forkserver`: a child inherits nothing, so a settings object
-    built in a lifespan or memoized in a parent does not survive into it. Every process builds its
-    own.
-
-    The role defaults to `api`, so nothing that exists today changes behaviour — a deployment sets
-    `BIAL_ROLE=worker` on the worker's container and nowhere else.
+    Read from the environment, not passed in: Python 3.14's POSIX multiprocessing start method
+    is `forkserver`, so a child inherits nothing and a settings object built or memoized in a
+    parent never survives into it — every process builds its own. Role defaults to `api`; a
+    deployment sets `BIAL_ROLE=worker` only on the worker's container.
     """
     if os.getenv(ROLE_ENV_VAR, "api").strip().lower() == "worker":
         return WorkerSettings()  # pyright: ignore[reportCallIssue]

@@ -1,38 +1,22 @@
 /**
- * The shared `parts[]` message-content model — the one thing every producer and
- * consumer of a chat message (the `conversationApi` reload projection, the live
- * turn stream, `MessageContent`'s render, `attachmentStore`'s transforms) agrees
- * on the shape of. This did NOT exist as a type anywhere before this file — it is derived
- * from the real construction/consumption sites, not invented:
- *
- *   - `TextPart`/`FilePart` (all three `file` sub-shapes) come verbatim from the
- *     JSDoc contract at the top of `attachmentStore.js`, the module that owns
- *     the parts<->wire transform.
- *   - `PlanOptionsPart`/`StepPart` wrap the already-typed `PlanOptionsItem`/
- *     `StepItem` from `turnStreamApi.ts` rather than re-declaring them — both
- *     are constructed ONLY by `conversationApi.js`'s `messagesFromProjection`
- *     (the reload path); the live path never builds these two part kinds
- *     directly.
+ * WHY THIS EXISTS: the shared `parts[]` message-content model every producer/consumer of a
+ * chat message (`conversationApi`'s reload projection, the live turn stream, `MessageContent`'s
+ * render, `attachmentStore`'s transforms) agrees on. Derived from the real construction/
+ * consumption sites, not invented:
+ *   - `TextPart`/`FilePart` come verbatim from the JSDoc contract atop `attachmentStore.ts`
+ *     (owns the parts<->wire transform; converted since this file was written, confirming
+ *     these shapes — one revision, `FilePartOffice` gained `truncationNote`).
+ *   - `PlanOptionsPart`/`StepPart` wrap the already-typed `PlanOptionsItem`/`StepItem` from
+ *     `turnStreamApi.ts`; both are built only by `messagesFromProjection` (reload path).
  *   - `BuildInProgressPart` likewise comes from `messagesFromProjection`.
- *   - `BuildPart` is the one case with a real pre-existing inconsistency
- *     between producers (see below) — this file makes it visible rather than
- *     papering over it.
  *
- * PRE-EXISTING INCONSISTENCY, STILL NOT FIXED: the persisted/reload `build` part
- * (`conversationApi`'s `messagesFromProjection`, the `banner` branch) and the live
- * `build` part carry different field sets under the same `type:'build'`
- * discriminant. Both producers named here originally lived on the deleted builder
- * page; the divergence outlived it, which is why the two named types below are
- * still worth keeping apart. No consumer has ever distinguished them — every field
- * is read via plain optional access regardless of producer, which is why this was
- * never a runtime bug.
- * `BuildPartPersisted` and `BuildPartLive` are kept as two distinct named
- * types, unioned, rather than collapsed into one everything-optional shape, so
- * the divergence stays legible to a future reader.
- *
- * UPDATE: `attachmentStore.ts` has since converted — its real construction
- * sites confirmed this file's shapes, with one revision: `FilePartOffice`
- * gained `truncationNote` (was missing when this file was first written).
+ * PRE-EXISTING INCONSISTENCY, STILL NOT FIXED: the persisted/reload `build` part (the
+ * `banner` branch of `messagesFromProjection`) and the live `build` part carry different
+ * field sets under the same `type:'build'` discriminant — both trace to the deleted builder
+ * page, and the divergence outlived it. No consumer has ever distinguished them (every field
+ * is read via optional access regardless of producer), so it was never a runtime bug.
+ * `BuildPartPersisted`/`BuildPartLive` stay two distinct named types, unioned rather than
+ * collapsed into one everything-optional shape, so the divergence stays legible.
  */
 import type { PlanOptionsItem, StepItem } from './turnStreamApi'
 
@@ -142,21 +126,12 @@ export interface StepPart {
 }
 
 /**
- * The agent is REASONING — and this part carries no text, by construction.
- *
- * THE STATUS-ONLY GUARANTEE IS STRUCTURAL, NOT A PROMISE. Reasoning text is technical and far
- * too much for the people who read this, so the decision is that the transcript shows THAT the
- * agent is working and never what it is working through. The server enforces the same rule at
- * the other end — reasoning is stored for the provider's next turn and is never projected,
- * never framed and never sent here — and this shape is the second wall: there is no field for
- * reasoning text to arrive in, so a later change cannot start carrying it by accident.
- *
- * THE ONLY PRODUCER IS THE LIVE SURFACE, which synthesises one at the TAIL of the streaming
- * message while the turn's `working` flag is true — the model is thinking at the end of what it
- * has written so far, and `streamingParts` records at length why pinning it to index 0 made the
- * turn jump down the screen. It has no reload counterpart on purpose: a finished turn is not
- * thinking, and a status line about a moment that has passed is noise in a transcript somebody
- * is reading tomorrow.
+ * The agent is REASONING; carries no text, by construction — STRUCTURAL, not a promise:
+ * reasoning is too technical for readers, so the transcript shows only THAT the agent works.
+ * The server enforces this too (never projected here); this shape is the second wall, with
+ * no field for the text to land in by accident. Synthesised only by the LIVE surface, at the
+ * TAIL of a streaming message while `working` is true (see `streamingParts` on the index-0
+ * jump) — no reload counterpart, since a finished turn isn't thinking.
  */
 export interface ReasoningPart {
   type: 'reasoning'

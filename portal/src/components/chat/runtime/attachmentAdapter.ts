@@ -1,49 +1,27 @@
 /**
  * THE LIBRARY'S ATTACHMENT ADAPTER, OVER THIS PROJECT'S OWN PIPELINE.
  *
- * ═══ WHY THIS EXISTS AT ALL ═══
+ * WHY THIS EXISTS
  *
- * The library's composer primitives — its add-attachment control, its chip list and its dropzone —
- * are all gated on the `attachments` capability, and that capability is DERIVED from whether an
- * adapter is registered. There is no way to render the library's box and keep the capability off:
- * the add control renders nothing, the chips render nothing, and the dropzone short-circuits.
+ * The library's composer chrome (add-attachment control, chip list, dropzone) only
+ * renders once an adapter is registered — there's no way to get the UI without also
+ * accepting an adapter. Registering one must NOT mean handing the library the
+ * pipeline: it renders a chip, but never decides what content is re-sent, which
+ * binaries are inlined, the cache-breakpoint ceiling, or fence-escaping — those stay
+ * in `utils/attachmentInput.ts` and the send paths that read it.
  *
- * So adopting the box means registering an adapter. What it must NOT mean is handing the library
- * the pipeline.
+ * This adapter does exactly three things: `add` runs OUR validation and base64 read,
+ * refusing in OUR words; `remove` is a no-op (nothing uploaded, nothing to undo);
+ * `send` returns the payload honestly but is NEVER CALLED here — `composer.send()`
+ * clears the composer text before awaiting anything and restores it only if the
+ * attachment tasks throw, never if the append itself does. That window has already
+ * destroyed a citizen's typed message and staged files once; `ComposerBox` sends
+ * itself instead and clears only after the server accepts. `send` stays implemented
+ * so a future caller gets a correct payload, not a lie.
  *
- * ═══ THE PIPELINE STAYS OURS, AND THAT IS THE WHOLE CONTRACT ═══
- *
- * The library renders a chip; it does not decide which content is re-sent, which binaries are
- * inlined, the cache-breakpoint ceiling, or how fences are escaped. Every one of those decisions
- * lives in `utils/attachmentInput.ts` and the send paths that read it, and none of them moves here.
- *
- * What this adapter does is exactly three things:
- *   · `add`   — runs OUR validation and OUR base64 read, and refuses in OUR words.
- *   · `remove`— nothing to undo. The decoded bytes live in the returned object and die with it;
- *               no upload has happened, so there is nothing on a server to withdraw.
- *   · `send`  — hands back the same payload as a complete attachment. It is on the interface and
- *               therefore has to be honest, but SEE BELOW: this project's send never calls it.
- *
- * ═══ `send` IS NOT ON THIS PROJECT'S SEND PATH, AND THAT IS DELIBERATE ═══
- *
- * `composer.send()` sets `_text = ""` BEFORE it awaits anything and restores it only if the
- * ATTACHMENT tasks throw — never if the append itself does. That is precisely the defect that has
- * already destroyed a citizen's typed message and their staged files, and OUR validation plus OUR
- * base64 read (the `add` above) run long enough to widen exactly that window if `composer.send()`
- * ever drove them.
- *
- * So the composer's own send is not used. `ComposerBox` reads the staged attachments off the
- * runtime at press time, performs the send itself, and clears only once the server has accepted.
- * `send` is implemented here anyway rather than throwing, because an interface member that lies
- * is worse than one that is merely unused — if a future path does route through the library's
- * send, it gets the right payload rather than an exception.
- *
- * ═══ THE PAYLOAD RIDES ON THE ATTACHMENT, NOT BESIDE IT ═══
- *
- * The library's `Attachment` is the only thing that survives from `add` to press time, so the
- * decoded bytes travel on it. They are stashed under one non-enumerated key rather than smuggled
- * into `content`, because `content` is a list of message parts the library may render, and a
- * base64 blob is not something anyone should see rendered.
+ * The payload rides ON the library's `Attachment` object under one non-enumerated
+ * key, never inside `content` — `content` is message parts the library may render,
+ * and a base64 blob must never be one of them.
  */
 import {
   fileToBase64,
@@ -98,13 +76,11 @@ export interface AttachmentAdapterOptions {
    */
   staged: () => readonly Attachment[]
   /**
-   * SAY A REFUSAL OUT LOUD, because the library will not.
-   *
-   * Both the dropzone and the input's paste handler wrap `addAttachment` in `try { … } catch {}`,
-   * so a file over the size cap, a fifth file past the per-message limit, or a format this
-   * platform does not accept would all be dropped in COMPLETE SILENCE — and the citizen would
-   * believe the model can see a file it cannot. `add` still throws, so the library discards the
-   * file; this is how the reason reaches a screen.
+   * SAY A REFUSAL OUT LOUD, because the library will not. The dropzone and paste handler
+   * both wrap `addAttachment` in `try { … } catch {}`, so an oversized file, a fifth file
+   * past the per-message cap, or an unsupported format would otherwise vanish in COMPLETE
+   * SILENCE — leaving the citizen believing the model can see a file it cannot. `add` still
+   * throws so the library discards it; this callback is how the reason reaches a screen.
    */
   onRefused: (message: string) => void
 }
@@ -119,45 +95,12 @@ function kindOf(mediaType: string): PendingAttachment['type'] {
 
 export function createAttachmentAdapter({ accept, staged, onRefused }: AttachmentAdapterOptions): AttachmentAdapter {
   /**
-   * WHAT THIS ADAPTER HAS SAID YES TO AND IS STILL READING, and the whole of why the cap survives
-   * a multi-file drop.
-   *
-   * ONE DROP IS N CONCURRENT `add` CALLS. The dropzone, the OS picker and the paste handler all
-   * fan out with `Promise.all(files.map(…))`, so every file in one gesture starts its `add` in the
-   * SAME tick. `staged()` cannot see any of them, because the runtime appends an attachment only
-   * once `add` has resolved. So eight files dropped at once each validated against an empty list
-   * and all eight went through — a cap bypass reintroduced by the gap between a
-   * synchronous check and an asynchronous read.
-   *
-   * Counting what THIS adapter has accepted closes it, because the accept and the count happen in
-   * the same synchronous stretch — there is no await between them for a sibling to slip through.
-   *
-   * ══ A CLAIM LIVES UNTIL THE FILE IS SOMEBODY ELSE'S TO COUNT ══
-   *
-   * The claims used to be dropped at the end of the tick that made them, on the reasoning that "a
-   * later gesture is a later task, by which time the runtime has published everything that
-   * landed". That was not true, and its being nearly true is what made it survive review: nothing
-   * is published until `fileToBase64` resolves, and `FileReader` resolves on a TASK, not a
-   * microtask. So two gestures a microtask apart — a fast repeated paste of a large image is
-   * exactly that — both validated against nothing, and a sixth file was staged past a cap of five
-   * with no refusal said.
-   *
-   * So a claim is retired by the three things that can end it:
-   *
-   *   · THE COMPOSER IS HOLDING THE FILE. Its id is in the staged list, which now counts it —
-   *     keeping the claim as well would count it twice and refuse a file that fits.
-   *   · THE CITIZEN TOOK THE CHIP BACK. `remove` is the composer telling us so by id, and it is
-   *     the only prompt version of that news: the rule above is applied inside `countable()`, and
-   *     `countable()` runs only when the NEXT file arrives. Until then a removed file's claim sat
-   *     in the cap and in the text budget for as long as any read was still out — erring towards
-   *     refusing a file the citizen was entitled to attach.
-   *   · NOTHING IS IN FLIGHT AT ALL. Every `add` has settled, so every claim has either been
-   *     published (the first case), taken back (the second), or discarded by a `clearAttachments()`
-   *     that cancelled it. This is what keeps a cancelled read from leaving a phantom file
-   *     occupying a slot for ever, and it costs no timer: reads only happen inside `add`, which is
-   *     a later task than the settle.
-   *
-   * A FAILED READ RELEASES ITS OWN CLAIM IMMEDIATELY, because nothing will ever be staged for it.
+   * A local `claimed` count above `staged()`, because concurrent `add()` calls (one drop
+   * gesture is N parallel calls) all read `staged()` before any of them publish — without
+   * this, a five-file cap let eight files through. A claim retires when: the composer now
+   * holds the file (it's in `staged()`); the user removed the chip (`remove`); or every read
+   * has settled with nothing left unpublished (a cancelled `clearAttachments()`). A failed
+   * read releases its claim immediately.
    */
   const claimed = new Map<string, { mediaType: string; size: number }>()
   let reading = 0

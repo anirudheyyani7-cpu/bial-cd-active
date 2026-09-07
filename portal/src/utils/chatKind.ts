@@ -1,33 +1,13 @@
 /**
- * What a chat's KIND is called, and how a row draws it — ONE table, not a predicate.
+ * What a chat's KIND is called, and how a row draws it — ONE table, not a predicate: an
+ * exhaustive lookup with a NAMED fallback ("Chat", never "Unknown"/"Assistant"), covering
+ * every value the field can hold today plus one honest answer for tomorrow's.
  *
- * An exhaustive lookup with a NAMED fallback, never a two-way test on the kind: every value the
- * field can hold today, plus one honest answer for every value it might hold tomorrow. A test
- * that recognises one kind drops everything else into its else arm, and an icon can get away
- * with that where a word that says "Plan" cannot.
- *
- * THE FALLBACK'S WORD IS "Chat", deliberately. Not "Unknown" — citizen-hostile on a row someone
- * is about to click — and not "Assistant", which is a schema word, not a product word. "Chat" is
- * true of every value this field can carry, including ones that do not exist yet.
- *
- * RE-POINTED THE WORDING AT THE SERVER. `word` and `description` no longer live as
- * literals in this file — they come from `chat_kinds` on the once-cached `GET /auth/me` bootstrap
- * (`utils/auth.ts`'s `UserProfile.chat_kinds`, mirroring `backend/src/services/agent/toolsets.py`'s
- * `CHAT_KIND_CATALOGUE`), the same catalogue the toolset registry sits beside. Only `Icon` and
- * `pill` — and the screen-reader-only `completion` suffix, which is UI grammar rather than a
- * description of what a kind IS — stay LOCAL: the server has no notion of a Lucide icon or a
- * Tailwind class, and re-pointing those too would just move the "what does this look like"
- * decision somewhere it does not belong.
- *
- * THIS IS THE SINGLE FRONTEND SOURCE of what a kind is CALLED and what it DOES. Its readers
- * are the toolbar row's kind pill and the rail composer's kind picker. Said plainly rather than
- * as an aspiration, because one surface still spells the words itself: the help page's prose, a
- * named deferral rather than an oversight — the copy rides a later release. When it does catch
- * up, it should read the `description` this module already carries rather than restating it.
- *
- * `kind` arrives as a plain `string` (`conversationApi` types it that way, and `ProjectPage`'s
- * `narrowChat` legitimately coerces a malformed row's kind to `''`), so the lookup is keyed on a
- * string and never on a union — the fallback is the type-safety, not a cast.
+ * `word`/`description` are RE-POINTED AT THE SERVER, from `chat_kinds` on the bootstrap
+ * (`utils/auth.ts`'s `UserProfile.chat_kinds`, mirroring backend's `CHAT_KIND_CATALOGUE`) —
+ * never literals here. Only `Icon`/`pillIcon`/`pill`/`completion` stay LOCAL: the server has
+ * no notion of a Lucide icon or a Tailwind class. `kind` arrives as a plain `string`, never a
+ * union, so the lookup is keyed on a string and the fallback IS the type-safety, not a cast.
  */
 import { MessageSquare, Wrench, type LucideIcon } from 'lucide-react'
 import { getStoredUser } from './auth'
@@ -52,44 +32,27 @@ export interface ChatKindPresentation {
   description: string
   Icon: LucideIcon
   /**
-   * THE GLYPH THE KIND PILL DRAWS — a different question from `Icon`, and the boards answer the
-   * two differently.
-   *
-   * `PlanChat` draws an 11px message-square inside its PLAN pill. `BuildChat`, `NewBuildChat`,
-   * `PlainAnswer` and `ChatStarting` — every primary board that draws a build chat — draw BUILD as
-   * the word alone. (The two transition boards, `T5BuildOpens` and `T6BuildDone`, do draw a glyph
-   * in a build pill, but a wand on a different palette entirely; the primary boards outrank them,
-   * which is how the rest of this branch treats them.)
-   *
-   * `Icon` still answers "what mark stands for this kind" for the rail's kind picker, where both
-   * kinds carry one. `null` here is a real answer, not a missing value: this kind's pill is a word.
+   * THE GLYPH THE KIND PILL DRAWS — a different question from `Icon`, answered differently per
+   * board: PLAN draws an 11px message-square in its pill; BUILD draws the word alone (the two
+   * transition boards draw a wand glyph on a different palette, but the primary boards outrank
+   * them). `Icon` still answers "what mark stands for this kind" for the rail's picker, where
+   * both kinds carry one — `null` here is a real answer: this kind's pill is a word, not a mark.
    */
   pillIcon: LucideIcon | null
   /**
-   * The kind PILL's own colours — a text/ground pair, applied to the caps pill the canvas draws
-   * beside a chat's title. LOCAL: the server has no opinion on Tailwind classes.
-   *
-   * The pair is the board's, not a choice made here: BUILD is #8C5D1E on #FFF4E0 and PLAN is
-   * #0A5C5F on #E0F5F6, both of which this build already owns as tokens. The pill is a LABEL and
-   * never an action, which is why gold is allowed to appear in it while nothing gold may fill a
-   * button.
+   * The kind PILL's own colours — a text/ground pair, applied to the caps pill beside a chat's
+   * title. LOCAL: the server has no opinion on Tailwind classes. The pair is the board's, not a
+   * choice made here (BUILD #8C5D1E on #FFF4E0, PLAN #0A5C5F on #E0F5F6, both owned as tokens);
+   * the pill is a LABEL, never an action, which is why gold may appear here but not in a button.
    */
   pill: string
   /**
-   * What the empty message box invites, for a chat of this kind that does not exist yet.
-   *
-   * LOCAL, for the same reason `completion` is: it is UI grammar — the hint inside a control —
-   * rather than part of what a kind IS, so there is nothing for it to drift out of sync with.
-   *
-   * It lives HERE rather than as a `kind === 'plan' ? … : …` at the one place that renders it,
-   * and that is not a style preference: branching on a chat's kind under `pages/`
-   * and `components/workspace/` is forbidden, mechanically, because per-kind branches scattered across
-   * surfaces are how the two-page era grew. One entry per kind in the catalogue is the shape
-   * that rule leaves open.
-   *
-   * The rail asked for "the change you need" in BOTH kinds, directly under a sentence promising
-   * a Plan chat changes nothing — so the box contradicted the copy above it at exactly the
-   * moment a citizen is deciding which kind they meant.
+   * What the empty message box invites, for a chat of this kind that does not exist yet. LOCAL,
+   * like `completion`: UI grammar, not part of what a kind IS. Lives HERE, not as a `kind ===
+   * 'plan' ? … : …` at the render site — per-kind branching under `pages/` and
+   * `components/workspace/` is forbidden MECHANICALLY (that scatter is how the two-page era
+   * grew). Fixes a real bug: the rail once asked for "the change you need" in BOTH kinds,
+   * contradicting the sentence above it promising a Plan chat changes nothing.
    */
   composerPlaceholder: string
 }
@@ -143,15 +106,11 @@ export const UNKNOWN_CHAT_KIND: ChatKindPresentation = {
 
 /**
  * How to present one chat row's kind. Never throws, never returns undefined.
- *
- * TWO INDEPENDENT LOOKUPS, EACH WITH ITS OWN NAMED MISS. `Object.hasOwn` on `CHAT_KIND_LOOKS`,
- * NOT a bare index — `kind` is unvalidated wire data (`narrowChat` passes through whatever
- * string the API sent), so a row whose kind is `"constructor"` or `"toString"` would find a
- * truthy value on `Object.prototype` and sail past a bare `??`. And a plain `.find()` against
- * the catalogue array, not an index either — an array has no `Object.prototype` collision to
- * guard against, but it CAN legitimately come back empty (the profile has not loaded, or the
- * server sent a kind this build's `CHAT_KIND_LOOKS` does not recognise yet), and that miss must
- * fall back exactly like an unknown wire value rather than rendering a half-built badge.
+ * TWO INDEPENDENT LOOKUPS, EACH WITH ITS OWN NAMED MISS. `Object.hasOwn` on
+ * `CHAT_KIND_LOOKS`, not a bare index — `kind` is unvalidated wire data, so a kind of
+ * `"constructor"` or `"toString"` would find a truthy `Object.prototype` value past a bare
+ * `??`. And `.find()` against the catalogue array, not an index: no prototype collision
+ * there, but it CAN legitimately come back empty, and that miss falls back the same way.
  */
 export function chatKindFor(kind: string): ChatKindPresentation {
   const look = Object.hasOwn(CHAT_KIND_LOOKS, kind) ? CHAT_KIND_LOOKS[kind] : undefined

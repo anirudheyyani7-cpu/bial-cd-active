@@ -4,37 +4,23 @@ Revision ID: 0030_approval_route_declaration
 Revises: 0029_classification_reviews
 Create Date: 2026-08-19
 
-Two nullable columns land on `app_registry`:
+Two nullable columns on `app_registry`: `approval_route` (native enum `runbook`|`self_publish`)
+records which LINEAGE the submission entered through — explicit because `redeploy_needed`
+derives from two columns a self-published app never sets, so without it that app would read
+"Deploy needed" forever. `declaration` is the JSONB publish-flow payload (both answer sets,
+per-question diffs, redacted explanation) — JSONB for the same reason
+`deployments.classification` (0026) is: the questionnaire is expected to be reworded.
 
-  * `approval_route` — a native enum (`runbook` | `self_publish`) recording
-    which LINEAGE the current submission entered through. An EXPLICIT column, not a
-    derivation tweak: `redeploy_needed` derives from two columns a
-    self-published app never sets, so without this a self-published app would read
-    "Deploy needed" forever and prompt an administrator to run a runbook that must
-    not be run.
-  * `declaration` — the JSONB payload the publish flow attaches at submit: both
-    answer sets, the per-question differences, and the redacted explanation.
-    JSONB for the same reason `deployments.classification` (0026) is: the
-    questionnaire is expected to be reworded and reweighted.
+WHY THIS EXISTS: BACKFILL marks every approved row, and every PENDING row, `runbook`. Approvals
+are obvious — they were an out-of-band review, never a self-publish decision. PENDING is the
+one easy to miss: a queue item outstanding at release has no lineage, so approving it would
+leave `approval_route` NULL, fail the gate's rule 3, and force a second approval. Marking it
+`runbook` turns that into a NAMED dead end (approve refuses, tells the admin to re-submit)
+instead of a silent loop. Drafts and never-approved rejects stay NULL and pick up
+`self_publish` on their first trip through publish.
 
-BACKFILL: every existing row WITH an approval, and every row
-sitting in PENDING, is marked `runbook`. The approvals half is the obvious one —
-they were granted for an out-of-band code review, a different decision, so they
-must never satisfy the gate's self-publish rule. The pending half is the one that
-is easy to miss and costs more: a queue item outstanding at release carries no
-lineage, so the administrator's approval would leave it NULL, the gate's rule 3
-would not be satisfied, and the citizen would need a SECOND approval to publish
-once. Marking them `runbook` makes that a NAMED dead end (approve refuses with
-copy telling the admin the citizen must re-submit through the publish flow)
-rather than a silent loop. Everything else — drafts, and rejected rows that were
-never approved — stays NULL and picks up `self_publish` on its first trip through
-the publish flow.
-
-`downgrade` just drops the columns + the enum: the backfill is not "undone"
-because it has nothing to restore — every value it wrote lives in a column the
-downgrade removes.
-
-Hand-finalized.
+`downgrade` just drops the columns + enum — nothing to "undo," every backfilled value lives
+in a column the downgrade removes. Hand-finalized.
 """
 
 from __future__ import annotations

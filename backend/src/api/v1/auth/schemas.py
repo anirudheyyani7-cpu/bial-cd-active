@@ -38,17 +38,14 @@ class ChatKindInfo(BaseModel):
 
 
 class UserProfile(BaseModel):
-    """The current user's public profile — no secrets, no upn/token_version. Snake_case on the
-    wire (deliberately NOT reparented onto CamelModel — `display_name`/`is_admin` are the SPA
-    contract).
+    """The current user's public profile — no secrets, no upn/token_version. Snake_case on the wire
+    (deliberately NOT on `CamelModel` — `display_name`/`is_admin` are the SPA contract).
 
-    `is_admin` is a DERIVED, read-only identity hint (email ∈ SUPERADMIN_EMAILS) so the SPA can
-    render the admin entry point. It is NOT the authorization gate — every `/v1/admin/*` route is
-    still enforced server-side by `requires_superadmin`; a forged `is_admin` buys nothing.
-
-    `chat_kinds` rides this ONCE-CACHED bootstrap rather than a dedicated endpoint: it is
-    the whole catalogue of what a Plan chat and a Build chat ARE, so the composer, the history
-    list and the help page all read the same two descriptions instead of each spelling its own."""
+    `is_admin` is a DERIVED, read-only hint (email ∈ SUPERADMIN_EMAILS), NOT the authorization gate
+    — every `/v1/admin/*` route is still enforced server-side by `requires_superadmin`; a forged
+    `is_admin` buys nothing. `chat_kinds` rides this ONCE-CACHED bootstrap rather than a dedicated
+    endpoint: the whole catalogue of what a Plan/Build chat ARE, so every reader shares one
+    description."""
 
     id: uuid.UUID
     email: str

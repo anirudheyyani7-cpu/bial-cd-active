@@ -143,12 +143,10 @@ async def _stage_the_candidates(report: PassReport) -> int:
     """Stamp `bial-reclaim-staged-at` on every STAGE verdict. Returns how many took.
 
     NOTHING ELSE WRITES THIS TAG, and the classifier reads exactly `reclaim_staged_at` to decide
-    STAGE versus DESTROY — so if this stops running, candidates re-stage forever and the destroy
-    arm, its ceiling, its lock and its re-validation have no reachable input.
-
-    ONE CONTAINER'S REFUSED PATCH IS ONE CONTAINER'S PROBLEM. The stamp is idempotent and the next
-    pass retries it, so a throttled or vanished container is logged and stepped over; aborting the
-    sweep on the first failure would leave the fleet part-staged with no report of what remains."""
+    STAGE versus DESTROY — so if this stops running, the destroy arm has no reachable input.
+    ONE CONTAINER'S REFUSED PATCH IS ONE CONTAINER'S PROBLEM: the stamp is idempotent and
+    retried next pass, so a throttled/vanished container is logged and stepped over rather
+    than aborting the whole sweep."""
     from src.services.build_sessions.destroy import staging_tags
     from src.services.build_sessions.inventory import FleetTagger
     from src.services.build_sessions.reclaim import Verdict
@@ -251,14 +249,11 @@ def _threshold() -> int:
 async def _record_pass(*, outcome: str, counts: dict[str, int], detail: str | None) -> None:
     """Write the pass record. EVERY outcome, including the boring ones.
 
-    A zero-candidate pass still writes, because a healthy quiet fleet and a dead worker are
-    otherwise the same observation. A declined pass writes, because "reclamation is switched off"
-    is a thing an operator should be able to see rather than infer from silence. A failed pass
-    writes, because a pass that raises every tick leaves no `ok` row and would otherwise be
-    indistinguishable from one that never ran.
-
-    ITS OWN SESSION, not the caller's: this runs outside any request, and it must land even when
-    the pass it is describing has just failed."""
+    A zero-candidate pass still writes (quiet fleet vs. dead worker are otherwise the same
+    observation); a declined pass writes (so "off" is visible, not inferred from silence); a
+    failed pass writes (a pass that raises every tick must not look like one that never ran).
+    ITS OWN SESSION, not the caller's: runs outside any request and must land even when the
+    pass it describes has just failed."""
     from src.db.base import async_session_factory
     from src.db.models.worker_pass import PassOutcome, WorkerPass
 

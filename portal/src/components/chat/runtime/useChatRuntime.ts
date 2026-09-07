@@ -2,35 +2,18 @@
  * THE RUNTIME — the single junction between the stream reader, the reload projection and every
  * rendered element.
  *
- * `useExternalStoreRuntime`, deliberately, and not `useLocalRuntime` or the AI-SDK runtime: those
- * two OWN the message array and mint ids. The library is a render model, and the hydrated
- * server transcript is the truth for ordering, identity and history. Everything this hook
- * passes is read-only from the library's point of view.
+ * `useExternalStoreRuntime`, deliberately, not `useLocalRuntime` or the AI-SDK runtime: those own
+ * the message array and mint ids, while here the hydrated server transcript is the truth for
+ * ordering, identity and history — everything this hook passes stays read-only to the library.
  *
- * ══ EVERY CAPABILITY IS OFF BY OMISSION, EXCEPT THREE ══
- *
- * A capability in this library is not a setting you switch off. It is DERIVED from which callbacks
- * and adapters you hand over, which means the way to keep one off is to pass nothing — and the way
- * one wakes up by accident is somebody adding a callback to fix an unrelated problem. Verified
- * derivations, read out of the installed 0.15.17:
- *
- *   switchToBranch, delete        ← `setMessages`      (ONE prop, TWO capabilities)
- *   edit, reload, refetchThread   ← onEdit / onReload / onRefetchThread
- *   cancel                        ← onCancel                          ← WE PASS THIS
- *   speech, dictation, voice,
- *   attachments, feedback         ← adapters.*      ← WE PASS `attachments`
- *   queue                         ← queue
- *   unstable_copy                 ← unstable_capabilities.copy (default true)
- *
- * `cancel` is the one capability this surface WANTS: registering `onCancel` is what puts the
- * relocated stop on the runtime. `unstable_copy` is passed explicitly even though `true` is already
- * the default, so the intent is legible and a future change of default shows up in a diff rather
- * than in production.
- *
- * THE WRITTEN LIST HAS THREE `true` ENTRIES. Anyone writing the exact-equality test from a shorter
- * sentence — "everything off except copy" — gets a red suite, and the tempting fix is to drop
- * `onCancel`, which silently deletes the stop path. `EXPECTED_CAPABILITIES` below is the list, the
- * test compares against it with `toEqual`, and this paragraph is why.
+ * WHY THIS EXISTS: in this library a capability is DERIVED from which callbacks/adapters you
+ * hand over, not a setting you switch — so the way one wakes up by accident is someone adding a
+ * callback to fix an unrelated problem. Only three are on, deliberately: `cancel` (via
+ * `onCancel`, the relocated stop), `unstable_copy` (explicit though already the default, so a
+ * future default change shows in a diff), and `attachments` (our own adapter — see its own
+ * comment below, and `attachmentAdapter.ts`). `EXPECTED_CAPABILITIES` pins all fourteen keys and
+ * a test compares it with `toEqual`; a red suite there tempts the fix of dropping `onCancel`,
+ * which SILENTLY DELETES THE STOP PATH — do not take that fix.
  */
 import { useMemo } from 'react'
 import {

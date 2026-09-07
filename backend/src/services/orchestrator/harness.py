@@ -1,22 +1,14 @@
-"""`run_build` — the frozen build entry point, implemented as a multi-run self-heal state machine.
+"""`run_build` — the frozen build entry point: a multi-run self-heal state machine.
 
-The build is a SEQUENCE of `agent.iter` runs. Within each run the harness drives the node loop
-manually and meters EVERY model step: `enforce_daily_limit` strictly before the request fires,
-`record_usage` strictly after off `CallToolsNode.model_response.usage`, in BRAIN's own per-step
-billing session (BRAIN owns the commit). Between runs it verifies (`tsc` + dev health) and, if red,
-starts the next run seeded with the redacted diagnostic. Three ceilings, three outcomes: the daily
-quota → graceful `ended`; the flat self-heal budget / the per-run request limit → `escalation` →
-`ended(failed)`.
+A SEQUENCE of `agent.iter` runs; each run meters every model step — `enforce_daily_limit`
+strictly before the request fires, `record_usage` strictly after (BRAIN owns the commit).
+Between runs it verifies (`tsc` + dev health) and reseeds on red with the diagnostic. Outcomes:
+quota → `ended`; self-heal/request-limit → `escalation` → `ended(failed)`.
 
-INVARIANTS: `run_build` never lets an Exception escape (a raise would strand SESSION-API's task
-with no terminal); every path funnels to exactly one `BuildResult`.
-
-BRAIN NEVER EMITS THE TERMINAL `ended`. It never runs git, never tears down, never touches the
-lock: completion travels as DATA (`BuildResult.status` / `.reason` / `.preview_url`), and
-SESSION-API renders the one terminal frame from that returned result. The funnel emits only the
-non-terminal context envelopes BRAIN owns (`quota_exceeded`, `escalation`) and returns. On
-stop/idle SESSION-API cancels the task; BRAIN unwinds on `CancelledError` and returns no value
-(SESSION-API owns that terminal too).
+INVARIANTS: never lets an Exception escape — every path funnels to exactly one `BuildResult`. BRAIN
+NEVER EMITS THE TERMINAL `ended` (no git, teardown, lock touch): completion travels as DATA, and
+SESSION-API renders the terminal frame from it, emitting only BRAIN's non-terminal envelopes. On
+stop/idle SESSION-API cancels the task; BRAIN unwinds on `CancelledError` with no value returned.
 """
 
 from __future__ import annotations
@@ -468,13 +460,12 @@ class BuildOrchestrator:
     ) -> tuple[_QuotaHit | None, list[ModelMessage]]:
         """One `agent.iter` run driven node-by-node, with per-model-step metering and per-step
         transcript persistence. Returns `(quota_hit, accumulated_messages)`; on a quota hit the
-        offending model request never fires and the messages are unchanged.
+        request never fires and the messages are unchanged.
 
-        PERSISTENCE CADENCE: one `step` row per model step — `[the step's request, its
-        response]` — persisted after that step's tools have executed. A crash loses at most the
-        in-flight step (its tool returns travel in the NEXT step's request, and the load seam's
-        dangling-call repair covers the orphaned calls); the delta cursor starts at
-        `len(messages)`, since the prior runs' history was already persisted."""
+        PERSISTENCE CADENCE: one `step` row per model step, persisted after that step's tools
+        execute. A crash loses at most the in-flight step (its tool returns land in the NEXT step's
+        request; the load seam's dangling-call repair covers the orphaned calls). The delta cursor
+        starts at `len(messages)`, since prior runs' history was already persisted."""
         quota_hit: _QuotaHit | None = None
         cut_short = False
         pending_answers: ModelRequest | None = None
@@ -711,37 +702,14 @@ class BuildOrchestrator:
         )
 
     async def _watch_preview(self, emitter: ProgressEmitter, deps: BuildDeps) -> None:
-        """The DECOUPLED early readiness watcher. A managed task, created just after
-        `dev_start` and cancelled + awaited by `run_build` before the terminal funnel. It owns two
-        framing transitions the between-runs `verify()` cadence is too coarse for:
-
-          * FIRST SERVE — the instant `/dev/status` reports `ready`, emit `preview_ready` DIRECTLY
-            (not a loop signal). `_run_one`'s first act is `await run.next(...)` — a tens-of-secs
-            model request — so a flag the loop only checks at node boundaries would frame at
-            first-MODEL-response, not first-SERVE: the exact blind window this closes. The direct
-            emit is seq-safe because `ProgressEmitter._emit` fixes `seq` with no await before the
-            sink, and the manager buffers synchronously (see progress.py).
-          * DEV-PROCESS CRASH — after the frame, a `running=False` edge means the dev process died.
-            Note `ready` is NOT a proxy for that any more: it now means `_dev_is_serving()`, which
-            consults no child state at all, precisely so a server the agent started itself still
-            reports ready with `running=False`. That is why the arm below tests `not
-            status.running` EXPLICITLY, and why it is ordered after the `status.ready` arm — a
-            dead child whose port is still served is live, not crashed. Emit the distinct
-            `preview_reconnecting` ONCE per crash so a dead frame never masquerades as
-            "building", then re-emit `preview_ready` when it serves again. The FRONTEND cannot
-            do this — `/dev/status` is supervisor-internal + bearer-guarded — so crash detection
-            MUST be backend-originated.
-
-        The INITIAL frame is deduped across the warm-resume emit + this watcher + the between-steps
-        verify by the shared, synchronous `deps.claim_preview_frame()` (seeded from handle.ready).
-        The reconnect→reframe cycle is this watcher's ALONE — verify never re-claims once framed —
-        so it stays seq-safe without a second guard, tracked by the local `reconnecting` edge flag.
-
-        The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` (see that constant for the
-        reasoning, and keep `turns/engine.py::_watch_preview` in step with it): a single
-        not-ready/not-running pair is the normal reading of a healthy-but-slowly-rendering app the
-        agent started itself, and acting on it re-mounts the citizen's iframe under them.
-        """
+        """The DECOUPLED early readiness watcher: created after `dev_start`, cancelled + awaited
+        by `run_build` before the terminal funnel. Owns two transitions `verify()`'s between-runs
+        cadence is too coarse for: FIRST SERVE — emit `preview_ready` the instant `/dev/status`
+        reports `ready`, DIRECTLY (not a loop signal, since `_run_one`'s first act blocks for
+        tens of secs) — and DEV-PROCESS CRASH — a `running=False` edge AFTER framing emits
+        `preview_reconnecting` once, debounced over `CRASH_EDGE_CONSECUTIVE_POLLS` (keep
+        `turns/engine.py::_watch_preview` in step). `/dev/status` is supervisor-internal, so
+        crash detection MUST be backend-originated; `deps.claim_preview_frame()` dedupes it."""
         reconnecting = False
         unanswered_polls = 0
         while True:
@@ -791,25 +759,14 @@ async def _frame_the_preview(
     *,
     preview_url: str,
 ) -> None:
-    """THE one door onto `preview_ready` for this whole module.
-
-    Four sites used to emit it — the warm-resume, verify's fallback, and the watcher's two arms
-    — and a warm request added to three of them is a warm request that one path silently skips.
-    Funnelling first is what makes "the iframe never mounts onto an uncompiled route" a property
-    of the module rather than a habit of whoever edits it next.
-
-    Warming cannot fail the frame: `someone_has_to_go_first` swallows everything and returns a
-    status nobody here reads. It cannot COST the frame either, which is what the `finally`
-    is for: the callers reach here having already burned the one-shot `claim_preview_frame()`
-    guard, so a cancellation landing inside the (up to 8s) warm request would leave the frame
-    claimed forever and never emitted — and `_stop_watcher` cancels this watcher at every
-    terminal, so that is an ordinary end-of-build window, not an exotic one.
-
-    The await in the `finally` runs during the unwind rather than being skipped: a single
-    `Task.cancel()` is delivered once, and `_stop_watcher` cancels exactly once. Even under a
-    second cancellation the emit is not lost outright — `ProgressEmitter._emit` fixes `seq` and
-    the session sink buffers the envelope BEFORE its first real suspension point (the liveness
-    renew), so the frame is on the replayable buffer either way."""
+    """THE one door onto `preview_ready` for this whole module — four sites used to emit it
+    directly, so funnelling here is what keeps "iframe never mounts onto an uncompiled route" a
+    property of the module. Warming (`someone_has_to_go_first`) cannot fail the frame — it
+    swallows everything — and cannot COST it either: callers have already burned the one-shot
+    `claim_preview_frame()` guard, so the `finally` guarantees the emit even under a
+    cancellation mid-warm-request; `_stop_watcher` cancels exactly once, so that await always
+    runs, and `ProgressEmitter._emit` fixes `seq` before any suspension — the frame lands on
+    the replayable buffer either way."""
     try:
         await sandbox_client.someone_has_to_go_first(handle)
     finally:

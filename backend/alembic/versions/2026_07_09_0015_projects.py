@@ -104,14 +104,10 @@ def downgrade() -> None:
     """Schema-shape rollback — safe only PRE-DIVERGENCE.
 
     Recreating `uq_app_registry_owner_conversation` assumes no two apps share a
-    (user_id, conversation_id). The NEW schema makes that shape legal — the same
-    conversation may head one app per project (proven by
-    `tests/db/test_projects_migration.py::test_old_owner_conversation_uniqueness_dropped`)
-    — so once such rows exist, the constraint recreation below aborts with a
-    UniqueViolation (transactionally: the whole downgrade rolls back cleanly, nothing
-    half-applied). Manually resolve conflicting (user_id, conversation_id) groups
-    before downgrading a diverged database.
-    """
+    (user_id, conversation_id) — legal under the NEW schema (one conversation, one app per
+    project). If such rows exist, the constraint recreation aborts with a UniqueViolation
+    (transactional: the whole downgrade rolls back cleanly). Resolve conflicting
+    (user_id, conversation_id) groups manually before downgrading a diverged database."""
     # conversations: drop the project parent.
     op.drop_constraint("conversations_project_id_fkey", "conversations", type_="foreignkey")
     op.drop_index(op.f("ix_conversations_project_id"), table_name="conversations")

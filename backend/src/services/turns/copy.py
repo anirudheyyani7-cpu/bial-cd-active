@@ -3,14 +3,12 @@
 ONE MODULE RATHER THAN STRINGS AT THEIR CALL SITES, because a promise about a CLASS of text can
 only be kept if the class has an address. The guard
 `test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon` iterates `vars()` of this
-module, so a sentence written inline at its call site is outside that guard by construction and
-nobody would notice until a citizen read it.
+module, so a sentence written inline at its call site is outside that guard by construction.
 
 THE REGISTER these sentences are held to: no file path, no command, no library or framework name.
 They say what happened, what the person is looking at, and one thing they can do, in the words the
 person who asked for the app already knows. A sentence here that needs to name something technical
-is a wrong sentence rather than a case for relaxing the rule.
-"""
+is a wrong sentence rather than a case for relaxing the rule."""
 
 from __future__ import annotations
 

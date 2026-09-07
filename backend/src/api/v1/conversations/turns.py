@@ -1,23 +1,14 @@
 """The resumable turn transport: POST starts a detached turn, GET subscribes.
 
-`POST /conversations/{id}/turns` → 202 `{turnId}` — the run is detached the moment the
-response leaves; closing the tab changes nothing (disconnect ≠ cancel; the explicit stop
-endpoint is the ONLY cancel). `GET /conversations/{id}/events` is a pure OBSERVER of the
-engine's frame ring: catch-up snapshot then live tail for any subscriber that cannot
-prove gap-free continuity, plain replay for one that can (`?turn=&cursor=`). Multiple
-simultaneous subscribers each get the identical stream — fan-out is the engine's, the
-route only walks the ring.
+`POST /conversations/{id}/turns` → 202 `{turnId}`; the run detaches once the response
+leaves (disconnect ≠ cancel — the stop endpoint is the ONLY cancel). `GET
+/conversations/{id}/events` is a pure OBSERVER of the engine's frame ring: snapshot then
+live tail for a subscriber that can't prove gap-free continuity, plain replay otherwise
+(`?turn=&cursor=`); every subscriber sees the identical stream — fan-out is the engine's.
 
-Wire discipline (copied from the build feed and the since-retired relay): commit the
-SSE response and
-emit the first frame BEFORE any model byte (the snapshot serves that role), `: ping`
-keepalives only between complete frames, errors travel in-band, and the terminal
-`turn_ended` frame is followed by `data: [DONE]` which closes the transport.
-
-The turn plumbing this route shares with the plan→build handoff (binaries resolution, prompt
-assembly, history rehydration, the model/session-factory/storage dependencies) lives in
-`_shared.py` alongside this module — one source, no copies, and no reaching into another
-router's underscore-private names.
+Wire discipline: commit the response and emit the snapshot before any model byte, `: ping`
+between frames only, errors in-band, `turn_ended` followed by `data: [DONE]`. Turn
+plumbing shared with plan→build lives in `_shared.py` — one source, no copies.
 """
 
 from __future__ import annotations
@@ -120,18 +111,12 @@ KEEPALIVE_SECONDS = 15.0
 class NewConversation(CamelModel):
     """The parentage of a conversation that DOES NOT EXIST YET (R-18).
 
-    Present only on a chat's FIRST message. The id rides the path exactly as it does for every
-    other turn, so this carries what a row cannot be built without and nothing else.
-
-    WHY IT LIVES ON THE TURN REQUEST AT ALL. The BROWSER used to create the row with a separate
-    `POST /v1/conversations` a round trip earlier, whose only workspace awareness was a
-    project-ownership check — so a message the workspace then refused left a real, titled,
-    empty conversation in the project's list, named after the text that was refused. (That route
-    is still MOUNTED and still works — only its client went. Do not read this paragraph as a
-    retirement notice and delete the handler.) Folding the creation into this request lets every
-    side-effect-free refusal already above it roll
-    the row back with it, because nothing is committed until the turn's own commit.
-    """
+    Present only on a chat's first message; carries only what a row needs, nothing else. WHY:
+    the browser used to create the row via a separate `POST /v1/conversations` a round trip
+    earlier, checking only project ownership, so a refused message left an orphaned, titled,
+    empty conversation. That route is still MOUNTED and works — only its client went, so don't
+    read this as a retirement notice. Folding creation into this request lets refusals roll the
+    row back too."""
 
     project_id: uuid.UUID
     # REQUIRED, and this is still the only place a chat's kind is ever set. There is no route
@@ -211,20 +196,12 @@ async def start_conversation_turn(
 ) -> uuid.UUID:
     """Persist the user turn and start the run — ONE expression, two readers.
 
-    `POST /turns` and `Build it` differ only in where the prompt came from, whether the user
-    is meant to see it, and whether a file change is OWED; everything after that (the durable
-    pre-run write, the engine claim, the two typed conflict mappings) is identical, and two
-    copies of it would drift the moment either grew a guard.
-
-    `visibility` is what makes Build-it's seed work: the machine-authored "execute the
-    approved plan" text has to be in the model's history and must never render as something
-    the citizen typed. A HIDDEN row is both, with no projection change — `load_history`
-    ignores visibility, `project_rows` skips it.
-
-    `expects_mutation` is the other half of that asymmetry, and it travels to the engine
-    rather than into a row: a Build-it turn that changes no file is a FAILED build, while a
-    typed Write message that changes no file is just a question answered. Only the caller
-    knows which it started, so only the caller can say."""
+    `POST /turns` and `Build it` differ only in prompt origin, visibility, and whether a file
+    change is OWED; the rest (pre-run write, engine claim, conflict mappings) is identical, so
+    one copy stops two guards drifting apart. `visibility=HIDDEN` puts Build-it's machine seed
+    in model history without the citizen seeing it (`load_history` ignores it, `project_rows`
+    skips it). `expects_mutation` travels to the engine: no file change makes a Build-it turn a
+    FAILED build but a Write turn just an answered question — only the caller knows which."""
 
     async def persist_user_turn() -> None:
         await append_batch(

@@ -1,36 +1,24 @@
 /**
  * `/projects/:projectId` — the project screen IS the app now.
  *
- * ═══ WHAT THIS SCREEN SHOWS, AND WHAT IT NEVER STARTS ═══
+ * WHY THIS EXISTS: it shows the RUNNING SANDBOX beside the rail, behind one control the person
+ * presses deliberately — nothing starts a container because a screen was opened (the pane reads
+ * a cheap state endpoint, no container call). No passive view of stored code, no lifecycle badge,
+ * no reroute into a chat; the suite beside this file asserts their absence.
  *
- * It shows the RUNNING SANDBOX, in a pane beside the rail, behind one control the person presses
- * deliberately. Nothing starts a container because a screen was opened: the pane reads a cheap
- * state endpoint that makes no container call, and the only thing that starts anything is a press.
- * There is no passive view of stored code, no lifecycle badge and no reroute into a chat, and the
- * suite beside this file keeps asserting their absence.
+ * This file owns the route, the data, and the beacon — everything visual moved down
+ * (`ProjectWorkspace` publishes on the workspace channel, `WorkspaceRail` renders it); it holds
+ * no layout of its own, since the two-column frame belongs to `WorkspaceShell`, above the Outlet.
+ * THE BEACON FIRES FROM EXACTLY ONE PLACE — the successful-load branch below — because it feeds a
+ * measurement nothing in the UI reflects, so a drop or a double-fire makes the numbers wrong with
+ * no symptom and no failing test; `observe.ts`'s per-project guard only makes a REPEATED call a
+ * no-op, so a second tracker (tempting, since `ProjectWorkspace` independently needs
+ * `project.appId`) would bypass that guard rather than be caught by it.
  *
- * ═══ WHAT THIS FILE OWNS ═══
- *
- * The route, the data, and the beacon. Everything visual moved down: `ProjectWorkspace` is the
- * project-scoped publisher on the workspace channel, and `WorkspaceRail` is what the rail renders.
- * This file starts no publish of its own and holds no layout — the two-column frame belongs to
- * `WorkspaceShell`, above the Outlet, and building a second one here would nest one grid inside
- * another and remount the app on every navigation.
- *
- * THE OBSERVATION BEACON FIRES FROM EXACTLY ONE PLACE, and that place is here — the successful-load
- * branch below. It feeds a measurement nothing in the UI reflects, so dropping it, double-firing
- * it, or letting a remount fire it twice makes the numbers wrong with no symptom and no failing
- * test. `ProjectWorkspace` independently needs `project.appId` for the rail's status line, which is
- * exactly the pull that would make somebody add a second tracker down there; `observe.ts`'s own
- * per-project guard makes a repeated call a safe no-op, so the risk is not defeating that guard but
- * bypassing it with a second mechanism it does not cover.
- *
- * Identity model (memory: app identity + flat URL model):
- *   - `appId` / `hasRelaunchableSnapshot` are READ off the project (a LEFT JOIN on the backend);
- *     the portal never fires a mutating provision call just to learn them. `appStatus` is not
- *     surfaced here — app lifecycle lives on the admin registry, not the citizen project screen.
- *   - a new chat opens at a flat `/chat/{uuid}` carrying its project in a transient
- *     `?projectId=&kind=` query; the row does not exist until its first message.
+ * Identity model (see: app identity + flat URL model): `appId`/`hasRelaunchableSnapshot` are READ
+ * off the project (a backend LEFT JOIN), never via a mutating provision call; `appStatus` lives on
+ * the admin registry, not here. A new chat opens at a flat `/chat/{uuid}` carrying its project in
+ * a transient `?projectId=&kind=` query — the row doesn't exist until its first message.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'

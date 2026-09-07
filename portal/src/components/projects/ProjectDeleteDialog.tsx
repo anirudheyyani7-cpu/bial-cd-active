@@ -1,51 +1,14 @@
 /**
- * Delete-a-project confirmation. Two things it owes the user before it lets them
- * pull the trigger:
+ * Delete-a-project confirmation. Owes the user two things before the trigger: it names the whole cascade out
+ * loud — project, app, its own Postgres DB and files, every filed chat, counted via `listProjectConversations`
+ * (fallback logic in the docstring below) — and asks WHY in 5-50 words, split the same way as
+ * `src/core/words.py`, gating confirm. WHO it's recorded against is shown, never collected (see `getStoredUser`
+ * below); the retyped-name gate this replaced is gone in favour of that reason (see the helper-text comment
+ * below for what the `deleted_projects` tombstone supports today).
  *
- *   1. It names the whole cascade out loud. Deleting a project destroys the project,
- *      its one app, its own PostgreSQL database and files, AND every chat filed under
- *      it — so it counts those chats
- *      (`listProjectConversations`) and says the number. While that count is still
- *      in flight, or if the count call fails, it falls back to copy that still names
- *      the cascade WITHOUT a number ("all of its chats") — it must never flash
- *      "all 0 chats" from a count that simply has not resolved yet.
- *   2. It asks WHY, in 5-50 words, and the confirm button stays disabled until that
- *      reason is inside the bounds.
- *
- *      IT NAMES WHO, BUT DOES NOT ASK. The deletion is recorded against an account, and the
- *      dialog says which one — but the server stamps that from the session and ignores
- *      anything sent for it. The field briefly WAS a required input, and that was wrong: a
- *      name this dialog could set is a name that can disagree with the account that acted,
- *      and it is the field an administrator reads to answer precisely that question. Shown,
- *      never collected.
- *
- *      THE TYPE-THE-NAME GATE IS GONE. Retyping a name proves you can read, not that you
- *      meant it — and it taught people to copy-paste past the warning they were meant to be
- *      reading. The reason is a better gate for the same purpose AND it is meant to still be
- *      useful a month later: it is kept on a `deleted_projects` tombstone. NOTHING READS THAT
- *      TABLE YET — the admin read surface is tracked separately — so the helper text
- *      says only what is true today (kept with the record) rather than promising a reader
- *      that does not exist. Say the same true thing in both places: the docblock and the
- *      helper text must never claim more than the table actually supports.
- *
- *      Once the admin read surface lands, this reverts to the stronger claim — someone writing a
- *      private-feeling note deserves to know an administrator sees it — in both the
- *      helper text and here.
- *
- *      The count is validated HERE and again on the server, with the same splitting rule
- *      (`utils/words.ts` <-> `src/core/words.py`). The client keeps the person inside the
- *      limit; the server refuses independently.
- *
- * BUILT ON THE VENDORED RADIX `Dialog`, not a hand-rolled `fixed inset-0`. This is the
- * dialog that put a REQUIRED FREE-TEXT FIELD inside a destructive confirmation, so keyboard
- * and screen-reader users have real work to do in here — and the hand-rolled shell announced
- * itself as nothing, trapped no focus and could not be dismissed with Escape. Radix gives
- * `role="dialog"`, `aria-modal`, the focus trap, Escape and scroll lock. The softened
- * overlay is passed as an override rather than lost.
- *
- * The dialog does not delete anything itself — the page owns the optimistic removal
- * and the 404-vs-500 reconciliation — it only collects an informed confirmation and
- * calls `onConfirm`.
+ * Built on the vendored Radix `Dialog`, not hand-rolled — the prior shell announced nothing and trapped no
+ * focus. The dialog deletes nothing itself: the page owns optimistic removal and 404-vs-500 reconciliation;
+ * this only collects confirmation and calls `onConfirm`.
  */
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Loader2 } from 'lucide-react'
@@ -67,13 +30,10 @@ const CASCADE_ID = 'delete-project-cascade'
 const MAX_DELETE_REASON_CHARS = 2000
 
 /**
- * `null` count = not resolved yet (loading, or the count call failed) → name the cascade with
- * no number rather than flash a wrong one.
- *
- * A count that lands exactly ON the server's row cap means "at least this many" — the endpoint
- * has no cursor, so there may be more. Quoting the cap as a total would state a falsehood
- * immediately before an irreversible cascade, which is precisely what this dialog exists to
- * prevent. Say "or more".
+ * `null` count = not resolved yet (loading, or the count call failed) → name the cascade
+ * with no number, never a flashed wrong one. A count landing exactly ON the server's row
+ * cap means "at least this many" (no cursor, so there may be more) — quoting it as a total
+ * would state a falsehood right before an irreversible cascade. Say "or more".
  */
 /**
  * The half of the cascade that has no row count to quote, and the half that is genuinely

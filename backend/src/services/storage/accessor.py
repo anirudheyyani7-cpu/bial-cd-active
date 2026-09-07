@@ -1,16 +1,11 @@
-"""App-level storage accessor + lifecycle for the Azure Blob backend. Two caching
-layers, kept distinct:
+"""App-level storage accessor + lifecycle for the Azure Blob backend. Two caching layers:
+*backend level* — `azure_backend`'s config-fingerprint client cache, the source of truth for
+open SDK clients; and *app level* — `get_storage()`, which reads `settings.object_store`, calls
+`create_storage` ONCE, and memoises the result without opening a client of its own.
 
-1. *Backend level* (the source of truth for open SDK clients) — the Azure
-   backend's config-fingerprint client cache (`azure_backend`).
-2. *App level* — `get_storage()` reads `settings.object_store`, calls
-   `create_storage` ONCE, and memoises the returned backend. It opens no clients
-   of its own; it just holds a reference into layer 1.
-
-`get_storage()` returns the base `ObjectStorage` because `settings.object_store`
-is statically the storage port — the honest dynamic contract (concrete types are
-for code holding a named config). It lazy-imports `settings` so this module can be
-re-exported from the package `__init__` without an import cycle through
+`get_storage()` returns the base `ObjectStorage`, not a concrete type, because
+`settings.object_store` is statically the storage port. It lazy-imports `settings` so this
+module can be re-exported from the package `__init__` without an import cycle through
 `src.config` (which itself imports `storage.config`).
 """
 

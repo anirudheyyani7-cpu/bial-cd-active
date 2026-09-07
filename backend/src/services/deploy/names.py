@@ -1,22 +1,14 @@
 """Azure resource names for a PUBLISHED app.
 
-One rule matters more than the rest: a published container app must be impossible for the
-sandbox reaper to select. That guarantee is **structural, not a naming convention** — the
-reaper (`build_sessions/reaper.py::sweep_all`) does not enumerate Azure at all. It scans the
-Redis sandbox registry and tears down whatever `app_name` it finds in the hash, and the only
-writer of that field is `AcaSandboxClient._write_registry`. The deploy path never calls it
-and never writes a `bial:sandbox:*` key, so a published app is invisible to the reaper by
-construction.
+One rule matters most: a published container app must be impossible for the sandbox reaper
+to select. STRUCTURAL, not convention — the reaper (`reaper.py::sweep_all`) scans the Redis
+sandbox registry and tears down whatever `app_name` it finds there; deploy never writes a
+`bial:sandbox:*` key, so a published app is invisible by construction.
 
-The distinct `pub-` prefix is the SECOND, independent belt. It means an ARM-side listing can
-partition the resource group unambiguously, and it means `live_build.py`'s
-`live_app_name == app_name_for(app_id)` comparison can never accidentally match a published
-app — a check that would otherwise treat a live deployment as the user's build sandbox.
-
-Deliberately the same 28-hex slug length as `app_name_for` (`build_sessions/manager.py`), so
-the two names stay derivable from each other. Do not "improve" the truncation: any uniqueness
-reasoning belongs on `app_id`, never on the name.
-"""
+The `pub-` prefix is a SECOND, independent belt: an ARM-side listing partitions the resource
+group unambiguously, and `live_build.py`'s `live_app_name == app_name_for(app_id)` check can
+never match a published app. Same 28-hex slug length as `app_name_for` so the two stay
+derivable — do not "improve" the truncation; uniqueness belongs on `app_id`, never the name."""
 
 from __future__ import annotations
 

@@ -2,17 +2,14 @@
 and the ONE helper allowed to interpolate a name into DDL.
 
 Names derive from the project UUID alone, so provisioning is idempotent by
-re-derivation (a retry computes the same name; a duplicate-object SQLSTATE is the
-idempotency signal), and teardown needs no stored schema. The FULL 32-char uuid hex
-is carried in `bialapp_<hex>` (40 chars) / `bialrole_<hex>` (41 chars) — well under
-PostgreSQL's 63-char identifier limit — not truncated, so the orphan reconciler's
-diff stays an exact registry-existence check rather than a fuzzy prefix scan.
+re-derivation (retry computes the same name; a duplicate-object SQLSTATE is the
+idempotency signal), and teardown needs no stored schema. The FULL 32-char hex is
+carried in `bialapp_<hex>`/`bialrole_<hex>` — under PostgreSQL's 63-char limit, not
+truncated — so the reconciler's diff stays an exact registry-existence check.
 
 Identifiers cannot be bound as query parameters, so `quote_identifier` is the single
-sanctioned interpolation seam: it validates against a closed character class before
-quoting, and every DDL statement here builds through it — same posture for the role
-password via `quote_password_literal`.
-"""
+sanctioned interpolation seam, validating a closed character class before quoting;
+`quote_password_literal` holds the same posture for the role password."""
 
 from __future__ import annotations
 
@@ -56,14 +53,11 @@ def project_id_from_database_name(name: str) -> uuid.UUID | None:
     """The owning project id, or `None` when `name` is not one of ours.
 
     FAIL-CLOSED: anything that does not parse exactly — wrong prefix, wrong length,
-    non-hex tail, a uuid the constructor rejects — is reported as unowned/not-actionable
-    rather than guessed at. The reconciler turns `None` into "leave it alone", which
-    is what protects the unrelated databases sharing a dev server. Mirrors
-    `_owned_by_app_row` in `services/storage/reconcile.py`.
-
-    `None` here is a legitimately-absent result ("this name is not a project database"),
-    not an error channel.
-    """
+    non-hex tail, a rejected uuid — is reported as unowned/not-actionable rather than
+    guessed at. The reconciler turns `None` into "leave it alone", protecting unrelated
+    databases sharing a dev server (mirrors `_owned_by_app_row` in
+    `services/storage/reconcile.py`). `None` is a legitimate absence, not an error
+    channel."""
     return _project_id_after(name, DATABASE_PREFIX)
 
 

@@ -20,15 +20,11 @@ export type AppStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'disable
 
 /**
  * Which lineage the app's current submission entered the approve queue through, mirroring
- * the backend's `ApprovalRoute` enum (`db/models/app_registry.py`). `null` is a real value
- * — never submitted, or a row that predates the publish flow.
- *
- * It lives HERE, beside `AppStatus`, because it is the same kind of thing: registry
- * vocabulary two clients read and neither owns. The citizen's deploy client and the
- * admin's registry client each need it, they were written independently and each declared
- * its own copy, and two hand-maintained mirrors of one server enum only agree until the
- * server grows a third value. What they do NOT share is what to do with an unrecognised
- * one — see each client's own narrower, which disagree on purpose.
+ * the backend's `ApprovalRoute` enum (`db/models/app_registry.py`). `null` is real — never
+ * submitted, or a row predating the publish flow. Lives here, beside `AppStatus`: both the
+ * deploy and admin registry clients hand-mirror this enum independently, and agree only
+ * until it grows a third value — what they do NOT share is handling an unrecognised one,
+ * which each client's own narrower disagrees on deliberately.
  */
 export type ApprovalRoute = 'runbook' | 'self_publish'
 
@@ -48,20 +44,12 @@ export interface Project {
    */
   hasRelaunchableSnapshot: boolean | null
   /**
-   * Is the app SERVING right now? "Live = deployed / published — if the application is
-   * published and has url". Deliberately not derivable from `appStatus`: APPROVED
-   * means an administrator said yes, and one-click deploy never writes `status` at all, so
-   * the ordinary live app is still `draft`. The server computes it from the deployment
-   * history; `false` for a project with no app.
-   *
-   * NAMED `isServing` even though the badge reads "Live", and deliberately not the
-   * obvious name: that one is a RETIRED symbol — one of the client-side predicates that
-   * used to re-decide in the browser what the server had already decided, and
-   * `jsx-deploy-retirement.test.ts` guards against it returning. This field is the opposite
-   * of that predicate; it IS the server's answer. Reusing the retired name would make every
-   * future grep ambiguous, so the field says how the server knows and the label says what
-   * the reader cares about. (The guard is a plain text scan, so even this note has to avoid
-   * spelling the old name.)
+   * Is the app SERVING right now? Not derivable from `appStatus`: APPROVED means an
+   * administrator said yes, but one-click deploy never writes `status`, so a live app can
+   * stay `draft`. Server-computed from deployment history; `false` for no app.
+   * NAMED `isServing`, not the obvious retired predicate name (`jsx-deploy-retirement.test.ts`
+   * guards its return) — this field is that predicate's opposite, the server's own answer.
+   * (Even this note avoids spelling the old name.)
    */
   isServing: boolean
   createdAt: string
@@ -69,13 +57,11 @@ export interface Project {
 }
 
 /**
- * One NUMBERED page of projects, newest-first.
- *
- * Was `{items, nextCursor, hasMore}` — a forward-only "Load more" — until numbered pages
- * and a rows-per-page selector replaced it. `Showing 1-8 of 12` and `Page 1 of 2` both
- * need a `total`, which the keyset envelope deliberately did not carry.
- *
- * `total` is counted AFTER the search is applied, so it describes the rows it sits under.
+ * One NUMBERED page of projects, newest-first. Was `{items, nextCursor, hasMore}` — a
+ * forward-only "Load more" — until numbered pages and a rows-per-page selector replaced
+ * it; `Showing 1-8 of 12` and `Page 1 of 2` both need a `total`, which the keyset envelope
+ * deliberately did not carry. `total` is counted AFTER the search is applied, so it
+ * describes the rows it sits under.
  */
 export interface ProjectsPage {
   items: Project[]
@@ -153,12 +139,10 @@ function asAppStatus(value: unknown): AppStatus | null {
 /**
  * Narrow one untrusted `ProjectResponse` into the typed `Project` shape.
  *
- * A project with no `id` is not a project — coercing it to `''` would hand the UI
- * a card that links to `/projects/` and a delete that targets nothing. Fail here,
- * at the boundary, rather than let an empty string corrupt state downstream.
- * The other fields tolerate absence because each
- * has a defined meaning: a missing `description`/`appId` IS null ("none yet"), and
- * `appStatus` outside the known union is unknown, not fatal.
+ * A project with no `id` is not a project — coercing it to `''` would hand the UI a card
+ * that links to `/projects/` and a delete that targets nothing, so this fails at the
+ * boundary instead. Other fields tolerate absence: a missing `description`/`appId` IS
+ * null ("none yet"), and `appStatus` outside the known union is unknown, not fatal.
  */
 function toProject(value: unknown): Project {
   if (!isRecord(value) || typeof value.id !== 'string' || value.id === '') {
@@ -273,19 +257,12 @@ export async function patchProject(id: string, patch: ProjectPatch, deps: AuthFe
 }
 
 /**
- * Delete a project, with the reason the server requires. The server cascades
- * its chats, app, database and blobs; none of it comes back.
- *
- * THE REASON IS ALL THE CLIENT SENDS. The deletion also records WHO deleted it, but that is
- * stamped server-side from the session — deliberately not a field here, because a name this
- * code could set is a name that can disagree with the account that acted, and an
- * administrator reads that field to answer exactly that question.
- *
- * A BODY ON A DELETE is unusual — RFC 9110 gives it no defined semantics, and some clients
- * decline to make it easy (httpx omits `json=` from its `.delete()`). It is used here
- * because a 50-word reason does not belong in a query string, and because the alternative,
- * a `POST /{id}/delete`, is a bigger contract change than adding a field to the route that
- * already exists. `fetch` sends it, and nginx and the container ingress both forward it.
+ * Delete a project, with the reason the server requires; it cascades chats, app, database
+ * and blobs, none of which comes back. THE REASON IS ALL THE CLIENT SENDS — WHO deleted it
+ * is stamped server-side from the session, deliberately not a field here: a name this code
+ * set could disagree with the account that acted, and an administrator reads that field to
+ * answer exactly that. A body on a DELETE is unusual (RFC 9110 gives it no semantics) but
+ * used here since a 50-word reason doesn't belong in a query string, and `fetch` sends it.
  */
 export async function deleteProject(
   id: string,

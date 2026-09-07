@@ -1,51 +1,26 @@
 /**
  * THE APP PANE HOST — one iframe for the whole workspace.
  *
- * ═══ THE ONE IDEA ═══
+ * WHY THIS EXISTS: a SIBLING of the shell's `<Outlet/>`, so a route change (which replaces the
+ * outlet's content) can never reach it. The pane is rendered BY THE ADDRESS, not by whichever
+ * page matches — no address, no element; same address across every transition, same element.
+ * Mounting `LivePreview` anywhere else builds a second host, the remount this file forbids. The
+ * address deliberately outlives the surface that published it (leaving a build chat for the
+ * project screen must not kill a running app), so it is bounded by the PROJECT, not a
+ * publisher's lifetime — see `useWorkspaceAddress`.
  *
- * This component is a SIBLING of the shell's `<Outlet/>`, and that position is the whole mechanism:
- * a route change replaces the outlet's content and cannot reach a sibling. So the pane is rendered
- * BY THE ADDRESS rather than by whichever page happens to match — no address, no element; the same
- * address across every transition, the same element. Mounting `LivePreview` anywhere else builds a
- * SECOND host, which is the remount this file exists to forbid.
+ * Frame identity is the URL plus `LivePreview`'s own reload nonce — route, rail mode and open
+ * chat are NOT part of it, and this host adds no `key`. THE FAILURE this guards against: buying
+ * continuity by weakening that identity, most obviously by never unmounting at all, which leaves
+ * a frame pointing at a gone container, undetectably. Continuity comes from WHERE THE ELEMENT
+ * LIVES, not from what identifies it.
  *
- * The address deliberately OUTLIVES the surface that published it, which is what keeps leaving a
- * build chat for the project screen from destroying a running app. What bounds it is therefore the
- * project rather than a publisher's lifetime: a held address carries the project it belongs to and
- * stops being this workspace's the moment a surface declares a different one, because a different
- * project is a different app, a different address and a legitimate remount. An UNRESOLVED project
- * is not a different project — see `useWorkspaceAddress`.
- *
- * ═══ WHAT IDENTIFIES THE FRAME, AND THE FAILURE THIS IS WRITTEN AGAINST ═══
- *
- * The frame's identity is the framed URL plus the reload nonce that URL already carries inside
- * `LivePreview` (`url#nonce`). The route, the rail mode and the open chat are not part of it, and
- * this host adds no `key` of its own.
- *
- * THE FAILURE: buying continuity by weakening what identifies the frame — most obviously by making
- * it never unmount at all. That satisfies "nothing reloaded" and leaves a frame pointing at a
- * container that is gone, with nothing able to detect it. Continuity has to come from WHERE THE
- * ELEMENT LIVES, not from what identifies it — so the two legitimate re-frames stay exactly as they
- * are: a turn ending over a live preview, and the manual Reload control.
- *
- * ═══ HIDDEN IS NOT UNMOUNTED ═══
- *
- * When no mounted surface declares the pane visible, the frame stays in the document inside a
- * zero-size wrapper with `visibility:hidden`. The distinction is the requirement: the pane is a
- * cross-origin frame whose `src` is re-issued on remount, and re-issuing it means a full reload
- * plus a fresh framing handshake.
- *
- * `visibility:hidden` RATHER THAN `aria-hidden` OR ZERO WIDTH ALONE, for the reason `hiddenSubtree.ts`
- * records beside the constant: zero width and `overflow:hidden` clip a subtree visually but leave its
- * descendants in the tab order, so `aria-hidden` alone left controls keyboard-reachable while
- * collapsed — a WCAG 4.1.2 violation. The stake is highest here of the three appliers: what this one
- * hides is a cross-origin frame holding a whole application.
- *
- * ═══ WHAT THIS COMPONENT WILL NOT DO ═══
- *
- * NOTHING HERE REQUESTS AN ADDRESS. The host frames what already exists; it never starts a
- * sandbox — a mounted-but-hidden pane on the project screen costs nothing, because there is
- * nothing for it to frame unless a conversation already put something there.
+ * HIDDEN IS NOT UNMOUNTED: an invisible pane stays in the document, zero-size and
+ * `visibility:hidden` — re-issuing this cross-origin frame's `src` means a full reload plus a
+ * fresh handshake. Not `aria-hidden`/zero-width alone (see `hiddenSubtree.ts`): those leave
+ * descendants tab-reachable while visually clipped, a WCAG 4.1.2 violation — the highest-stakes
+ * case of the three appliers, since this hides a whole application. Nothing here requests an
+ * address; the host only frames what already exists.
  */
 import { useRef } from 'react'
 import LivePreview from '../LivePreview'

@@ -126,13 +126,11 @@ class ClientErrorStore:
         """Throw away everything parked for this app; returns how many were dropped.
 
         THE TURN FENCE. A report describes the tree the browser was rendering when it crashed,
-        and the turn that is about to start is going to change that tree. Draining it at the end
-        of that turn would fail a verify on a fault the agent may have just fixed — and worse,
-        the pane reloads its frame at every turn terminal, so the gap between turns is a moment
-        that actively MANUFACTURES reports. Anything parked before the agent started is history.
-
-        Distinct from `drain` on purpose: `drain` hands the reports to a verdict, this one is a
-        deliberate discard, and reading a call site should say which of the two it meant."""
+        and the turn about to start is going to change that tree — draining it at the end would
+        fail a verify on a fault the agent may have just fixed, and the pane's reload-per-turn
+        means the gap between turns actively MANUFACTURES reports. Anything parked before the
+        agent started is history. Distinct from `drain` on purpose: `drain` hands reports to a
+        verdict, this is a deliberate discard — a call site should say which one it meant."""
         dropped = self._parked.pop(app_name, [])
         return len(dropped)
 

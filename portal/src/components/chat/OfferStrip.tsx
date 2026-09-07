@@ -1,53 +1,27 @@
 /**
- * THE PLAN OFFER, AS A STRIP ON THE COMPOSER.
+ * THE PLAN OFFER, AS A STRIP ON THE COMPOSER. The plan agent calls an offer tool when it judges
+ * the plan finished; the browser renders the PENDING call as a strip with two buttons, and
+ * pressing either supplies the tool result.
  *
- * The plan agent calls an offer tool when it judges the plan finished. The browser renders the
- * PENDING call as a strip on the composer with two buttons; pressing either supplies the tool
- * result.
+ * WHY SENDING WAITS, AND WHY TWO BUTTONS: a tool call must be answered before the conversation
+ * continues, so a typed message while this strip is pending would leave the call open and get the
+ * next request rejected. A single "Build this plan" would be a dead end for anyone who wanted to
+ * change something, so "Keep planning" answers the call too and hands the box back. Those labels
+ * name the mode the press puts you in, and the SAME words appear in the model-facing copy; this
+ * file owns only what is drawn. Resolution values stay `build`/`refine` (wire values, unrenamed).
  *
- * ══ WHY SENDING WAITS, AND WHY THERE ARE TWO BUTTONS ══
+ * THE BROWSER NEVER POSTS THE PLAN TEXT BACK: the server reads it from the offering tool call's
+ * own message, and the press sends only the conversation id, the tool call id, and a minted new-
+ * chat id. A browser-supplied body would let a stale second tab write stale requirements into the
+ * permanent first message.
  *
- * A tool call must be answered by a tool result before the conversation can continue, so a typed
- * message while this strip is pending would leave the call open and get the next request
- * rejected. That reason is honest and worth stating in the copy below. It also decides the
- * shape: a single "Build this plan" would be a dead end for anyone who wanted to change
- * something, so "Keep planning" answers the call too and hands the box straight back.
- *
- * ══ THE LABELS ══
- *
- * `Build this plan` and `Keep planning`. NOT "Build it", NOT "Keep refining", and NOT
- * "Not yet — keep talking". Each names the mode the press puts you in, which is why they read as a
- * pair. The internal resolution values stay `build` and `refine` — wire values nobody reads, and
- * renaming them would be churn with a migration attached.
- *
- * The SAME two words appear in the model-facing copy, or the agent will tell a citizen to press a
- * button that does not exist — the offer tool's docstring and the plan prompt both carry them.
- * This file owns only what is drawn.
- *
- * ══ A SPENT STRIP STAYS, AND STAYS PRESSABLE ══
- *
- * The first press answers the tool call; that is unavoidable. The strip then renders in its spent
- * treatment but REMAINS A LIVE CONTROL. Pressing it again is an ordinary request that creates
- * another Build chat. Nothing is stored to record that a build happened. "Only one offer is live"
- * is about which one blocks the composer, not about which one is pressable.
- *
- * ══ IDEMPOTENCY WITHOUT STORAGE, AND ITS HONEST BOUNDARY ══
- *
- * The press names the chat it is creating: a UUIDv7 minted ONCE PER PRESS-SESSION, held in a ref,
- * sent as the new conversation's id. A double press and a retry carry the same id and collide on
- * the primary key, so the server returns the chat that already exists.
- *
- * A RELOAD IS OUT OF REACH, and it is said once, here: a ref dies with the page, and the only
- * thing that would survive it is a local record — which the spent-strip rule above forbids. So
- * after a reload a fresh press-session mints a new id and creates a second Build chat. That is
- * asserted by a test rather than discovered in production, and closing it needs storage, which is
- * a decision nobody has taken.
- *
- * ══ THE BROWSER NEVER POSTS THE PLAN TEXT BACK ══
- *
- * The server reads it from the offering tool call's own message. The press sends the conversation
- * id, the tool call id and the minted new-chat id, and nothing else. A browser-supplied body would
- * let a stale second tab write stale requirements into a permanent first message.
+ * WHY THIS EXISTS — A SPENT STRIP STAYS, AND STAYS PRESSABLE. The first press answers the tool
+ * call; the strip then renders spent but REMAINS LIVE, so pressing it again creates another Build
+ * chat. Idempotency is storage-free: the press names the chat it creates with a UUIDv7 minted ONCE
+ * PER PRESS-SESSION and held in a ref, so a double press or retry carries the same id, collides on
+ * the primary key, and the server returns the existing chat. A RELOAD IS OUT OF REACH — a ref dies
+ * with the page — so a reload's fresh press-session mints a new id and creates a second Build
+ * chat. Asserted by a test; closing it needs storage, a decision nobody has taken.
  */
 import { useCallback, useRef, useState, type FC } from 'react'
 import { Loader2, Wand2 } from 'lucide-react'
@@ -94,11 +68,10 @@ export const OFFER_LOCKED_NOTE =
 /**
  * WHAT THE STRIP SAYS BEFORE ANYBODY PRESSES ANYTHING, verbatim from `PlanReady`.
  *
- * The board's annotation is the requirement, and it is about register rather than decoration:
- * "this teal strip is not text the agent typed — it is a control the interface draws". Two bare
- * buttons at the right of the box read as chrome: nothing distinguishes them from Send, and
- * nothing says what pressing one would DO — that it opens a second chat and leaves this one
- * alone, which is the one thing a citizen wants to know before pressing it.
+ * The board's requirement is about register, not decoration: "this teal strip is not text the
+ * agent typed — it is a control the interface draws." Two bare buttons at the box's right read
+ * as chrome — nothing says pressing one opens a second chat and leaves this one alone, which is
+ * the one thing a citizen wants to know before pressing it.
  */
 export const OFFER_HEADLINE = 'This looks ready to build.'
 export const OFFER_EXPLANATION =

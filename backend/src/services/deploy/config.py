@@ -1,33 +1,22 @@
 """One-click publish configuration model.
 
 `Settings.deploy` is typed `DeployConfig | None`; pydantic-settings validates one
-`DEPLOY__*` env block against it (the single config funnel). Publishing is a
-genuinely-optional integration — `| None` means "publishing is off", which is the correct
-dev/test posture and a legitimate staging one.
+`DEPLOY__*` env block against it. `| None` means "publishing is off" — a legitimate
+dev/test/staging posture, so **no production gate**: this follows the `foundry`
+precedent, not `sandbox`/`redis`/`object_store`. Add a gate in the same commit that
+makes the portal show a Deploy control unconditionally; before that it would fail-first
+a running production backend for a capability nobody has turned on.
 
-**No production gate, deliberately** — this follows the `foundry` precedent
-(`src/config.py`), not the `sandbox`/`redis`/`object_store` one. A prod gate would make the
-running production backend fail to boot the moment this merges, for a capability nobody has
-turned on yet. Add `_require_deploy_in_production` in the same commit that makes the portal
-show a Deploy control unconditionally; until then a gate would fail-first for a feature that
-is not wired.
-
-WHY THE ACR FIELDS ARE DUPLICATED FROM `SandboxConfig` RATHER THAN HOISTED INTO A SHARED
-BLOCK. Three reasons, in order of weight:
-
-1. Hoisting is a breaking config change with no safe intermediate. `SandboxConfig` sets
-   `extra="forbid"`, so a leftover `SANDBOX__ACR_SERVER` during a rollout is a startup
-   `ValidationError` — production down at boot. The code deploy and the App Service settings
-   edit would have to be atomic. Duplication is purely additive and rollout-safe.
-2. It makes "deploy must never read `settings.sandbox.*`" structural rather than a
-   discipline. `settings.sandbox` is `None` in dev and test — a supported posture — so any
-   cross-read would crash exactly where it is least expected.
-3. The two consumers want different credentials in the end state: the sandbox needs
-   pull-only (and should move to AcrPull via managed identity), while publish needs ARM
-   rights to schedule a build plus pull creds to hand to ACA.
-
-The cost is the ACR password configured twice. That is one extra line in the deployment's
-env block, and it buys a rollout that cannot break the sandbox.
+WHY THIS EXISTS
+The ACR fields are DUPLICATED from `SandboxConfig`, not hoisted into a shared block,
+for three reasons: (1) hoisting is a breaking config change with no safe intermediate,
+since `SandboxConfig`'s `extra="forbid"` makes a leftover
+`SANDBOX__ACR_SERVER` a startup `ValidationError`; duplication is purely additive. (2)
+it makes "deploy must never read `settings.sandbox.*`" structural, not a discipline —
+`settings.sandbox` is `None` in dev/test. (3) the two consumers want different
+end-state credentials: sandbox pull-only, publish needs ARM rights to schedule a build.
+The cost — the ACR password configured twice — buys a rollout that cannot break the
+sandbox.
 """
 
 from __future__ import annotations

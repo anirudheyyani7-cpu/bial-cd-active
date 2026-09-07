@@ -1,17 +1,9 @@
 /**
- * Is this element's text ACTUALLY clipped? Measured after layout, never guessed from length —
- * character heuristics are wrong at every breakpoint — and re-measured whenever the element
- * resizes, because a column that widens un-clips text that was clipped a moment ago.
- *
- * SHARED because `ProjectRow` and `ProjectCard` both needed it and used to carry byte-identical
- * copies (round-4 review) — a silent duplication, unlike `offset_pagination.py`'s honestly
- * disclosed `clean_page` copy on the backend.
- *
- * RE-MEASURES ON `document.fonts.ready` TOO, not just on resize. Manrope loads with
- * `display=swap`, so a measurement taken before the swap can pin `clipped` wrong for the
- * element's whole lifetime — and `ResizeObserver` does not fire for a content-only width
- * change with an unchanged box (the element's box does not move; only what fits inside it
- * does).
+ * Is this element's text ACTUALLY clipped? Measured after layout (character heuristics are
+ * wrong at every breakpoint), and re-measured on resize plus on `document.fonts.ready` —
+ * `ResizeObserver` does not fire for a content-only width change with an unchanged box, so a
+ * measurement taken before a `display=swap` font swap can pin `clipped` wrong for the
+ * element's whole lifetime. Shared: `ProjectRow`/`ProjectCard` both need it (round-4).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 

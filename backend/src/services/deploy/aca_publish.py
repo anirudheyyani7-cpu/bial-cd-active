@@ -1,21 +1,14 @@
 """Azure Container Apps operations for a PUBLISHED app.
 
-A separate client from `services/sandbox/aca.py`, deliberately. The two build genuinely
-different container apps and share only the ARM plumbing, and the difference is not
-cosmetic — reusing the sandbox envelope here would fail in a way that looks like success:
+A separate client from `services/sandbox/aca.py`, deliberately: reusing the sandbox envelope
+here would fail in a way that looks like success. The sandbox probes `/_sup/health` on 8080
+(Caddy + supervisor in front of `next dev`); a published container runs `node server.js`
+directly, so that path 404s forever, the revision never goes healthy, yet ACA create still
+returns an FQDN — deploy reports success, URL 5xx's. The sandbox also pins
+`min/max_replicas=1`; a published app scales to zero, and its image is a per-deploy digest.
 
-* The sandbox probes `/_sup/health` on port 8080, because a Caddy proxy and a Python
-  supervisor sit in front of `next dev`. A published container runs `node server.js`
-  directly. That path 404s forever, the revision never goes healthy, and the ACA create
-  still returns an FQDN — so the deploy reports success and the URL 5xx's.
-* The sandbox pins `min_replicas=1, max_replicas=1` (exactly one container per user). A
-  published app scales to zero.
-* The sandbox's image is a config constant; a published app's is a per-deploy digest.
-
-So `sandbox/aca.py` is imported for its ERROR TYPES and its ARM helpers — one shared
-classification, one shared long-running-operation ceiling — and nothing else. Its
-`_envelope` is untouched, which is also why the sandbox's own tests cannot be broken from
-here.
+So `sandbox/aca.py` is imported only for its error types and ARM helpers; its `_envelope` is
+untouched, which is also why the sandbox's own tests can't break from here.
 """
 
 from __future__ import annotations
@@ -133,16 +126,11 @@ class RevisionState:
 def _did_it_bind(port: int) -> list[aca_models.ContainerAppProbe]:
     """A single TCP startup probe on the app port.
 
-    TCP, NOT HTTP. An HTTP probe against `/` would depend on an agent-authored route
-    existing and answering 2xx — so a bug in the citizen's home page would read as "the
-    container is dead" and fail an otherwise fine deploy. A TCP probe passes the instant
-    `node server.js` binds, which is the honest "it started" signal.
-
-    NO READINESS PROBE: ACA's default (running means ready) is correct here.
-
-    NO LIVENESS PROBE, for the same reason the sandbox refuses one — a failing liveness
-    probe makes ACA restart the container, and against an agent-authored route that is a
-    flap generator, not a fix. Restarting is strictly worse than reporting.
+    TCP, not HTTP: an HTTP probe on `/` depends on an agent-authored route answering 2xx, so a
+    broken home page would read as "container is dead" and fail a fine deploy. TCP passes the
+    instant `node server.js` binds — the honest "it started" signal. No readiness probe: ACA's
+    default (running means ready) is correct here. No liveness probe either, same reason as the
+    sandbox — a failing one makes ACA restart against a flaky agent-authored route.
     """
     return [
         aca_models.ContainerAppProbe(

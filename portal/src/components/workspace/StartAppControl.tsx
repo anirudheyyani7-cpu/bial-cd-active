@@ -1,17 +1,14 @@
 /**
- * THE ONE CONTROL THAT STARTS THE APP.
+ * THE ONE CONTROL THAT STARTS THE APP. Exactly three action members exist — start, retry, and
+ * go to the project that holds the workspace — and this component renders whichever it is
+ * handed; there is no fourth, so no unreadable signal can reach a teardown or a restore FROM
+ * HERE. What `relaunch_preview` does with the press is the server's own concern, tested there.
  *
- * Three action members exist — start, retry, and go to the project that holds the workspace — and
- * this component renders whichever one it is handed. There is no fourth, so no unreadable signal
- * can reach a teardown or a restore FROM HERE; what `relaunch_preview` then does with the press is
- * the server's, and is proved by its own tests.
- *
- * That restraint is load-bearing, because the press lands on one of that route's two arms and the
- * restore arm tears the live container down before it pulls the last saved bundle. So the press is
- * one ordinary start, and whatever comes back — INCLUDING a refusal — is surfaced as it stands:
- * this control never retries on its own, escalates, or offers a recovery verb. The workspace read
- * behind it can be stale, and a remedy invented here would be guessing on top of a reading the
- * browser cannot check.
+ * That restraint is load-bearing: the press lands on one of that route's two server-side arms,
+ * and the restore arm tears the live container down before pulling the last saved bundle. So
+ * whatever comes back — INCLUDING a refusal — is surfaced as it stands: this control never
+ * retries on its own, escalates, or invents a recovery verb over a workspace read that can
+ * already be stale.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'

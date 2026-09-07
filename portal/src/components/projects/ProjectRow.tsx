@@ -2,26 +2,12 @@
  * One project as a LIST row: name · description · details updated · status, plus Delete.
  *
  * INVARIANT F-10 — NO NESTED INTERACTIVE ELEMENTS, and this row is the shape that most
- * wants to break it. The whole row opens the project AND it carries a Delete button, which
- * is a button inside a button the moment anyone reaches for the obvious implementation.
- *
- * So the same construction the card already uses:
- *   - the NAME is a real `<button>`, and its stretched `::after` covers the row
- *   - DELETE is a SIBLING, layered above with `z-10`
- *
- * Neither is a descendant of the other. Making the row itself `<div role="button">`, or
- * wrapping it in a link, is what breaks it. Native buttons carry Enter and Space for free,
- * so there is no key handler here and there should not be one.
- *
- * BOTH TOOLTIPS ARE CONDITIONAL, per §10 (description) and §14 (name): clipped text reveals
- * itself on hover, and text that already fits shows nothing. A tooltip firing on text the
- * reader can see in full is noise, so each is gated on the element actually being clipped
- * (`scrollWidth > clientWidth`), measured after layout rather than guessed from length.
- *
- * THE DESCRIPTION HAS TO BE LIFTED ABOVE THE STRETCHED `::after` to be hoverable at all —
- * see `ClampedDescription`. That is the same reason Delete carries `z-10`, and it is why the
- * description also wires `onOpen` back: lifting it out of the overlay takes it out of the
- * row's click target unless you put it back.
+ * wants to break it: the whole row opens the project AND carries a Delete button. So NAME
+ * is a real `<button>` whose stretched `::after` covers the row, and DELETE is a SIBLING
+ * layered above with `z-10` — neither is a descendant of the other. Making the row itself
+ * `<div role="button">`, or wrapping it in a link, is what breaks it; native buttons carry
+ * Enter/Space for free, so there is no key handler here and there should not be one. See
+ * `ClampedDescription`/`ClampedName` for the tooltip and `z-10`-stacking rationale.
  */
 import { Trash2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -37,18 +23,12 @@ export interface ProjectRowProps {
 }
 
 /**
- * The description cell: one line, ellipsis, and a tooltip ONLY when it is really clipped.
- *
- * `relative z-10` IS LOAD-BEARING AND WAS MISSING. The name button's stretched `::after` is
- * positioned against the row, so it painted over this static sibling and took every pointer
- * event: hovering a clipped description hit the BUTTON, and the tooltip — correctly built and
- * correctly measured — could never open. jsdom does no hit testing, so no unit test in the
- * suite could see it.
- *
- * Lifting it costs the row's click target here, so `onOpen` is wired back explicitly. It stays
- * a `<p>` rather than becoming a button: the name is already the row's one keyboard-reachable
- * open affordance, and a second interactive element covering the same action is the shape
- * F-10 exists to prevent.
+ * The description cell: one line, ellipsis, tooltip ONLY when really clipped.
+ * `relative z-10` IS LOAD-BEARING: the name button's stretched `::after` painted over this
+ * sibling and swallowed every pointer event, so a correctly-built tooltip could never open
+ * (jsdom does no hit testing, so no test caught it). Stays a `<p>` — F-10 forbids a second
+ * interactive element covering the row's action — with `onOpen` wired back since lifting
+ * the z-index costs the click target.
  */
 function ClampedDescription({
   text,

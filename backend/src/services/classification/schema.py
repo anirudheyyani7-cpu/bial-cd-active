@@ -1,28 +1,23 @@
 """The review's structured output — six verdicts, evidence-first.
 
-FIELD ORDER IS LOAD-BEARING. Output is produced start to finish, so per question the
-schema is evidence → reason → verdict: the model cites what it found, explains it, and
-only then concludes. A verdict-first schema yields a justification written after the fact
-— the worst thing to hand a reviewer whose job is to check reasoning. The order the model
-sees is the order the fields are declared in (pydantic preserves declaration order into
-the JSON schema), and a test pins it.
+WHY THIS EXISTS: field order is load-bearing, pinned by test. Per question the schema is
+evidence → reason → verdict — the model cites what it found, explains it, only then
+concludes, in the order pydantic declares (preserved into the JSON schema). Verdict-first
+would yield a justification written after the fact, the worst thing to hand a reviewer
+whose job is checking reasoning.
 
-The six questions are keyed by `deploy/classification.CLASSIFICATION_KEYS` — the same
-keys the request schema and the persisted deployment declaration use, referenced from the
-single source rather than duplicated, so the questionnaire can be reworded without this
-module drifting. Validation demands EXACTLY the six: a response missing a question is
-rejected as incomplete (never defaulted to No — an unanswered question must be
-RETURNED as `unanswered`, handing it to the citizen), and a well-formed response is
-normalised into questionnaire order whatever order the model produced it in.
+The six questions key off `deploy/classification.CLASSIFICATION_KEYS`, the single source
+also used by the request schema and the persisted deployment declaration. Validation
+demands EXACTLY the six: a missing question is rejected as incomplete, never defaulted to
+No — it must be RETURNED as `unanswered` — and answers are normalised into questionnaire
+order.
 
-`completeness` is the truncation-vs-abstention disambiguator: a clipped or cut-short
-review and one that deliberately abstained on every question both look like six
-`unanswered` — this signal is what tells them apart, and `partial` is treated as a
-failure, not as six abstentions.
+`completeness` disambiguates truncation from abstention: a clipped review and one that
+abstained on every question both look like six `unanswered`; `partial` is a failure, not
+six abstentions.
 
-Evidence is INTERNAL ONLY: stored for machine checking, never rendered to a citizen
-or an administrator. The `reason` is the only text a person reads, which is why the
-prompt (not a validator — the evidence fields carry the integrity load) keeps it plain.
+Evidence is INTERNAL ONLY, never rendered to a citizen or admin — `reason` is the only
+text a person reads, kept plain by the prompt (evidence fields carry the integrity load).
 """
 
 from __future__ import annotations

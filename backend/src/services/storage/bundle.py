@@ -8,16 +8,11 @@ A v2 git bundle opens with a plaintext header before the binary packfile:
     <blank line>
     <binary packfile>
 
-`parse_bundle_head_sha` is submit's validity gate AND its SHA source: the
-sandbox is long gone by submit time and `write_snapshot` records no SHA, so the
-header is the only provenance the control plane has. The header is
-ATTACKER-WRITABLE (it came from a sandbox the citizen's AI drove), so the token
-is validated to exactly 40 lowercase hex chars before it is returned — never
-truncated to fit a `String(40)` column, never logged unsanitized — and only a
-bounded prefix of the blob is examined, so a pathological multi-GB "header" can
-never make the parser scan the whole object. The stored object is the RAW bundle;
-base64 is a supervisor-transport artifact, and a base64-encoded bundle
-fails the magic check here rather than being silently accepted.
+WHY THIS EXISTS — `parse_bundle_head_sha` is submit's only SHA provenance (the sandbox is gone by
+submit time; `write_snapshot` records no SHA), and the header is ATTACKER-WRITABLE. The token is
+validated to exactly 40 lowercase hex chars, never logged unsanitized, and only a bounded prefix
+is scanned so a pathological "header" can't force a full-object scan. Stored bytes are the RAW
+bundle; a base64-encoded one fails the magic check here.
 """
 
 from __future__ import annotations

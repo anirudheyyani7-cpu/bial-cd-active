@@ -1,20 +1,15 @@
 """Killable process governor for untrusted-file parsing.
 
-A thread cannot preempt a CPU-bound C-extension parse (openpyxl/lxml) or contain its
-OOM, so each parse runs in a FRESH `multiprocessing` process (spawn — never fork the
-async server's state) that can be hard-`terminate()`d. The child sets an address-space
-rlimit (best-effort; enforced on the Linux runtime) and reports its result over a
-Queue; the parent enforces a wall-clock timeout and maps failures:
+A thread cannot preempt a CPU-bound C-extension parse (openpyxl/lxml) or contain its OOM, so each
+parse runs in a FRESH, hard-`terminate()`-able `multiprocessing` process (spawn, never fork) with
+a best-effort rlimit. The parent enforces a wall-clock timeout off the event loop and maps
+failures — contained OOM/timeout never takes down the API:
 
-* wall-clock exceeded, child still alive → terminate → 413 `PARSE_TIMEOUT`
-* child died with no result (OS OOM-kill / crash) → 413 `FILE_TOO_LARGE`
-* child caught `MemoryError` (rlimit) → 413 `FILE_TOO_LARGE`
+* wall-clock exceeded, child alive → terminate → 413 `PARSE_TIMEOUT`
+* child died with no result, or caught `MemoryError` (OOM-kill, crash, rlimit)
+  → 413 `FILE_TOO_LARGE`
 * child raised `FileParseError` → that status/code
-* any other child error → 500 `PARSE_FAILED`
-
-Contained OOM/timeout NEVER takes down the API. The blocking wait runs in a thread
-executor so the event loop is never blocked.
-"""
+* any other child error → 500 `PARSE_FAILED`"""
 
 from __future__ import annotations
 

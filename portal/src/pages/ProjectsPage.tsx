@@ -1,26 +1,14 @@
 /**
- * `/projects` — the landing screen. Three numbers, then the citizen's tools.
+ * `/projects` — the landing screen: list/grid views, numbered pagination, a summary strip.
  *
- * The card grid was replaced with TWO views, list default and grid second, numbered
- * pagination in both, and a summary strip above them.
+ * Pagination is OFFSET, not keyset — `list_projects` needs a `total` for "Page 1 of 2",
+ * which the keyset envelope doesn't compute — so `page`/`pageSize`/`view` are committed
+ * state and an effect re-fetches, rather than a hook that appends forward-only.
  *
- * PAGINATION IS OFFSET NOW, and that is a deliberate exception the server documents at
- * `list_projects`: `Showing 1-8 of 12` and `Page 1 of 2` both need a `total`, which the
- * keyset envelope declines to compute. What changed here is that the page is COMMITTED
- * state — `page`, `pageSize`, `view` — and one effect fetches from it, rather than a hook
- * that appends forward-only.
- *
- * TWO EMPTY STATES THAT ARE NOT THE SAME THING, carried over because they were already
- * right: zero projects and no search is a first run; zero results WITH a search is a
- * no-match, and it quotes `appliedQuery` — the query the rows answer — never `q`, the live
- * input, which runs 300ms ahead of the data and would flash "you have no projects" at
- * someone who has plenty.
- *
- * THE SKELETON TAKES THE SHAPE OF THE VIEW YOU ARE IN. A card skeleton under a list
- * view flashes the wrong layout for one frame, which reads as a bug.
- *
- * A PAGE-2 FAILURE MUST NOT CLEAR THE ROWS ALREADY ON SCREEN. The error is said
- * underneath them instead.
+ * Two empty states differ: zero projects (first run) vs. zero results WITH a search,
+ * which quotes `appliedQuery` — never the live `q`, which runs 300ms ahead and would
+ * flash a false "no projects" mid-type. The skeleton matches the active view, and a
+ * page-2 failure is shown below the rows already on screen, never clears them.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'

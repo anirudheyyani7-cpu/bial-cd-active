@@ -1,37 +1,27 @@
 """One-off DEV cleanup: merge the duplicate anant.gupta@rvaiglobal.com user rows.
 
-Investigation (independently verified against the dev DB). Two rows share the
-email — `users.email` is deliberately NON-unique (every query is scoped by `user_id`, not email):
+WHY THIS EXISTS — two rows share the email (`users.email` is deliberately non-unique; every
+query scopes by `user_id`, not email). Verified against the dev DB:
 
-  ORPHAN  (the .mythos test-harness identity)   canonical=False
-    id   019f4bc9-58ec-74ba-9f0d-044ce94addf3
-    oid  'mythos-synth:...'  — a SYNTHETIC cookie-injection login oid, never a real Entra GUID
-    owns the BULK of content (61 projects, ALL conversations + messages + attachments).
+  ORPHAN     019f4bc9-58ec-74ba-9f0d-044ce94addf3   canonical=False
+    oid 'mythos-synth:...' — a SYNTHETIC cookie-injection login oid, never a real Entra GUID.
+    Owns the bulk of content (61 projects, all conversations/messages/attachments).
 
-  CANONICAL  (Anant's genuine Entra sign-in)     canonical=True
-    id   019f4f3d-6ced-7727-9f0c-afefb98b8021
-    oid  '932efc26-17db-4251-b90b-e85042b1dffb'  — a real Entra Object-ID GUID, re-upserted on
-    every browser sign-in.
+  CANONICAL  019f4f3d-6ced-7727-9f0c-afefb98b8021   canonical=True
+    oid '932efc26-17db-4251-b90b-e85042b1dffb' — Anant's real Entra Object-ID, re-upserted on
+    every sign-in. The callback upsert is idempotent on `azure_oid`, so the next genuine login
+    always resolves here; keeping ORPHAN would let it re-create CANONICAL empty and re-split
+    everything. Root cause: the harness seeded a synthetic oid, not an auth bug — no code guard.
 
-Why CANONICAL is the REAL row, not the one with more data: the Entra callback upsert is
-idempotent on `azure_oid` (`api/v1/auth/router.py`), so the NEXT genuine browser login resolves
-to the REAL row. If the synthetic row were kept, that login would re-create the REAL row empty
-and re-split everything. Canonical must be the oid future sign-ins land on. Root cause = the test
-harness seeding a synthetic oid with a real email — NOT a live-auth bug, so no code guard is
-warranted (investigate-then-cleanup, per the plan).
-
-THE CASCADE TRAP. `OwnedByUserMixin.user_id` is `ON DELETE CASCADE`, so a *missed* owned table
-is not left orphaned — deleting ORPHAN would silently CASCADE-DELETE its rows. So this script
-reassigns EVERY one of the nine ON DELETE CASCADE owned tables (introspected + pinned below) from
-ORPHAN to CANONICAL BEFORE the delete, and proves ORPHAN owns zero rows before deleting it. The
-three UNIQUE-constrained tables MERGE rather than blind-UPDATE. One transaction; dry-run by
-default; the `.mythos/walkthrough-e2e/backups/` dump is the rollback.
+THE CASCADE TRAP: `OwnedByUserMixin.user_id` is `ON DELETE CASCADE`, so a *missed* owned table is
+not left orphaned — deleting ORPHAN would CASCADE-DELETE its rows. It reassigns all nine owned
+tables to CANONICAL first (merging, never blind-UPDATE, where a UNIQUE constraint exists), then
+proves ORPHAN owns zero rows first, one transaction. Rollback `.mythos/walkthrough-e2e/backups/`.
 
   DRY RUN (default):  uv run python -m scripts.merge_duplicate_user_rows --confirm-env dev
   EXECUTE:            uv run python -m scripts.merge_duplicate_user_rows --confirm-env dev \
                         --i-am-the-account-owner --keep-limit <default|real|synth> \
                         --refresh-tokens <delete|reassign> --execute
-
 """
 
 # The module docstring above is shown verbatim as `--help` text (argparse description=__doc__).

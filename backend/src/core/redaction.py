@@ -1,21 +1,15 @@
-"""The ONE secret redactor: one pattern set, two consumers, and no second regex family anywhere.
+"""The ONE secret redactor: one pattern set, two consumers, no second regex family.
 
-`redact_secrets` is the masker, tuned to over-redact — a false positive costs nothing on an
-egress path. `detect_credentials` is the pre-publish scan over the same candidates: it reports a
-pattern family, a tier and a line number, NEVER the matched value, and Tier A stands in as the
-credentials answer when the model is unavailable, so its precision burden is absolute. Every
-pattern here must stay LINEAR — app-controlled text reaches them on the event loop — and a caller
-on a synchronous path caps input length before scanning.
+`redact_secrets` masks and over-redacts by design — a false positive on an egress path
+costs nothing. `detect_credentials` is the pre-publish scan over the same candidates: it
+reports a pattern family, tier and line number, NEVER the matched value; Tier A stands in
+as the answer when the model is unavailable, so its precision burden is absolute. Every
+pattern must stay LINEAR — app-controlled text reaches them on the event loop — and a
+synchronous caller caps input length before scanning.
 
-STRIP THE ESCAPES, THEN REDACT, THEN SLICE — `scrub_untrusted` is that order in one function, and
-is what any caller holding sandbox-authored text wants. Both halves of the order are the security
-property. An escape sequence spliced into a credential splits the token so no pattern matches it,
-and stripping afterwards closes the text back up around a secret that already went out in the
-clear. Cutting first is the same failure at the other end: a credential straddling the cut
-becomes fragments matching none of these shapes, so what egresses is the head of a real token.
-Everything that shortens text — a capture window, a stored-detail cap — therefore cuts AFTER the
-mask, on whole lines; only the cap bounding how much work a hostile blob can demand runs first.
-"""
+`scrub_untrusted` is strip-escapes, THEN redact, THEN slice — that order IS the security
+property: cutting first fragments a credential so no pattern matches it; stripping after
+closes the text back around a secret already leaked in the clear."""
 
 from __future__ import annotations
 
@@ -403,12 +397,11 @@ def _open_credential_start(text: str) -> int | None:
     """The offset of the credential opener `text` never closes, or `None` if every one closed.
     `text` must already be de-escaped — both public entry points below see to that.
 
-    LEFT TO RIGHT, not "the last opener wins", because a quote only ever closes the value that
-    opened it. In `A_KEY="… B_TOKEN='v'` the last opener is `B_TOKEN` and its quote does close,
-    so a right-to-left reading answers "nothing open" while `A_KEY`'s value runs on unmasked to
-    the end of the chunk. Each step jumps past the closing quote it just found, so no character
-    is visited twice and the scan stays LINEAR — the constraint every pattern in this module is
-    built around."""
+    LEFT TO RIGHT, not "last opener wins": in `A_KEY="… B_TOKEN='v'` the last opener's quote
+    does close, so right-to-left reads "nothing open" while `A_KEY`'s value runs on unmasked to
+    the end. Each step jumps past the closing quote it just found, so no character is visited
+    twice and the scan stays LINEAR — the constraint every pattern in this module is built
+    around."""
     pos = 0
     while (opener := _CREDENTIAL_OPEN_QUOTE_RE.search(text, pos)) is not None:
         closed_at = text.find(opener.group("q"), opener.end())
@@ -419,48 +412,28 @@ def _open_credential_start(text: str) -> int | None:
 
 
 def leaves_a_credential_value_open(text: str) -> bool:
-    """Does `text` end INSIDE a credential-shaped quoted value? (Fails toward "yes".)
+    """Does `text` end INSIDE a credential-shaped quoted value? (Fails toward yes.)
 
-    WHY THIS EXISTS, because it is not obvious from the signature. `_SECRET_ASSIGN_RE`'s quoted
-    arms deliberately span newlines — a PEM body or a multi-word passphrase is one value across
-    many lines — so a credential is NOT always "a shape on one line". Any consumer that cuts a
-    capture into pieces and masks each piece separately therefore has a hole: the piece holding
-    the VALUE carries no key, matches nothing, and egresses in the clear. Cutting on line
-    boundaries does not help, because the value legitimately contains newlines.
-
-    That is exactly how the orchestrator's head+tail output cap leaked: the middle was dropped and
-    the retained tail began part-way through a private key with nothing left to identify it.
-
-    So a chunker asks this about everything preceding the chunk it is about to emit, and declines
-    to emit when the answer is yes. `True` on an unscannably large input, because an unestablished
-    fact on an egress path is not a licence.
-
-    THE SCAN RUNS ON THE DE-ESCAPED TEXT, and that is the fix rather than a tidy-up: the masker
-    that would process the chunk is `scrub_untrusted` = strip → mask, so a guard reading the RAW
-    bytes and a masker reading the stripped ones disagree about the same input. Neither ESC nor
-    U+200B is `\\s`, so one colour byte between a key and its quote (`DB_PASSWORD\\x1b[0m="…`,
-    which colourised CLI output emits routinely) made this answer "nothing is open" while the
-    masker still saw — and could not mask — the value it opened. See `strip_control_sequences`."""
+    A credential value may span newlines (a PEM, a passphrase), so a naive line-cut chunker has
+    a hole: the piece holding the VALUE carries no key, matches no pattern, and leaks in the
+    clear — exactly how the orchestrator's head+tail cap once leaked a private key. A chunker
+    asks this of everything before the chunk it emits and declines when the answer is yes; `True`
+    on an unscannably large input, since an unestablished fact earns no licence. Runs on
+    DE-ESCAPED text, or a colour byte between a key and its quote hides an open credential here."""
     if len(text) > CREDENTIAL_OPEN_SCAN_MAX_CHARS:
         return True
     return _open_credential_start(strip_control_sequences(text)) is not None
 
 
 def cut_before_an_open_credential(text: str) -> str | None:
-    """`text` — DE-ESCAPED, and cut back to the line before the credential value it leaves open —
-    or `None` when it leaves none open and the caller's own text needs no cut at all.
+    """`text` — DE-ESCAPED — cut back to the line before the credential value it leaves open, or
+    `None` when nothing is open (the caller's text needs no cut).
 
-    THE OTHER HALF OF THE GUARD ABOVE, for the chunk a caller emits rather than the one it drops.
-    A chunk that ENDS inside a credential value is just as unmaskable as one that BEGINS inside
-    it: `_SECRET_ASSIGN_RE`'s quoted arms need the closing delimiter, and its bare arm excludes
-    quote characters outright, so `PRIVATE_KEY="-----BEGIN…` with the closing quote past the cut
-    matches NOTHING and the value's whole visible prefix egresses in the clear. Withholding the
-    tail while rendering that is half a guard.
-
-    Cut on the LINE boundary before the opener, so "whole lines in, whole lines out" survives —
-    the caller hands the result straight to `scrub_untrusted`, whose own strip pass is then a
-    no-op over already-stripped text. An empty string is a legitimate answer (the opener was on
-    the first line, or the chunk is too big to scan): nothing here is worth a leak."""
+    THE OTHER HALF of the guard above: a chunk that ENDS inside a credential is just as unmaskable
+    as one that begins inside it — no closing quote in view means no pattern matches, and the
+    value's visible prefix egresses in the clear. Cut on the LINE boundary, so "whole lines in,
+    whole lines out" holds and `scrub_untrusted`'s own strip pass is then a no-op. An empty string
+    is a legitimate answer (the opener was on the first line, or the chunk was too big to scan)."""
     if len(text) > CREDENTIAL_OPEN_SCAN_MAX_CHARS:
         return ""
     deescaped = strip_control_sequences(text)
@@ -482,17 +455,13 @@ def scrub_untrusted(text: str, *, limit: int) -> str:
 
 
 def redact_secrets(text: str) -> str:
-    """Mask credential-shaped substrings: `bial_…` credentials, `NAME<sep>value`
-    assignments across the credential families (underscore-suffixed AND camelCase
-    names with quoted/literal values — `const password = "hunter2"`), URL-embedded
-    `user:pass@`, connection-string / SAS parameters (`Password=`/`AccountKey=`/
-    `SharedAccessSignature=`/`sig=`, masked even mid-string after a `;` where the assignment
-    pass stops, quoted values included), and `Bearer` tokens. Idempotent and safe on any
-    string — used on every egress path (build error envelopes, raw log relay, `run_command`
-    stdout) AND at the message store's persistence seam. Every pattern is LINEAR so it
-    cannot stall the event loop on an adversarial (app-controlled) blob. The name-literal pass
-    runs AFTER the URL pass so a credential-shaped username (`postgres://token:x@h`) is masked
-    as userinfo, preserving the URL's structure."""
+    """Mask credential-shaped substrings: `bial_…` credentials, `NAME<sep>value` assignments
+    (underscore and camelCase names, quoted or literal values), URL-embedded `user:pass@`,
+    connection-string/SAS parameters (`Password=`, `AccountKey=`, `sig=`, ...), and `Bearer`
+    tokens. Idempotent and safe on any string — used on every egress path and at the message
+    store's persistence seam. Every pattern is LINEAR so it cannot stall the event loop on an
+    adversarial blob. The name-literal pass runs AFTER the URL pass, so a credential-shaped
+    username (`postgres://token:x@h`) masks as userinfo, preserving the URL's structure."""
     masked = _CREDENTIAL_RE.sub(_MASK, text)
     masked = _SECRET_ASSIGN_RE.sub(_mask_assignment, masked)
     masked = _URL_CRED_RE.sub(rf"\g<1>{_MASK}:{_MASK}@", masked)
@@ -504,13 +473,10 @@ def redact_secrets(text: str) -> str:
 def redact_and_cap(text: str | None, max_chars: int) -> str | None:
     """Redact, THEN cap — the shape every stored failure detail wants, in one place.
 
-    Both pipelines that store an operator-grade detail (the deploy pipeline and the
-    classification review runner) keep their own ceiling — how much diagnostic is worth
-    storing is theirs to decide — and share this one ordering.
-
-    Empty or absent text answers None: "nothing to say" is a state, not an empty string
-    that reads as a detail nobody wrote.
-    """
+    Both pipelines that store an operator-grade detail (the deploy pipeline, the classification
+    review runner) keep their own ceiling — how much diagnostic is worth storing is theirs — and
+    share only this ordering. Empty or absent text answers None: "nothing to say" is a state, not
+    an empty string that reads as a detail nobody wrote."""
     if not text:
         return None
     return redact_secrets(text)[:max_chars]

@@ -1,42 +1,28 @@
 """The Redis key namespace for the sandbox lifecycle.
 
-These key strings are a **byte-stable cross-track contract**. Every key is built here, through the
-single `ns()` choke point, so no module ever hand-writes one — drift in a prefix is a cross-track
-break (a lock written under one format is invisible to a reaper reading another). The builders take
-`uuid.UUID` and enforce it at RUNTIME, not just in the annotation: a canonical UUID cannot contain
-a `:`, so the `user_id` axis can never forge a different family, and the type IS the boundary.
+These key strings are a **byte-stable cross-track contract**, built only through the single
+`ns()` choke point — a hand-written key drifts a prefix invisible to another track. Builders take
+`uuid.UUID` and enforce it at RUNTIME: a UUID cannot contain a `:`, so the type IS the boundary.
 
-Five sandbox families share the environment-scoped root `bial:{environment}:sandbox:`; the segment
-after it is the family discriminator:
+Five sandbox families share the environment-scoped root `bial:{environment}:sandbox:`:
 
-    bial:{env}:sandbox:lock:{user_id}        string  — one-per-user lock (SET NX EX)
-    bial:{env}:sandbox:heartbeat:{user_id}   string  — idle timer (presence = active)
-    bial:{env}:sandbox:registry:{user_id}    hash    — {app_name, fqdn, token_ref, created_at,
-                                                        state, preview_stay_until?}
-    bial:{env}:sandbox:lease:{user_id}       string  — liveness lease (wall-clock deadline,
-                                                        epoch seconds, TTL mandatory)
-    bial:{env}:sandbox:starting:{user_id}    string  — start-in-flight marker (the project id
-                                                        being started, TTL mandatory)
+    lock:{user_id}       string — one-per-user lock (SET NX EX)
+    heartbeat:{user_id}  string — idle timer (presence = active)
+    registry:{user_id}   hash   — see REGISTRY_FIELD_* below
+    lease:{user_id}      string — liveness lease (epoch seconds, TTL mandatory)
+    starting:{user_id}   string — start-in-flight marker (project id, TTL mandatory)
 
-The sixth family is the taskiq queue, built in `src/broker.py`: `bial:{env}:taskiq:stream` plus
-the library-derived `autoclaim:<group>:<stream>`, whose literal prefix cannot be moved under
-`bial:` and therefore sits outside the environment-scoping guarantee by construction.
+A sixth family, taskiq's queue in `src/broker.py`, has a literal prefix outside `bial:`. There
+is deliberately NO `:channel` family — single-replica means build progress is in-process.
 
-Single-replica deployment ⇒ there is intentionally **NO** `:channel` family: build progress is an
-in-process asyncio channel, not Redis pub/sub.
-
-Every key carries the environment because production shares one Redis instance with other BIAL
-applications, and a scheduled job reads this namespace as a spare-list and deletes Azure
-containers on the strength of it: a process pointed at the wrong instance must not be able to
-act on another deployment's fleet. The registry hash is the ONE family with no TTL, and it is
-the sole input to both the fleet sweep and the report-only Azure inventory — so a key that
-moves or is forgotten does not degrade, it permanently strands every container live at that
-instant, invisible to both. Two rules follow, and the builders below enforce them. A fleet scan
-issues the current and the legacy pattern as two literals, never one `bial:*:` glob, which
-would reach into other environments. And a scan only makes a legacy key REACHABLE, so the point
-read behind it is dual-read as well (`locks.read_registry`). The legacy prefix is read-only,
-and it goes once the inventory reports zero records under it.
-"""
+WHY THIS EXISTS. Production shares one Redis instance with other BIAL apps, and a scheduled job
+reads this namespace as a spare-list and deletes Azure containers on the strength of it — a
+process pointed at the wrong instance must not act on another deployment's fleet. The registry
+hash is the ONE family with no TTL and the sole input to the fleet sweep and Azure inventory, so
+a moved or forgotten key permanently strands every container live at that instant. A fleet scan
+issues current AND legacy as two literals, never one `bial:*:` glob, which would reach into
+another environment's fleet; a legacy match is dual-read too (`locks.read_registry`), and the
+legacy prefix stays read-only."""
 
 from __future__ import annotations
 
@@ -68,14 +54,11 @@ FAMILY_STARTING: Final = "starting"
 def _environment() -> str:
     """This process's environment segment — the scope every sandbox key sits under.
 
-    Delegated to `src.core.runtime_env`, which is a leaf with no module-scope imports: `src.config`
-    reaches `src.settings.api`, which imports `src.services.redis.config` — which imports
-    THIS package — so asking `src.config` directly at module level would close the cycle and make
-    `src.config` unimportable.
-
-    Kept as its own named function rather than calling the accessor at each site: what this scopes
-    is coordination state, which is a different question from which control plane may judge a
-    container, and the two are free to diverge."""
+    Delegated to `src.core.runtime_env`, a leaf with no module-scope imports: `src.config` reaches
+    `src.settings.api` reaches `src.services.redis.config`, which imports THIS package, so asking
+    `src.config` directly at module level would close the cycle. Kept as its own function since
+    what this scopes is coordination state, a different question from which control plane judges
+    a container."""
     from src.core.runtime_env import environment_segment
 
     return environment_segment()
@@ -140,17 +123,12 @@ def lease_key(user_id: uuid.UUID) -> str:
 def starting_key(user_id: uuid.UUID) -> str:
     """`bial:{env}:sandbox:starting:{user_id}` — the start-in-flight marker (family 5).
 
-    The value is the `project_id` (str(uuid.UUID)) being started, and it **must** carry a TTL
-    bounded by the cold-start budget plus margin: the marker is one of the disjuncts that spare
-    a container from reclamation, so one that never expires spares its container forever.
-    Written once, by `_holding_user_lock` — the one skeleton behind the build start, the
-    relaunch and the turn's `ensure_sandbox` — and cleared on the same scope exit that releases
-    or adopts the lock, and in the compensation arm.
+    Value is the `project_id` being started; **must** carry a TTL bounded by the cold-start
+    budget plus margin — this marker spares a container from reclamation, so one that never
+    expires spares it forever. Written once by `_holding_user_lock`, cleared on the same exit.
 
-    DELIBERATELY NOT A REGISTRY FIELD. A registry entry written before a container exists reads to
-    the sweep, the reconciler and the ARM reconciliation as a live container that is not there, and
-    a registered container is spared rather than collected. `build_sessions/locks.py` owns the
-    write/read/clear primitives."""
+    DELIBERATELY NOT A REGISTRY FIELD: written before a container exists, it would read as a
+    live container that is not there, and get spared rather than collected."""
     return ns(FAMILY_STARTING, user_id)
 
 

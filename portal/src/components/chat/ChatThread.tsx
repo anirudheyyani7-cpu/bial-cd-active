@@ -1,29 +1,14 @@
 /**
- * THE TRANSCRIPT — the portal's composition of the ported thread.
+ * THE TRANSCRIPT — the portal's composition of the ported thread. One surface for both
+ * chat kinds: nothing here consults kind, so a Plan transcript cannot show a build (no
+ * build parts ever arrive in it) — a test asserts identical DOM either way. It mounts
+ * into `ConversationSlot`, which owns height/hide (no `calc(100vh - …)` here); the
+ * runtime lives at the SURFACE, not here, so the composer can share it via `useAui()`.
  *
- * One surface for both kinds of chat. Nothing in this file, or anywhere below it, consults the
- * chat's kind: a Plan chat's transcript cannot show a build because no build parts arrive in it,
- * never because a renderer checked. The same fixture rendered in either kind produces identical
- * DOM, and a test asserts exactly that.
- *
- * ── WHAT IT MOUNTS INTO ──
- *
- * `ConversationSlot` owns the slot's height and its hide treatment. This builds nothing
- * that positions itself against the viewport and adds no `calc(100vh - …)`.
- *
- * THE RUNTIME IS NOT BUILT HERE — it is the SURFACE's, and provided by the surface, because the
- * composer has to sit inside the same provider: the library's composer primitives all resolve
- * against `useAui()`, and a provider wrapped around only the transcript leaves the composer
- * outside it. One runtime per conversation, mounted above both — never a second one here.
- *
- * ── `MessageContent` IS RE-HOSTED, NOT REPLACED ──
- *
- * It comes across whole, because it *is* four guarantees rather than a markdown renderer:
- * the image refusal (`disallowedElements` — and there is NO `img-src` CSP anywhere in this repo, so
- * that prop is the only thing holding it), the CSV-injection table control, `remark-breaks`, and
- * the `mode="static"` corruption guard. `@assistant-ui/react-markdown` has none of them and
- * reintroduces the engine this repo deliberately removed. Its 21-case parity checklist is
- * re-pointed at this host and must pass BEFORE anything is deleted.
+ * `MessageContent` is RE-HOSTED, not replaced: it holds four guarantees —
+ * `disallowedElements` (this repo's only `img-src` protection), the CSV-injection
+ * control, `remark-breaks`, and the `mode="static"` guard — that
+ * `@assistant-ui/react-markdown` lacks; its 21-case parity checklist must pass first.
  */
 import { useMemo, type FC } from 'react'
 
@@ -57,22 +42,12 @@ const TextPart: ThreadComponents['TextPart'] = ({ text, isUser }) => (
 )
 
 /**
- * THE WORKING STATUS — status only, never the reasoning content.
- *
- * The reasoning text is technical and far too much for the people who read this,
- * so `useMessagePartReasoning` is not used and the group renders one plain line.
- *
- * This is a deliberate, narrow exception to the rule against showing a progress indicator on a
- * turn that ran no tools, recorded here where it renders rather than left for an implementer to
- * trip over. That rule exists to kill an indicator driven by TURN STATUS, which appeared on every
- * message including a plain question. This one is driven by a real signal instead: the model is
- * actually reasoning, and it disappears the instant it starts writing or calling something.
- *
- * IT DOES APPEAR ON A TURN THAT RUNS TOOLS. The grouping is HIERARCHICAL: `reasoning` and
- * `tool-call` share a `group-chainOfThought` parent but get separate `group-reasoning` /
- * `group-tool` children, so both render. That is intended — a build shows the status before its
- * first step — and it is stated here because the shared parent key reads like a guarantee that
- * this never fires beside an activity group.
+ * THE WORKING STATUS — status only, never the reasoning content (too technical here;
+ * `useMessagePartReasoning` unused): a narrow exception to no-indicator-without-tools,
+ * driven by the model's real reasoning signal, not TURN STATUS (once shown on every
+ * message) — gone the instant writing or a call starts. ALSO APPEARS ON A TOOL-RUNNING
+ * TURN: grouping is HIERARCHICAL, `reasoning` and `tool-call` sharing
+ * `group-chainOfThought` but rendering separate children, so a build shows status first.
  */
 const ReasoningGroup: ThreadComponents['ReasoningGroup'] = () => (
   <p data-testid="working-status" className="my-1 text-xs text-neutral">

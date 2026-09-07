@@ -1,18 +1,14 @@
 """What a scheduled worker pass did, and — far more important — THAT it happened.
 
-WHY THIS IS A TABLE AND NOT A REDIS KEY. The fleet-count alarm is emitted *by the pass itself*, so
-a crashlooping scheduler emits nothing and reads exactly like a healthy quiet fleet: the origin
-incident's epistemic failure, relocated one layer out. The only detector of a dead worker is
-therefore the ABSENCE of a pass record, which means the record has to outlive everything the
-worker depends on. Under `volatile-lru` — or any `allkeys-*` policy — a Redis marker is evictable,
-so the staleness alarm would fire spuriously *and* its absence would be indistinguishable from a
-real outage. Postgres also gives pass history for free, which report-only's three-consecutive-pass
-exit condition needs anyway.
+A TABLE, NOT A REDIS KEY: the fleet-count alarm is emitted *by the pass itself*, so a
+crashlooping scheduler reads like a healthy quiet fleet — the only detector of a dead worker
+is the ABSENCE of a pass record, which must outlive everything the worker depends on. A Redis
+marker is evictable under any `allkeys-*` policy and would make that absence indistinguishable
+from a real outage.
 
-NOT USER-SCOPED, and deliberately so. This is the only table in the system that is not: a pass is
-a property of the deployment, not of a citizen, and it holds no user data — a name, a timestamp,
-an outcome and five integers. Every other model here carries an owning `user_id` because it holds
-somebody's work; this one holds the platform's own pulse.
+NOT USER-SCOPED, deliberately: the only table in the system that isn't. A pass is a property of
+the deployment, not a citizen's, and it holds NO user data — a name, a timestamp, an outcome,
+five integers. Every other model carries an owning `user_id` because it holds somebody's work.
 """
 
 from __future__ import annotations

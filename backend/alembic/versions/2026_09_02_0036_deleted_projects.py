@@ -1,19 +1,15 @@
 """deleted_projects — a tombstone per deletion, not a soft-delete flag
 
-The ask was `is_deleted` + `remark` on `projects`. This is a separate table instead, and the
-model's docstring carries the argument: the dialog tells the citizen nothing is recoverable
-and the server means it (`salt_the_earth` force-drops the project's database), so a
-surviving row is a record ABOUT the deletion rather than a project that can come back. A
-flag on `projects` would also put `WHERE is_deleted = false` on every read of that table
-forever, and missing one resurrects a deleted project.
+Separate table, not `is_deleted` + `remark` on `projects`: the dialog tells the citizen nothing
+is recoverable and the server means it (`salt_the_earth` force-drops the project's database), so
+a surviving row is a record ABOUT the deletion, not a project that can come back. A flag would
+also put `WHERE is_deleted = false` on every read forever, and missing one resurrects a project.
 
-No foreign key to `projects`: the row it would reference is gone by the time this is
-written. `project_id` is stored so an administrator can correlate with audit rows and
-deployment history that still name it.
+No foreign key to `projects` (the row is gone by the time this writes); `project_id` lets an
+administrator correlate with audit rows and deployment history.
 
 Revision ID: 0036_deleted_projects
-Revises: 0035_chat_kind
-"""
+Revises: 0035_chat_kind"""
 
 from __future__ import annotations
 

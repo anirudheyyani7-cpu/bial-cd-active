@@ -1,18 +1,15 @@
 """Office → Markdown extraction.
 
-docx and xlsx are stored as-is but NEVER inlined to the model — the server extracts them to
-Markdown (a sticky text block re-sent every turn), so the payload is bounded (text cap) and
-truncate-and-warn (never reject on content). Structure is validated by ZIP signature + OPC part
-BEFORE any parse (a mislabelled `.zip`/`.pptx` is a clean 400).
+docx and xlsx are stored as-is but NEVER inlined to the model — extracted to Markdown (a
+sticky text block re-sent every turn) so the payload is bounded and truncate-and-warn (never
+reject). Structure is validated by ZIP signature + OPC part BEFORE any parse (a mislabelled
+`.zip`/`.pptx` is a clean 400).
 
-These functions are pure extractors: openpyxl read-only streaming + a row cap keep a *legit*
-sheet bounded, but they do NOT contain a decompression bomb by themselves. The invariant —
-untrusted docx/xlsx must not OOM the shared API worker — is met by the CALLER
-running `extract_office` inside the shared killable parse governor (`services/parse/governor.py`,
-via the `extract_word`/`extract_excel` dispatch kinds), which adds the `assert_zip_not_bomb`
-pre-filter, an rlimit, and a wall-clock kill (contained OOM/timeout → 413). Do not call
-`extract_office` in-process on untrusted bytes.
-"""
+These are PURE extractors — openpyxl read-only streaming + a row cap bound a *legit* sheet,
+but do NOT by themselves stop a decompression bomb. That invariant is met by the CALLER
+running `extract_office` inside the killable parse governor (`services/parse/governor.py`),
+which adds the bomb pre-filter, an rlimit, and a wall-clock kill. Do NOT call `extract_office`
+in-process on untrusted bytes."""
 
 from __future__ import annotations
 

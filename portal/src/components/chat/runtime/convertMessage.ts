@@ -1,62 +1,25 @@
 /**
- * THE SEAM. Above it everything is the library's; below it everything is the server's.
+ * THE SEAM. Above it everything is the library's; below it everything is the server's. One
+ * function maps our `ChatMessage` onto assistant-ui's `ThreadMessageLike`; the live stream and the
+ * reload projection produce the SAME shape, so nothing branches on chat kind and a live message
+ * renders identically to a reloaded one.
  *
- * One function maps our `ChatMessage` — server id, seq, role, parts[] — onto assistant-ui's
- * `ThreadMessageLike`. Both the live stream and the reload projection produce the SAME
- * `ChatMessage`, so both arrive here and both render identically. That is the rendering half of
- * the guarantee that nothing here branches on a chat's kind, and it is also what makes a live
- * message and a reloaded one render identically — a property of there being one converter rather
- * than a rule anyone enforces.
+ * WHAT A PART BECOMES: `text` → text part; `step` → tool-call, LABEL AND STATE ONLY; `reasoning` →
+ * the platform's status sentence only (`ReasoningPart` has no field for real reasoning text);
+ * everything else (`build`, `build_in_progress`, `plan_options`) drops — a message whose parts all
+ * drop still exists, empty, unrendered. THE REDACTION WALL IS HERE, NOT AT THE DRAW SITE: a step
+ * becomes `toolName` + `state`, NOTHING ELSE — no `args`/`result`/`detail` — so an expander has
+ * nothing to leak even if it later renders every field a part holds.
  *
- * ══ FIVE IDENTITY TRAPS, ALL VERIFIED IN THE INSTALLED 0.15.17 SOURCE ══
- *
- * Carried here as code, not as a risks table:
- *
- *  1. OMIT `id` AND THE FALLBACK IS THE ARRAY INDEX. Every message we hand over carries the
- *     server's id. `messagesFromProjection` already mints stable composite keys — `srv_{seq}_{kind}_{index}`
- *     — and the comment above them explains why seq alone collides (one row projects several
- *     items). We reuse those; we do not invent a second identity scheme.
- *  2. DUPLICATE IDS DROP MESSAGES. The runtime keeps the LAST occurrence and only `console.warn`s,
- *     so a collision costs a turn and says so nowhere anyone looks. `assertUniqueIds` throws with
- *     the offending id named instead — loud, at the seam, before the runtime can swallow it.
- *  3. THE LIBRARY MINTS EXACTLY ONE ID. `hasUpcomingMessage` is `isRunning && last.role !== "assistant"`;
- *     when true it appends an optimistic assistant message with an id we do not control. Keeping
- *     identity server-owned is therefore a SEQUENCING requirement on the send path — a server-owned
- *     assistant message must be last the instant `isRunning` flips true — not something this file
- *     can fix. `hasUpcomingMessage` restates the library's own predicate here, where the ordering
- *     is reasoned about, and its test pins it — the send path SATISFIES the rule by construction
- *     rather than by consulting it, so nothing outside that test calls it.
- *  4. THE CONVERTER CACHES ON OBJECT IDENTITY. The runtime holds a WeakMap keyed on the message
- *     object and short-circuits on a hit, so MUTATING A MESSAGE IN PLACE IS INVISIBLE — the UI
- *     simply never re-renders. Every streamed update must produce a NEW object for the changed
- *     message and preserve identity for every unchanged one. This is also the fix for the
- *     "activity groups flicker and disappear" failure: the record of tool calls lives outside the
- *     loop reading the stream, so a chunk carrying only text cannot erase earlier calls.
- *  5. `setMessages` IS NOT FREE. Providing it switches on `switchToBranch` AND `delete`. It is
- *     never provided, and an exact-equality capability test is what keeps it that way.
- *
- * ══ WHAT A PART BECOMES ══
- *
- * `text`      → a text part. Prose is prose.
- * `step`      → a `tool-call` part carrying LABEL AND STATE ONLY (see the redaction note).
- * `reasoning` → a reasoning part carrying the platform's own status sentence and nothing else.
- *               The library's own renderer for that kind is reached only when a message actually
- *               carries one, which is why a boolean on the turn cannot drive the working status
- *               on its own. The status-only guarantee is structural rather than a promise: OUR
- *               part has nowhere for reasoning text to sit — see `REASONING_STATUS_TEXT`.
- * others      → nothing. `build`, `build_in_progress` and `plan_options` are not transcript prose:
- *            the first two are replaced by the activity group's own terminal handling, and
- *            `plan_options` is the offer, which renders on the composer rather than inline.
- *            Dropping a part is not the same as dropping a message — a message whose parts all
- *            drop still exists, with empty content, and the thread renders no element for it.
- *
- * ══ THE REDACTION WALL IS HERE, NOT AT THE DRAW SITE ══
- *
- * A step becomes a tool-call part with `toolName` and a `state`, and NOTHING ELSE. No `args`, no
- * `result`, no `detail`. The expander therefore has nothing to leak even if someone later
- * renders every field a part holds — which is the point of putting the wall at the converter
- * rather than trusting a promise at the component. `toStepItem` in `turnStreamApi.ts` already
- * narrows `detail` away on both paths, so this is the second of two walls, not the only one.
+ * WHY THIS EXISTS — five identity traps, verified in the installed 0.15.17 source: (1) omitting
+ * `id` falls back to array index, so always pass the server's composite key
+ * (`srv_{seq}_{kind}_{index}`, since `seq` alone collides); (2) duplicate ids silently DROP a
+ * message, so `assertUniqueIds` throws instead; (3) the library mints an id itself when `isRunning
+ * && last.role !== "assistant"`, so identity stays server-owned by construction on the send path
+ * (`hasUpcomingMessage` restates that predicate for its test); (4) the converter caches on OBJECT
+ * IDENTITY (a WeakMap), so mutating in place is invisible — every streamed update needs a NEW
+ * object for the changed message and unchanged identity for the rest; (5) `setMessages` is never
+ * provided, since supplying it switches on `switchToBranch`/`delete`.
  */
 import type { ChatMessage, MessagePart } from '../../../utils/messageTypes'
 import { attachmentsFromParts } from '../../../utils/attachmentStore'
@@ -87,20 +50,12 @@ export type LibraryPart = Exclude<ThreadMessageLike['content'], string>[number]
 const TOOL_NAME = 'activity'
 
 /**
- * What a reasoning part carries into the library, and it is the PLATFORM's sentence.
- *
- * THE LIBRARY REFUSES AN EMPTY ONE. `fromThreadMessageLike` drops a reasoning part whose `text`
- * and `unstable_summary` are both blank, so a genuinely content-free part never reaches the
- * renderer and the status would simply never appear. This is the smallest thing that satisfies
- * that requirement without weakening the guarantee: our own `ReasoningPart` still has NO field
- * for reasoning text — the wire never carries any, and there is nowhere to put any — and what
- * crosses here is a constant.
- *
- * IT IS NEVER RENDERED. `ReasoningGroup` draws its own line and ignores its children, and the
- * `reasoning` part itself falls to the thread's `default: return null`. The words are the same
- * words the status line shows anyway, so the one case where that stopped being true would put
- * the correct sentence on screen rather than a placeholder — fail-safe rather than a marker
- * nobody would recognise.
+ * The platform's own status sentence, carried into the library as the reasoning part's text.
+ * A blank `text`+`unstable_summary` is dropped by `fromThreadMessageLike`, so this constant is
+ * the smallest fix that satisfies that without inventing a real field — `ReasoningPart` has
+ * nowhere else to put reasoning text. Never actually rendered (`ReasoningGroup` draws its own
+ * line, ignoring children), but it is the same words the status line already shows, so if that
+ * stopped being true this would fail safe onto the correct sentence, not an unrecognised one.
  */
 const REASONING_STATUS_TEXT = 'Working on your app'
 
@@ -237,13 +192,11 @@ export function assertUniqueIds(messages: readonly ChatMessage[]): void {
 }
 
 /**
- * The library's own rule for when it mints an assistant message of its own, restated so the send
- * path can be tested against the same predicate the runtime uses.
- *
- * `hasUpcomingMessage = isRunning && last.role !== "assistant"`. When this is true the runtime
- * appends an optimistic assistant message carrying an id WE DO NOT CONTROL, which breaks
- * server-owned identity for the whole turn. The send path's job is to make sure a server-owned
- * assistant message is already last at the instant `isRunning` flips true.
+ * The library's own rule for minting an assistant message of its own, restated so the send
+ * path can be tested against the same predicate the runtime uses: `isRunning && last.role
+ * !== "assistant"`. True means an optimistic assistant message appends with an id WE DO NOT
+ * CONTROL, breaking server-owned identity — so the send path's job is making sure a
+ * server-owned assistant message is already last the instant `isRunning` flips true.
  */
 export function hasUpcomingMessage(isRunning: boolean, messages: readonly ChatMessage[]): boolean {
   const last = messages[messages.length - 1]

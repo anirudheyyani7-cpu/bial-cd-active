@@ -1,40 +1,21 @@
 /**
- * THE APP STATUS PANEL — the rail section the boards draw, always visible.
+ * THE APP STATUS PANEL — the rail section the boards draw, always visible: a coloured state
+ * pill, three provenance rows, one sentence, one action — nothing behind a popover.
  *
- * The boards draw it open: a coloured state pill, three provenance rows with dates and short
- * build ids, one sentence, and one action. That is what this renders — nothing about where an app
- * stands is behind a popover a citizen has to click for.
+ * WHY THIS EXISTS: the panel and the chip (`PublishStatusChip.tsx`) must never disagree. Both
+ * read the one server `publishState` through `utils/publishPresentation.ts` — same words,
+ * colour, action, rows — but hold SEPARATE reads, deliberately: they differ in shape and
+ * lifetime, so sharing a component was the wrong seam. A same-tab `bial:deployment-changed`
+ * nudge reconciles the two reads (one extra poll only while a publish is in flight) — but it
+ * reconciles the READ, not the server's per-mount unsaved-work QUESTION, which no read carries.
+ * `hiddenSubtree.ts` keeps this panel mounted-but-invisible when the rail closes, which once let
+ * a stale question sit behind a closed rail while the freshly-mounted chip offered "Send for
+ * review" as though nothing were pending — so the question is retired when the rail closes,
+ * trading a re-typed declaration for two surfaces that can no longer contradict each other.
  *
- * ═══ THE PANEL AND THE CHIP CANNOT DISAGREE, AND THIS IS HOW ═══
- *
- * Both read the ONE server-computed `publishState` and both put it through
- * `utils/publishPresentation.ts` — the same words, the same colour, the same action, the same
- * rows. Neither renders the other and neither is a special case of the other; they differ in
- * shape and in lifetime, which is why sharing a component would have been the wrong seam.
- *
- * They hold SEPARATE READS, which is deliberate rather than an oversight. `usePublishState`'s
- * own docblock kept a same-tab `bial:deployment-changed` nudge alive for exactly this case,
- * noting that "the moment anything puts two publish surfaces in one document again it is the
- * difference between them agreeing and them contradicting each other". That moment is now. The
- * cost is one extra read per project screen: the poll runs only while a publish is in flight, so
- * a settled app costs one request per mount and nothing after it.
- *
- * THE NUDGE RECONCILES THE READ, NOT THE OUTSTANDING QUESTION, which is why the question is
- * retired when the rail closes. The server's unsaved-work question is per-mount state that no read
- * returns and the nudge does not carry, so a question raised HERE is invisible to the chip. Hide
- * details keeps this panel mounted and merely invisible — see `hiddenSubtree.ts` — which left the
- * question alive behind a rail nobody could see while the chip, mounted fresh, offered "Send for
- * review" as though nothing were pending. It is retired when the rail closes: the citizen loses a
- * declaration they have to re-enter, which is the smaller cost than two surfaces contradicting
- * each other and a stale question with a live button waiting when the rail reopens.
- *
- * ═══ WHERE THE SAVED ROW COMES FROM ═══
- *
- * Every other row comes from a column the status read already selects. The citizen's own last
- * save comes from that same read — the server's one object-store metadata HEAD and its timestamp,
- * returned alongside the drift verdict, with no container in the request path: the row has to
- * render on a project whose workspace is stopped, which is precisely where `save-state` — which
- * attaches to a container first — has nothing to say.
+ * The saved row's date/id come from the SAME status read as every other row (the store's
+ * metadata HEAD, no container in the path) — it must render even when the workspace is
+ * stopped, which is exactly where `save-state` (container-attached) has nothing to say.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ExternalLink } from 'lucide-react'
@@ -55,15 +36,12 @@ import type { ProvenanceRow } from '../../utils/publishPresentation'
 export interface AppStatusPanelProps {
   projectId: string
   /**
-   * The section's own small-caps label, drawn by this component so the state pill can share its row.
+   * The section's own small-caps label, drawn by this component so the pill can share its row.
    *
-   * A NODE RATHER THAN A STRING, and it comes from the rail rather than being written here: the
-   * rail owns the treatment every one of its section labels shares, and a second definition of it
-   * here is how two of the three end up a half-point apart. What this component owns is the ROW —
-   * `PreviewOff`, `NothingBuilt` and `Main` all draw the label and the pill on one 25px band with
-   * the pill carried right. The pill was a `float-right` in the block BELOW the heading, and a
-   * float cannot rise onto a preceding block's line, so it dropped to its own row and left a stray
-   * band of empty rail in every state.
+   * A NODE, NOT A STRING — it comes from the rail, which owns the shared label treatment; a
+   * second definition here previously drifted a half-point out of sync. This component owns only
+   * the ROW: label and pill share one 25px band with the pill carried right, replacing a
+   * `float-right` that could not rise onto the heading's line and left a stray empty band.
    */
   label: ReactNode
 }
@@ -79,13 +57,12 @@ function SectionHead({ label, children }: { label: ReactNode; children?: ReactNo
 }
 
 /**
- * One provenance row: a fixed-width small-caps label, then the date, then the short build id.
+ * One provenance row: fixed-width small-caps label, then date, then short build id.
  *
  * "CANNOT TELL" IS A RENDERING, NOT A BLANK. The two halves are independently null — a bundle
  * written before the metadata stamp existed has a last-modified but no head, so the store can
- * say WHEN without saying WHICH — and neither absence may be filled in from the other or from
- * nothing. A row with no date at all says so in words rather than printing an em-dash a citizen
- * has to interpret.
+ * say WHEN without WHICH, and neither absence is filled from the other. No date at all says so
+ * in words, never an em-dash a citizen has to interpret.
  */
 function Row({ row }: { row: ProvenanceRow }) {
   const tone = row.tone === 'drift' ? 'text-status-amber-fg font-bold' : 'text-primary-900 font-semibold'

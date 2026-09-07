@@ -1,19 +1,14 @@
 /**
  * shadcn/ui `toggle-group`, copied in from the registry — the rail composer's kind picker.
+ * Re-added with its importer; see `toggle.tsx` beside it for why, and for the Tailwind-3
+ * generation note that applies here identically.
  *
- * Re-added with its importer; see `toggle.tsx` beside it for why that sentence is worth writing
- * down, and for the Tailwind-3 generation note that applies to this file identically.
+ * WHY THIS AND NOT A `select`: the Plan/Build choice is BINARY, both options matter equally
+ * and need a line of explanation beside them — a segmented control, not a dropdown hiding one
+ * option and feeling like a setting rather than a fork in what happens next.
  *
- * WHY THIS AND NOT A `select`. The choice between a Plan chat and a Build chat is BINARY, both
- * options matter equally, and both need a line of explanation beside them — that is a segmented
- * control, not a dropdown that hides one of two options behind a click. A `select` would also make
- * the choice feel like a setting; it is a fork in what happens next.
- *
- * THE VARIANT CONTEXT is why the group and the item are separate exports rather than one
- * component: a variant set on the group has to reach every item without each call site repeating
- * it, and React context is the registry's answer. Keeping it means a later `variant="outline"` on
- * the group still works, which is the whole reason to copy a registry component rather than write
- * two buttons.
+ * THE VARIANT CONTEXT is why group and item are separate exports: a group-level variant must
+ * reach every item without each call site repeating it, via React context.
  */
 import * as React from "react"
 import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group"

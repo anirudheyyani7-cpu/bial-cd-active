@@ -139,16 +139,10 @@ export default function Navbar() {
   }
 
   /**
-   * SIGNING OUT GOES THROUGH THE WORKSPACE'S GUARD.
-   *
-   * It did not, and it is one of the two most-used exits out of a workspace: every nav LINK in
-   * this bar was routed through `exit` and the one control that ends the session entirely was
-   * not, so a citizen with unsaved work could lose it by pressing the single most final button
-   * on the screen, in silence. The guard is the same one, so the dialog, the save-first offer and
-   * the failed-save refusal are all the ones they have already seen.
-   *
-   * OUTSIDE A WORKSPACE `exit` is a function that simply calls what it is given, which is why
-   * every other page's sign-out is untouched by this.
+   * Signs out through the workspace's UNSAVED-WORK GUARD — it did not, once, and a citizen
+   * could lose work by pressing the single most final button on the screen, in silence. Same
+   * guard as every nav link, so the dialog/save-offer/failed-save refusal are already familiar.
+   * Outside a workspace, `exit` is a passthrough, so every other page's sign-out is untouched.
    */
   const signOut = () => exit(() => void handleLogout())
 

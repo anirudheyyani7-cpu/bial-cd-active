@@ -1,17 +1,14 @@
 """Microsoft Entra ID + session configuration.
 
-The backend runs the OIDC Authorization-Code + PKCE flow itself and mints its own
-cookie session. Every Entra + session parameter flows through one
-`AUTH__*` env block validated into `AuthConfig`, mirroring
-`services/storage/config.py`: `extra="forbid"` so a mistyped nested key fails at
-startup instead of silently defaulting, `SecretStr` on every credential
-(unwrapped only at the JOSE / OAuth boundary), and required fields carry NO
-default so a missing tenant/secret fails at `Settings()` construction.
+The backend runs the OIDC Authorization-Code + PKCE flow itself and mints its own cookie session.
+Every Entra + session parameter flows through one `AUTH__*` env block validated into `AuthConfig`,
+mirroring `services/storage/config.py`: `extra="forbid"` (a mistyped nested key fails at startup,
+not silently), `SecretStr` on every credential (unwrapped only at the JOSE/OAuth boundary), and
+required fields carry NO default (missing tenant/secret fails at `Settings()` construction).
 
-The single tenant is hard-configured: `tenant_id` pins the tenant-specific
-discovery document and thus the exact issuer, which is what makes the
-outside-tenant rejection possible — never `common`/`organizations`, whose
-templated issuer defeats an exact `iss` match.
+The single tenant is hard-configured: `tenant_id` pins the tenant-specific discovery document and
+exact issuer, which is what makes outside-tenant rejection possible — never
+`common`/`organizations`, whose templated issuer defeats an exact `iss` match.
 """
 
 from __future__ import annotations

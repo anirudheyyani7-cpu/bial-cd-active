@@ -4,31 +4,24 @@ Revision ID: 0033_harness_counters
 Revises: 0032_rejection_standing
 Create Date: 2026-08-23
 
-There is no metrics system in this deployment, so an outcome is observable
-only if the platform writes it down. This is the relational half — the pinned
-structlog events in `services/build_sessions/alarms.py` are the other.
+WHY THIS EXISTS: there is no metrics system in this deployment, so an outcome is
+observable only if the platform writes it down — this is the relational half (the
+pinned structlog events in `services/build_sessions/alarms.py` are the other).
 
-A NAME/VALUE ROW, NOT A COLUMN PER COUNTER. The companion plan emits three
-adoption counters of its own at the tool boundary and ships no migration of its
-own; a counter that needs a schema change to exist is a counter that does not get
-added. With the name as a column, a new counter is an INSERT.
+A NAME/VALUE ROW, NOT A COLUMN PER COUNTER: a counter that needs a schema change to
+exist is a counter that does not get added; with the name as a column, a new counter
+is an INSERT. NOT USER-SCOPED, following `worker_passes`'s precedent — these are
+deployment properties, not a citizen's, and hold no user data. `app_id`/`build_id`
+carry NO foreign key deliberately: a count is a historical fact that must survive its
+app being deleted, which is precisely when someone wants to read it.
 
-NOT USER-SCOPED. `worker_passes` is the precedent and the reasoning is identical:
-these are properties of the deployment rather than of any citizen, and they hold
-no user data — a name, a number, two ids and a timestamp. `app_id` and `build_id`
-carry NO foreign key deliberately: a count is a historical fact and has to
-survive its app being deleted, which is precisely when someone wants to read it.
+`served_head` is folded in here (not its own table) because it is only ever read
+beside the verdict it explains, already scrubbed/capped at the container boundary.
 
-`served_head` is folded in here rather than given a table of its own because it
-is only ever read beside the verdict it explains. It is scrubbed and capped at
-the container boundary long before it reaches this column.
+THE ONLY ALEMBIC REVISION IN EITHER PLAN — a later one chains onto this head and
+updates the pinned string in `tests/db/test_suspended_at_migration.py`.
 
-THIS IS THE ONLY ALEMBIC REVISION IN EITHER PLAN. If one becomes necessary in the
-companion plan it chains onto this head and updates the same pinned string in
-`tests/db/test_suspended_at_migration.py`.
-
-Hand-finalized.
-"""
+Hand-finalized."""
 
 from __future__ import annotations
 

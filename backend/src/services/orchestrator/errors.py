@@ -194,14 +194,11 @@ def from_server(raw: str) -> BuildError:
 def from_next_build(raw: str) -> BuildError:
     """A raw `next build` log → `BuildError(source=next_build)`.
 
-    The PRODUCTION build, run where the shipped image is made — not the dev-server verify.
-    `tsc --noEmit` is structurally blind to the whole prerender/bundling failure class
-    (`useSearchParams` without a Suspense boundary, `window` at module scope, `server-only`
-    pulled into a client graph, a route that throws during static generation), so this is
-    the only signal that says an app can actually be built and shipped.
-
-    `ErrorSource.NEXT_BUILD` has existed unused since the taxonomy was written — this is the
-    arm the docstring on `declutter` anticipated."""
+    The PRODUCTION build, run where the shipped image is made — not the dev-server verify. `tsc
+    --noEmit` is structurally blind to the whole prerender/bundling failure class (a `window` at
+    module scope, a route that throws during static generation), so this is the only signal that
+    says an app can actually be built and shipped. `ErrorSource.NEXT_BUILD` sat unused since the
+    taxonomy was written — this is the arm `declutter`'s docstring anticipated."""
     return declutter(raw, ErrorSource.NEXT_BUILD)
 
 
@@ -276,23 +273,12 @@ def _frame_as_data(text: str) -> str:
 def from_client(raw: str) -> BuildError:
     """A browser-side crash report → `BuildError(source=client)`.
 
-    The `client` arm `ErrorSource` has reserved since the taxonomy was written, and the only one
-    that splits its audience. `BuildError` is dual-purpose — a portal envelope AND the next run's
-    repair prompt — and those two readers need opposite things from a report whose text the
-    generated app wrote:
-
-    * `title` / `cleaned_stack` are what EGRESS (the `error` progress envelope, the turn stream's
-      `diagnostic` frame). They get the platform's own sentence and an empty stack, so no part of
-      the report is ever rendered to anybody.
-    * `agent_only_detail` is what the model reads, and it never leaves this process — the field
-      is `exclude=True`, so it is absent from every serialization of every envelope that carries
-      a `BuildError`.
-
-    `declutter` still runs, for its redaction/ANSI/path/truncation pipeline: the app can
-    `console.log(process.env)`, so a report is exactly as credential-shaped as a dev-server tail
-    and must be redacted on the same single path. Its computed title is discarded on purpose —
-    that title would be the app's first line, which is the one thing that must not become
-    user-facing copy here."""
+    `BuildError` is dual-purpose — a portal envelope AND the next run's repair prompt — the one
+    source that splits its audience. `title`/`cleaned_stack` are what EGRESS: only the platform's
+    own sentence and an empty stack, so no byte of the app-authored report is ever rendered to
+    anybody. `agent_only_detail` is what the model reads; `exclude=True` means it never leaves this
+    process. `declutter` still runs for redaction (the app can `console.log(process.env)`), but its
+    computed title — the app's own first line — is discarded: it must never become user-facing."""
     reported = declutter(raw, ErrorSource.CLIENT)
     return BuildError(
         source=ErrorSource.CLIENT,

@@ -1,39 +1,14 @@
-"""The `classification_reviews` table — ONE row per app, upserted, stamped with the
-commit it read.
+"""The `classification_reviews` table — ONE row per app, upserted and stamped with the commit
+it read (`head_sha`), so a stale answer for an older commit is detectable rather than kept.
 
-The AI pre-publish review reads an app's last saved code and pre-fills the six
-data-classification questions. This table is where that result lives, and its shape is
-the opposite of `deployments` on purpose: `deployments` is append-only because a failed
-attempt must never overwrite the record of the version still serving traffic, while a
-review is only ever a claim ABOUT the current saved version — a stored answer for an
-older commit is not history worth keeping, it is a stale answer waiting to be mistaken
-for a current one. So the row is overwritten wholesale whenever the version moves, and
-`head_sha` is what makes that staleness detectable. The durable history lives in
-the audit records written per run and at publish/routing time, not here.
+Opposite of `deployments` on purpose: reviews are overwritten wholesale when the version moves
+because a stale claim is worse than none, while `deployments` stays append-only so a failed
+attempt can never overwrite the version still serving.
 
-WHY `attempt` EXISTS: the review bypasses the citizen's daily token gate, so "bounded"
-cannot rest on "once per version" — the review is deliberately built to let a citizen
-re-request a failed review without re-saving, because the failing runs are the expensive
-ones. The counter
-increments on every claim of the same version and resets to 1 when the version changes;
-the SERVICE layer refuses past three model runs per version (the store exposes the
-counter faithfully and enforces nothing, so the policy lives in one place).
-
-`verdicts` carries the six answers with their plain-language reasons — JSONB rather
-than six columns for the same reason `deployments.classification` is JSONB: the
-questionnaire is expected to be reworded and reweighted, and the keys are pinned to
-`CLASSIFICATION_KEYS`, so this is a stable shape, not a free-form bag. `evidence` is
-the machine-checkable half — stored for the gate and the audit trail, NEVER
-projected to the citizen or the administrator.
-
-`answers_complete` is a third axis, not a fourth status: a run can return COMPLETE
-while having answered fewer than six questions, and the publish gate treats a partial
-complete as failed. Folding that into `status` would make "the run finished" and "the
-answers are whole" one column answering two questions.
-
-No `project_id`: `app_registry` already enforces one app per project
-(`uq_app_registry_project`), so the route resolves project → app before touching this
-table — the same reasoning as `deployments`.
+`attempt` resets per version because review bypasses the daily token gate — service layer caps
+it at three per version, not the store. `evidence` (the machine-checkable half of `verdicts`)
+is NEVER projected to the citizen or administrator. `answers_complete` is independent of
+`status`: COMPLETE can still answer fewer than six, which the publish gate treats as failed.
 """
 
 from __future__ import annotations

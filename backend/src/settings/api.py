@@ -1,16 +1,14 @@
 """Everything the FastAPI control plane needs to boot, in one list.
 
-Read this file to answer "which environment variables does the API need?" — the answer is here and
-nowhere else. Fields are grouped under the four tier headers defined in `__init__.py`, and a
-field's tier is spelled by its SHAPE, never by a class name:
+Read this file to answer "which environment variables does the API need?" Fields are
+grouped under the four tier headers in `__init__.py`; a field's tier is spelled by its
+SHAPE, never a class name:
 
     REQUIRED               no default            -> fails to construct in EVERY environment
     REQUIRED IN PRODUCTION `X | None = None` + a `_require_<field>_in_production` gate
     FEATURE SWITCH         `X | None = None`     -> unset means the feature is OFF, in prod too
     KNOB                   a working default     -> set only to change behaviour
-
-Behaviourally identical to the previous mixin composition: same fields, same seven production
-gates, same messages.
+Behaviourally identical to the previous mixin composition: same fields, gates, messages.
 """
 
 from __future__ import annotations
@@ -34,13 +32,12 @@ from src.settings.foundry import FoundryConfig
 class ApiSettings(CoreSettings):
     """The API role's complete settings manifest.
 
-    Inherits `CoreSettings` — and ONLY `CoreSettings`. A single base is deliberate: pydantic merges
-    `model_config` along the MRO with a plain left-to-right `dict.update`, and every `BaseSettings`
-    subclass owns a complete config dict with explicit `None` defaults, so multiple bases could
-    silently reset `env_file` and `env_nested_delimiter` — a profile that boots, reads no env file
-    and ignores every nested `X__Y` variable. With one base there is no merge to clobber it.
-    `tests/test_settings_profiles.py` pins it anyway.
-    """
+    Inherits `CoreSettings` — and ONLY `CoreSettings`. A single base is deliberate:
+    pydantic merges `model_config` along the MRO with a plain left-to-right
+    `dict.update`, and every `BaseSettings` subclass owns a complete config dict with
+    explicit `None` defaults, so multiple bases could silently reset `env_file` and
+    `env_nested_delimiter` — booting with no env file read and every nested `X__Y`
+    ignored. `tests/test_settings_profiles.py` pins it anyway."""
 
     # ============================================================ REQUIRED
     # No default. Missing or partial -> the process does not start, in dev, test and prod alike.

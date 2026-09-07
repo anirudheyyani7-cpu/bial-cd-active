@@ -1,24 +1,13 @@
 /**
- * The wire shapes of the build-session control surface and the progress envelope
- * the SSE feed carries. Mostly types — imported with `import type` — plus two tiny
- * PURE helpers derived from these shapes (`isActiveBuildStatus`, a predicate over
- * the status union, and `formatDailyLimitMessage`, the shared quota copy) so every
- * surface shares one definition instead of re-deriving it.
+ * Wire shapes for the build-session control surface and the SSE progress envelope, plus two
+ * pure helpers (`isActiveBuildStatus`, `formatDailyLimitMessage`) shared by every surface.
  *
- * TWO DELIBERATELY DIFFERENT CASINGS, each frozen by its own contract:
+ * TWO DELIBERATELY DIFFERENT CASINGS: REST bodies are camelCase (backend serializes by alias);
+ * the progress envelope stays snake_case — field names AND `type` literals (`preview_ready`,
+ * `cleaned_stack`, `resets_at`) — with NO alias generator. Every guard below discriminates on
+ * those exact literals, so an aliased envelope would go quiet, not error.
  *
- *   - **REST bodies are camelCase** — the backend serializes by alias, so Python
- *     `session_id` arrives as JSON `sessionId`, and the client narrows the
- *     camelCase field.
- *   - **The progress envelope stays snake_case** — field names AND `type` literals
- *     (`preview_ready`, `cleaned_stack`, `resets_at`). It is a streaming frame shape
- *     (kin to the chat relay's `{"delta":{"text":…}}`) and is rendered with NO
- *     camelCase alias generator. Do not put one over it: every guard below
- *     discriminates on those exact literals, so an aliased envelope would stop
- *     matching silently and the feed would simply go quiet.
- *
- * Bodies arrive as `unknown` (untrusted network input) and are narrowed with type
- * guards at the boundary — never cast, never `any`.
+ * Bodies arrive as `unknown`, narrowed with type guards at the boundary — never cast, never `any`.
  */
 
 // ─── The control-plane status enum (camelCase surface) ───────────────────────
@@ -158,15 +147,12 @@ export interface ErrorEvent {
    *  on the legacy build-session feed, which keeps its historical red rendering. */
   recovering?: boolean
   /**
-   * The CITIZEN-facing half of the split. `title` and `cleaned_stack` above are the
-   * model's: `title` is built to be the compiler's own first meaningful line, so it names a
-   * file and a framework construct by design. These two are what the feed renders instead —
-   * a plain sentence about the app, and something the reader can actually do.
+   * The CITIZEN-facing half of the split: `title`/`cleaned_stack` above are the model's (built
+   * to be the compiler's own first line, naming a file and construct by design); these two are
+   * what the feed renders instead — a plain sentence and something the reader can do.
    *
-   * OPTIONAL, because the legacy build-session feed emits neither. A committed fallback pair is supplied
-   * where they are rendered (the surface's diagnostic row, via `DIAGNOSTIC_FALLBACK`) when they
-   * are missing, so an error status is never rendered without an action clause — that is the
-   * invariant, not the presence of these fields.
+   * OPTIONAL: the legacy build-session feed emits neither, so a committed fallback pair renders
+   * in its place (`DIAGNOSTIC_FALLBACK`) — an error status is never shown without an action.
    */
   user_message?: string
   user_action?: string
@@ -216,13 +202,11 @@ export function formatDailyLimitMessage(limit: number, used: number): string {
 }
 
 /**
- * `ended` — the terminal envelope. `status` is narrowed to the two absorbing members
- * (`ended` graceful | `failed` unrecoverable). `reason` is display copy, typed loosely
- * as `string` so a new orchestrator reason renders as text rather
- * than breaking the build — control decisions ride `status`, with ONE deliberate
- * exception: `reason === 'completed'` marks the pardoned preview (the server
- * keeps a completed build's container alive under an idle lease), which is what lets the
- * pane keep framing it. An unknown reason degrades to the placeholder, never to a crash.
+ * `ended` — the terminal envelope. `status` narrows to the two absorbing members (`ended`
+ * graceful | `failed` unrecoverable); `reason` is loosely-typed display copy so a new
+ * orchestrator reason renders as text, not a crash. Control decisions ride `status` alone,
+ * with ONE exception: `reason === 'completed'` marks the pardoned preview (server keeps its
+ * container alive under an idle lease), which is what lets the pane keep framing it.
  */
 export interface EndedEvent {
   type: 'ended'

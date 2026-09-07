@@ -1,82 +1,27 @@
-"""The Redis coordination primitives: the one-per-user lock, the idle heartbeat, and the
-registry-state helpers.
+"""Redis coordination primitives: the one-per-user lock, idle heartbeat, and registry-state
+helpers, built only from the frozen key builders and TTL constants (`services/redis/keys.py`,
+`api/v1/build_sessions/schemas.py`).
 
-All keys go through the frozen `services/redis/keys.py` builders — nothing here ever
-hand-writes a key string. TTL/cadence use the frozen constants in
-`api/v1/build_sessions/schemas.py` (`LOCK_TTL_SECONDS=900`, `LOCK_RENEW_CADENCE_SECONDS=300`,
-`HEARTBEAT_TTL_SECONDS=90`), never a 300 s lock — a 300 s lock with a 300 s renew cadence
-has zero head-room and can drop the lock under an active build.
+Two release primitives, not interchangeable: `release_lock_as_holder` compare-and-deletes against
+the holder's OWN token (graceful stop/end); `reap_lock` has no token, so it compares against the
+CURRENTLY stored value instead (reaper/reconcile) — clearing a drifted lock without clobbering a
+same-user racing acquire. The lock fails CLOSED: any Redis error on acquire denies, never grants.
 
-Two **distinct** release primitives, and collapsing them into one is a correctness bug —
-the two paths hold different evidence about who owns the lock:
-
-* `release_lock_as_holder` — the graceful stop/end path: compare-and-delete with the
-  holder's OWN in-process token, so a process never deletes a lock it no longer owns.
-* `reap_lock` — the reaper / reconcile path: the in-process token is gone by
-  construction (crashed / restarted session, or another user's stale lock), so it reads
-  the CURRENT stored value and compare-and-deletes THAT observed value — clearing a
-  drifted lock without clobbering a same-user racing fresh acquire.
-
-The lock is security-sensitive, so it fails CLOSED: any Redis error on acquire denies
-(never a silent grant).
-
-REDIS-ERROR POLICY — `acquire_lock` is the ONLY primitive here that catches `RedisError`,
-and it catches it to RETYPE it (`LockUnavailableError`), never to answer with it. Every
-other one lets it propagate raw, and that is a decision, not an omission:
-
-* Swallowing in an ANSWER-BEARING primitive manufactures a certain-looking answer out of an
-  ambiguous store — `lock_is_held` ⇒ False is fail-OPEN, `read_registry` ⇒ None is a phantom
-  "no sandbox", `renew_lock` ⇒ False is a phantom "lock lost" that ends a healthy build.
-  `mark_registry_ending` is an ordering guard ("step 1: guard a concurrent attach") whose
-  failure must abort the reaper sequence rather than let it delete a container a racing
-  `attach_existing` still believes is ready.
-* `release_lock_as_holder` and `write_heartbeat` LOOK like compensation paths that want a
-  guard. **They do not — resist the temptation, it has already been tried once.** Two
-  independent reasons, and each alone is sufficient:
-    1. REDUNDANT where a guard is genuinely wanted. Every caller that needs one already has
-       it, at the call site, per `_do_finalize`'s log-and-continue pattern. Named rather than
-       cited by line, because the three line numbers this list used to carry (365 / 1046 / 873)
-       were every one of them wrong after `manager.py` grew past four thousand lines:
-       `SessionManager._compensate_lock_and_container`, `SessionManager._do_finalize` (and
-       `_pardon_the_container` beside it), and `SessionManager.on_progress`, which renews the
-       lock and re-seeds the heartbeat on every non-terminal progress envelope. An in-primitive
-       guard would make all of those unreachable and misleading.
-    2. ACTIVELY HARMFUL where there is no call-site guard, because there the raise IS the
-       mechanism. At the `_holding_user_lock` clean exit and at BOTH heartbeat seeds —
-       relaunch's AND start's, each now placed inside the block BEFORE `scope.adopt()` — the
-       call sits inside the protected region whose `except BaseException` spawns the
-       compensation that tears the container down (the `_holding_user_lock` docstring says so
-       outright). A swallow returns normally, compensation never runs, and the container is
-       left ALIVE behind a lock nobody releases.
-
-So a Redis error from this module surfaces to its caller, and the HTTP layer maps it:
-`services/redis/errors.py` turns it into a 503 with user-facing copy.
+REDIS-ERROR POLICY: only `acquire_lock` catches `RedisError` (to retype it as
+`LockUnavailableError`); every other primitive lets it propagate, deliberately. Answer-bearing
+primitives (`lock_is_held`, `read_registry`, `renew_lock`, `mark_registry_ending`) must never
+swallow — that would fabricate a certain answer from an ambiguous store. `release_lock_as_holder`
+and `write_heartbeat` look like they want a guard; they don't — callers that need one already have
+it, and inside `_holding_user_lock`'s protected region the raise IS what triggers compensation.
 
 WHY THIS EXISTS
 ---------------
-Redis is the store this platform distrusts, and two properties of the production instance are
-why. Both are stated once, here; every other module that made a choice because of them says
-which half drove it and points back.
-
-ITS EVICTION POLICY IS UNVERIFIED. `maxmemory-policy` has never been confirmed on the deployed
-instance, and under any `allkeys-*` setting a key with no TTL is as evictable as one with a
-TTL — so a lock, a heartbeat, a stay, a liveness lease or a start-in-flight marker can vanish
-mid-operation with nothing said. Anything that must not evaporate under memory pressure is
-therefore kept elsewhere: the destructive reclamation pass single-flights on a Postgres
-advisory lock rather than a Redis one, and the record of whether a scheduled pass ran is a
-Postgres row, because a staleness alarm keyed on an evictable marker would fire spuriously and
-its absence could not be told apart from a real outage.
-
-IT IS SHARDED, WHICH ITS OWN CONFIGURATION DENIES. Production runs Azure Managed Redis
-(`Microsoft.Cache/redisEnterprise`), and on 2026-08-18 that instance reported
-`clusteringPolicy = EnterpriseCluster` — which reads as "not clustered" and is the trap. The
-policy governs only the client-facing protocol (one endpoint, no `MOVED` redirects); the
-database underneath is still sharded, and a multi-key command whose keys hash to different
-slots is rejected outright (`ClusterCrossSlotError`). No sandbox key carries a hash tag, so
-every command issued here is SINGLE-KEY: no `COPY` between two registry keys, no two-key
-`DEL`. A single-node dev Redis and fakeredis both hash everything to one slot and cannot
-reproduce any of it, so this cannot be found by running the tests — which is why it is written
-down instead of left to be discovered in production.
+Redis here is distrusted for two confirmed reasons, stated once for every module that relies on
+them. Its `maxmemory-policy` is unverified, and under `allkeys-*` an untimed key is as evictable
+as a TTL'd one, so anything that must survive memory pressure lives in Postgres instead. And
+production (Azure Managed Redis) reports `clusteringPolicy = EnterpriseCluster` (confirmed
+2026-08-18) — reads as unclustered, but the database beneath IS sharded — so every command here
+is single-key by construction, and a dev Redis cannot reproduce the cross-slot rejection.
 """
 
 from __future__ import annotations
@@ -126,21 +71,14 @@ _LOCK_TOKEN_BYTES: Final = 32
 
 
 class LockUnavailableError(RedisError):
-    """The one-per-user lock was neither granted nor refused — Redis failed to answer, so
-    whether the lock is held is UNKNOWN.
+    """Redis failed to answer, so whether the lock is held is UNKNOWN — distinct from
+    `acquire_lock` returning `None`, which means the lock is genuinely HELD (409). A Redis
+    failure used to collapse into that same `None`, so an outage looked like a conflict:
+    "already active" when no session existed. Same fail-closed outcome, different truth.
 
-    `acquire_lock` returns `None` for exactly one thing: the lock is genuinely HELD. That
-    is a certain answer and the caller renders it as a 409 naming the live session. A
-    Redis failure used to collapse into the same `None`, which made every outage look like
-    a conflict — the endpoint told users "a build session is already active" when no
-    session existed anywhere. Same fail-closed outcome (no token is ever handed out on an
-    error), different surfaced truth.
-
-    Additive by design, mirroring `StorageUnconfiguredError(StorageError)`: it SUBCLASSES
-    `RedisError`, so every existing `except RedisError` — including
-    `services/redis/errors.py::build_coordination_or_503`, which maps it to the 503 —
-    keeps working with no change, and no caller has to learn a new type to stay correct.
-    """
+    SUBCLASSES `RedisError` (like `StorageUnconfiguredError(StorageError)`) so every existing
+    `except RedisError` — including the 503 mapping in `services/redis/errors.py` — keeps
+    working with no caller change."""
 
 
 # Compare-and-delete: DEL the key only if its current value equals ARGV[1]. Atomic (a
@@ -223,14 +161,12 @@ async def lock_is_held(redis: aioredis.Redis, user_uuid: uuid.UUID) -> bool:
 
 async def write_heartbeat(redis: aioredis.Redis, user_uuid: uuid.UUID) -> datetime:
     """`SET heartbeat <iso8601> EX HEARTBEAT_TTL` — presence = active, expiry = idle
-    (eligible for reaper teardown). Returns the UTC instant the reaper considers the
-    session idle.
+    (reaper-eligible). Returns the UTC instant the reaper considers the session idle.
 
-    BARE for the same reason as `release_lock_as_holder` — see the REDIS-ERROR POLICY in the
-    module docstring. The in-build renewal (`SessionManager.on_progress`, once per non-terminal
-    progress envelope — not a timer loop) already guards its own call, while at BOTH the
-    relaunch and start heartbeat seeds the raise is what tears the container down — each seed
-    sits inside `_holding_user_lock`'s compensated region, before the scope adopts the lock."""
+    BARE per the module's REDIS-ERROR POLICY, like `release_lock_as_holder`. The in-build
+    renewal (`SessionManager.on_progress`) already guards its own call; at both the relaunch
+    and start heartbeat seeds, the raise is what tears the container down — each sits inside
+    `_holding_user_lock`'s compensated region, before the scope adopts the lock."""
     now = datetime.now(UTC)
     await redis.set(heartbeat_key(user_uuid), now.isoformat(), ex=HEARTBEAT_TTL_SECONDS)
     return now + timedelta(seconds=HEARTBEAT_TTL_SECONDS)
@@ -264,28 +200,13 @@ def _wall_clock_now() -> float:
 
 
 async def renew_liveness_lease(redis: aioredis.Redis, user_uuid: uuid.UUID) -> bool:
-    """Push this user's liveness lease out by one TTL. True if the write LANDED.
+    """Push this user's liveness lease out by one TTL; True iff the write landed.
 
-    The TTL is deliberately NOT a parameter. `liveness_lease_is_held` bounds what it will
-    honour by the same module constant, so a caller passing a longer one would write a lease
-    that can never read as held — silently buying no protection at all while returning True.
-    One constant, read by both sides, is the only shape in which the write and the read agree.
-
-    `SET lease <deadline-epoch-seconds> EX ttl_seconds`. Both halves matter and neither is
-    redundant: the TTL is what stops an abandoned lease from pinning a container forever
-    (the registry hash's missing TTL is the root cause), and the stored deadline
-    is what a reader compares against so a lease is never merely "present" — presence
-    without a bound is how a stale key becomes an indefinite reprieve.
-
-    DISOWNED WITH THE REGISTRY, guarded exactly like `grant_stay_of_execution`: a lease
-    belongs to a sandbox record, and one written for a user with no record would spare
-    whatever container that user gets next. The skip returns False and is LOUD, because the
-    caller is a build that would otherwise carry on believing itself protected — the precise
-    failure this family was added to remove.
-
-    BARE on Redis errors, per the module's REDIS-ERROR POLICY. The caller (the turn's
-    renewal loop) guards at the call site and logs; swallowing here would let a build run on
-    with no lease and nothing said."""
+    TTL is NOT a parameter: `liveness_lease_is_held` bounds itself to the same module
+    constant, so a longer TTL would write a lease that can never read as held — silent, no
+    protection. Skips (LOUD: logs + returns False) when no registry record exists, so a lease
+    never outlives the record and spares whatever container this user gets NEXT. BARE on
+    Redis errors per the module's REDIS-ERROR POLICY; the turn's renewal loop guards there."""
     if not await redis.exists(registry_key(user_uuid)):
         _log.warning(
             "no registry hash to renew a liveness lease against; the build is unprotected",
@@ -298,26 +219,14 @@ async def renew_liveness_lease(redis: aioredis.Redis, user_uuid: uuid.UUID) -> b
 
 
 async def liveness_lease_is_held(redis: aioredis.Redis, user_uuid: uuid.UUID) -> bool:
-    """True only while a renewed lease is demonstrably unexpired AND inside the window a
-    renewal could have produced. Fails CLOSED — absent, empty, unparseable, lapsed or absurd
-    all read False (reapable).
+    """True only while unexpired AND inside the window a renewal could have produced
+    (`now < deadline <= now + TTL + CLOCK_SKEW_GRACE`); fails CLOSED — absent, empty,
+    unparseable, lapsed, or absurd all read False (reapable).
 
-    The upper bound is not decoration, and it is the same lesson `stay_of_execution_is_current`
-    already paid for: "unexpired" alone lets a bad clock, a hand-edited key, or a future
-    writer using milliseconds place a deadline centuries out, which is an unbounded hold on
-    a container reached through the parse rather than around it. So the window is bounded on
-    both sides — `now < deadline <= now + TTL + CLOCK_SKEW_GRACE` — and nothing survives much
-    longer than a fresh renewal would have granted.
-
-    THE GRACE IS LOAD-BEARING; do not "tighten" it back to a bare TTL. Writer and reader are
-    different processes by design, so they are different clocks. A reader lagging the writer
-    by any amount at all computes a ceiling below the deadline a renewal one millisecond old
-    just wrote, calls it absurd, and hands a live build to the reaper. Reproduced with a
-    scripted clock at 100 ms of skew before the grace existed.
-
-    The comparison is not made redundant by the key's own expiry. Redis expiry is lazy, the
-    value is what a future writer could get wrong, and a reader that trusted mere PRESENCE
-    would spare a container on the strength of a key nobody can account for."""
+    THE GRACE IS LOAD-BEARING; do not tighten it to a bare TTL. Writer and reader are
+    different processes/clocks — without it, a lagging reader computes a ceiling below a
+    fresh deadline, calls it absurd, and reaps a live build (reproduced at 100 ms of skew).
+    Lazy Redis expiry doesn't make this redundant: PRESENCE alone would spare a container."""
     raw = await redis.get(lease_key(user_uuid))
     if raw is None:
         return False
@@ -344,16 +253,14 @@ async def liveness_lease_is_held(redis: aioredis.Redis, user_uuid: uuid.UUID) ->
 
 
 async def release_liveness_lease(redis: aioredis.Redis, user_uuid: uuid.UUID) -> None:
-    """Drop the lease. Idempotent, and issued from three places for three reasons: the turn's
-    `finally` (the container has been handed back), the reaper's ordered reap (the record it
-    belonged to is gone), and the certified-dead reconcile (a turn killed mid-build left it
-    behind, and honouring it would 409 the same builder's next start until the TTL).
+    """Drop the lease. Idempotent; issued from three places: the turn's `finally` (container
+    handed back), the reaper's ordered reap (record gone), and the certified-dead reconcile
+    (a turn killed mid-build left it behind, and honouring it would 409 the next start).
 
-    Unconditional `DEL`, deliberately NOT a compare-and-delete like the lock's. The lock
-    holds an opaque holder token precisely so a process cannot delete a lock it no longer
-    owns; a lease holds a deadline and has exactly one writer at a time — the turn holding
-    the user's one-per-user slot — so there is no second holder to protect against, and a
-    CAS here would only leave a stale lease standing whenever the value had moved on."""
+    Unconditional `DEL`, deliberately NOT a compare-and-delete like the lock's: a lease has
+    exactly one writer at a time (the turn holding the user's slot), so there is no second
+    holder to protect against, and a CAS would only leave a stale lease standing once the
+    value had moved on."""
     await redis.delete(lease_key(user_uuid))
 
 
@@ -372,36 +279,26 @@ async def release_liveness_lease(redis: aioredis.Redis, user_uuid: uuid.UUID) ->
 async def write_starting_marker(
     redis: aioredis.Redis, user_uuid: uuid.UUID, project_id: uuid.UUID
 ) -> None:
-    """`SET starting <project_id> EX STARTING_MARKER_TTL_SECONDS` — the one write, issued once
-    the one-per-user lock is held (so a marker can only ever name a start this process actually
-    committed to). The TTL is MANDATORY: past it the container is reapable again exactly as if
-    no marker had ever been written — a bounded claim, not a pardon (see the module docstring's
-    TTL discussion for the liveness lease, which this repeats for a different family).
+    """`SET starting <project_id> EX STARTING_MARKER_TTL_SECONDS`, issued once the lock is
+    held. TTL is MANDATORY — past it, reapable again as if never written: a bounded claim,
+    not a pardon.
 
-    BARE on Redis errors, per the module's REDIS-ERROR POLICY, and that is only safe because
-    of WHERE it is called: inside `_holding_user_lock`'s try, after the lock is acquired and
-    before the scope is yielded. A raise there reaches the compensation arm, which releases the
-    lock and tears down a container that does not exist yet — the right outcome for a marker
-    whose write failed. Called from ABOVE that try it would be the opposite: the lock is already
-    held by then, so an unguarded raise leaks it for the whole 900s TTL and locks the user out
-    of their own workspace. Anyone adding a second call site owes it the same placement."""
+    BARE on Redis errors (module REDIS-ERROR POLICY) — safe only because of WHERE it's
+    called: inside `_holding_user_lock`'s try, after the lock but before the scope yields,
+    so a raise reaches compensation and tears down a not-yet-real container. Called ABOVE
+    that try, the already-held lock would leak for the full TTL instead."""
     await redis.set(starting_key(user_uuid), str(project_id), ex=STARTING_MARKER_TTL_SECONDS)
 
 
 def _parse_starting_marker(raw: object, user_uuid: uuid.UUID) -> uuid.UUID | None:
-    """The ONE reading of a marker's value, shared by both readers below.
+    """The ONE reading of a marker's value, shared by both readers below — they feed ONE
+    predicate (is a start in flight) from different call sites (`reaper.reconcile_user` /
+    `reclamation_pass._claim_of` via the direct read, `project_preview_state` via the pipelined
+    one). A value one called garbage and the other called a claim would spare a container on
+    one path and destroy it on the other.
 
-    Fails toward `None` on a value this process cannot parse (a hand-edited key, a future writer
-    using a different shape) rather than treating garbage as a claim — the same fail-closed
-    reading `liveness_lease_is_held` gives an unparseable deadline, applied here to a marker
-    whose only job is to ANSWER, never to spare on the strength of a value nobody can account
-    for.
-
-    SHARED BECAUSE THE TWO READERS FEED ONE PREDICATE. The direct read and the pipelined read
-    answer the same question — is a start in flight — from two call sites (`reaper.
-    reconcile_user` and `reclamation_pass._claim_of` through the first, `project_preview_state`
-    through the second). A value one of them called garbage and the other called a claim would
-    spare a container on one path and destroy it on the other."""
+    Fails toward `None` on anything unparseable rather than treat garbage as a claim — same
+    fail-closed reading `liveness_lease_is_held` gives an unparseable deadline."""
     if raw is None:
         return None
     value = raw.decode() if isinstance(raw, bytes) else str(raw)
@@ -421,35 +318,27 @@ async def read_starting_marker(redis: aioredis.Redis, user_uuid: uuid.UUID) -> u
 
 
 async def clear_starting_marker(redis: aioredis.Redis, user_uuid: uuid.UUID) -> None:
-    """Unconditional `DEL`. Idempotent, and issued from two places for two reasons: the clean
-    exit of `_holding_user_lock` (the scope that RELEASES the lock, and the scope that ADOPTS
-    it — a start in flight is over the instant either happens, whichever door it came through),
-    and the compensation arm (the body failed, so there is no start left to claim).
+    """Unconditional `DEL`. Idempotent; issued from `_holding_user_lock`'s clean exit (the scope
+    that releases OR adopts the lock — a start in flight is over the instant either happens) and
+    from the compensation arm (the body failed, nothing left to claim).
 
-    Both call sites GUARD this at the call site rather than let it propagate, deliberately —
-    unlike `release_lock_as_holder` and `write_heartbeat`, whose raise inside the protected
-    region IS the mechanism that triggers compensation. A marker that fails to clear is not a
-    reason to tear down a container that just finished provisioning successfully, or to skip
-    the teardown a failed one still needs: its TTL is the backstop either way."""
+    Both sites GUARD this call, deliberately unlike `release_lock_as_holder`/`write_heartbeat`
+    whose raise IS the compensation trigger. A marker that fails to clear should not tear down a
+    just-provisioned container, or skip teardown of a failed one — its TTL backstops either way."""
     await redis.delete(starting_key(user_uuid))
 
 
 async def read_registry_and_starting_marker(
     redis: aioredis.Redis, user_uuid: uuid.UUID
 ) -> tuple[dict[str, str] | None, uuid.UUID | None]:
-    """The one round trip `project_preview_state` spends on Redis: the registry hash
-    and the starting marker, read as ONE PIPELINE (two commands) rather than two sequential
-    round trips. This is what keeps the frozen cost budget honest — it was "one registry hash
-    read"; adding the marker as a second, separate `GET` would have doubled the round trips on
-    every poll rather than adding one command to the one already in flight.
+    """The one round trip `project_preview_state` spends on Redis: registry hash + starting
+    marker as ONE PIPELINE (two commands), not two sequential round trips — keeps the frozen
+    cost budget ("one registry hash read") honest instead of doubling it on every poll.
 
     Falls back to `read_registry`'s legacy-prefix adoption ONLY when the pipelined `HGETALL`
-    comes back empty — that migration is itself a second round trip (`_adopt_a_pre_cutover_
-    record`), so it stays off the hot path exactly as it already was, rare rather than routine.
-
-    A `RedisError` propagates from `pipe.execute()` exactly as a bare `hgetall` would have, so
-    every existing caller's error handling (`project_preview_state`'s `except RedisError`)
-    keeps working unchanged."""
+    comes back empty — that migration is itself a second round trip, so it stays off the hot
+    path, rare not routine. `RedisError` propagates from `pipe.execute()` exactly as a bare
+    `hgetall` would, so `project_preview_state`'s existing `except RedisError` keeps working."""
     pipe = redis.pipeline(transaction=False)
     pipe.hgetall(registry_key(user_uuid))
     pipe.get(starting_key(user_uuid))
@@ -468,15 +357,12 @@ async def read_registry_and_starting_marker(
 class DeadlineWriter(enum.StrEnum):
     """Every party permitted to push a sandbox's keep-alive deadline forward.
 
-    A CLOSED SET, and that is the requirement rather than a side effect. Before this, a container
-    stayed up because *something* renewed *something*, and no operator could say what — which is
-    how the origin incident's containers outlived every human who might have stopped them. Adding
-    a member here is a deliberate act with a review attached; there is no anonymous extension.
+    A CLOSED SET, deliberately: before this, a container stayed up because *something* renewed
+    *something* and no operator could say what — how the origin incident's containers outlived
+    everyone who might have stopped them. Adding a member is a deliberate, reviewed act.
 
-    EVIDENCE OF USE, WEIGHTED TOWARD THE CONTAINER RATHER THAN THE KEYBOARD. The strongest
-    evidence a sandbox is in use is what is happening *inside* it and what its app is actually
-    serving. Keystrokes are a proxy for a human being present; tool calls and served requests are
-    direct evidence of the thing being used."""
+    Weighted toward the CONTAINER over the keyboard: what's happening *inside* it and what its
+    app is serving is direct evidence of use; keystrokes are only a proxy for presence."""
 
     #: The wall-clock lease, published by the turn engine for the duration of a turn.
     #: OUTRANKS EVERYTHING, and does it structurally rather than by comparing numbers: the lease
@@ -519,25 +405,14 @@ async def grant_stay_of_execution(
     writer: DeadlineWriter = DeadlineWriter.BUILDER_ACTED,
     ttl_seconds: int | None = None,
 ) -> datetime:
-    """Stamp the registry hash with the UTC instant this preview's reprieve lapses, and
-    return it. Guarded on registry existence exactly like `mark_registry_ending`, so it
-    never conjures a partial registry hash for a user who has no sandbox.
+    """Stamp the registry hash with the UTC instant this preview's reprieve lapses, and return
+    it. Guarded on registry existence like `mark_registry_ending` — never conjures a hash for a
+    user with no sandbox; the skip still returns the computed deadline but logs LOUD, since the
+    caller (which discards the return) can't otherwise tell "no lease" from success.
 
-    NAMED WRITER, RECORDED. Every caller says who it is, the TTL comes from that
-    identity rather than from the call site, and the name is stamped beside the deadline. Nothing
-    branches on the provenance — it exists so an operator looking at a container that will not
-    lapse can answer "what is holding this open?" instead of reading four call sites.
-
-    THE DEADLINE NEVER MOVES BACKWARD. A weaker writer arriving after a stronger one must not
-    shorten the reprieve: served traffic buying fifteen minutes must not truncate the half-hour a
-    Save just bought. `max(existing, computed)`, so extension is monotonic within a container's
-    life and the precedence between writers needs no lock to be correct.
-
-    The returned deadline is what this call COMPUTED, not proof that it landed: when the
-    guard skips the write there is no lease at all, and the caller (which discards the
-    return) would otherwise see "no registry, no lease" as indistinguishable from success.
-    So the skip is LOUD — a container running with nothing owning its lifetime is exactly
-    the state the lease exists to prevent."""
+    Every caller names its writer; the TTL comes from that identity, and the name is stamped
+    beside the deadline for audit. THE DEADLINE NEVER MOVES BACKWARD: `max(existing, computed)`
+    keeps a weaker writer from truncating a stronger one's reprieve, no lock needed."""
     ttl = DEADLINE_WRITER_TTL_SECONDS[writer] if ttl_seconds is None else ttl_seconds
     deadline = datetime.now(UTC) + timedelta(seconds=ttl)
     if not await redis.exists(registry_key(user_uuid)):
@@ -582,15 +457,12 @@ async def _standing_stay(redis: aioredis.Redis, user_uuid: uuid.UUID) -> datetim
 
 async def stay_of_execution_is_current(redis: aioredis.Redis, user_uuid: uuid.UUID) -> bool:
     """True only while a granted stay is demonstrably unexpired AND inside the bound this
-    module could ever have granted. Fails CLOSED — absent, empty, unparseable, or absurd
-    ⇒ False (reapable). A malformed value must never buy an unbounded reprieve for a
-    container nobody owns; the safe direction here is reaping.
+    module could ever have granted (`now < deadline <= now + RELAUNCH_PREVIEW_STAY_SECONDS`).
+    Fails CLOSED — absent, empty, unparseable, or absurd ⇒ False (reapable).
 
-    "Unexpired" alone is NOT enough: a perfectly parseable year-9999 stamp (a bad clock, a
-    hand-edited hash, a future writer with a different unit) would then grant a reprieve
-    measured in millennia — the exact unbounded reprieve the docstring above forbids, just
-    reached through the parse rather than around it. So the window is bounded on BOTH
-    sides by construction: `now < deadline <= now + RELAUNCH_PREVIEW_STAY_SECONDS`, i.e.
+    "Unexpired" alone is NOT enough: a parseable year-9999 stamp (bad clock, hand-edited hash,
+    a future writer using a different unit) would grant a millennia-long reprieve reached
+    through the parse rather than around it — so the window is bounded on BOTH sides, and
     nothing survives longer than a freshly granted stay would have."""
     raw = await redis.hget(registry_key(user_uuid), REGISTRY_FIELD_PREVIEW_STAY_UNTIL)
     if raw is None:
@@ -623,19 +495,13 @@ async def stay_of_execution_is_current(redis: aioredis.Redis, user_uuid: uuid.UU
 
 async def read_registry(redis: aioredis.Redis, user_uuid: uuid.UUID) -> dict[str, str] | None:
     """Read the sandbox record, falling back to the legacy key and migrating what it finds.
+    The dual-read has to live HERE — `sweep_all` re-enters here with the parsed user id rather
+    than reading off its scan, so a legacy record reached by any other route is never rescued.
 
-    THE DUAL-READ HAS TO LIVE HERE, and widening the SCAN instead would not do it: `sweep_all`
-    does not read the record off its scan, it re-enters HERE with the user id it parsed out of
-    the key name — so a legacy record reached by any other route is still never rescued.
-
-    Precedence is current-then-legacy, never the other way round: every write goes to the current
-    key, so it is by definition the newer claim, and answering with a superseded `app_name` would
-    point a teardown at the wrong container.
-
-    `SandboxClient._read_registry` is the other point read and must behave identically — the two
-    are kept separate on purpose (`services/sandbox/` may not import `services/build_sessions/`),
-    and `tests/services/build_sessions/test_key_migration.py` is what stops them drifting.
-    """
+    Precedence is current-then-legacy, never reversed: every write goes to the current key, the
+    newer claim by definition. `SandboxClient._read_registry` must behave identically (kept
+    separate — sandbox/ may not import build_sessions/) — `test_key_migration.py` stops them
+    drifting."""
     raw = await redis.hgetall(registry_key(user_uuid))
     if raw:
         return {str(k): str(v) for k, v in raw.items()}
@@ -645,18 +511,13 @@ async def read_registry(redis: aioredis.Redis, user_uuid: uuid.UUID) -> dict[str
 async def _adopt_a_pre_cutover_record(
     redis: aioredis.Redis, user_uuid: uuid.UUID
 ) -> dict[str, str] | None:
-    """Migrate one legacy-prefix registry hash into the environment-scoped namespace, on read.
+    """Migrate one legacy-prefix registry hash into the environment-scoped namespace, on read:
+    `COPY`, not a read-then-`HSET`, so a field this module has never heard of (e.g.
+    `preview_stay_until`, from a different subsystem) is never dropped in transit.
 
-    `COPY`, not a read-then-`HSET`. It is one atomic server-side move of whatever the key holds,
-    so a field this module has never heard of cannot be dropped in transit — and the optional
-    `preview_stay_until` is a live example of exactly such a field, written by a different
-    subsystem. A client-side rewrite would also re-encode every value through this process's
-    idea of a `str`, which is a second way to lose information for no benefit.
-
-    Copy first, delete second. Dying between them leaves a legacy key that the next read ignores
-    (the current key now wins) and that `delete_registry` clears from both prefixes, so the
-    sequence terminates either way. The reverse order would lose the record outright.
-    """
+    Copy first, delete second: dying between them leaves a legacy key the next read ignores
+    (current key wins) and `delete_registry` clears from both prefixes either way; the reverse
+    order would lose the record outright."""
     raw = await redis.hgetall(legacy_registry_key(user_uuid))
     if not raw:
         return None
@@ -725,33 +586,14 @@ async def mark_registry_ending(redis: aioredis.Redis, user_uuid: uuid.UUID) -> N
 
 
 async def delete_registry(redis: aioredis.Redis, user_uuid: uuid.UUID) -> None:
-    """Clear the sandbox record under BOTH prefixes (the dual-read window).
+    """Clear the sandbox record under BOTH prefixes — the ONLY place the legacy key is removed
+    (migration-on-read leaves it; see `_adopt_a_pre_cutover_record`), so a pre-cutover record
+    doesn't outlive its session and get retried by every later pass forever.
 
-    This is what makes the window terminate, and it is the ONLY place the legacy key is removed
-    — migration-on-read deliberately leaves it (see `_adopt_a_pre_cutover_record`). Without a
-    legacy `DEL` here, a pre-cutover record would survive its own session forever, every later
-    pass would read it, tear down a container that is already gone, and never clear it: a
-    permanent per-pass ARM call plus a log line that looks like real work. The legacy arm is
-    removed once the fleet inventory reports zero legacy-prefix records.
-
-    TWO SINGLE-KEY DELETES, not one two-key `DEL` — the module docstring's sharding note is
-    why. Issued current-first so an interruption between them leaves only the legacy key, which
-    the next read migrates, rather than the reverse (a surviving CURRENT key with the legacy one
-    gone would be read as live).
-
-    AND THE LEGACY DELETE IS CONDITIONAL, because the legacy prefix is the one namespace with no
-    environment segment: `bial:sandbox:registry:{user}` names different containers in different
-    deployments sharing a Redis instance. Deleting it unconditionally meant a process ending its
-    own session also destroyed another environment's record for that user — leaving THEM a running
-    container nothing tracks, which is the orphan class the scheduled fleet sweep exists to
-    collect, produced by its own cleanup. So the legacy key goes only when this environment
-    adopted it (the marker `_adopt_a_pre_cutover_record` writes), which is exactly when we know
-    it is ours.
-
-    Termination is unaffected: a record that was never adopted has no legacy key of ours to clear,
-    and one whose current key vanished is re-adopted on the next read — re-marking it — so the
-    sequence still ends.
-    """
+    TWO single-key deletes (sharding, see module docstring), current-first. CONDITIONAL on THIS
+    environment having adopted the record — an unconditional delete would destroy ANOTHER
+    deployment's record sharing this Redis; re-adoption on the next read keeps termination
+    guaranteed either way."""
     adopted = await redis.hget(registry_key(user_uuid), REGISTRY_FIELD_ADOPTED_FROM_LEGACY)
     await redis.delete(registry_key(user_uuid))
     if adopted:

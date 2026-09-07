@@ -1,15 +1,14 @@
 /**
  * THE RUNTIME, MOUNTED ONCE PER CONVERSATION, AROUND EVERYTHING THAT READS IT.
  *
- * It used to be built inside `ChatThread`, whose provider therefore wrapped only the transcript.
- * That was fine while the composer was entirely hand-rolled — it read nothing from the runtime. It
- * stops being fine the moment the composer is the library's: every composer primitive resolves
- * against `useAui()`, so the input, the attachment control, the chips and the dropzone all have to
- * be inside the same provider as the thread.
+ * It used to be built inside `ChatThread`, wrapping only the transcript — fine while the
+ * composer was hand-rolled and read nothing from the runtime. It stopped being fine once the
+ * composer became the library's: every primitive resolves against `useAui()`, so the input,
+ * attachment control, chips and dropzone all need the same provider as the thread.
  *
- * Hoisting it rather than adding a second one is the whole point: two runtimes would give the
- * screen two composer states and two capability maps, and the one the citizen typed into would not
- * be the one the transcript belonged to.
+ * Hoisting it rather than adding a second one is the point: two runtimes would give the screen
+ * two composer states and two capability maps, and the one the citizen typed into would not be
+ * the one the transcript belonged to.
  */
 import type { ReactNode } from 'react'
 import { AssistantRuntimeProvider, type AppendMessage } from '@assistant-ui/react'

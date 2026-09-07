@@ -1,20 +1,15 @@
 """In-module budgets, knobs, and the fail-closed file-surface guards.
 
 Every value BRAIN needs to bound the self-heal loop, clamp the model, and decide which paths
-the model may touch lives HERE — never in `config.py` (the config surface is frozen for this
-track). Two guards are load-bearing security boundaries:
+the model may touch lives HERE, never in `config.py` (frozen for this track). Two guards matter
+for security, but neither is the real boundary:
 
-* `is_write_allowed` — the fail-closed write gate for the three mutator tools. The open-sandbox
-  model (the vibe-coding pivot) makes the WHOLE workspace editable — config, `package.json`, the
-  lockfile, and the app's own data client — so the old positive `app/`/`components/`/`lib/`
-  allowlist and the never-edit set are GONE. Only two denials remain: `_normalize_rel` rejects
-  absolute paths and `..` escapes (mirroring the supervisor `_resolve`), and `.git/**` is denied
-  so a file tool can't corrupt the snapshot history. This is defense-in-depth, NOT the containment
-  boundary — `run_command` can write anywhere regardless, so the real boundary is the supervisor
-  workspace-escape guard + demoted `appuser`.
-* `is_read_ignored` — a denylist is fine HERE because a read cannot mutate; it exists
-  only to bound the context window, not to contain a threat.
-"""
+* `is_write_allowed` — fail-closed write gate for the three mutator tools. The open-sandbox model
+  makes the whole workspace editable, so the only denials left are an unusable path and `.git/**`
+  (snapshot-history integrity). Defense-in-depth: `run_command` can write anywhere regardless, so
+  the actual containment is the supervisor workspace-escape guard + demoted `appuser`.
+* `is_read_ignored` — a denylist is fine here since a read cannot mutate; it bounds context,
+  not a threat."""
 
 from __future__ import annotations
 

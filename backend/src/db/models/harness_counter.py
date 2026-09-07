@@ -36,13 +36,11 @@ from src.db.mixins import TimestampMixin, UUIDv7PrimaryKeyMixin
 class HarnessCounter(enum.StrEnum):
     """The counters used to judge whether the tracked behaviors actually happened.
 
-    A NATIVE PG ENUM would be exactly the wrong choice here and it is worth saying why, since
-    native enums are the house default: every other enum in this schema is a closed set the
-    platform controls, and adding a member is a deliberate schema change. This set is open
-    BY DESIGN — new counters can be added below without shipping a migration — so the column
-    is a plain string and this enum is the vocabulary this module writes with.
-
-    Names are stable strings. Renaming one loses the history it names."""
+    A native PG enum would be the wrong choice: every other enum in this schema is a closed
+    set the platform controls, but this one is open BY DESIGN — a counter can be added below
+    without a migration — so the column stays a plain string and this enum is just the
+    vocabulary this module writes with. Names are stable strings; renaming one loses the
+    history it names."""
 
     #: A completion claim the health verdict refused. The headline number: how often the
     #: platform would have told a citizen their app was finished when it was not.

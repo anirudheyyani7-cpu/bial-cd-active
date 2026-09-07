@@ -1,40 +1,26 @@
 /**
  * THE PROJECT SURFACE — the rail's contents, and the project-scoped publisher.
  *
- * ═══ THE HEADLINE BEHAVIOUR THIS FILE EXISTS FOR ═══
+ * WHY THIS EXISTS: the symmetric counterpart to the chat-scoped publisher — exactly one of the
+ * two is ever mounted for a given address, so there's no contest, only continuity across the
+ * hop, which the channel's per-payload rules already handle (`address`/`project` survive an
+ * unmount; `pane`, `visible` and the workspace report clear).
  *
- * This is the symmetric counterpart: the project-scoped publisher. Exactly one of the two is ever
- * mounted for a given address, so there is no contest — only continuity across the hop, which the
- * channel's per-payload rules already handle (`address` and `project` survive an unmount; `pane`,
- * `visible` and the workspace report clear).
+ * ONE READ, TWO CONSUMERS, NOT A SECOND POLL: `useWorkspaceState` owns the preview-state read
+ * and its cadence/visibility handling; the address is built from that SAME result, feeding only
+ * the project-scoped input. Precedence lives in `previewAddress.ts` and is not re-derived here —
+ * its resolver docblock and the conversation surface's `projectPreviewUrl: null` comment both
+ * name this caller as the one that needs a chat-less project address.
  *
- * ═══ ONE READ, TWO CONSUMERS — NOT A SECOND POLL ═══
+ * PUBLISH THROUGH THE HOOKS, NEVER A RAW CHANNEL SET: they carry the "nothing yet ≠ there is
+ * nothing" protection — a publisher abstains on its first renders until it has resolved
+ * something, which stops a remount from retiring a frame the departing surface left standing. A
+ * direct `channel.address.set` breaks that round trip silently, only on the return leg.
  *
- * `useWorkspaceState` performs the preview-state read with its own cadence and visibility
- * handling. The address is built from THAT SAME RESULT, feeding only the project-scoped input and
- * leaving every chat-scoped one at rest. The rule that its pure map neither takes nor returns an
- * address is about the MAP's type; it is not a bar on the caller that already holds the read.
- *
- * THE PRECEDENCE IS `previewAddress.ts`'s AND IS NOT RE-DERIVED HERE. Its two comments already name
- * this caller: the conversation surface's `projectPreviewUrl: null` block says the populated arm
- * "exists for the caller that has a project and no chat — the project surface", and the resolver's
- * own docblock says that arm "is the only one that does not require a chat … without it the project
- * screen frames nothing." That gap is closed; both comments now describe a closed one.
- *
- * ═══ PUBLISH THROUGH THE HOOKS, NEVER A RAW CHANNEL SET ═══
- *
- * The hooks carry the "I have nothing yet is not the same as there is nothing" protection: a
- * publisher abstains on its first renders until it has resolved something, which is what stops a
- * remount from retiring a frame the departing surface left standing. Reimplementing that with a
- * direct `channel.address.set` is how the round trip breaks — silently, and only on the return leg.
- *
- * ═══ WHAT THIS FILE DELIBERATELY DOES NOT DO ═══
- *
- * It does NOT fire the project-opened beacon. `ProjectPage` does, from its successful-load branch,
- * and from exactly one place. This component independently needs `project.appId` for the rail's
- * status line, which is precisely the pull that would make somebody add a second tracker here —
- * and `observe.ts`'s per-project guard makes a repeated call a safe no-op, so the risk is not
- * defeating that guard but BYPASSING it with a second mechanism it does not cover.
+ * DOES NOT FIRE THE PROJECT-OPENED BEACON — `ProjectPage` does, from one place. This component
+ * needs `project.appId` for the rail's status line, which is exactly the pull that tempts a
+ * second tracker; `observe.ts`'s per-project guard makes a repeat call a no-op, so the risk is
+ * bypassing that guard with a second mechanism it doesn't cover.
  */
 import { useCallback, useMemo, useState } from 'react'
 import WorkspaceRail from './WorkspaceRail'
@@ -200,13 +186,10 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   /**
    * PUSH THE WORKSPACE TO DURABLE STORAGE, from the project screen.
    *
-   * The same call the conversation surface makes, and deliberately not shared with it: only ONE
-   * of the two is ever mounted for a given address, so there is no contest, and a hook whose whole
-   * body is three `useState`s and one request would be an abstraction over nothing.
-   *
-   * SURFACED, NEVER SWALLOWED. A save that silently fails leaves the citizen believing their work
-   * is stored, which is the one outcome worse than not offering the control at all. The server's
-   * own copy names the way out, so it is passed through rather than reworded.
+   * The same call the conversation surface makes, deliberately not shared with it — only one
+   * of the two is ever mounted per address. Surfaced, never swallowed: a save that fails
+   * silently leaves the citizen believing their work is stored, so the server's own error
+   * copy is passed through rather than reworded.
    */
   const save = useCallback(async () => {
     if (saving) return

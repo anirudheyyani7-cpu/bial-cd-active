@@ -4,13 +4,11 @@ Revision ID: 0006_conversations
 Revises: 0005_feedback
 Create Date: 2026-07-06
 
-User-scoped chat headers + messages. Conversation `id` is the CLIENT-MINTED id
-(a builder chat's id IS the deployed appId — preserved across the migration); messages order
-by the client-minted `seq` and store the SPA content `parts[]` in JSONB `parts`. `kind` and
-`role` are native PG enums, owned by this migration (explicit CREATE/DROP TYPE).
-Chains off `0005_feedback`; the parallel app-data branch reconciles via
-`alembic merge heads` at integration. Hand-finalized.
-"""
+User-scoped chat headers + messages. Conversation `id` is the CLIENT-MINTED id (a builder
+chat's id IS the deployed appId, preserved across the migration); messages order by the
+client-minted `seq`, storing SPA content in JSONB `parts`. `kind`/`role` are native PG enums
+owned by this migration (explicit CREATE/DROP TYPE). Chains off `0005_feedback`; the
+parallel app-data branch reconciles via `alembic merge heads` at integration. Hand-finalized."""
 
 from __future__ import annotations
 

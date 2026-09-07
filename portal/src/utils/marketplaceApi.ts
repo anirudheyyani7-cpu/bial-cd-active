@@ -3,14 +3,11 @@
  *
  * Mirrors `projectApi.ts` deliberately — same `authFetch` + `readApiError` + tolerant
  * `to*` parse shape — because the only thing that differs about this surface is WHOSE apps
- * come back, and that difference belongs on the server, not in a bespoke client.
+ * come back, and that belongs on the server, not in a bespoke client.
  *
- * The parsers coerce rather than throw on a missing optional field: a catalog entry whose
- * builder has no display name, or whose app has no description, is a normal row here,
- * not a response we should refuse to render.
- * That tolerance extends to a whole row: this is the ONE list on the platform every user
- * shares, so one unparseable entry drops itself rather than blanking the catalog for the
- * entire org.
+ * Parsers coerce rather than throw on a missing optional field, and that tolerance extends
+ * to a whole row: this is the ONE list every user shares, so one unparseable entry drops
+ * itself rather than blanking the catalog for the entire org.
  */
 import { isRecord, readApiError } from './apiError'
 import { authFetch } from './api'

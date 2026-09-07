@@ -1,25 +1,15 @@
-"""The marketplace catalog's wire shape.
+"""The marketplace catalog's wire shape — THE EXPOSURE BOUNDARY, and why these models are
+hand-written rather than derived from ORM rows. Every other list is scoped by `user_id`; the
+marketplace is a DELIBERATE, REASONED DEVIATION — no standalone doc carries this policy, so
+this docstring is where a reviewer checks it.
 
-THIS IS THE EXPOSURE BOUNDARY, and it is the reason these models are hand-written rather
-than derived from the ORM rows. Every other list on the platform is scoped by `user_id`
-(cross-user access is normally an explicit, role-gated, audited action); the
-marketplace is a DELIBERATE, REASONED DEVIATION from that default rather than an
-oversight — an enterprise platform where no app is a private document.
-The cross-user policy has no standalone document — only statements like this one at the
-sites that implement it — so what a caller may see about someone else's app is enumerated
-in one place a reviewer can check at a glance, here.
+FOUR FIELDS, and nothing else: app name, description, builder DISPLAY NAME (never email or
+Entra object id, never handed across a user boundary elsewhere), and the live URL. Never app
+code, submission ids, `app_key`, per-app DB details, project internals, or the deployment row.
 
-FOUR FIELDS, and nothing else: the application name, its description, the display name of
-the person who built it, and the address it is live at. Never app code, submission
-identifiers, `app_key`, per-app database details, project internals, or the deployment row.
-The builder is named by DISPLAY NAME only — never email, never the Entra object id, which
-are the two identifiers the rest of the platform is careful never to hand across a user
-boundary.
-
-Adding a field here is a deliberate act with a security consequence, which is precisely
-why the route SELECTs these columns explicitly instead of returning ORM objects: a column
-added to `Project` or `Deployment` later cannot silently widen this response.
-"""
+Adding a field here is a deliberate act with a security consequence — the route SELECTs these
+columns explicitly, so a column added to `Project`/`Deployment` later cannot silently widen
+this response."""
 
 from __future__ import annotations
 
@@ -27,17 +17,13 @@ from src.schemas.base import CamelModel
 
 
 class MarketplaceEntry(CamelModel):
-    """One published app as the catalog shows it. See the module docstring for why this
-    list is short and closed.
-
-    WORTH STATING PLAINLY: this materially widens a pre-existing accepted risk rather than
-    creating a new one. `login_required` has no enforcement reader anywhere on the platform,
-    and a published app carries no auth of its own — so this endpoint converts "you need to
-    already have the URL" into "everyone signed in has every URL, searchable by what the app
-    does." No `SECURITY.md` exists in this repo to carry that line separately, so it is
-    recorded here, next to the field that does it (`url`). The mitigating context: the
-    `AUTO_DEPLOY_MAX_SCORE = 0` gate already routes any sensitive-category app through
-    mandatory admin review before it can go live at all."""
+    """One published app as the catalog shows it — see the module docstring for why this list
+    is short and closed. WORTH STATING PLAINLY: this widens a pre-existing accepted risk, not
+    a new one. `login_required` has no enforcement reader anywhere, and a published app has
+    no auth of its own — so this converts "you need the URL" into "everyone signed in has
+    every URL, searchable by what the app does." No `SECURITY.md` carries that line, so it is
+    recorded here, next to `url`; mitigation: `AUTO_DEPLOY_MAX_SCORE = 0` already routes any
+    sensitive-category app through mandatory admin review first."""
 
     #: The app's name. `app_registry` carries no name of its own — the owning
     #: project's name IS the app name.

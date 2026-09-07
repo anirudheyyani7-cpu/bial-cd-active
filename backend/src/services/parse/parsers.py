@@ -1,17 +1,13 @@
 """Kind dispatch for untrusted-file parsing, run inside the killable process governor.
 
-The live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`), driven
-by `api/v1/attachments/router.py`. The extraction itself lives in `services/extract/office.py`;
-this module's job is to order the bounds around it and map its errors.
-
-The four bounds (untrusted-file-parsing learning): (1) the decoded-size cap is enforced
-by the caller before parsing (the attachments upload limits — the old per-app parse HTTP
-endpoint was retired with the open-sandbox pivot, but this parse SERVICE stays, driven by
-`attachments/router.py`); (2) the zip-bomb guard runs here BEFORE any inflate and the
-structural gate runs first inside the extract — the shared `zip_safety` + `office`
-validators; (3) a row/col range-clamp is applied BEFORE iterating, by `office.py`'s
-`MAX_SHEET_ROWS`/text cap; (4) the whole dispatch runs inside the killable process governor
-(`governor.py`). Errors are the shared `FileParseError` (carries status + code, e.g.
+Live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`), driven by
+`api/v1/attachments/router.py`; extraction itself lives in `services/extract/office.py`, and this
+module orders the bounds around it and maps its errors. Four bounds: (1) decoded-size cap
+enforced by the caller before parsing (the old per-app parse HTTP endpoint was retired with the
+open-sandbox pivot, but this SERVICE stays); (2) zip-bomb guard runs here BEFORE any inflate, the
+structural gate runs first inside extract — shared `zip_safety` + `office` validators; (3) a
+row/col range-clamp applied BEFORE iterating, via `office.py`'s `MAX_SHEET_ROWS`/text cap; (4)
+the whole dispatch runs inside `governor.py`. Errors are the shared `FileParseError` (e.g.
 413/`FILE_TOO_LARGE`, 415/`UNSUPPORTED_TYPE`).
 """
 

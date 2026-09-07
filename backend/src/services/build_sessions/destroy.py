@@ -1,31 +1,25 @@
 """The destructive half: single-flight, re-validated, ceilinged, ordered.
 
-Everything here runs only when BOTH reclamation flags are on: `reclaim_enabled` gets you a
-report, `reclaim_destroy` is what lets a pass act.
+Runs only when BOTH reclamation flags are on: `reclaim_enabled` gets a report,
+`reclaim_destroy` lets a pass act.
 
-FOUR PROTECTIONS, AND EACH ONE COVERS A FAILURE THE OTHERS DO NOT:
+WHY THIS EXISTS — FOUR PROTECTIONS, each covering a failure the others do not:
 
-1. **Single-flight via a Postgres advisory lock.** ACA revision overlap means two schedulers can
-   exist during a deploy, so a second pass can start while one is running. Deliberately NOT a
-   Redis lock — `locks.py` records why Redis is not trusted to hold one.
-2. **Re-validation immediately before each DELETE — of the TAGS *and* of the CLAIM.**
-   `app_name_for(app_id)` is deterministic, so a reclaimed container's name is the name the next
-   start provisions into. In-process, the reaper and every start shared one event loop; out of
-   process they do not. A trailing `delete_registry` can otherwise wipe a record written by a
-   start that happened *after* the enumeration snapshot — manufacturing exactly the orphan class
-   this system collects. The claim is the half a tag re-read cannot cover: a builder who RESUMES a
-   staged container leaves its tags untouched (staged containers stay attachable by design) and
-   changes only the lock, heartbeat, stay or liveness lease.
-3. **A per-pass ceiling.** A bounded blast radius, and a bounded runtime: ACA sends SIGTERM with a
-   ~30s grace and `asyncio.wait(..., timeout=)` does not cancel on timeout, so a pass that
-   overran would be killed mid-flight holding whatever it held.
-4. **A dev allowlist.** Nothing on a development control plane is deleted, full stop. Dry-run is
-   the default and this is the belt to that pair of braces.
+1. Single-flight via a Postgres advisory lock, NOT Redis (`locks.py` says why Redis
+   isn't trusted to hold one) — ACA revision overlap means two schedulers can exist
+   during a deploy.
+2. Re-validation immediately before each DELETE, of both the TAGS and the CLAIM:
+   `app_name_for` is deterministic, so a trailing `delete_registry` can otherwise wipe
+   a record written by a start that landed after the enumeration snapshot. The claim
+   covers what a tag re-read cannot — a resumed builder leaves tags untouched and
+   changes only the lock/heartbeat/stay/liveness lease.
+3. A per-pass ceiling, bounding blast radius AND runtime: ACA's SIGTERM grace is ~30s
+   and `asyncio.wait(timeout=)` does not cancel on timeout.
+4. A dev allowlist — nothing on a development control plane is deleted, full stop.
 
-THE FOUR-STEP TEARDOWN ORDERING IS FOUR STEPS, NOT TWO: `mark_registry_ending` (guards a
-concurrent attach) → `teardown` → `delete_registry` → `reap_lock` LAST. Out of process, both the
-dropped mark-ending guard and the never-released per-user lock matter. "Azure before Redis record"
-is a property of that sequence, not a replacement for it.
+Teardown order is FOUR steps, not two: `mark_registry_ending` → `teardown` →
+`delete_registry` → `reap_lock` LAST — "Azure before Redis record" is a property of
+that sequence, not a substitute for it.
 """
 
 from __future__ import annotations
@@ -96,24 +90,13 @@ _lock_engine: AsyncEngine | None = None
 
 def _the_lock_engine() -> AsyncEngine:
     """The pass lock's OWN engine — AUTOCOMMIT, `NullPool`, built on first use.
-
-    NOT THE APPLICATION POOL. `pg_try_advisory_lock` is SESSION-scoped: the lock lives on the
-    connection that took it, for exactly as long as that connection lives. Riding the shared pool
-    puts two failures one accident apart, and both are silent. If the pass's session releases its
-    connection mid-pass — a commit, a rollback, an expiry, anything a future caller adds to the
-    loop — the lock is gone while the destroy loop keeps deleting in the belief that it is the
-    only pass running, which is precisely the overlap the lock exists to prevent. And if the
-    process dies holding it, the lock rides a pooled connection that outlives the pass and blocks
-    every later pass until the pool happens to recycle it.
-
-    `NullPool` gives the lock a connection whose lifetime is the pass and nothing more. Postgres
-    drops a session advisory lock when the session ends, so even a hard crash frees it, and no
-    other query can ever be sharing it. AUTOCOMMIT because there is no transaction here to speak
-    of: one lock, one unlock, nothing to roll back.
-
-    LAZY, for the reason `appdb/engine.py` documents at length — an engine built at import binds
-    asyncpg connections to whichever event loop imported it, and pytest-asyncio's per-function
-    loop invalidates that on the next test."""
+    NOT THE APPLICATION POOL: `pg_try_advisory_lock` is SESSION-scoped, so riding the
+    shared pool risks the connection being released mid-pass (commit, rollback, expiry) —
+    the lock vanishes while the destroy loop keeps deleting believing it's alone, exactly
+    the overlap the lock exists to prevent. `NullPool` gives the lock a connection whose
+    lifetime is the pass alone, so even a hard crash frees it via session end. AUTOCOMMIT
+    because there's no transaction here to speak of. LAZY, for the reason `appdb/engine.py`
+    documents: an eagerly-built engine binds to whichever event loop imported it."""
     global _lock_engine
     if _lock_engine is None:
         from src.config import settings
@@ -168,19 +151,13 @@ async def destroy_candidates(
     environment: str,
 ) -> DestroyOutcome:
     """Destroy at most `DESTROY_CEILING` confirmed candidates, in order, re-validating each.
-
-    `revalidate(name)` returns the container's CURRENT tags, or `None` if ARM says it is gone.
-    `claim_now(name)` returns the coordination store's CURRENT claim on it, or `None` when
-    nothing claims it. `teardown(name)` performs the ordered reap and reports whether it deleted
-    anything. All three are injected so the whole destructive chain is drivable against a fake in
-    a test — the one place where "a green suite proves nothing" would be least acceptable.
-
-    RE-VALIDATION IS TWO READS, NOT ONE, and neither substitutes for the other. Tags answer "is
-    this still the resource the classifier judged"; the claim answers "did its owner come back
-    while we were walking the list". A builder who resumes a staged container between enumeration
-    and delete leaves the tags exactly as they were — a tag-only recheck waves them straight
-    through — so the claim is rebuilt here, at delete time, and run through the same pure
-    `spares_the_container` predicate the classifier used."""
+    `revalidate(name)` returns current tags or `None` if ARM says gone; `claim_now(name)`
+    returns the current spare-list claim or `None`; `teardown(name)` reports whether it
+    deleted anything — all three injected so the chain is drivable against a fake in a test.
+    RE-VALIDATION IS TWO READS, NOT ONE: tags answer "is this still the resource judged",
+    the claim answers "did its owner come back". A resumed staged container leaves tags
+    unchanged, so the claim is rebuilt here through the same `spares_the_container`
+    predicate the classifier used."""
     if not may_destroy_on_this_control_plane(environment):
         _log.info(
             "reclaim.destroy.refused_off_production",
@@ -226,15 +203,13 @@ async def _still_the_same_container(
     candidate: ContainerVerdict, *, revalidate: Revalidate
 ) -> bool:
     """Re-read the container's tags and abort on ANY change since enumeration.
-
-    The window this closes is small and the consequence is not: `app_name_for` is deterministic,
-    so between enumeration and delete a builder can start a fresh build that provisions into the
-    very name this pass is about to destroy. Deleting it would take the new container; the
-    trailing registry clear would then wipe the record of a container that no longer exists,
-    manufacturing an orphan of exactly the kind this system was built to collect.
-
-    A container ARM reports ABSENT is not an abort — it is already gone, which is the outcome we
-    wanted, and a second delete of an absent resource is a 204 no-op."""
+    The window is small, the consequence is not: `app_name_for` is deterministic, so
+    between enumeration and delete a builder can start a fresh build into the very name
+    this pass is about to destroy. Deleting it would take the new container, and the
+    trailing registry clear would then wipe the record of a container that no longer
+    exists — manufacturing exactly the orphan class this system was built to collect.
+    ABSENT is not an abort: already gone is the outcome wanted, and a second delete of an
+    absent resource is a 204 no-op."""
     current = await revalidate(candidate.name)
     if current is None:
         return True  # already gone; the ordered teardown is idempotent
@@ -249,18 +224,13 @@ async def _still_the_same_container(
 
 async def _somebody_came_back(candidate: ContainerVerdict, *, claim_now: ClaimNow) -> bool:
     """Re-read the SPARE-LIST for this container and abort if its owner is holding it again.
-
-    THE TAGS ARE UNCHANGED IN THE CASE THIS CATCHES, which is why the check above cannot stand in
-    for this one. A staged container stays fully attachable on purpose — `attach_existing` refuses
-    anything reading `ending`, so a citizen coming back must be able to reach it — and coming back
-    writes a lock, a heartbeat, a stay or a liveness lease, none of which are ARM tags. Between
-    enumeration and this line the classifier's opinion can therefore go stale in the one direction
-    that matters, with every tag still saying exactly what it said when we judged it.
-
-    The predicate is `RegistryClaim.spares_the_container`, unchanged and unduplicated: one pure
-    rule for "is somebody using this", evaluated once at classification and again here. A second
-    spelling of it would be a second thing to keep in sync with the first, on the path where being
-    wrong costs somebody their afternoon."""
+    THE TAGS ARE UNCHANGED IN THE CASE THIS CATCHES — why the check above can't stand in
+    for this one: a staged container stays fully attachable on purpose, and coming back
+    writes a lock/heartbeat/stay/liveness lease, none of which are ARM tags, so the
+    classifier's opinion can go stale in the one direction that matters.
+    The predicate is `RegistryClaim.spares_the_container`, unchanged and unduplicated: one
+    pure rule evaluated once at classification and again here, so there is no second
+    spelling to fall out of sync on the path where being wrong costs an afternoon."""
     claim = await claim_now(candidate.name)
     if claim is None:
         return False  # nothing claims it — the state the classifier judged it in

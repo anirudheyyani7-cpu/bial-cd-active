@@ -1,20 +1,14 @@
 """Sandbox integration-harness fixtures.
 
-The integration lane (`-m integration`) runs the REAL pre-baked sandbox image in Docker and,
-for the snapshot round-trip, a real Azurite. Every fixture here **skips cleanly** when its
-service is absent, so the default (offline) lane always runs and the integration lane degrades
-to a clear skip rather than a hang or an error.
+The integration lane (`-m integration`) runs the REAL pre-baked sandbox image in Docker plus,
+for the snapshot round-trip, a real Azurite. Fixtures skip cleanly when their service is absent,
+so the default (offline) lane always runs and the integration lane degrades to a skip, not a hang.
 
-Fixtures:
-  * `docker_ready`   — session skip-gate: skips the whole integration lane if Docker is absent.
-  * `sandbox_image`  — session: the image tag to run. `BIAL_SANDBOX_IMAGE` points at a pre-built
-                       tag (fast dev-loop / CI cache); otherwise the current `Dockerfile.sandbox`
-                       is built once per session so the test exercises the CURRENT image.
-  * `sandbox_factory`— function: `make(env) -> Sandbox`, tracking + tearing down every container.
+Fixtures: `docker_ready` (skip-gate), `sandbox_image` (image tag), `sandbox_factory` (launches +
+tears down containers) — each documents itself below.
 
-`sandbox/tests/` has no `__init__.py` on purpose: pytest (prepend import mode) puts this dir on
-`sys.path`, so sibling modules (`_docker`, later `fake_storage` / `snapshot_ref_client`) import
-by bare name. The backend-`src` bridge + the Azurite fixture are added below.
+No `__init__.py` here on purpose: pytest's prepend import mode puts this dir on `sys.path`, so
+sibling modules (`_docker`, `fake_storage`, `snapshot_ref_client`) import by bare name.
 """
 
 from __future__ import annotations

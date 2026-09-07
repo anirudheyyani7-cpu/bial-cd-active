@@ -1,20 +1,17 @@
 """The golden template's Next config must EVALUATE to the right object, not merely read right.
 
-WHY IT EXISTS. This file had no coverage at all, and it is the only place three separate
-production properties are decided: the base path the platform routes to, the origin a Server
-Action will accept, and the dev-origin glob whose narrowing once shipped a preview that returned
-200 and never rendered. Every one of those fails SILENTLY — as a blank frame, a CSRF abort, or a
-hydration stall — and none of them fails at build time.
+WHY THIS EXISTS. This file had no coverage at all, and it decides three production properties:
+the base path the platform routes to, the origin a Server Action will accept, and the dev-origin
+glob whose narrowing once shipped a preview that returned 200 and never rendered. Each fails
+SILENTLY — a blank frame, a CSRF abort, a hydration stall — and none fails at build time.
 
-WHY IT EVALUATES RATHER THAN GREPS, exactly as `test_caddyfile_adapts.py` asserts on Caddy's
-ADAPTED JSON rather than on the Caddyfile text: a text assertion is satisfied by a comment, and
-it breaks on any reformatting that changes nothing. Running the real evaluator and asserting on
-the resulting object survives any spelling of the same config and cannot be fooled.
+It evaluates rather than greps (as `test_caddyfile_adapts.py` does on Caddy's ADAPTED JSON, not
+the Caddyfile text): a text assertion is satisfied by a comment and breaks on harmless
+reformatting. Asserting on the real evaluator's output survives any spelling of the same config.
 
-It is deliberately NOT an integration test. `sandbox/template` has no `node_modules` checked
-out, and it does not need one: the file's only import is `import type`, which type-stripping
-erases, so a throwaway official Node image evaluates it in about a second. Docker missing means
-a clean skip, exactly like the rest of this harness.
+Not an integration test: `sandbox/template` has no `node_modules`, and needs none — the file's
+only import is `import type`, stripped away, so a throwaway Node image evaluates it in about a
+second. Docker missing means a clean skip, like the rest of this harness.
 """
 
 from __future__ import annotations

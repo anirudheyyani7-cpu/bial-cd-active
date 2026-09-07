@@ -1,52 +1,27 @@
 /**
- * WHAT GETS FRAMED, decided once.
+ * WHAT GETS FRAMED, decided once. The app pane is rendered by the address, not the route: the
+ * shell mounts one iframe for the whole workspace and the element exists whenever this module
+ * returns a URL, which only works if the decision is made from ABOVE the chat. PURE — signals in,
+ * an address and a status out; no hooks, fetches or refs. `null` when no source qualifies, never a
+ * fallback: a pane framing nothing is correct, one framing the wrong app is not.
  *
- * The app pane is about to stop being rendered by the route and start being rendered by the
- * address: the shell mounts one iframe for the whole workspace, and the *element exists* whenever
- * this module returns a URL. That only works if the decision can be made from ABOVE the chat —
- * which is precisely what the builder page's render body could not do, because the precedence was
- * spelled inline at the framing sites and its two scoping predicates were free variables derived
- * further up the same function.
- *
- * ═══ THE PRECEDENCE, AND THE TWO PREDICATES THAT ARE NOT THE SAME PREDICATE ═══
- *
+ * THE PRECEDENCE, AND TWO PREDICATES THAT ARE NOT THE SAME PREDICATE:
  *   1. the live turn's preview      — CHAT-scoped   (`narratingChatIsOpenChat`)
  *   2. a relaunched URL             — PROJECT-scoped
  *   3. the live session's URL       — PROJECT-scoped, and additionally needs a session to exist
  *   4. the project's live preview   — PROJECT-scoped, ranked last
  *
- * THE ASYMMETRY IS LOAD-BEARING AND IT IS NOT A TIDY-UP TARGET. The turn arm is gated by the chat
- * predicate ALONE; the three below it are gated by the project predicate alone. Merging the two
- * into one "is this ours" test breaks it in both directions at once: it stops a live turn framing
- * in the one case that matters most (the citizen watching their build in a chat whose project the
- * page's session was never stamped with), and it lets one project's build frame into another
- * project's pane. `previewAddress.test.ts` has a scenario for each half, and
- * `ConversationSurface-previewaddress.test.tsx` has the same asymmetry at the page level.
+ * WHY THIS EXISTS — THE ASYMMETRY IS LOAD-BEARING, not a tidy-up target. The turn arm is gated by
+ * the chat predicate ALONE, the three below it by the project predicate alone. Merging them into
+ * one "is this ours" test breaks both directions at once: it stops a live turn framing in the case
+ * that matters most (a chat whose project the page's session was never stamped with), and it lets
+ * one project's build frame into another project's pane. `previewAddress.test.ts` and
+ * `ConversationSurface-previewaddress.test.tsx` each carry a scenario.
  *
- * ═══ THREE SCOPES, AND ONLY TWO OF THEM LIVE HERE ═══
- *
- * There are three scopes in play on this pane, not two:
- *
- *  - CHAT-scoped   — the live turn's preview and its reconnecting flag. About the open conversation.
- *  - PROJECT-scoped — the relaunched URL, the session's URL, whether a turn is running anywhere in
- *                     this project. About the project, not the chat.
- *  - APP-scoped    — the compile state, and whether the workspace was lost. Facts about the
- *                     project's ONE app, deliberately NOT narrowed to the open conversation,
- *                     because their producer outlives the turn and blanking them on a chat switch
- *                     is what leaves an error screen uncovered.
- *
- * The third scope is named here so it is documented somewhere, and then deliberately kept OUT of
- * this module: the app-scoped facts are not address sources, they answer *what to say about the
- * app* rather than *what to frame*, and pulling them in "for consistency" is how the compile signal
- * gets narrowed to a chat. They stay ordinary pass-through props with their reasons beside them.
- *
- * ═══ WHAT THIS MODULE WILL NOT DO ═══
- *
- * It is PURE — identities and raw signals in, an address and a status out. No hooks, no fetches,
- * no refs (a ref's current value is passed as an argument, never read in here). It returns `null`
- * for the address when no source qualifies: it never invents a fallback and it never widens a
- * scope to produce one. A pane framing nothing is a correct answer; a pane framing the wrong app
- * is not.
+ * A THIRD SCOPE IS NAMED HERE AND KEPT OUT: APP-scoped facts (the compile state, whether the
+ * workspace was lost) are about the project's ONE app and deliberately NOT narrowed to the open
+ * chat, since their producer outlives the turn — blanking them on a chat switch leaves an error
+ * screen uncovered. They stay ordinary pass-through props.
  */
 import type { BuildSessionStatus } from './buildSessionTypes'
 
@@ -55,15 +30,14 @@ export interface PreviewAddressInputs {
   /** The URL the live turn last named, whichever chat it was narrating. */
   turnPreviewUrl: string | null
   /**
-   * The live turn's build status — the top of the STATUS precedence, and deliberately independent
-   * of which arm won the URL: a build that is provisioning has a status and no URL yet, and that
-   * pair is what renders the loading state instead of an empty pane.
+   * The live turn's build status — top of the STATUS precedence, deliberately independent of
+   * which arm won the URL: a provisioning build has a status and no URL yet, which is what
+   * renders the loading state instead of an empty pane.
    *
-   * Gated by the chat predicate in here even though its only caller today hands it in already
-   * gated. The point of this module is that an arm carries its predicate INTO it rather than
-   * relying on the caller having derived one above the JSX — a gate that depends on where it was
-   * declared is one reorder away from silently opening, which is the note the builder page's own
-   * comments already carry about this exact pair of predicates.
+   * Gated by the chat predicate IN HERE even though its only caller hands it in already gated —
+   * an arm carries its predicate INTO the module rather than relying on the caller having
+   * derived one above the JSX, because a gate that depends on where it was declared is one
+   * reorder away from silently opening.
    */
   turnStatus: BuildSessionStatus | null
   /** THE CHAT PREDICATE. Is the turn that produced the signals above narrating the OPEN chat? */
@@ -88,18 +62,15 @@ export interface PreviewAddressInputs {
    */
   sessionId: string | null
   /**
-   * The project's own live preview, from the preview-state read, whose contract says exactly when
-   * this is framable: `alive` — "a container is serving this project; `previewUrl` is framable"
-   * (`buildSessionApi.ts`). RANKED LAST, and it is the only arm that does not require a chat:
-   * the three above it all need a live turn, a relaunch performed in this session, or a session.
-   * At a bare project address on a fresh load there is none of that, so without this arm the
-   * project screen frames nothing.
+   * The project's own live preview, from the preview-state read (`alive`: "a container is
+   * serving this project; `previewUrl` is framable" — `buildSessionApi.ts`). RANKED LAST, and
+   * the only arm that needs no chat: the three above it need a live turn, a relaunch, or a
+   * session, so at a bare project address on a fresh load none of that exists.
    *
-   * ITS CALLER EXISTS. `components/workspace/ProjectWorkspace.tsx` is the project-scoped publisher
-   * this arm was written for, and it feeds only the `alive` case — the one state whose `previewUrl`
-   * the wire's own contract calls framable. Until it landed, this arm had no caller at all and the
-   * bare project screen published nothing, so the pane host hit its "no pane and no address" early
-   * return and rendered nothing on a fresh load.
+   * ITS CALLER EXISTS: `ProjectWorkspace.tsx` is the project-scoped publisher this arm was
+   * written for, feeding only the `alive` case. Until it landed, this arm had no caller and a
+   * bare project screen published nothing — the pane host hit its early return and rendered
+   * nothing on a fresh load.
    */
   projectPreviewUrl: string | null
   /** THE PROJECT PREDICATE. Do the project-scoped signals above belong to the OPEN project? */

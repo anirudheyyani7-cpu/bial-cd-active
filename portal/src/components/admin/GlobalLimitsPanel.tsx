@@ -28,18 +28,12 @@ export interface GlobalLimitsPanelProps {
 }
 
 /**
- * Admin "Global Limits" panel — apply one daily-token-limit value to either every
- * user system-wide or a hand-picked subset, in a single bulk request.
- *
- * Two explicit modes, not a hybrid "select all that match, except these": "All
- * users" sends `userIds: null` straight to the backend (which resolves the roster
- * itself, so it covers literally everyone, not just what's loaded here); "Selected
- * users" renders a checkbox table over the same background-loaded roster
- * `UsersLimitsPanel` uses, and only ever sends the ids actually ticked.
- *
- * The value picker is one control, not two disconnected ones: picking a preset from
- * the dropdown fills the number input, which the admin can still hand-edit before
- * applying.
+ * Admin "Global Limits" panel — apply one daily-token-limit value to either
+ * every user system-wide or a hand-picked subset, in one bulk request. "All
+ * users" sends `userIds: null` (backend resolves the roster, covering
+ * everyone); "Selected users" checks rows off the same background-loaded
+ * roster `UsersLimitsPanel` uses. The value picker is one control: a preset
+ * fills the number input, which stays hand-editable before applying.
  */
 export default function GlobalLimitsPanel({ onToast }: GlobalLimitsPanelProps) {
   const [mode, setMode] = useState<Mode>('all')

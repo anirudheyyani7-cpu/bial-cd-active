@@ -1,29 +1,25 @@
 /**
  * The composer draft, per conversation — THE ONE STORE, FOR BOTH CHAT KINDS.
  *
- * WHY THIS EXISTS
- * Under the mode-free composer contract the user can keep typing while the assistant works, so
- * the text has to survive a reload, a chat switch, and a refinement chip — the first two are
- * this module's job. Both chat kinds use it now: the planning surface used to keep its text in
- * assistant-ui's in-memory composer and clear it on every chat change including the first mount
- * after a reload, so a planning draft died on a reload and on a round trip to a sibling chat.
- * This module is the sole owner of the key — other surfaces only consume it and never write
- * directly — so there is exactly one writer per key.
+ * WHY THIS EXISTS: under the mode-free composer contract the user can keep typing while the
+ * assistant works, so the text must survive a reload and a chat switch. Both kinds use it now —
+ * planning used to keep its text in assistant-ui's in-memory composer, which cleared on every
+ * chat change including the first mount after a reload, so a planning draft died on reload and on
+ * a round trip to a sibling chat. This module is the sole owner of the key; other surfaces only
+ * consume it, so there is exactly one writer per key.
  *
  * SEMANTICS, stated because they are user-visible:
  *  - `sessionStorage`, not `localStorage`: a draft is tab-scoped work-in-progress, and dying with
- *    the tab is the correct lifetime, rather than accumulating every abandoned half-thought
- *    forever across every conversation.
- *  - Keyed per conversation, so switching chats shows each one its own draft rather than leaking
- *    one conversation's text into another.
- *  - LAST WRITER WINS across tabs sharing one conversation; accepted deliberately, since the
+ *    the tab is correct, rather than accumulating every abandoned half-thought forever.
+ *  - Keyed per conversation, so switching chats shows each one its own draft.
+ *  - LAST WRITER WINS across tabs sharing one conversation — accepted deliberately; the
  *    alternative is a merge UI for a text box.
- *  - Cleared on a SUCCESSFUL send, never on failure — a failed send is exactly when the text is
- *    worth most, and an uncleared draft would otherwise resend the same message by accident.
+ *  - Cleared on a SUCCESSFUL send only, never on failure — a failed send is exactly when the text
+ *    is worth most, and clearing it would resend the same message by accident.
  *
- * Storage access is wrapped because `sessionStorage` genuinely throws rather than degrading —
- * Safari's private mode on quota, and any embedding that blocks storage access. Losing a draft is
- * not worth taking the chat down with it: no persistence, everything else unaffected.
+ * Storage access is wrapped because `sessionStorage` genuinely throws rather than degrading
+ * (Safari private mode on quota, storage-blocking embeds) — losing a draft is not worth taking
+ * the chat down with it.
  */
 
 const key = (conversationId: string): string => `draft:${conversationId}`

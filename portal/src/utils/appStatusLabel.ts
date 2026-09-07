@@ -1,29 +1,20 @@
 /**
- * ONE vocabulary for what state an app is in — the words, in one place.
+ * WHY THIS EXISTS
  *
- * The projects list must borrow the project page's words and must not invent a second
- * set. `PublishStatusChip` is that first set, and it is richer
- * than anything a list row can support: it reads a per-project deployment fetch and can say
- * `Starting up`, `Live · newer work saved` and `Taken offline`. A list cannot — one request
- * per row is an N-way fan-out on the landing screen — so this module is the SUBSET the list
- * can prove, using the chip's exact words for the states they share.
+ * One vocabulary for what state an app is in. The projects list must reuse
+ * `PublishStatusChip`'s words rather than invent a second set; this module is the
+ * SUBSET a list row can prove without an N-way per-row deployment fetch — same
+ * words, fewer of them, never different ones.
  *
- * That is the whole design constraint: same words, fewer of them, never different ones.
+ * TWO FACTS, NOT ONE. Whether an app is LIVE is a deployment fact ("live = deployed
+ * / published, with a url" — confirmed on a call) and is NOT derivable from
+ * `appStatus`: `approved` only means an admin said yes, and one-click deploy never
+ * writes `status` at all, so an ordinary live app still reads `draft`. `isServing` is
+ * therefore checked FIRST — computed server-side by `services/deploy/liveness.py`,
+ * the same predicate the marketplace and dashboard's "In production" count use.
  *
- * TWO FACTS, NOT ONE. Whether an app is LIVE is a deployment fact — settled on a
- * call as "live = deployed / published — if the application is published and has url" —
- * and it is NOT derivable from `appStatus`:
- *
- *   - `approved` means an administrator said yes. Nothing may ever have been deployed.
- *   - one-click deploy never writes `status` at all, so the ordinary live app is `draft`.
- *
- * So `isServing` is checked FIRST and wins. The server computes it from the deployment
- * history (`services/deploy/liveness.py`), which is the same predicate the marketplace and
- * the dashboard's "In production" count read.
- *
- * The board drew `NOT SENT` and `LIVE`; the words below are the chip's instead,
- * confirmed on the call — "the mocks are just for reference, exact terminology is not
- * finalised yet, use explainable and simple language".
+ * Wording below is the chip's, not the board mockups' ("NOT SENT"/"LIVE") — confirmed
+ * on a call to use explainable, simple language over the mocks' placeholder terms.
  */
 import type { AppStatus, Project } from './projectApi'
 

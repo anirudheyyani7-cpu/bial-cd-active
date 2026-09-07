@@ -1,25 +1,20 @@
 /**
  * HOW FAR THE LEFT COLUMN MOVES — the board's four numbers, in one place.
  *
- * `ResizeBounds` is a whole artboard about this, and every number on it has a stated reason:
+ * WHY THIS EXISTS: `ResizeBounds`, the artboard these implement, says a free divider produces
+ * two failures nobody asks for — dragged to 120px the composer is unusable, dragged to 1100px
+ * the app is a sliver and the preview is pointless. The stops ARE the design; a citizen who
+ * wants full width already has a control for that.
  *
- *   360px  narrowest   below this the composer and the status rows start wrapping
- *   400px  project     where it opens; fits the status rows without wrapping
- *   520px  a chat      where a chat opens — a conversation needs more width than a status panel
- *   640px  widest      past this the app is too narrow to judge on a desktop artboard
+ *   360px  narrowest   below this the composer and status rows start wrapping
+ *   400px  project      opening width; fits the status rows without wrapping
+ *   520px  a chat       opening width; a conversation needs more room than a status panel
+ *   640px  widest       past this the app is too narrow to judge on a desktop artboard
  *
- * WHY IT IS BOUNDED RATHER THAN FREE, in the board's own words: "a free divider produces two
- * failures nobody asks for — a column dragged to 120px where the composer is unusable, and a
- * column dragged to 1100px where the app is a sliver and the preview is pointless. The stops are
- * the design. Someone who wants the app at full width already has a control for it."
- *
- * WHAT IS REMEMBERED, AND WHAT IS NOT. Per person, in `localStorage`; NOT per project — "a width
- * is a preference about a screen, not a property of an app". The board says "per width class" as
- * well, and one stored value satisfies that here rather than dodging it: the handle exists in
- * exactly one width class, because below the stacking threshold there is no handle at all.
- *
- * The two OPENING widths are not the same number, and a remembered one replaces both: once the
- * citizen has dragged, "every project opens there", which is the board's own sentence.
+ * Remembered per person in `localStorage`, never per project ("a width is a preference about a
+ * screen, not a property of an app"); one stored value covers both opening widths too — once the
+ * citizen drags, every project opens there. The handle exists in exactly one width class (below
+ * the stacking threshold there is no handle at all), so one key already covers "per width class".
  */
 export const RAIL_MIN = 360
 export const RAIL_MAX = 640
@@ -37,15 +32,12 @@ export function clampRailWidth(px: number): number {
 }
 
 /**
- * The remembered width, or `null` when the citizen has never dragged one.
+ * The remembered width, or `null` when the citizen has never dragged one — NOT a number to
+ * substitute, since the two opening widths differ and a caller that defaulted here would pick
+ * one of them for both.
  *
- * `null` IS NOT A NUMBER TO SUBSTITUTE. It means "use the opening width for whichever rail this
- * is", and the two are different, so a caller that defaulted here would pick one of them for both.
- *
- * THROW-WRAPPED, because `localStorage` genuinely throws rather than degrading — Safari private
- * mode, and any browser with site data blocked. A preference nobody can save is a preference that
- * silently uses its default, which is a strictly better outcome than a workspace that will not
- * render.
+ * Throw-wrapped: `localStorage` genuinely throws (Safari private mode, blocked site data), and a
+ * preference nobody can save is better silently defaulted than a workspace that fails to render.
  */
 export function readRailWidth(): number | null {
   try {

@@ -202,20 +202,13 @@ async def write_snapshot(
     destination: Destination | None = None,
 ) -> str:
     """Snapshot the sandbox's current tree to Blob and return its HEAD sha.
+
     Step 1 of the ordered end — the caller runs teardown + release AFTER this returns.
-
-    `destination` defaults to the user's SAVED bundle, which is what every caller of this
-    function means. The platform's own autosave does not come through here: it goes through
-    `write_recovery_copy`, which is the same write with a guard in front of it.
-
-    RETURNS THE BUNDLED TREE'S HEAD SHA, which is also stamped into the object's metadata.
-    Callers compare that rather than `last_modified` to decide which of two bundles is newer:
-    Azure stamps modification times in WHOLE SECONDS, so a Save and an autosave inside one second
-    are indistinguishable by time, and resolving that tie toward the saved bundle silently
-    restores an older tree over the user's newer work.
-
-    Serialized per app: concurrent callers queue rather than racing each other's bundle file
-    and each other's git index (see `_serialized_per_app`)."""
+    `destination` defaults to the user's SAVED bundle; the autosave goes through
+    `write_recovery_copy`, the same write with a guard in front. The head sha is stamped into the
+    object's metadata and callers compare THAT, not `last_modified`: Azure stamps mtimes in whole
+    seconds, so a Save and an autosave in the same second cannot be told apart by time, and the tie
+    would restore an older tree over newer work. Serialized per app: callers queue, never race."""
     key = (destination or Destination.saved(app_id)).key
     async with _serialized_per_app(app_id):
         store = _the_store_first()
@@ -250,17 +243,11 @@ async def write_recovery_copy(
     """The turn-end autosave, with a guard that will not overwrite a good copy with a bad tree.
 
     THE NO-OP SKIP IS DECIDED ON THE BUNDLED SHA, AND THAT ORDERING IS THE WHOLE TRICK.
-    `_COMMIT_SCRIPT` runs `git add -A && git commit` as step ONE inside the bundle below, so by
-    the time there is a sha to compare, any uncommitted work has already become a commit. A naive
-    "skip when HEAD has not moved" reads the sha BEFORE that step. The agent does not commit as
-    it works, so "HEAD unchanged + dirty tree" is the normal shape of EVERY building turn, and
-    that version would silently discard every turn's recovery copy. Data loss plus containers
-    nothing would ever reclaim, both reading green to every health check.
-    `test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy` is the standing contract.
-
-    NEVER RAISES FOR A REFUSAL, and never fails the turn. A caller still has to catch the bundle
-    or upload failing — that case is `failed`, and it is raised from the call site because only
-    the call site knows the write threw."""
+    `_COMMIT_SCRIPT` commits as step ONE inside the bundle, so a naive "skip when HEAD has not
+    moved" reading the sha BEFORE it would discard every turn's recovery copy: the agent rarely
+    commits mid-turn, so "HEAD unchanged + dirty tree" is the normal shape of a building turn
+    (`test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy`). NEVER RAISES FOR A
+    REFUSAL — only bundle/upload failure is raised, at the call site that saw it throw."""
     async with _serialized_per_app(app_id):
         store = _the_store_first()
         meta = await store.head(recovery_key(app_id))
@@ -459,16 +446,12 @@ class Promotion:
 
 
 async def list_parked_trees(app_id: uuid.UUID) -> list[ParkedTree]:
-    """Every quarantine and divert object for one app, newest first.
-
-    NEWEST FIRST because the useful one is almost always the last one, and an operator scrolling
-    to the bottom of a list to find the tree they are looking for is an operator who will
-    eventually promote the wrong one.
+    """Every quarantine and divert object for one app, newest first — the useful one is almost
+    always the last, and scrolling to the bottom is how an operator promotes the wrong one.
 
     Returns an empty list rather than raising on an unconfigured or unreadable store: this is a
-    read for a human who is already dealing with an incident, and a 500 in the middle of one is
-    not help. The empty case is indistinguishable from "nothing parked", which is the honest
-    reading — an operator who sees nothing and expected something will look at the store."""
+    read for a human already dealing with an incident, and a 500 mid-incident is not help. The
+    empty case reads honestly as "nothing parked" either way."""
     try:
         store = get_storage()
     except StorageUnconfiguredError:
@@ -509,22 +492,14 @@ async def list_parked_trees(app_id: uuid.UUID) -> list[ParkedTree]:
 
 
 async def promote_parked(app_id: uuid.UUID, *, key: str) -> Promotion:
-    """Copy one parked tree into the recovery slot, THROUGH the guard.
+    """Copy one parked tree into the recovery slot, THROUGH the guard — not a two-line blob copy.
 
-    THE GUARD IS THE WHOLE POINT and it is why this is not a two-line blob copy. A promotion whose
-    tree is not a descendant of what the recovery slot already holds is exactly the shape the
-    turn-end guard refuses — an operator asking for it is not evidence that the tree is
-    the right one, and forcing it would destroy the newest copy of somebody's work in the name of
-    recovering it.
-
-    THE ANCESTRY QUESTION CANNOT BE ASKED HERE, and that changes what the guard can be. The
-    turn-end guard asks a live container `git merge-base --is-ancestor`; this runs against two
-    objects in a store with no container in sight. So the check is the one that IS answerable:
-    refuse when the slot already holds the same tree (nothing to do), and otherwise require the
-    promotion to be explicit about replacing it — which the audit row records, with the operator's
-    name on it. That is weaker than the turn-end guard and it is stated rather than dressed up:
-    the compensating control is that this route is superadmin-only, audited, and per-occurrence
-    keys mean the replaced object is still there."""
+    THE ANCESTRY QUESTION CANNOT BE ASKED HERE: the turn-end guard asks a live container `git
+    merge-base --is-ancestor`, but this runs against two store objects with no container in sight.
+    So the check is the one that IS answerable — refuse when the slot already holds the same tree,
+    otherwise require an explicit promotion — which is weaker than the turn-end guard, stated
+    rather than dressed up. The compensating control is that this route is superadmin-only,
+    audited, and per-occurrence keys mean the replaced object is still there."""
     store = get_storage()
     if not key.startswith((quarantine_prefix(app_id), divert_prefix(app_id))):
         # THE KEY COMES FROM A REQUEST BODY. It names an object to READ and an app to write it

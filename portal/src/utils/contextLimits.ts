@@ -1,35 +1,18 @@
 /**
  * THE BROWSER'S "THIS CHAT IS GETTING LONG" WARNING.
  *
- * ══ IT WARNS. IT NEVER REFUSES. ══
+ * WHY THIS EXISTS. The hard boundary is the SERVER's (`enforce_context_limit` refuses the
+ * turn before anything persists) — the two-page portal once enforced the whole guardrail in
+ * the browser, so when `ChatPage.tsx` was deleted the boundary went with it: an administrator
+ * set a number nothing read, and a citizen's first news of the limit was a failed turn with
+ * no reason. A guard only the client holds is not a guard. So this file only warns EARLY
+ * ENOUGH to finish a thought and start a new chat, never refuses.
  *
- * The hard boundary is the SERVER's — `enforce_context_limit` refuses the turn at the route
- * with a sentence of its own, before anything is persisted. That is deliberate and it is the
- * lesson of what this file replaces: the two-page portal enforced the whole guardrail in the
- * browser, so when `ChatPage.tsx` was deleted the boundary went with it, an administrator was
- * left setting a number nothing read, and a citizen's first news of the limit was a failed turn
- * with no reason. A guard only the client holds is not a guard.
- *
- * So this file's job is smaller and honest: warn EARLY ENOUGH that the citizen can finish their
- * thought and start a new chat, rather than being stopped mid-sentence.
- *
- * ══ THE ESTIMATE IS A FLOOR, AND THE DIRECTION MATTERS ══
- *
- * The browser sees the RENDERED transcript — prose and attachments. The server measures what
- * actually goes on the wire, which also includes every tool call and every tool result a Build
- * turn generated. Those never reach the projection, so this number is a LOWER BOUND on the
- * server's.
- *
- * The consequence, stated rather than glossed: in a Build chat with heavy tool traffic the
- * warning can arrive later than it ideally would. It cannot arrive too late to matter, because
- * the server's refusal is the thing that actually protects the conversation and that one is
- * never late. What this must never do is the opposite — claim room in a chat the server would
- * refuse — which is why it carries the same `SYSTEM_PROMPT_RESERVE` the server holds back, and
- * why the two files spell the same four-characters-to-the-token ratio.
- *
- * Every constant below is the twin of one in `backend/src/services/usage/` — `context_window.py`
- * for the estimate's ratios, `limits.py` for the window numbers.
- * They are two readings of one scale; change one and change the other.
+ * THE ESTIMATE IS A FLOOR: the browser sees rendered prose/attachments, the server also
+ * counts every tool call/result a Build turn generated, so this number can only under-count.
+ * It carries the same `SYSTEM_PROMPT_RESERVE` and token ratio the server holds, so it never
+ * claims room the server would refuse. Every constant below twins one in
+ * `backend/src/services/usage/` (`context_window.py` / `limits.py`) — change one, change both.
  */
 import { getStoredUser } from './auth'
 import type { ProfileLimits } from './auth'
@@ -80,17 +63,11 @@ export function getContextLimits(): { soft: number; hard: number } {
 }
 
 /**
- * What this conversation is worth, in tokens, as far as the browser can see.
- *
- * EVERY attachment counts on EVERY turn, which is a real change from the estimator this
- * replaces. That one charged image and PDF parts only in the newest message, because the old
- * relay sent binaries only for the newest turn. The turn engine rehydrates every stored
- * attachment in the history on every turn (`load_history`'s rehydrator) — Foundry has no Files
- * API, so the bytes go up again each time. Charging them once would under-count a
- * picture-heavy chat by however many pictures it holds.
- *
- * Office attachments are counted by their extracted TEXT, not the nominal: that text is sticky
- * prose on the wire, and a 200 KB spreadsheet extraction is ~50k tokens rather than 1,600.
+ * What this conversation is worth, in tokens, as far as the browser can see. EVERY attachment
+ * counts on EVERY turn — a real change from the estimator this replaces, which charged
+ * image/PDF parts only in the newest message. The turn engine rehydrates every stored
+ * attachment on every turn (Foundry has no Files API), so charging once would under-count.
+ * Office attachments count by extracted TEXT: a 200 KB spreadsheet is ~50k tokens, not 1,600.
  */
 export function estimateConversationTokens(messages: readonly ChatMessage[]): number {
   let tokens = 0

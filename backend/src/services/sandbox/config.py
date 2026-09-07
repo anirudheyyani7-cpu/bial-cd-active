@@ -1,18 +1,15 @@
 """Sandbox (ACA) provisioning configuration model.
 
 `Settings.sandbox` is typed `SandboxConfig | None`; pydantic-settings validates one
-`SANDBOX__*` env block against it (the single config funnel). The per-user sandbox
-runtime is a genuinely-optional integration: `| None` keeps dev/test booting
-without it, and the single prod gate in `src.config` requires it in production.
+`SANDBOX__*` env block against it (the single config funnel). `| None` keeps dev/test
+booting without it — the single prod gate in `src.config` requires it in production.
 
-SESSION-API provisions one Azure Container App sandbox per user against these knobs
-and injects the interim app-data credential at provision and on restore. The full
-shape here is frozen, and nothing should reopen `config.py` to change it.
+SESSION-API provisions one Azure Container App sandbox per user against these knobs and
+injects the interim app-data credential at provision and on restore. This shape is
+FROZEN — nothing should reopen this file to change it.
 
-ACA control-plane auth is managed-identity (`DefaultAzureCredential`) — there is no
-static provisioning secret to hold here; the per-sandbox supervisor bearer token is
-minted at provision time, not configured.
-"""
+ACA control-plane auth is managed-identity (`DefaultAzureCredential`): no static
+provisioning secret lives here; the supervisor bearer is minted at provision time."""
 
 from __future__ import annotations
 

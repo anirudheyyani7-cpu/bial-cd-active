@@ -19,10 +19,8 @@ the orphan reconciler still work on rows minted under an earlier name scheme.
 
 There is no `user_id` column: `projects` is the ownership anchor, every user-scoped query
 reaches this table through it, and `ON DELETE CASCADE` guarantees the registry row can never
-outlive its project. The databases themselves live OUTSIDE Alembic's world — this migration
-creates only the registry; Drizzle owns everything inside each per-project database.
-
-Hand-finalized.
+outlive its project. The databases live OUTSIDE Alembic's world — this migration creates
+only the registry; Drizzle owns everything inside each per-project database. Hand-finalized.
 """
 
 from __future__ import annotations

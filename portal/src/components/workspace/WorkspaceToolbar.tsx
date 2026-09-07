@@ -1,46 +1,25 @@
 /**
- * THE TOOLBAR ROW — one 54px row under the navbar, on both workspace screens.
+ * THE TOOLBAR ROW — one 54px row under the navbar, on both workspace screens, drawn once by
+ * the shell rather than per-surface.
  *
- * ═══ WHY IT IS DRAWN BY THE SHELL AND NOT BY THE RAIL ═══
+ * WHY THIS EXISTS: it used to be three separate headers (rail, conversation panel, framed
+ * preview), and the project name lived inside the 400px rail — so it truncated at the rail's
+ * width and disappeared entirely when the rail collapsed. Drawing it once, above the two-column
+ * grid, makes "the title survives a collapse" true by construction, and makes the row a single
+ * element across a route change (position never remounts, only its contents change).
  *
- * It used to be three separate headers: the rail's own (back control, project name, status chip,
- * rename), the conversation panel's (a bordered breadcrumb), and the framed preview's (device
- * widths, Reload, Save). Three headers, three widths, three sets of contents — and the project
- * name lived inside the 400px rail, so it truncated at the rail's width and DISAPPEARED entirely
- * when the rail was collapsed. The collapse board draws the opposite: hide the details and the
- * title is still there.
+ * Its SHAPE comes from `rail.mode`, not `heading.chatKind`: mode is derived from the pathname
+ * and is right on the first frame, while chatKind is an answer that arrives from a fetch — using
+ * it re-shaped the row under the reader on a cold `/chat/{id}` open (bookmark, reload, hand-over
+ * from a plan chat). It deliberately does NOT read the `pane` cell (republished every keystroke,
+ * cleared on unmount) — either fact alone disqualifies it. `heading` comes from the ROUTES so a
+ * cold open still renders the row's full height and back control while data resolves. Save reads
+ * its values/action from the `save`/`actions` cells at press time, so a handler whose identity
+ * changes every render costs nothing and no stale closure is reachable.
  *
- * Drawing it once, above the two-column grid, is what makes that true by construction rather than
- * by a rule someone has to keep. It also means the row is a SINGLE ELEMENT across a route change
- * from the project screen to one of its chats — its contents change, its position never does, and
- * nothing in it remounts.
- *
- * ═══ WHICH CHANNEL CELLS FEED IT ═══
- *
- * The heading comes from `heading`, published by the ROUTES rather than by the surfaces, so a cold
- * open of a chat address renders the row at its full height with its back control working while
- * the conversation and the project are both still resolving. See `WorkspaceHeading`.
- *
- * WHICH OF THE TWO SHAPES IT DRAWS comes from `rail.mode` instead, and that is the whole reason
- * the two are separate reads. The heading's fields are ANSWERS — a name, a title, a kind — and
- * every one of them arrives from a fetch; the rail's mode is derived from the pathname, so it is
- * right on the first frame. Deciding the shape from an answer meant the row wore the project
- * screen's layout for the length of a cold chat open and then re-shaped under the reader.
- *
- * It deliberately does NOT read the `pane` cell, which is the obvious place chrome already lives:
- * that cell is republished on every keystroke in the composer and is cleared to nothing when its
- * publisher unmounts. Either one alone would disqualify it.
- *
- * The save control reads its VALUES from `save` and its ACTION from `actions`, at press time —
- * so a handler whose identity changes on every render of the conversation surface costs this row
- * nothing, and a stale closure is not reachable. See `useWorkspaceActions`.
- *
- * ═══ WHAT IS DELIBERATELY NOT HERE ═══
- *
- * THE HISTORY CONTROL. Four boards draw a clock icon in this row's right cluster and the history
- * drawer behind it is a later feature by the owner's decision — so the control is not built, and
- * not left as a disabled stub either. A control that implies a drawer nobody can open is worse
- * than its absence.
+ * NOT HERE: the history-drawer control. Four boards draw its icon, but the drawer is a later
+ * feature by the owner's decision — an affordance for a drawer nobody can open is worse than
+ * no affordance, so it is neither built nor left as a disabled stub.
  */
 import { useMemo } from 'react'
 import {
@@ -86,18 +65,12 @@ export default function WorkspaceToolbar({
   const address = useWorkspaceAddress()
   const paneVisible = useWorkspacePaneVisible()
 
-  // WHICH SHAPE THE ROW TAKES IS A FACT ABOUT THE ADDRESS, not about the conversation. It used to
-  // be `heading.chatKind !== null`, and a kind is something only the SERVER can answer: opening a
-  // bare `/chat/{id}` — a reload, a bookmark, the hand-over out of a plan chat — spends a whole
-  // `GET /conversations/{id}` with no kind at all. For that window the row drew the PROJECT
-  // screen's shape over a chat: a lone `<h1>` reading "Your project", no breadcrumb, and a back
-  // control labelled and aimed at the projects list, which threw a citizen who reloaded and
-  // pressed back straight out of the project they were in. Then it re-shaped under them when the
-  // fetch landed — the layout shift this row is drawn by the shell to prevent.
-  //
-  // The rail's mode is that fact and it is available from the first frame: the shell derives it
-  // from the pathname and nothing else (`railModeFor`), so a chat address is a chat address before
-  // anything has been fetched. The KIND still decides only what the kind pill says.
+  // A fact about the ADDRESS, not the conversation. It used to be `heading.chatKind !== null`,
+  // but kind only ever arrives from the server — so a cold `/chat/{id}` open drew the PROJECT
+  // shape instead (a bare "Your project" heading, a back control aimed at the projects list),
+  // then re-shaped under the reader once the fetch landed and threw anyone who pressed back
+  // right out of the project they were in. `rail.mode` is derived from the pathname alone, so
+  // it is right on the first frame; the kind still decides only what the pill says.
   const isChat = useRailSlot().mode === 'conversation'
   const kind = useMemo(() => (heading.chatKind ? chatKindFor(heading.chatKind) : null), [heading.chatKind])
   // Capitalised so JSX reads it as a component rather than as an intrinsic element. `null` is a
@@ -185,16 +158,12 @@ export default function WorkspaceToolbar({
         </h1>
       )}
 
-      {/* ONE PLACE SAYS THE STATE AT A TIME, and which place it is depends on whether the rail is
-          showing it. `BuildChat`, `PlanChat` and every other chat board draws the chip beside the
-          title, because a chat has no APP STATUS section. `Collapsed` draws it there too, for the
-          same reason — the section it lives in has just gone off screen. `PreviewOff`, `Main`,
-          `NewProject` and `NothingBuilt` draw the identity cluster as back-chevron + title and
-          NOTHING else, because the rail is right there carrying the pill.
-
-          Ungated, the project screen stated the same word twice inside 300px — a `Draft` chip in
-          the row and a `Draft` pill in the rail — which is the classic way two renderings of one
-          fact start to disagree. */}
+      {/* ONE PLACE SAYS THE STATE AT A TIME. Chat boards (which have no app-status section) and
+          `Collapsed` (whose section just went off screen) draw the chip beside the title;
+          `PreviewOff`, `Main`, `NewProject` and `NothingBuilt` draw only chevron + title, since
+          the rail is right there carrying the pill. Ungated, the project screen stated the same
+          word twice inside 300px — a `Draft` chip here and a `Draft` pill in the rail — the
+          classic way two renderings of one fact start to disagree. */}
       {heading.projectId && (isChat || collapsed) && (
         <span className="ms-2.5 flex-shrink-0">
           <PublishStatusChip projectId={heading.projectId} />
@@ -302,20 +271,12 @@ export default function WorkspaceToolbar({
 }
 
 /**
- * THE SAVE CONTROL, in the board's three states.
- *
- * Clean is an outlined chip reading "Saved". Dirty is a TEAL OUTLINE on a pale teal ground with a
- * 6px amber dot — not a filled teal button: a permanently loud control is one people learn to
- * ignore, and the dot is what the eye actually catches. That dot is one of
- * exactly two places the whole canvas uses the accent colour.
- *
- * `dirty === null` MEANS "COULD NOT TELL" AND RENDERS NOTHING. It is not clean. The check costs two
- * `git` executions inside the container, so a stopped project has no answer at all, and a chip
- * reading "Saved" over an unknown is the one thing this control must never say.
- *
- * WITH NO ACTION PUBLISHED IT IS A STATUS, NOT A BUTTON — a real `<span>`, so nothing invites a
- * press that would do nothing. Both surfaces publish `onSave` today, so the control is pressable
- * on each; the status-only shape is what it falls back to when a surface does not.
+ * THE SAVE CONTROL, in three states. Clean is an outlined "Saved" chip; dirty is a teal outline on
+ * pale teal with a 6px amber dot (not a filled button — a loud control gets ignored) — one of only
+ * two accent-colour uses on the canvas. `dirty === null` means "could not tell" and renders
+ * nothing, never "Saved": the git check costs two executions, so a stopped project has no answer.
+ * With no action published it renders a real `<span>`, not a button, so nothing invites a no-op
+ * press — both surfaces publish `onSave` today, so this is only the fallback shape.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save

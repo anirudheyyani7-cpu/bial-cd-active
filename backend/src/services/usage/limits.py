@@ -1,17 +1,14 @@
-"""Effective per-user limits — the daily token cap and the per-conversation context
-guardrails (soft/hard), resolved with the clamps the portal has always applied.
+"""Effective per-user limits — the daily token cap and per-conversation context guardrails
+(soft/hard), resolved with the clamps the portal has always applied.
 
-The SINGLE source of truth shared by the admin `/admin/users` endpoint AND `/auth/me`, so a
-superadmin's per-user override reaches the client (the daily badge + the "getting long"
-warning) instead of the client silently falling back to the global defaults. Daily reuses the
-gate's resolver so the badge and the 429 gate can never diverge.
+The SINGLE source of truth shared by the admin `/admin/users` endpoint and `/auth/me`, so a
+superadmin's per-user override reaches the client instead of it falling back to the global
+defaults. Daily reuses the gate's resolver so the badge and the 429 gate can never diverge.
 
-WHO ENFORCES WHICH. `hard` is the SERVER's: `usage/context_window.enforce_context_limit`
-refuses a turn at the route, before anything is persisted. `soft` is the browser's: it is
-advisory, it blocks nothing, and it exists to warn the citizen in time to start a new chat
-rather than to be told at the wall. This docstring used to call both of them "the values the
-client should enforce", which was true of neither — nothing enforced them at all, front or
-back, while an administrator was being shown a field promising a hard stop.
+WHO ENFORCES WHICH: `hard` is the SERVER's — `usage/context_window.enforce_context_limit`
+refuses a turn before anything is persisted. `soft` is the browser's: advisory only, it blocks
+nothing, and exists to warn the citizen in time to start a new chat rather than be told at the
+wall.
 """
 
 from __future__ import annotations
@@ -65,15 +62,13 @@ real conversation — tight, deliberate, and still a chat someone can use."""
 
 
 def effective_context(override: UserLimit | None) -> tuple[int, int]:
-    """Resolve (soft, hard) with Express's clamps: hard ≤ the model window and ≥ the floor;
-    soft in [1, hard-1]. A non-positive/absent override falls back to the default (0/negative
-    never caps to nothing).
+    """Resolve (soft, hard) with Express's clamps: hard ≤ model window and ≥ the floor; soft in
+    [1, hard-1]. A non-positive/absent override falls back to the default.
 
-    THE FLOOR IS APPLIED AT READ TIME AS WELL AS AT WRITE TIME, and both halves are needed. The
-    admin PATCH validator refuses a new value below it, which is where an administrator learns
-    why; this clamp is what keeps a value ALREADY stored below the floor — written before the
-    validator existed — from locking that citizen out of every chat they own. Validation alone
-    would leave the people the defect already reached exactly where it left them."""
+    THE FLOOR IS APPLIED AT READ TIME AS WELL AS WRITE TIME — both are needed. The admin PATCH
+    validator refuses a new value below it; this clamp is what keeps a value ALREADY stored below
+    the floor (written before the validator existed) from locking that citizen out of every chat
+    they own."""
     hard_raw = (
         override.context_hard_limit
         if override and override.context_hard_limit and override.context_hard_limit > 0

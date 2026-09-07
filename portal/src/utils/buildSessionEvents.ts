@@ -1,24 +1,14 @@
 /**
- * The progress feed consumer: a small typed wrapper around a native
- * `EventSource` that turns the SSE stream at `/api/build-sessions/{id}/events` into
- * dispatched, parsed envelopes.
+ * The progress feed consumer: wraps a native `EventSource`, turning the SSE stream at
+ * `/api/build-sessions/{id}/events` into dispatched, parsed envelopes.
  *
- * WHY `EventSource` (not the fetch-and-parse idiom the turn stream uses): it is
- * cookie-authed BY CONSTRUCTION (`EventSource` cannot set an `Authorization` header)
- * and gives `Last-Event-ID` auto-reconnect/replay for free. A hand-rolled SSE parser
- * has no `event:`/`id:`/reconnect handling — reusing one would re-implement what the
- * platform primitive already provides.
+ * Uses `EventSource`, not the turn stream's fetch-and-parse idiom, for cookie-auth BY
+ * CONSTRUCTION and free `Last-Event-ID` reconnect/replay — but replay covers only a
+ * mid-stream drop, never a full page reload, which starts fresh with no replay; preview
+ * continuity on reconnect instead comes from `getStatus` at the owning hook.
  *
- * SCOPE OF "for free": native `EventSource` attaches
- * `Last-Event-ID` ONLY on its OWN auto-reconnect (a transient mid-stream drop) — it
- * cannot set headers on the initial GET, so a full page reload starts a FRESH stream
- * from the live position (prior history is NOT replayed). Preview continuity on
- * connect/reattach is recovered from `getStatus` by the owning hook,
- * not from catching a live `preview_ready`.
- *
- * The consumer does NOT dedup by `seq` — it dispatches every parsed envelope in
- * arrival order (including a replay overlap after reconnect). Idempotency is pinned
- * at the owning hook, which upserts its envelope store by `seq`.
+ * Does NOT dedup by `seq` — envelopes dispatch in arrival order, replay overlap
+ * included; idempotency is pinned at the hook, which upserts its store by `seq`.
  */
 import { isRecord } from './apiError'
 import { assertNever } from './assertNever'
@@ -194,16 +184,12 @@ export function isTerminalEnvelope(env: ProgressEnvelope): boolean {
 // ─── the subscription ─────────────────────────────────────────────────────────
 
 /**
- * Open the SSE feed for `sessionId` and dispatch each envelope. Returns a handle
- * whose `close()` tears the transport down.
- *
- * TERMINAL CLOSE IS LOAD-BEARING. A native `EventSource` left open after a
- * clean server close AUTO-RECONNECTS (WHATWG treats a server stream-close as a
- * droppable connection) — re-opening the feed with `Last-Event-ID` at the final
- * `seq` against an already-torn-down session, a zombie reconnect. So the consumer
- * closes explicitly on the typed `ended` envelope AND on the `[DONE]` sentinel — the
- * sentinel is special-cased AHEAD of the skip-malformed rule so it is recognized,
- * not silently dropped.
+ * Open the SSE feed for `sessionId`, dispatching each envelope; `close()` tears the
+ * transport down.
+ * TERMINAL CLOSE IS LOAD-BEARING: an `EventSource` left open after a clean server
+ * close AUTO-RECONNECTS (WHATWG), replaying `Last-Event-ID` into an already-torn-down
+ * session — a zombie reconnect. So this closes explicitly on the typed `ended`
+ * envelope and the `[DONE]` sentinel (special-cased ahead of the skip-malformed rule).
  */
 export function subscribeBuildFeed(
   sessionId: string,

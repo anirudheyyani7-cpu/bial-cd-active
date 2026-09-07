@@ -1,15 +1,14 @@
 """Low-level Docker container control for the Track SANDBOX integration harness.
 
 A private helper (leading underscore → pytest never collects it as a test module) that both
-`conftest.py` fixtures and the U15 `snapshot_ref_client.py` build on. It owns exactly three
-concerns: (1) is Docker usable, (2) build/resolve the sandbox image, (3) run one sandbox
-container and speak the C1 supervisor HTTP API to it over the Caddy `:8080` ingress.
+`conftest.py` fixtures and the U15 `snapshot_ref_client.py` build on. It owns three concerns:
+(1) is Docker usable, (2) build/resolve the sandbox image, (3) run one sandbox container and
+speak the C1 supervisor HTTP API to it over the Caddy `:8080` ingress — the real pre-baked image
+(`sandbox/Dockerfile.sandbox`): Caddy (`:8080`) → supervisor (`:9000`) + `next dev` (`:3000`).
 
-The container is the real pre-baked image (`sandbox/Dockerfile.sandbox`) — Caddy (`:8080`) →
-supervisor (`:9000`) + `next dev` (`:3000`). We map the container's `8080` to an ephemeral host
-port so many containers can run at once without collision (the snapshot round-trip runs two).
-
-Every subprocess call uses list-form args (no shell), so there is no shell-injection surface.
+We map `8080` to an ephemeral host port so many containers can run at once without collision
+(the snapshot round-trip runs two). Every subprocess call uses list-form args (no shell) — no
+shell-injection surface.
 """
 
 from __future__ import annotations

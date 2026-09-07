@@ -161,14 +161,10 @@ class CoreSettings(BaseSettings):
     def app_url(self, app_name: str) -> str:
         """The browser-facing address of the app whose container is called `app_name`.
 
-        `app_name` is `sbx-`/`pub-` plus 28 hex — the container app's own name — which is what
-        makes this a string composition rather than a lookup, and is why the router needs no
-        registry.
+        `app_name` (`sbx-`/`pub-` + 28 hex, the container app's own name) makes this a string
+        composition, not a lookup — no registry needed.
 
-        NO TRAILING SLASH, and this is measured rather than chosen. Against a real Next 16 dev
-        server, `/<base>/` answers 308 and redirects to `/<base>`; only the unslashed form
-        answers 200. A slash here would put a redirect in front of every framed preview and
-        every published link somebody shares — the opposite of what an earlier draft of this
-        docstring claimed it was avoiding.
-        """
+        NO TRAILING SLASH, measured not chosen: against a real Next 16 dev server, `/<base>/`
+        redirects (308) to `/<base>`, only the unslashed form answers 200. A slash here would
+        put a redirect in front of every framed preview and published link."""
         return f"{self.APPS_BASE_URL}{base_path_for(app_name)}"

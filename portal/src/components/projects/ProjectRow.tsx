@@ -133,7 +133,7 @@ export default function ProjectRow({ project, onOpen, onDelete }: ProjectRowProp
   const status = statusFor(project)
 
   return (
-    <div className="relative flex items-center gap-4 px-4 py-3 border-b border-bial-border last:border-0 hover:bg-bial-bg/60 transition">
+    <div data-testid="project-row" className="relative flex items-center gap-4 px-4 py-3 border-b border-bial-border last:border-0 hover:bg-bial-bg/60 transition">
       <div className="min-w-0 flex-1">
         {/* The open affordance. Its ::after covers the row, so the whole row is the target
             without the row itself being interactive. */}

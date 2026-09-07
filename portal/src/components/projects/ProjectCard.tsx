@@ -110,7 +110,7 @@ export default function ProjectCard({ project, onOpen, onDelete }: ProjectCardPr
     // shadcn `Card` is the tile, per §12 — the surface (border, radius, background) comes
     // from the primitive so a grid tile here and a card anywhere else cannot drift apart.
     // The layout and hover behaviour stay local, because they belong to THIS tile.
-    <Card className="group relative flex flex-col gap-3 rounded-2xl px-5 py-4 hover:border-primary/40 hover:shadow-sm transition font-manrope">
+    <Card data-testid="project-card" className="group relative flex flex-col gap-3 rounded-2xl px-5 py-4 hover:border-primary/40 hover:shadow-sm transition font-manrope">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <h3 className="min-w-0 flex-1">

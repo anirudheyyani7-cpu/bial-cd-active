@@ -44,6 +44,12 @@ function overlaps(a: { x: number; y: number; width: number; height: number }, b:
 
 async function openFirstProject(page: Page) {
   await page.goto('/projects')
+  // BOTH VIEWS, because the landing screen remembers which one you last chose (`projectsListMemory`)
+  // and a run inherits whatever that was. `project-card` and `project-row` are the two roots, and
+  // each is clickable at its centre — the name button's stretched `::after` covers the whole tile.
+  // These testids exist BECAUSE of this file: when it first landed it named two testids that were
+  // in neither component, so `waitFor` timed out at 30s before a single assertion ran and every
+  // geometric check in here was inert while the file looked green in a suite nothing runs.
   const firstCard = page.getByTestId('project-card').first().or(page.getByTestId('project-row').first())
   await firstCard.waitFor({ state: 'visible', timeout: 30_000 })
   await firstCard.click()

@@ -1,17 +1,14 @@
 """`compute_publish_state` — U15's pure mapping from `(registry row, newest deployment
 row, saved head)` to one of thirteen `PublishState` values.
 
-Every case below is built WITHOUT a database session and WITHOUT an event loop: the
-function reads nothing but plain columns off two ORM instances it never persists. That
-is not an incidental convenience — it is the property the unit's "technical design"
-note asks for ("no I/O, no storage handle in the signature, so it cannot acquire a
-hidden input later"), and constructing the inputs by hand rather than through
-`AppRegistryFactory`/a live `deployments` row is what actually proves it, rather than
-merely asserting it in a docstring.
+Every case is built WITHOUT a database session and WITHOUT an event loop: the function
+reads nothing but plain columns off two ORM instances it never persists. That is the
+property the unit's technical-design note requires ("no I/O, no storage handle in the
+signature, so it cannot acquire a hidden input later"), and building inputs by hand rather
+than through `AppRegistryFactory` or a live `deployments` row is what proves it.
 
-The single object-store metadata HEAD this depends on, and the storage-error /
-no-app-row cases that only make sense at the route, are covered where the I/O lives:
-`test_deploy_routes.py`.
+The object-store HEAD this depends on, and the storage-error / no-app-row cases that only
+make sense at the route, are covered where the I/O lives: `test_deploy_routes.py`.
 """
 
 from __future__ import annotations
@@ -205,9 +202,8 @@ def test_ladder_rule_7_unattended_publish_reads_live_off_the_saved_head_never_th
 
 
 def test_approved_with_a_matching_pin_and_no_deployment_reads_ready_to_publish() -> None:
-    """The earlier draft's two lies, named: a never-published approved app is neither
-    `draft` (it has a real, actionable lifecycle) nor `starting_up` (nothing is
-    running — approval starts no pipeline)."""
+    """A never-published approved app is neither `draft` (it has a real, actionable
+    lifecycle) nor `starting_up` (nothing is running — approval starts no pipeline)."""
     app = _app(
         status=AppStatus.APPROVED,
         approval_route=ApprovalRoute.SELF_PUBLISH,

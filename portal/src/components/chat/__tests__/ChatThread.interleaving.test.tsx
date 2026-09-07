@@ -1,25 +1,16 @@
 /**
  * THE ORDER A TURN IS READ IN, AND THE STATUS THAT SAYS IT IS THINKING.
  *
- * Two properties, both of them about what the citizen sees rather than about any one module:
+ * Two properties, both about what the citizen sees, not about any one module:
  *
- *  1. A turn that wrote, acted, and wrote again renders in THAT order — and the same order
- *     whether the page was reloaded or not. The live path and the reload path build their
- *     `ChatMessage`s differently (one streaming message carrying every part, versus one message
- *     per stored item) and both arrive at this thread, so this is the only place the two can be
- *     put side by side and compared as DOM. Until the narration drop was deleted a turn could
- *     hold at most one block of text and it was always last, so this ordering was unreachable.
+ *  1. A turn that wrote, acted, and wrote again renders in THAT order, live or reloaded — the
+ *     two paths build `ChatMessage`s differently, and this thread is the only place they land
+ *     side by side to compare as DOM.
+ *  2. The working status appears while the model reasons and never carries its content, driven
+ *     by a reasoning part with no field for reasoning text — "status only" holds by construction.
  *
- *  2. The working status appears when the model is reasoning and never carries its content. It
- *     is driven by a reasoning part that has NO FIELD for reasoning text — "status only" is a
- *     property of the type rather than a promise someone has to keep. What the converter hands
- *     the library is a constant the platform wrote (`REASONING_STATUS_TEXT`), because the
- *     library drops a literally empty reasoning part; the last case here pins that nothing but
- *     the status line reaches the DOM either way.
- *
- * Asserted on the ORDER of rendered elements, never on presence: every one of these cases passes
- * a presence check today with the parts in the wrong order, which is exactly the failure the
- * plan this file belongs to exists to prevent.
+ * Every case below asserts ORDER, never presence: each one passes a presence check today even
+ * with the parts in the wrong order, which is exactly the failure this file exists to catch.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
@@ -89,15 +80,12 @@ const ACTIVITY = '«activity»'
 
 /**
  * What the thread drew, in order — a paragraph as its own text, an activity group as a marker.
+ * Read off the rendered tree, not the fixtures, because the question is what a person reading
+ * top to bottom sees.
  *
- * Read off the rendered tree rather than off the fixtures, because the question is what a person
- * looking at the screen reads top to bottom.
- *
- * A GROUP IS A MARKER RATHER THAN ITS LABEL, deliberately. The group is collapsed by default, so
- * its rows are not in the DOM at all, and the summary line its trigger shows is the workspace
- * plan's copy rather than this one's — asserting on that wording here would make this file go
- * red the next time somebody rewords a summary, which has nothing to do with the order parts
- * arrive in. Where the group SITS is what this file is about.
+ * A group is a MARKER rather than its label, deliberately: it's collapsed by default (its rows
+ * are not in the DOM), and its summary line is the workspace plan's copy, not this file's — this
+ * only pins where the group sits, never its wording.
  */
 function readingOrder(container: HTMLElement): string[] {
   const nodes = container.querySelectorAll(
@@ -134,11 +122,10 @@ describe('a turn reads the same whether or not the page was reloaded', () => {
   })
 
   it('groups two adjacent steps as ONE activity group, and prose between them as two', () => {
-    // The board's sealing rule, and it has only been reachable since prose stopped being held.
-    // `groupPartByType` coalesces ADJACENT tool-call parts, so what decides the number of groups
-    // is whether anything was written between them — which is a fact about the turn, not a
-    // setting. Two assertions rather than one: the same fixture minus its middle paragraph must
-    // produce ONE group, or this proves nothing about the paragraph.
+    // `groupPartByType` coalesces ADJACENT tool-call parts, so the group count is a fact about
+    // the turn (whether anything was written between them), not a setting. Two assertions, not
+    // one: the same fixture minus its middle paragraph must produce ONE group, or this proves
+    // nothing about the paragraph.
     const withProse = mount([{ id: 'a1', role: 'assistant', parts: TURN, seq: 1 }])
     expect(withProse.container.querySelectorAll('[data-testid="activity-group"]')).toHaveLength(2)
     cleanup()
@@ -168,9 +155,8 @@ describe('the working status — that the agent is thinking, never what about', 
 
   it('shows the status ABOVE the activity group on a turn that is also running steps', () => {
     // The grouping is HIERARCHICAL — reasoning and tool-call parts share a chain-of-thought
-    // parent and get separate children — so both render, and the status comes first because the
-    // model thought before it acted. A comment in `ChatThread` used to claim the activity group
-    // covered the status on any turn that ran a tool; it does not, and this is that correction.
+    // parent and get separate children — so both render, with the status first because the
+    // model thought before it acted.
     const { container } = mount(
       [
         {
@@ -190,11 +176,10 @@ describe('the working status — that the agent is thinking, never what about', 
   })
 
   it('carries no reasoning text into the DOM, because the part has nowhere to hold any', () => {
-    // The structural half of the guarantee. There is no field on `ReasoningPart` for reasoning
-    // text, so the converter has none to pass on — what it hands the library is the platform's
-    // own status sentence, because a literally empty reasoning part is dropped. This is not
-    // "the renderer chooses not to draw it", it is "there is nothing to draw": the status line
-    // is the entire rendered content of the message.
+    // There is no field on `ReasoningPart` for reasoning text, so the converter has none to pass
+    // on — what it hands the library is the platform's own status sentence, because a literally
+    // empty reasoning part gets dropped. Not "the renderer chooses not to draw it": there is
+    // nothing to draw. The status line is the entire rendered content of the message.
     const { container } = mount([{ id: 'a1', role: 'assistant', parts: [{ type: 'reasoning' }], seq: 1 }], true)
 
     const message = container.querySelector('[data-testid="assistant-message"]')

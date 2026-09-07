@@ -1,20 +1,12 @@
 /**
- * Build-chat persistence guards, re-expressed against the session model and the routing rule
- * (a send is a CHAT turn; the build fires only when the user confirms the returned brief card).
+ * Build-chat persistence guards, expressed against the current routing rule: a send is a CHAT
+ * turn, and the build fires only when the user confirms the returned brief card.
  *
- * The single-file era persisted an ASSISTANT turn + a code snapshot (patchBuildCode) at the end of
- * a stream; those are gone (the activity feed is the build narrative, not a persisted transcript).
- * The in-rail "Recent builds" dropdown (and with it the per-chat delete + its live-session gate)
- * was removed — past conversations, and their deletion, live on the project page now — so the
- * delete-gating tests that drove that dropdown are gone too. What REMAINS and is pinned here:
- *   - the user turn — INCLUDING its attachment parts — is persisted on the SEND, hence before
- *     the confirmed build starts, so BRAIN reads the image/PDF/office/deck context server-side.
- *     That retired the separate `createBuild` round trip this used to go through: the row's
- *     parentage now rides the turn's own `POST .../turns` request as a `create` block, so the
- *     server can check the workspace BEFORE creating anything — see `fireRelayTurn`'s comment in
- *     `ConversationSurface.tsx`. The `createBuild` wrapper itself is now deleted along with the
- *     mock key that stood in for it, so there is nothing left in this file to assert its absence
- *     against.
+ * What's pinned: the user turn — INCLUDING its attachment parts — persists on the SEND, before
+ * the confirmed build starts, so BRAIN reads attachment context server-side. The row's
+ * parentage rides the same `POST .../turns` request as a `create` block, letting the server
+ * check the workspace before creating anything — see `fireRelayTurn`'s comment in
+ * `ConversationSurface.tsx`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -32,10 +24,9 @@ const h = vi.hoisted(() => ({
 vi.mock('../../utils/builderHistory', () => ({
   loadBuilds: h.loadBuilds, getBuild: h.getBuild, deriveTitle: (t) => (t || '').slice(0, 40),
 }))
-// SPREAD THE ORIGINAL — `handleBuildIt` mints the new build chat's id through the shared
-// `uuidv7`, and a factory naming only `listProjectConversations` leaves every other
-// export (including that one) undefined; Vitest now warns the moment a real caller reaches for
-// it, which every Build-it press in this suite does.
+// SPREAD THE ORIGINAL — `handleBuildIt` mints the build chat's id via the shared `uuidv7`;
+// a factory naming only `listProjectConversations` leaves every other export (that one
+// included) undefined, and Vitest warns the moment a real caller reaches for it.
 vi.mock('../../utils/conversationApi', async (importOriginal) => ({
   ...(await importOriginal()),
   listProjectConversations: h.listProjectConversations,
@@ -95,10 +86,8 @@ beforeEach(() => {
   h.listProjectConversations.mockResolvedValue([])
   h.buildUserParts.mockImplementation(async (text) => [{ type: 'text', text }])
   // A scripted turn that always answers with a ready-to-build brief, so these suites reach the
-  // persistence + gating mechanics in one send. (Whether the model asks or briefs is its own
-  // judgment, and it is a property of the server-composed prompt —
-  // `backend/tests/services/agent/test_mode_prompts.py`. The relay suite this used to point at
-  // was retired with the relay.)
+  // persistence + gating mechanics in one send. Whether the model asks or briefs is the server's
+  // own judgment — see `backend/tests/services/agent/test_mode_prompts.py`.
   primeTurn(h)
 })
 afterEach(() => cleanup())
@@ -118,17 +107,12 @@ describe('BuilderPage — the attachment user-turn is persisted before the build
     const [, wire, , create] = h.startTurn.mock.calls[0]
     expect(wire.text).toBe('use this layout')
     expect(wire.attachmentIds).toEqual(['a1'])
-    // THE ROW'S PARENTAGE RIDES THIS SAME CALL NOW, so there is no separate
-    // `createBuild` round trip left to order against `buildFromPlan`: `create` is this call's
-    // 4th argument, present because this is the FIRST message on an empty thread, and it is
-    // what lets the server check the workspace before creating the row at all (rather than
-    // committing it a round trip earlier, as the retired two-call protocol did — see
-    // `fireRelayTurn`'s comment in `ConversationSurface.tsx`).
+    // The row's parentage rides this same call as a 4th `create` argument (present because
+    // this is the FIRST message on an empty thread), letting the server check the workspace
+    // before creating the row at all — see `fireRelayTurn`'s comment in `ConversationSurface.tsx`.
     expect(create).toMatchObject({ projectId: 'p1', kind: 'build' })
-    // …and this ONE call — carrying both the message and the row's parentage — still happens
-    // BEFORE the build is started (create+turn → stream → confirm → build). The two-call
-    // ordering this test used to prove via `createBuild` vs `buildFromPlan` collapses to a
-    // single call ordered against `buildFromPlan`, because there is only one call left to order.
+    // The single call — message + row parentage together — still happens before the build
+    // starts: create+turn → stream → confirm → build.
     expect(h.startTurn.mock.invocationCallOrder[0]).toBeLessThan(
       h.buildFromPlan.mock.invocationCallOrder[0],
     )
@@ -155,10 +139,9 @@ describe('BuilderPage — the attachment user-turn is persisted before the build
     fireEvent.keyDown(textarea, { key: 'Enter' })
 
     await screen.findByText(/Upload failed: storage is full./i)
-    // The turn never reaches the server AT ALL — no `create` block, no message, nothing — so no
-    // plan comes back and there is nothing to confirm — the file-less build is unreachable rather
-    // than merely un-triggered. (There is no separate `createBuild` call left to assert absent:
-    // that folded the row's creation into this same, never-attempted `startTurn`.)
+    // The turn never reaches the server at all — no `create` block, no message — so no plan
+    // comes back and there is nothing to confirm. (No separate `createBuild` call to assert
+    // absent: its creation folded into this same, never-attempted `startTurn`.)
     expect(h.startTurn).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /^Build this plan$/ })).toBeNull()
     expect(h.buildFromPlan).not.toHaveBeenCalled() // no build ignoring the file

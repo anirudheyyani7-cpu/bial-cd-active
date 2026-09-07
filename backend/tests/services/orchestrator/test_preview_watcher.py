@@ -323,18 +323,16 @@ async def test_crash_reconnecting_is_not_re_emitted_while_the_server_stays_down(
 async def test_a_slow_render_does_not_read_as_a_dev_process_crash(
     db_session, billing_factory
 ) -> None:
-    """★ THE FLAP, pinned on the harness watcher so the two implementations cannot drift. They
-    emit the same signal to the same pane, so a debounce on the turns engine alone would make the
-    crash edge depend on which code path built the app.
+    """★ THE FLAP, pinned on the harness watcher so the two implementations cannot drift — they
+    emit the same signal to the same pane, so a debounce on only one code path would make the
+    crash edge depend on which one built the app.
 
-    `/dev/status` answers from a bounded wait on an in-flight probe (2s) while a real cold root
-    render against a per-project Postgres takes longer, and a negative is never cached — so a
-    healthy app reads not-ready for as long as it renders. Paired with `running: false` (the
-    NORMAL state for a dev server the agent started itself), one such poll used to be a crash
-    edge, and the citizen's iframe was re-mounted under them over an app that was merely slow.
+    `/dev/status` answers from a bounded 2s probe while a real cold render against a per-project
+    Postgres can take longer, and a negative is never cached — so one `running: false` poll used
+    to misread a merely-slow app as a crash and re-mount the citizen's iframe under them.
 
-    TWO negatives, as a literal: a count derived from `CRASH_EDGE_CONSECUTIVE_POLLS` would move
-    with the constant and could never go red. Mutation check: set it to 1 or 2."""
+    TWO negatives, as a literal, not `CRASH_EDGE_CONSECUTIVE_POLLS` itself (which could never go
+    red). Mutation check: set it to 1 or 2."""
 
     class SlowRender(FakeSandbox):
         """Serves the first poll (so the frame lands), then `running=False, ready=False` for

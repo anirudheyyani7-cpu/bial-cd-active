@@ -167,11 +167,9 @@ describe('showing the outcome', () => {
 
     const card = await findOutcome()
     expect(card.textContent).toMatch(/build finished/i)
-    // The per-build preview URL died with its sandbox the moment the build ended, so the record —
-    // permanent, and read again on every future open — must never surface it as a working link.
-    // The live "Relaunch preview" affordance lives in the preview pane. The card that used
-    // to render this link conditionally is gone, so the guarantee is now structural: no link is
-    // rendered because no renderer exists to render one.
+    // The per-build preview URL died with its sandbox the moment the build ended, so the
+    // permanent record must never surface it as a working link. The guarantee is structural,
+    // not conditional: no renderer for this link exists on the card any more.
     expect(card.querySelector(`a[href="${PREVIEW_URL}"]`)).toBeNull()
   })
 
@@ -226,12 +224,8 @@ describe('showing the outcome', () => {
     await turn.end()
 
     // A build that did not save is not a success: the next build will not start from it, and the
-    // user has to know that before building on top of it.
-    //
-    // RE-POINTED AT THE BANNER. This sentence used to live inside the outcome card; it is in the
-    // one banner slot above the composer now — derived from the newest build part, so it still
-    // survives a reload exactly as the card's version did, and it is where the citizen is
-    // standing when they are about to build again on top of it.
+    // user has to know that before building on top of it. This lives in the banner slot above
+    // the composer now (moved from the outcome card), and it survives a reload the same way.
     expect((await screen.findByTestId('turn-banner')).textContent).toMatch(/wasn’t saved/i)
   })
 

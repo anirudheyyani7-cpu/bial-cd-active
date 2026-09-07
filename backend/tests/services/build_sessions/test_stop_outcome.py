@@ -1,27 +1,14 @@
 """The stop, as three named states and as an ask plus a status read.
 
-THE DEFECT THESE EXIST FOR. `stop_active_work` returned `True` on both of its branches
-unconditionally, and `stop_user_turn_and_wait` did the same, while all three docstrings promised
-that a timeout would be reported as *still running*. Five committed tests asserted that hardcoded
-success and every one of them exercised the happy path, so the lie was invisible: a stop that had
-not finished handed the caller the same answer as one that had, and the caller's very next act is
-to take the container.
+Two rules run through the whole file:
+* "Gone" and "slow" must be provably different before anything is reclaimed: `STOPPED` is a
+  positive observation that nothing holds the app, never a deduction from elapsed time.
+* The completion barrier sits above every assertion that depends on it — each test waits on
+  the stop's own task, or a bounded poll of the real condition, before checking the outcome.
 
-Two rules run through the whole file, both bought expensively:
-
-* **"Gone" and "slow" must be provably different before anything is reclaimed.** A readiness
-  timeout once condemned a live container and a restore destroyed a citizen's unsaved work.
-  So `STOPPED` here is never a deduction from elapsed time — it is a positive observation that
-  nothing holds the app, read from the map `release_project_sandbox` itself refuses on.
-* **The completion barrier sits above every assertion that depends on it.** Assertions appended
-  over time land at the bottom of a block, which is often ABOVE the wait they need.
-  Each test below waits on the stop's own task — or on a bounded poll of the real condition —
-  before it asks whether the stop worked.
-
-And the shape being tested is a one-container-two-projects hand-over: the stop is
-now ASKED FOR by one request and REPORTED BY another, so the thing that starts it is no longer the
-thing that watches it. That is why the manager keeps its own record of having asked — nothing else
-could tell a later poll "stopped" from "nothing was running".
+The stop is ASKED FOR by one request and REPORTED BY another, so the manager keeps its own
+record of having asked — nothing else could tell a later poll "stopped" from "nothing was
+running".
 """
 
 from __future__ import annotations
@@ -144,16 +131,10 @@ async def _the_slot_is_free(manager: SessionManager, user_id: uuid.UUID) -> None
 
 
 def test_the_stop_budget_sits_above_the_unwind_each_branch_actually_runs() -> None:
-    """★ THE RULE THE NUMBER IS SUPPOSED TO OBEY, checked against the parts rather than trusted.
-
-    A budget BELOW the unwind's own bounds reports a healthy stop as one that did not finish —
-    which is what the retired 30 s did, and what the first attempt at deriving it did again for
-    the branch it was written to fix: it counted the build's 10 s record and missed the snapshot
-    `_do_finalize` writes first, an unbounded call whose parts are four execs of two minutes.
-
-    COMPUTED FROM THE PRIMITIVES, not from the intermediate the module derives, so it is a check
-    and not a restatement: if the per-exec bound or the number of execs moves, this recomputes
-    the branch's real cost and the budget has to keep up.
+    """The budget is COMPUTED FROM THE PRIMITIVES here, not the module's derived intermediate,
+    so it is a check and not a restatement: if the per-exec bound or exec count moves, this
+    recomputes the branch's real cost and the budget has to keep up. A budget below either
+    branch's real bound reports a healthy stop as one that did not finish.
 
     Mutation check: make the budget the sum of the recovery autosave and the record again and the
     build-branch assertion goes red while the write-branch one stays green."""
@@ -274,12 +255,11 @@ async def test_a_status_read_for_a_project_nobody_asked_about_is_nothing_was_run
 async def test_a_stop_that_times_out_is_reported_as_still_running_never_as_success(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """*The regression.* This is the exact call that used to answer `True` after its wait expired.
+    """*The regression*: `stop_active_work` used to answer `True` after its wait expired.
 
-    Asserted on `stop_active_work` itself rather than through the router, because that is where
-    the hardcoded success lived — one `return True` per branch, below a docstring promising the
-    opposite. A caller acting on the old answer releases a container out from under a task that is
-    still inside its `finally`."""
+    Asserted directly on `stop_active_work` rather than through the router, since that is where
+    the hardcoded success lived. A caller acting on the old answer releases a container out from
+    under a task that is still inside its `finally`."""
     user, project_a = await _mk(db_session, "stop4@rvaiglobal.com")
     manager = SessionManager()
     client = _bundles_to(FakeSandboxClient(), "3" * 40)
@@ -294,7 +274,6 @@ async def test_a_stop_that_times_out_is_reported_as_still_running_never_as_succe
         db_session, user, project_a, sandbox_client=client, timeout_s=0.05
     )
 
-    # `STOPPED` is what the old code returned here, on both branches, unconditionally.
     assert timed_out is StopOutcome.STILL_RUNNING
     assert brain.unwinding.is_set()  # ...and the turn really was mid-cleanup, not merely slow
     assert manager.active_session_for(user.id) is not None
@@ -390,35 +369,14 @@ async def test_two_racing_transfers_for_one_citizen_end_with_one_container(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two tabs, one workspace, one stop.
+    """Two tabs, one workspace, one stop: two asks could race into two cancels, so one record per
+    project must catch both. The barrier sits inside `_existing_app_id`, after its real DB round
+    trip (see the inline comments there for why that is the race-safe spot); counts are of
+    `_stop_the_held_session` CALLS, not `len(_stop_records)`, which reads `1` either way.
 
-    The hazard is the scope split: whoever asks is no longer whoever watches, so two asks could
-    easily become two stops — a second `task.cancel()` landing inside a cleanup already under way,
-    which is how a terminal frame gets eaten, and two teardowns of one container. One record per
-    project is what prevents it, and both callers are told the same true thing.
-
-    ★ THE RACE HAS TO BE MADE REAL, AND THE COUNT HAS TO BE OF TASKS. Two tabs are two requests,
-    and the only suspension point in the ask is the app-id read — but both asks here share one
-    connection, whose driver serialises them end to end, so a bare `gather` runs the second ask
-    only after the first has finished its whole critical section and no interleave ever happens.
-    Yielding BEFORE that read does not help either: the second tab still cannot get past the
-    connection until the first is done with it, so the two are serialised exactly as before and
-    a mutation that opens a gap between the check and the write is never observed.
-
-    SO THE BARRIER SITS AFTER THE READ AND BEFORE THE CHECK, which is the only place a test can
-    hold both tabs without touching production code. `_existing_app_id` does its real round trip
-    — releasing the connection — and only then parks, and the ask has no further await, so when
-    the barrier releases both tabs are provably past every suspension point the ask has, with
-    neither having claimed the project. Whichever resumes first must therefore run the check,
-    the create and the store as one uninterrupted step; the other finds the record and joins.
-
-    WHAT IS COUNTED IS `_stop_the_held_session` ENTRIES, not records: `len(_stop_records)` counts
-    KEYS, and both tabs write the same key, so it reads `1` whether one stop was started or two
-    with the second silently replacing the first.
-
-    Mutation receipt: put `await asyncio.sleep(0)` between reading `in_flight` and storing the
-    record in `request_stop_of_active_work` and the second tab resumes inside that gap, starts a
-    second stop, and `stops_started` grows to two while every other assertion here stays green.
+    Mutation check: put `await asyncio.sleep(0)` between reading `in_flight` and storing the
+    record in `request_stop_of_active_work` and the second tab starts a second stop —
+    `stops_started` grows to two while every other assertion here stays green.
     (Verified by injecting it and watching this test — and only this test — go red.)"""
     user, project_a = await _mk(db_session, "stop7@rvaiglobal.com")
     manager = SessionManager()
@@ -486,8 +444,7 @@ async def test_two_racing_transfers_for_one_citizen_end_with_one_container(
     brain.let_go.set()
     assert await asyncio.wait_for(record.task, timeout=10) is StopOutcome.STOPPED
 
-    # …and ONE STOP was ever started behind that one key. The second tab joined the first rather
-    # than firing a second cancel into a cleanup already under way.
+    # …and only ONE stop was ever started behind that key.
     assert stops_started == [record.app_id]
 
     # ONE container destroyed, and only the one that was provisioned.
@@ -506,14 +463,12 @@ async def test_a_stop_that_breaks_is_logged_against_the_citizen_it_broke_for(
 ) -> None:
     """A detached stop that raises names WHO it failed for, not just that something failed.
 
-    The callback exists because an un-retrieved task exception surfaces only as a warning at
-    collection time, attached to nothing anyone is looking at. A line with no keys is barely
-    better: nothing in this service binds structlog contextvars, so a detached task inherits no
-    request scope, and an operator watching "stop of active work failed" repeat cannot tell
-    which citizen is stuck or which container is still holding a workspace.
+    An un-retrieved task exception surfaces only as a warning at collection time, and nothing here
+    binds structlog contextvars, so a detached task inherits no request scope and an operator
+    watching "stop of active work failed" repeat cannot tell which citizen or container it is.
 
-    Mutation check: drop the identifiers from the `_log.error` call and the key assertions go red
-    while the message assertion stays green."""
+    Mutation check: drop the identifiers from the `_log.error` call and the key assertions go
+    red while the message assertion stays green."""
     user, project_a = await _mk(db_session, "stop8@rvaiglobal.com")
     manager = SessionManager()
     client = _bundles_to(FakeSandboxClient(), "7" * 40)
@@ -574,15 +529,11 @@ async def test_the_write_only_flag_is_still_derived_from_the_toolset_alone(
     """A DIRECT pin on `building`'s predicate, so widening it goes red here rather than in a
     citizen's face.
 
-    `_writing_session_holds` is narrow ON PURPOSE and the manager records why: every mode pins the
-    container, so the broad predicate is true throughout an ordinary Ask or Plan turn — and using
-    it here put a hammer icon and two Stop buttons in front of someone who had asked a question,
-    and short-circuited the escape hatch that lets a pristine container be reclaimed without a
-    dialog about nothing.
-
-    The hand-over's wider fact is a SEPARATE field for exactly that reason, so the temptation to
-    widen this one is gone. These four assertions are what says the two predicates are genuinely
-    different questions and not a copy waiting to be deduplicated."""
+    `_writing_session_holds` is narrow ON PURPOSE: the broader "is anything live" predicate is
+    true throughout an ordinary Ask or Plan turn too, so widening this one would put Stop
+    controls in front of someone who only asked a question. The hand-over's wider fact stays a
+    SEPARATE field for exactly that reason — these four assertions pin the two predicates as
+    genuinely different questions, not a copy waiting to be deduplicated."""
     user, project_a = await _mk(db_session, "stop8@rvaiglobal.com")
     user_b, project_b = await _mk(db_session, "stop9@rvaiglobal.com")
     manager = SessionManager()

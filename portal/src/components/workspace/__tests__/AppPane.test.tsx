@@ -65,8 +65,8 @@ function renderPane(prime: (channel: WorkspaceChannel) => void, paneVisible = tr
   prime(channel)
   const result = render(
     <MemoryRouter>
-      {/* The rail the skip control moves focus to — the shell owns it in the product; here it is
-          stood up so the focus assertion is about the behaviour rather than about a missing node. */}
+      {/* The shell owns this rail in the product; stood up here so the focus assertion is about
+          behaviour, not a missing node. */}
       <div id={WORKSPACE_RAIL_ID}>
         <button type="button">a rail control</button>
       </div>
@@ -97,10 +97,8 @@ describe('the pane says what it is, and a keyboard can get past it', () => {
   })
 
   it('★ offers a way past the frame, and it moves focus to the rail', () => {
-    // An iframe swallows the tab sequence into a cross-origin document whose length nothing here
-    // can know and whose focus behaviour is the generated app's business — so a way out has to
-    // exist OUTSIDE it. Without one a person navigating by keyboard is trapped in somebody else's
-    // application.
+    // An iframe swallows the tab sequence into a cross-origin document — a way out must exist
+    // OUTSIDE it, or someone navigating by keyboard is trapped in the generated app.
     renderPane((c) => c.workspace.set(reportFor(reading())))
 
     fireEvent.click(screen.getByRole('button', { name: /skip past your app/i }))
@@ -116,8 +114,8 @@ describe('the pane says what it is, and a keyboard can get past it', () => {
 })
 
 describe('★ NOT ORPHANED — every no-frame state still offers a way to start the app', () => {
-  // The four states that used to carry a `RelaunchAffordance` inside `LivePreview`. Asserting the
-  // old strings are absent would pass on a pane with no control at all; this asserts PRESENCE.
+  // These are the states that used to carry LivePreview's `RelaunchAffordance` — the presence
+  // check the file docstring's trap requires.
   const restorable = [
     ['asleep, with a saved copy', reading({ state: 'asleep', restorable: true })],
     ['never built, but restorable', reading({ state: 'never_built', restorable: true })],
@@ -203,9 +201,8 @@ describe('one author for every pane sentence', () => {
   })
 
   it('★ draws the board\'s mark above the headline on the three states that have one', () => {
-    // `NothingBuilt`, `PreviewOff` and `PreviewStarting` each put a 30px #9AA5B1 glyph directly
-    // above the headline, and it is the only thing that makes a blank half-screen read as a
-    // deliberate state rather than as a page that failed to load.
+    // `NothingBuilt`, `PreviewOff` and `PreviewStarting` put a 30px #9AA5B1 glyph above the
+    // headline — the only thing that reads a blank half-screen as deliberate, not broken.
     const withGlyph: [string, PreviewState][] = [
       ['never-built', reading({ state: 'never_built', restorable: false })],
       ['not-running', reading({ state: 'asleep', restorable: true })],
@@ -224,9 +221,8 @@ describe('one author for every pane sentence', () => {
   })
 
   it('★ and draws none for a state no board has a mark for', () => {
-    // Seven of the ten states are hand-overs, read failures and start outcomes that the canvas has
-    // never drawn. Borrowing one of the three marks for them would be this file inventing the
-    // design; saying nothing is the honest answer, and the sentence still carries the state.
+    // Seven of the ten states are hand-overs, read failures and start outcomes the canvas has
+    // never drawn — borrowing one of the three marks would be this file inventing the design.
     renderPane((c) => c.workspace.set(reportFor(reading({ state: 'unknown' }))))
 
     expect(screen.queryByTestId('app-pane-glyph')).toBeNull()
@@ -262,10 +258,9 @@ describe('one author for every pane sentence', () => {
  */
 describe('the seam is the address AND the state, not the URL alone', () => {
   it('★ frames the LOADING state — a status with no URL yet, which is a first build coming up', () => {
-    // `previewAddress.ts` says it in its own docblock: "a build that is provisioning has a status
-    // and no URL yet, and that pair is what renders the loading state instead of an empty pane."
-    // Gating on the URL alone put "We could not check on your app." in front of a citizen watching
-    // their first build.
+    // See `previewAddress.ts`'s own docblock: a provisioning build has a status and no URL yet,
+    // and gating on the URL alone put "We could not check on your app." in front of a citizen
+    // watching their first build.
     //
     // Mutation receipt: change the gate back to `address.url !== null` and this goes red.
     const { container } = renderPane((c) => {
@@ -326,15 +321,8 @@ describe('the seam is the address AND the state, not the URL alone', () => {
 })
 
 describe('the column a plan chat does not get', () => {
-  // THE DEFECT THIS BLOCK IS WRITTEN AGAINST: `AppPane` read the report and the address but
-  // never the VISIBILITY, so its `flex-1` section claimed half the window on a plan chat —
-  // filled with the "Your app is saved / Launch Application" card, offering to start an app the
-  // citizen had not asked about. `AppPaneHost` hides itself correctly, but a plan chat never
-  // reaches it: with nothing to frame, `NoFrame` renders instead.
-  //
-  // The knock-on was the visible half of the bug. `ConversationSurface` centres a plan chat with
-  // `mx-auto max-w-3xl`, which does nothing inside a rail that is only half the screen — so the
-  // board's one centred column rendered as a left-aligned half-width one.
+  // AppPane used to read the report and the address but never the VISIBILITY, so its `flex-1`
+  // section claimed half the window on a plan chat nobody had asked to start an app from.
 
   // WHOLE CLASSES, NOT SUBSTRINGS. `min-w-0` contains `w-0`, so a `toContain` here passes on the
   // very layout this block exists to forbid.
@@ -405,10 +393,9 @@ describe('the movement between the two layouts', () => {
   }
 
   it('★ slides out at full width and only then collapses', async () => {
-    // `T2Sliding` is a whole artboard of this one moment — "the app card is sliding out to the
-    // right and fading as it goes … a moment later the app is gone." Applying the keyframe to the
-    // collapsed arm would change nothing: an element at `w-0 invisible` cannot be watched fading,
-    // which is why the column holds its size for the length of the animation.
+    // Applying the leave keyframe to the collapsed arm would change nothing — an element at
+    // `w-0 invisible` cannot be watched fading — which is why the column holds its size for the
+    // length of the animation.
     const { container, channel } = renderPane(framed, true)
     expect(paneClasses(container)).not.toContain('animate-pane-leave')
 
@@ -429,24 +416,19 @@ describe('the movement between the two layouts', () => {
   })
 
   it('★ stays out of the keyboard’s reach for the WHOLE leave, not only once it has gone', async () => {
-    // THE GAP THIS IS WRITTEN AGAINST. The column holds its size for the length of the animation so
-    // the card can be watched leaving, which means `visibility:hidden` — the thing that takes a
-    // subtree out of the tab order — cannot land yet. For those 240ms the pane was announced as
-    // gone and still one Tab away: a keyboard could land on the skip control, or inside the frame
-    // of an app that was no longer on the screen. `hiddenSubtree.ts` names that pairing a WCAG
-    // 4.1.2 violation, and this is the applier where what is hidden is a whole application.
+    // The column holds its size during the leave, so `visibility:hidden` — which takes a subtree
+    // out of the tab order — cannot land yet. Without `inert` covering that gap, the pane reads as
+    // gone (aria-hidden) but stays one Tab away: a WCAG 4.1.2 violation on a whole application.
     //
-    // ASSERTED AS THE ATTRIBUTE, and honestly: jsdom implements no part of `inert` — it neither
-    // reflects the property nor refuses a `focus()` inside one — so a focus simulation here would
-    // be inventing a browser rather than testing one. The attribute IS the mechanism a browser
-    // obeys, which is the same bargain the `aria-hidden` assertions in this file already make.
+    // Asserted as the attribute, not a focus simulation: jsdom implements no part of `inert` (no
+    // reflected property, no refused `focus()`), so the attribute is the only mechanism here that
+    // a real browser actually obeys.
     const { container, channel } = renderPane(framed, true)
     // A pane somebody is looking at is reachable, or the assertion below proves nothing.
     expect(region().hasAttribute('inert')).toBe(false)
 
     act(() => channel.visible.set(false))
 
-    // MID-LEAVE: still sized, still animating, still framing the app — and unreachable.
     expect(paneClasses(container)).toContain('animate-pane-leave')
     expect(paneClasses(container)).not.toContain('invisible')
     expect(region().hasAttribute('inert')).toBe(true)
@@ -500,7 +482,6 @@ describe('the movement between the two layouts', () => {
   it('★ both halves are suppressed for a reader who asked for less motion', () => {
     // Asserted against the STYLESHEET because that is where the suppression lives, and jsdom
     // loads no stylesheet: nothing else in the suite would notice the media block being deleted.
-    // A citizen sets this preference because motion makes them ill, so it is not decoration.
     // Resolved from the vitest root (`portal/`), not from `import.meta.url`: under vite the
     // module's own URL is not a `file:` one, so `new URL(…, import.meta.url)` cannot be read.
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')

@@ -1,22 +1,12 @@
 """Revision 0036: the `deleted_projects` tombstone.
 
-DEFAULT LANE ONLY (L11 \u2014 every up/down round-trip permanently burns `pg_attribute` slots on
-the shared `citizen_one_test` database, so round-trip coverage is budgeted). This revision
-creates one table and drops it; there is no data step to walk, so the shape the fresh upgrade
-left is the whole of what there is to assert.
+DEFAULT LANE ONLY (L11) \u2014 round-trip coverage is budgeted: every up/down cycle permanently
+burns `pg_attribute` slots on the shared `citizen_one_test` database. This revision only
+creates and drops one table, so the fresh-upgrade shape is all there is to assert.
 
-The three properties below are each a decision that was made twice \u2014 once in the model and
-once in the migration \u2014 and `--autogenerate` only catches a disagreement between them, never
-a matching pair that is wrong. So they are pinned against the REAL migrated schema:
-
-  * `project_id` is UNIQUE, which is what makes a double-submitted delete write one tombstone
-    instead of two. The ownership read takes no row lock and the cascade deletes through Core
-    `sa.delete()`, so nothing else in the path would notice the second request.
-  * `id` defaults to `uuidv7()` like every other table (ADR-0006). It was briefly a
-    Python-side `uuid4`, which left this the one table whose keys do not order by creation
-    time \u2014 on an audit table read newest-first, the worst one to lose.
-  * `project_id` carries NO foreign key. The row it would reference is gone by the time this
-    is written, so an FK here would be unsatisfiable rather than merely unnecessary.
+Each property below was decided twice \u2014 once in the model, once in the migration \u2014 and
+`--autogenerate` only catches a disagreement between them, never a matching pair that is
+wrong. So each is pinned against the REAL migrated schema, not just the model.
 """
 
 from __future__ import annotations
@@ -57,6 +47,9 @@ async def test_one_tombstone_per_project_is_enforced_by_the_database(db_session)
 
 
 async def test_the_primary_key_is_uuidv7_like_every_other_table(db_session) -> None:
+    """It briefly used a Python-side `uuid4`, which left this the one table whose keys
+    don't sort by creation time — the worst place to lose that, on an audit table read
+    newest-first."""
     row = (await db_session.execute(sa.text(_COLUMN_SQL), {"table": _TABLE, "column": "id"})).one()
     assert row.is_nullable == "NO"
     assert row.column_default is not None, "no server default \u2014 a Python-side uuid4 again?"

@@ -389,14 +389,12 @@ async def test_stop_active_build_settles_a_live_build_so_release_can_proceed(
 
 def test_the_published_api_names_the_stop_states_the_wire_actually_sends(app: FastAPI) -> None:
     """FastAPI publishes a route's docstring as its OpenAPI description, so prose in a route is
-    API surface. `CamelModel` camelizes FIELD names and nothing else — `StopOutcome` is a plain
-    string enum whose values go out verbatim — so a docstring saying `nothingWasRunning` tells a
-    reader to branch on a value the wire never sends.
-
-    SPELLING-BLIND rather than a list of the known wrong spellings: any backticked token that is
-    a state name with its separators or casing changed is a token no client can match, whichever
-    way someone rewrites it later. The Python MEMBER names (`STILL_RUNNING`) are allowed beside
-    the values, because prose naming the enum member is talking about the symbol."""
+    API surface. `CamelModel` camelizes FIELD names only — `StopOutcome` values go out verbatim —
+    so a docstring saying `nothingWasRunning` tells a reader to branch on a value the wire never
+    sends. SPELLING-BLIND rather than a list of known wrong spellings: any backticked token shaped
+    like a state name with its separators or casing changed is unmatchable, however it gets
+    respelled later. Python MEMBER names (`STILL_RUNNING`) are allowed beside the values — that
+    prose names the symbol, not the wire value."""
     # Mutation check: put `nothingWasRunning` back in any of the stop docstrings and this goes red.
     published = json.dumps(app.openapi())
     spellings = {outcome.value for outcome in StopOutcome} | {

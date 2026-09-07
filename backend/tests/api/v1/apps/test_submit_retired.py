@@ -49,9 +49,8 @@ async def _provision_app(db_session, user) -> str:
 async def test_the_submit_route_is_gone_even_for_the_owner_with_a_valid_bundle(
     client, db_session, fake_storage
 ) -> None:
-    # The strongest reinstatement probe: everything the retired route needed to
-    # succeed is in place — the owner, the app, a valid staged bundle — and the
-    # answer is still "no such route", never a submission.
+    # The strongest reinstatement probe: everything the retired route needed to succeed is in
+    # place — owner, app, valid staged bundle — and the answer is still "no such route".
     user, headers = await _auth_user(db_session)
     app_id = await _provision_app(db_session, user)
     fake_storage.objects[snapshot_key(uuid.UUID(app_id))] = _BUNDLE

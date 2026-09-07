@@ -1,39 +1,25 @@
 /**
- * THE RELAUNCH CHAIN IS INERT — the characterization this unit was allowed to delete against.
+ * WHY THIS EXISTS
  *
- * `RelaunchAffordance` and its four render sites went in, and `LivePreview` was left
- * ACCEPTING `onRelaunch` and never reading it. Everything above that unread prop — the surface's
- * `handleRelaunch`, the session hook's `relaunch()`, the two `409` arms that set `blocked`, and the
- * block banner with its Force-end button — was therefore reachable-looking code hanging off a
- * callback nobody consumes.
+ * `RelaunchAffordance` and its four render sites went in, and `LivePreview` was left holding
+ * an unread `onRelaunch` prop. Everything above that unread prop — `handleRelaunch`, the
+ * session hook's `relaunch()`, the 409 arms that set `blocked`, and the block banner with its
+ * Force-end button — was reachable-looking code hanging off a callback nobody consumes.
  *
- * WRITTEN BEFORE THE DELETION, AND IT STAYS GREEN AFTER IT. That is the whole contract of this
- * file: every assertion below holds identically on both sides of the commit, so a red here means
- * the deletion changed behaviour rather than removing dead weight.
+ * Written BEFORE that deletion, and it stays green after it: every assertion below must hold
+ * identically on both sides of the commit, so a red here means the deletion changed behaviour
+ * rather than removing dead weight.
  *
- * THE BLOCK BANNER HAD **TWO** PRODUCERS, and a test driven from only one proves nothing about the
- * half the same commit also deletes:
+ * The block banner has TWO producers, and driving only one would prove nothing about the half
+ * the same commit also deletes: `start()`'s 409 (unreachable — a send is a TURN, nothing calls
+ * `session.start()`) and `relaunch()`'s 409 (its one caller is wired to the unread prop, BUT
+ * `relaunchPreview` itself is still called directly in production by `StartAppControl` and
+ * `RailComposer` — a LIVE path whose 409 must answer in the workspace, not the banner).
  *
- *   1. `start`'s 409    — `useBuildSession.start()` mapped `build_session_already_active` onto
- *                         `blocked`. Nothing calls `session.start()`; a composer send is a TURN.
- *   2. `relaunch`'s 409 — `useBuildSession.relaunch()` surfaced the SAME banner, by its own
- *                         comment ("relaunch never pre-empts a running build"). Nothing calls
- *                         `session.relaunch()` either: its one caller is wired to the unread prop.
- *
- * Both are driven here. The second matters most, because `relaunchPreview` IS still called in
- * production — `StartAppControl` and `RailComposer` reach the module function directly, bypassing
- * the hook — so its 409 is a LIVE path, and what this pins is that the live path answers with the
- * workspace's own sentence rather than with the banner.
- *
- * EVERY ABSENCE IS PAIRED WITH A LIVENESS ASSERTION. "No banner" is also true of a surface that
- * threw on render, which is exactly how an assert-absence test false-greens.
- *
- * The frame scenarios are the dangerous half. `relaunching` was never a banner flag — it fed
- * `showRestoring`, `showTerminal`, `frameContext`, `framePending` and the frame's own reload
- * identity, i.e. four booleans that decide whether the iframe stays MOUNTED. Unmounting it kills a
- * container the server is still serving (`AppPaneHost.tsx` describes that failure at length), so
- * the framed cases below pin those derived values through their DOM consequences, on both sides of
- * the change.
+ * Every absence is paired with a liveness assertion, since "no banner" is also true of a
+ * surface that threw on render. And the frame scenarios are the dangerous half: `relaunching`
+ * fed the booleans deciding whether the iframe stays MOUNTED, and unmounting it kills a
+ * container the server is still serving (`AppPaneHost.tsx` has the failure mode at length).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
@@ -141,7 +127,7 @@ describe('the block banner cannot reach the tree — from EITHER producer', () =
 
     // LIVENESS FIRST — a surface that threw on render would also have no banner.
     expect(screen.getByTestId('composer-input')).toBeTruthy()
-    expect(h.start).not.toHaveBeenCalled() // the reason the arm is unreachable, stated
+    expect(h.start).not.toHaveBeenCalled()
     expect(blockBanner()).toBeNull()
     expect(forceEndControl()).toBeNull()
   })

@@ -1,16 +1,14 @@
 """`_pin_workspace` resolves one workspace, for both kinds of chat, with no branch.
 
-WHY THIS IS ASSERTED RATHER THAN WRITTEN DOWN. A sentence saying "there is one arm here"
-cannot fail, and a sentence that cannot fail is how the last census of this method went
-wrong — see `test_no_prose_readers`, which exists because two docstrings disagreed about a
-count. This can fail: the day someone reintroduces the branch, it goes red.
+WHY ASSERTED RATHER THAN WRITTEN DOWN: a sentence saying "there is one arm here" cannot
+fail — see `test_no_prose_readers`, which exists because two docstrings once disagreed
+about a count. This can fail: the day someone reintroduces the branch, it goes red.
 
-IT IS A STRUCTURAL ASSERTION ON PURPOSE. The behavioural coverage already exists — the
-write-turn and turn-stream suites drive real turns of both kinds through the live
-container. What none of them can say is "there is ONE arm here": a branch returning a live
-workspace on both sides would keep every one of those tests green while re-establishing the
-exact shape that was removed. So this reads the method's AST and asserts the absence of a
-fork, which is the property, rather than sampling outcomes a fork would still produce.
+WHY STRUCTURAL: the write-turn and turn-stream suites drive real turns through the live
+container, but none of that behavioural coverage can say "there is ONE arm here" — a branch
+returning a live workspace on both sides would keep those tests green while re-establishing
+the exact shape that was removed. So this reads the AST and asserts the absence of a fork,
+the property itself, rather than sampling outcomes a fork would still produce.
 """
 
 from __future__ import annotations

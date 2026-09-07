@@ -45,9 +45,8 @@ describe('BuilderPage — the passive stored-app preview is inert', () => {
     })
     renderBuilder({ deps: deps() })
 
-    // The saved transcript renders...
     expect(await screen.findByText(/build the gate board/i)).toBeTruthy()
-    // ...but the durable app code is NEVER read into the preview, and no frame is mounted.
+    // The durable app code is deliberately never read into the preview; no frame is mounted.
     await waitFor(() => expect(h.getBuild).toHaveBeenCalled())
     // getAppSource itself is retired from appRegistryApi (owner surface gone;
     // pinned by appRegistryApi.test.js) — the stale-code framing path cannot exist.

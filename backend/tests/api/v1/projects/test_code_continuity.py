@@ -82,7 +82,6 @@ async def test_submit_no_longer_touches_current_code(client, db_session, set_cha
     )
     await db_session.commit()
 
-    # The retired backstop stays retired: current_code is untouched by submit.
     row = await db_session.scalar(select(AppRegistry).where(AppRegistry.project_id == project.id))
     assert row is not None
     assert row.current_code is None

@@ -1,5 +1,7 @@
 """The scheduler's first passenger.
 
+WHY THIS EXISTS
+
 Three properties are worth a test rather than a comment, and each of them has a specific way of
 failing silently:
 
@@ -248,17 +250,12 @@ async def test_an_unconfigured_deployment_is_reported_separately_from_a_switched
 def test_a_disabled_pass_imports_nothing_heavy() -> None:
     """THE ordering contract, in a fresh interpreter.
 
-    A disabled task must cost structlog, the broker and the settings profile and nothing else, so
-    that parking a passenger on this scheduler never taxes a deployment that has not turned it on.
-    Nothing raises when this regresses — the task simply works while quietly loading the ORM
-    engine and the publish client's Azure credential chain into a process that will not use them.
+    A disabled task must cost structlog, the broker and the settings profile — nothing else; a
+    regression here quietly loads the ORM engine and Azure credential chain, and nothing raises.
 
-    Scoped by measurement, not aspiration: `sqlalchemy` and `azure.mgmt.appcontainers` are ALREADY
-    in the chassis's import closure (`src.config` reads every capability's config model), so
-    naming them here would assert a falsehood about a cost this unit did not add. What is asserted
-    is exactly this module's own lazy set — `src.db.base` in particular BUILDS the async engine at
-    import — plus `src.main`, which a careless import would add silently.
-    """
+    Scoped by measurement: `sqlalchemy` and `azure.mgmt.appcontainers` are already in the
+    chassis's import closure, so naming them would assert a false cost. Asserted instead is
+    this module's own lazy set — `src.db.base` builds the engine at import — plus `src.main`."""
     result = subprocess.run(  # noqa: S603
         [
             sys.executable,

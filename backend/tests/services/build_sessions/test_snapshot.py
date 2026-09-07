@@ -39,11 +39,10 @@ async def test_write_snapshot_bundles_and_puts_to_blob(fake_storage: FakeStorage
 
     client.exec_handler = handler
     await write_snapshot(client, _handle(), APP_ID)
-    # The base64'd bundle round-trips to Blob at the snapshot key (byte-stable).
     assert fake_storage.objects[snapshot_key(APP_ID)] == a_git_bundle()
     # The commit script survives a GIT-LESS workspace (the baked image has no .git): it inits
-    # idempotently and guards the nothing-to-commit case (mirrors sandbox/scripts/snapshot.sh).
-    # Asserted on the script text — the dict-backed fake cannot run real git.
+    # idempotently and guards the nothing-to-commit case. Asserted on the script text — the
+    # dict-backed fake cannot run real git.
     assert scripts[0].startswith("git init -q")
     assert "git diff --cached --quiet || git commit" in scripts[0]
 
@@ -93,7 +92,6 @@ async def test_write_snapshot_raises_on_bundle_read_failure(fake_storage: FakeSt
     client.exec_handler = handler
     with pytest.raises(SandboxError):
         await write_snapshot(client, _handle(), APP_ID)
-    # A failed bundle read leaves no dangling blob.
     assert snapshot_key(APP_ID) not in fake_storage.objects
 
 
@@ -101,16 +99,10 @@ async def test_write_snapshot_raises_on_bundle_read_failure(fake_storage: FakeSt
 
 
 def test_porcelain_paths_survive_the_stripped_first_line() -> None:
-    """The parse that cost a live debugging session.
-
-    `git status --porcelain` is `XY path` — two status columns, a space, then the path. The
-    block gets stripped before it is split, so the FIRST line has already lost its leading
-    status space while later lines keep theirs. Slicing a fixed `line[3:]` therefore ate one
-    character of the first filename — `next-env.d.ts` became `ext-env.d.ts`, matched nothing,
-    and a pristine workspace kept reading as "has unsaved changes".
-
-    Splitting on whitespace once is right for the ragged first line AND for paths with spaces,
-    which a fixed offset is not."""
+    """`git status --porcelain` is `XY path`, but the block is stripped before it is split, so
+    only the FIRST line loses the leading status space that later lines keep — a fixed
+    `line[3:]` slice therefore eats one character of the first filename. Splitting on
+    whitespace instead handles both the ragged first line and paths that contain spaces."""
     from src.services.build_sessions.integrity import ContainerState, parse_state
 
     st = parse_state(
@@ -233,11 +225,10 @@ async def test_concurrent_snapshots_of_one_app_run_one_at_a_time(
         write_snapshot(client, _handle(), APP_ID),
     )
 
-    # Serialized, not interleaved: the first call finishes its whole sequence — including its
-    # cleanup — before the second one commits. Unserialized, both `git add -A && git commit` runs
-    # race on `.git/index.lock` and the loser exits non-zero, which the user sees as a failed
-    # Save. Asserted on ordering rather than on a concurrency counter so it reads as the property
-    # it protects: the second commit must come AFTER the first call's `rm`, not beside it.
+    # Serialized, not interleaved: unserialized, both `git add -A && git commit` runs race on
+    # `.git/index.lock` and the loser exits non-zero, which the user sees as a failed Save.
+    # Asserted on ordering, not a concurrency counter: the second commit must come AFTER the
+    # first call's `rm`, not beside it.
     commits = [
         i
         for i, cmd in enumerate(client.commands)

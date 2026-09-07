@@ -1,17 +1,16 @@
 """`app_registry.approval_route` + `declaration` against the REAL migrated schema.
 
 The test DB carries both columns from `alembic upgrade head` (revision
-0030_approval_route_and_declaration), so the shape assertions exercise the actual
-DDL — a native two-label enum and a nullable JSONB — inside the rolled-back
-per-test transaction. `test_suspended_at_migration.py` pins the chain's exact head
-at 0030 and `tests/test_alembic_single_head.py` guards the head count.
+0030_approval_route_and_declaration), so the shape assertions exercise the actual DDL — a
+native two-label enum and a nullable JSONB — inside the rolled-back per-test transaction.
+`test_suspended_at_migration.py` pins the chain's exact head at 0030 and
+`tests/test_alembic_single_head.py` guards the head count.
 
-DELIBERATELY NO downgrade/upgrade round-trip: every
-round-trip on `app_registry` permanently burns pg_attribute slots on the shared
-test database, and seven destructive-lane tests already do it. The backfill is
-tested instead by importing the migration module and executing EXACTLY the
-statement `upgrade()` runs (`BACKFILL_RUNBOOK_LINEAGE`) over ORM-seeded rows —
-the fresh-upgrade DDL path is what built this database in the first place.
+DELIBERATELY NO downgrade/upgrade round-trip: every round-trip on `app_registry` permanently
+burns pg_attribute slots on the shared test database, and seven destructive-lane tests already
+do it. The backfill is tested instead by importing the migration module and executing EXACTLY
+the statement `upgrade()` runs (`BACKFILL_RUNBOOK_LINEAGE`) over ORM-seeded rows — the
+fresh-upgrade DDL path is what built this database in the first place.
 """
 
 from __future__ import annotations
@@ -127,9 +126,8 @@ async def test_backfill_marks_the_old_guard_and_only_the_old_guard(db_session) -
     statement runs once in the migration, so the test runs it once too and asserts
     every bucket, rather than proving each bucket against a statement the others
     never shared a pass with."""
-    # A pre-feature approval, whatever the status now shows: a re-submitted-then-
-    # rejected app KEEPS its approved pin (reject deliberately does not clear it),
-    # and that pin is an approval granted for the out-of-band code review.
+    # A pre-feature approval: a re-submitted-then-rejected app KEEPS its approved pin
+    # (reject deliberately does not clear it) — that pin was for the out-of-band review.
     pin = uuid.uuid4()
     pinned_rejected = await _seed(
         db_session,
@@ -137,9 +135,8 @@ async def test_backfill_marks_the_old_guard_and_only_the_old_guard(db_session) -
         approved_submission_id=pin,
         approved_commit_sha=_SHA,
     )
-    # The half that is easy to miss: a queue item outstanding at release. Left NULL,
-    # the admin's approval would not satisfy the gate and the citizen would need a
-    # SECOND approval — marked runbook, approve refuses with re-submit copy instead.
+    # Easy to miss: a queue item outstanding at release. Left NULL, the admin's approval
+    # wouldn't satisfy the gate and the citizen would need a SECOND approval.
     outstanding_pending = await _seed(
         db_session,
         status=AppStatus.PENDING,

@@ -1,24 +1,16 @@
 /**
- * The conversation slot.
+ * The conversation slot: one home for the conversation body mount, and hide-not-unmount.
  *
- * The slot's job is small and its claims are correspondingly narrow: one home for the conversation body
- * mount, and the hide-not-unmount treatment.
+ * Deliberately NOT re-asserted here — each has its own owner:
+ *  - the shared draft across a reload and a sibling round trip —
+ *    `components/chat/__tests__/Composer.test.tsx`;
+ *  - draft/scroll surviving a hide/show cycle — `ProjectWorkspace.test.tsx` ("keeps the rail
+ *    MOUNTED while collapsed"), the assertion that discriminates a CSS hide from an unmount;
+ *  - a route change unmounting the conversation — it does, deliberately: the router owns which
+ *    conversation is mounted, and what survives a project↔chat move is the draft and the app
+ *    pane, not the component.
  *
- * WHAT IS PROVEN ELSEWHERE, AND DELIBERATELY NOT RE-ASSERTED HERE:
- *  - the shared draft, and its behaviour across a reload and a sibling round trip —
- *    `components/chat/__tests__/Composer.test.tsx`, which is where the one composer now lives;
- *  - the draft and the scroll position surviving a hide/show cycle — the builder surface owns no
- *    collapse any more, so this holds at the shell, in
- *    `components/workspace/__tests__/ProjectWorkspace.test.tsx` ("keeps the rail MOUNTED while
- *    collapsed, so nothing inside it is discarded"), which is the assertion that actually
- *    discriminates a CSS hide from an unmount;
- *  - that a route change still unmounts the conversation. It does, deliberately: the router owns
- *    which conversation is mounted and the slot keeps no stack of visited ones alive. What survives
- *    a project↔chat move is the draft and the app pane, not the component.
- *
- * The one conversation body is stubbed. That the slot mounts it — and mounts nothing else, for
- * either kind — is the whole subject, and the real surface would drag a transport, a hydration
- * fetch and a build session into a test about a single mount.
+ * The one conversation body is stubbed — mounting it, and nothing else, is the whole subject.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { useState } from 'react'
@@ -73,12 +65,9 @@ describe('ConversationSlot — one body, whatever the kind', () => {
   })
 
   it('hands the resolved conversation through, INCLUDING its kind', () => {
-    // INVERTED DELIBERATELY — the surface cannot branch on what it is never given. These
-    // requirements need exactly one thing from it: a Plan chat has no app pane, a Build chat
-    // shows it, and only the route knows which this is.
-    //
-    // The two scenarios either side of this one hold the rest: one BODY for both kinds, and the
-    // same DOM node across a kind change. This one only proves a visibility declaration.
+    // INVERTED DELIBERATELY: the surface cannot branch on what it is never given, so this only
+    // proves the visibility declaration is passed through. The sibling tests hold the rest — one
+    // BODY for both kinds, and the same DOM node across a kind change.
     renderSlot({ kind: 'build', chatId: 'build-7' })
     const body = screen.getByTestId('conversation-body')
     expect(body.textContent).toContain('build-7')

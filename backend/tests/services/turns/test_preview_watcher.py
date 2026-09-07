@@ -125,15 +125,14 @@ async def test_a_slow_render_does_not_read_as_a_dev_process_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ THE FLAP. `/dev/status` answers from a bounded wait on an in-flight probe (2s) while a
-    real cold root render against a per-project Postgres takes longer, and a negative is never
-    cached — so a healthy app answers not-ready for as long as it is rendering. Paired with
-    `running: false` — the NORMAL state for a dev server the agent started itself — a single
-    such poll used to read as a crash edge, and the citizen's iframe was re-mounted under them
+    real cold root render takes longer, and a negative is never cached — so a healthy app
+    answers not-ready while rendering, and paired with `running: false` (the NORMAL state for
+    a self-started dev server) used to read as a crash edge: the citizen's iframe re-mounted
     every few seconds over an app that was merely slow.
 
-    TWO negatives, written as a literal rather than derived from the constant: a test that says
-    `CRASH_EDGE_CONSECUTIVE_POLLS - 1` moves with whatever the constant becomes and can never go
-    red. Mutation check: set the constant to 1 or 2 and this fails."""
+    TWO negatives, written as a literal rather than derived from the constant — a test that says
+    `CRASH_EDGE_CONSECUTIVE_POLLS - 1` can never go red. Mutation check: set the constant to 1
+    or 2 and this fails."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     client = _SlowRenderSandbox(negative_polls=2)
     state = _framed_state(client)

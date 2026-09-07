@@ -8,7 +8,6 @@ import time
 from src.api.v1.build_sessions.schemas import ErrorSource
 from src.services.orchestrator import constants, errors
 
-# A realistic tsc blob: ANSI colour codes + absolute sandbox paths + a real TS error line.
 _TSC_RAW = (
     "\x1b[96m/workspace/app/app/records/page.tsx\x1b[0m:\x1b[93m12\x1b[0m:\x1b[93m5\x1b[0m - "
     "\x1b[91merror\x1b[0m\x1b[90m TS2322\x1b[0m: Type 'string' is not assignable "
@@ -28,7 +27,7 @@ _SERVER_RAW = (
 def test_tsc_blob_becomes_a_clean_build_error() -> None:
     err = errors.from_tsc(_TSC_RAW)
     assert err.source == ErrorSource.TSC
-    assert "error TS2322" in err.title  # the first meaningful error line
+    assert "error TS2322" in err.title
     assert "\x1b[" not in err.cleaned_stack  # ANSI stripped
     assert "/workspace/app/" not in err.cleaned_stack  # absolute paths relativized
     assert "app/records/page.tsx" in err.cleaned_stack

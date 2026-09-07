@@ -5,10 +5,10 @@ destructive unit downstream, so the tier table is spelled out as tests first and
 code written to satisfy them. They run on synthetic fleets only — no Azure, Redis or database.
 
 THE TWO ASSERTIONS THAT MATTER MOST, both mutation-checked:
-`test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate` — reverting the spare
-set to "registered ⇒ spared" silently disables ~all reclamation — and
-`test_a_partially_lost_spare_list_trips_the_store_fault_guard`, the eviction shape: reverting the
-guard to empty-only leaves a live build routed into staging with every signal reading normal.
+`test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate` (reverting the spare
+set to "registered ⇒ spared" silently disables ~all reclamation) and
+`test_a_partially_lost_spare_list_trips_the_store_fault_guard` (reverting the eviction-shape
+guard to empty-only routes a live build into staging with every signal reading normal).
 """
 
 from __future__ import annotations
@@ -41,9 +41,9 @@ from src.services.sandbox.base import (
 from tests.fakes import a_fleet_member
 
 NOW = dt.datetime(2026, 8, 11, 12, 0, tzinfo=dt.UTC)
-#: A staging tag old enough to authorise the second read. Deliberately past the minimum
-#: rather than exactly on it: a boundary-exact fixture turns any future tightening of the
-#: interval into a suite-wide failure that says nothing about what actually broke.
+#: A staging tag old enough to authorise the second read. Deliberately past the minimum, not
+#: exactly on it — a boundary-exact fixture would turn any future tightening of the interval
+#: into a suite-wide failure that says nothing about what actually broke.
 STAGED_LONG_ENOUGH = MINIMUM_STAGING_AGE * 2
 USER = uuid.uuid4()
 APP = uuid.uuid4()
@@ -114,8 +114,8 @@ def _healthy_padding(count: int = 6) -> tuple[list[FleetMember], dict[str, Regis
 
 
 def test_high_confidence_orphan_is_destroyed_at_one_hour() -> None:
-    """Carries our identity, absent from the spare set, no matching app record,
-    staged on an earlier pass, past its hour. Every signal concurs, so the wait is short."""
+    """Every signal here concurs, which is why the wait before destruction is the
+    shortest in the tier table."""
     live, claims = _healthy_padding()
     doomed = a_fleet_member(
         "sbx-ghost", tags=_tags(age=dt.timedelta(hours=2), staged=STAGED_LONG_ENOUGH)
@@ -163,15 +163,13 @@ def test_an_unclaimed_container_with_a_real_app_record_waits_longer(
 
 
 def test_a_registered_container_whose_signals_have_all_lapsed_is_a_candidate() -> None:
-    """*The fifth tier, and the mutation-check that guards it.*
-
-    Registered, but lock, stay and liveness lease have ALL lapsed. `_pardon_the_container` keeps
-    the registry entry after a turn completes and `preview_stay_until` is a hash field rather than
-    a TTL'd key, so a pardoned-then-abandoned container sits in the registry forever. This is the
+    """*The fifth tier, and the mutation-check that guards it.* Registered, but lock, stay and
+    liveness lease have ALL lapsed: `_pardon_the_container` keeps the registry entry after a
+    turn completes, so a pardoned-then-abandoned container sits there forever — this is the
     path that produces essentially all of the cost saving.
 
-    MUTATION: revert the spare set to "registered ⇒ spared" and this goes red while every other
-    test in this file stays green — which is precisely why it is worth writing."""
+    MUTATION: revert the spare set to "registered ⇒ spared" and this goes red while every
+    other test in this file stays green."""
     live, claims = _healthy_padding()
     abandoned = a_fleet_member("sbx-pardoned", tags=_tags(staged=STAGED_LONG_ENOUGH))
     claims["sbx-pardoned"] = _claim()  # registered; every signal lapsed
@@ -329,15 +327,13 @@ def test_an_empty_spare_list_against_a_live_fleet_destroys_nothing() -> None:
 
 
 def test_a_partially_lost_spare_list_trips_the_store_fault_guard() -> None:
-    """THE EVICTION SHAPE, and the more dangerous of the two.
-
-    The registry hash is the only key family with no TTL, so under any `volatile-*` policy the
-    lock, the stay and the lease evict FIRST while the registry survives. A live build then reads
-    as registered-but-lapsed — the fifth tier — with a non-empty registry, so a binary
-    empty-or-not guard sees nothing wrong and routes it into staging and destruction mid-build.
+    """THE EVICTION SHAPE, and the more dangerous of the two. The registry hash is the only key
+    family with no TTL, so under any `volatile-*` policy the lock/stay/lease evict FIRST while
+    the registry survives — a live build then reads as registered-but-lapsed with a non-empty
+    registry, so a binary empty-or-not guard routes it into staging and destruction mid-build.
 
     MUTATION: revert the guard to `not claims` and this goes red while every other test stays
-    green. That is the whole reason the guard is proportional rather than binary."""
+    green."""
     fleet = [a_fleet_member(f"sbx-{i}", tags=_tags(staged=STAGED_LONG_ENOUGH)) for i in range(11)]
     claims = {"sbx-0": _claim(lock=True, heartbeat=True), "sbx-1": _claim(lease=True)}
 

@@ -1,22 +1,14 @@
-"""THE FIFTH LINK OF THE REMOVAL TRACE, made mechanical (backend half).
+"""Backend half of the repo's retire-a-behaviour convention: a mention of something DELETED must
+read as history, not present tense. Exists because a stale comment once claimed a branch "retires
+with the relay" when a shipping endpoint still ran on it — a comment cannot be asserted, so this
+checks the one thing that can be: naming what replaced dead code is fine, but the sentence around
+it has to say the thing is gone.
 
-The repo's retire-a-behaviour convention has five links: the surface · the navigation payloads ·
-the consumers and imports · the tests-become-inertness-guards · and the human-facing copy,
-INCLUDING COMMENTS. The relay's removal completed four of them the first time, and the fifth is
-where the damage was: `services/agent/agent.py` told the next reader that the `kind is None`
-branch "retires with the relay", when a shipping endpoint (`description:generate`) runs on it.
-That comment could have taken a live feature out with the dead one.
+A marker-list scan, not real prose analysis, on purpose: cheap enough to survive, and wrong only
+in the harmless direction — a miss, never a false alarm that gets the guard deleted and the check
+skipped on the next wholesale deletion.
 
-A comment cannot be asserted, so this asserts the one thing that can be: a mention of something
-DELETED has to read as history. Naming what code replaced is often the clearest way to explain
-its shape, so the names are allowed — the sentence around them has to say the thing is gone.
-
-WHY A MARKER LIST RATHER THAN REAL PROSE ANALYSIS: this has to be cheap enough to survive, and
-wrong in the harmless direction. A present-tense sentence that happens to contain "legacy" slips
-through; that is a miss. A guard that cried wolf would be deleted inside a month and the next
-wholesale deletion would leave this link undone again.
-
-Its sibling is `portal/src/__tests__/retired-names-are-past-tense.test.ts`.
+Sibling: `portal/src/__tests__/retired-names-are-past-tense.test.ts`.
 """
 
 from __future__ import annotations
@@ -25,15 +17,11 @@ from pathlib import Path
 
 _BACKEND = Path(__file__).resolve().parents[4]
 
-# BOTH TREES, AND MARKDOWN TOO — the first version of this guard scanned `src/` alone, and that
-# is precisely where it let the drift through: `tests/journeys/_COOKBOOK_HARNESS.md` went on
-# handing the next author a copy-pasteable `from src.api.v1.claude.router import ...`, and
-# `_CONTRACTS.md` went on listing the relay as a live, passing contract, both invisible to a
-# check that only read production Python. A harness doc that lies costs the reader the same
-# hour a lying docstring does.
-# `claude_retired/` is the ONE directory excluded, and it has to be: these files exist to name
-# the dead thing and prove it is dead, so every mention is the subject of a sentence rather than
-# a claim about live code. Excluding anything wider would reopen the hole this widening closed.
+# BOTH TREES, AND MARKDOWN TOO: an earlier version scanned `src/` alone, and a harness `.md` kept
+# a copy-pasteable dead import and a "live" contract listing invisible to it. A harness doc that
+# lies costs the reader the same hour a lying docstring does.
+# `claude_retired/` is the ONE directory excluded: these files exist to name the dead thing and
+# prove it's dead, so every mention is the subject of a sentence, not a claim about live code.
 _GUARD_HOME = _BACKEND / "tests/api/v1/claude_retired"
 
 SCANNED = tuple(
@@ -46,12 +34,11 @@ SCANNED = tuple(
     if _GUARD_HOME not in path.parents
 )
 
-# Unambiguous identifiers only. A generic word like "relay" appears in live contexts (the C3
-# progress relay, the BRAIN→SESSION-API relay) and scanning for it would produce pure noise.
+# Unambiguous identifiers only — a generic word like "relay" appears in live contexts (the C3
+# progress relay, the BRAIN↔SESSION-API relay) and would produce pure noise.
 #
-# This test asserts an ABSENCE: adding a word to either tuple below changes what the whole repo
-# is scanned for, which can turn an innocent, unrelated edit elsewhere red. Treat both as fixed
-# data.
+# This asserts an ABSENCE: adding a word to either tuple below changes what the whole repo is
+# scanned for and can turn an unrelated edit elsewhere red. Treat both as fixed data.
 RETIRED = (
     "v1/claude",
     "api.v1.claude",

@@ -1,17 +1,12 @@
 """The classification review store: claim-or-return, and the version/attempt-guarded
-terminal write.
+terminal write. Three properties carry the design, each pinned by a test:
 
-Three properties carry the design and each gets a test that would fail loudly if it broke:
-
-* a stored COMPLETE answer for the SAME version is returned, never re-run — "re-opening
-  the form for an unchanged version returns the stored answers" is this store's whole reason
-  to exist;
-* a stored answer for an OLDER version is never returned as the answer for a newer one — the
-  row is replaced wholesale and the attempt counter resets, because a stale verdict wearing a
-  fresh look is the exact bug the version stamp prevents;
-* a run settles only its OWN claim — the row survives being taken over (unlike a deployment
-  row), so a zombie runner's `review_id` still points at a live row, and only the
-  `head_sha` + `attempt` guards stop its late write dressing a new claim in old verdicts.
+* a stored COMPLETE answer for the SAME version is returned, never re-run — this store's
+  whole reason to exist;
+* a stored answer for an OLDER version is never returned as the newer one's answer — the row
+  is replaced wholesale and the attempt counter resets;
+* a run settles only its OWN claim — the row survives being taken over, so a zombie runner's
+  `review_id` still points at a live row, and only `head_sha` + `attempt` stop its late write.
 """
 
 from __future__ import annotations
@@ -98,8 +93,8 @@ async def test_a_first_claim_creates_the_row_running_and_stamped(db_session) -> 
 async def test_a_stored_complete_row_for_the_same_version_is_returned_not_rerun(
     db_session,
 ) -> None:
-    """Re-opening the form for an unchanged version returns the stored answers
-    without running again — the store must not mark the row running."""
+    """The store must not mark the row RUNNING again for an unchanged version — this is why
+    re-open reads back the same verdicts instead of re-triggering a run."""
     user, app = await _app(db_session)
     first = await _claimed(db_session, app_id=app.id, user_id=user.id, head_sha=_V1)
     assert await store.succeed(
@@ -227,7 +222,6 @@ async def test_a_reclaim_renews_the_wall_clock_start(db_session) -> None:
     assert await store.fail(
         db_session, review_id=first.review_id, head_sha=_V1, attempt=1, code="review_failed"
     )
-    # Age the finished row's start far into the past, then re-claim.
     long_ago = datetime.now(UTC) - timedelta(seconds=10_000)
     await db_session.execute(
         sa.update(ClassificationReview)
@@ -416,7 +410,6 @@ async def test_claim_complete_claim_newer_read_leaves_one_truthful_row(db_sessio
     exactly one row per app whose stamp always matches its contents."""
     user, app = await _app(db_session)
 
-    # Claim and complete version 1.
     v1 = await _claimed(db_session, app_id=app.id, user_id=user.id, head_sha=_V1)
     assert await store.succeed(
         db_session,
@@ -428,12 +421,10 @@ async def test_claim_complete_claim_newer_read_leaves_one_truthful_row(db_sessio
         answers_complete=True,
     )
 
-    # Re-open unchanged: the stored answers come back, no run starts.
     unchanged = await store.claim(db_session, app_id=app.id, user_id=user.id, head_sha=_V1)
     assert unchanged.claimed is False
     assert unchanged.review.verdicts == _VERDICTS
 
-    # The version moves: the row is replaced, and completing it settles the NEW stamp.
     v2 = await _claimed(db_session, app_id=app.id, user_id=user.id, head_sha=_V2)
     fresh_verdicts = {**_VERDICTS, "public_data": {"answer": "no", "reason": "Nothing public."}}
     assert await store.succeed(

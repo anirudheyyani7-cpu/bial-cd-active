@@ -51,8 +51,6 @@ async def _ensure_azure_container(backend: AzureBlobStorage, container: str) -> 
 
 @pytest.fixture
 async def ready_backend() -> AsyncIterator[ObjectStorage]:
-    # Fresh client cache per test so a client from a prior test's event loop is
-    # never reused on this loop.
     await reset_storage_for_tests()
     if not _port_open("127.0.0.1", 10000):
         pytest.skip(

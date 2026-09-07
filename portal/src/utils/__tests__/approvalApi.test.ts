@@ -3,10 +3,9 @@ import * as approvalApi from '../approvalApi'
 import { withdrawSubmission } from '../approvalApi'
 import { ApiError } from '../apiError'
 
-// A real WHATWG Response so `res.ok` / `res.status` / `res.json()` behave exactly as
-// production fetch would — the same real-boundary approach as projectApi.test.ts, no
-// module mocking: the file's whole value is the unknown→narrowed parsing, so the real
-// narrowers must run in CI.
+// A real WHATWG Response so `res.ok`/`res.status`/`res.json()` behave exactly as production
+// fetch would — no module mocking, since the file's whole value is the unknown→narrowed
+// parsing, so the real narrowers must run in CI.
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
@@ -21,28 +20,20 @@ const deps = (fetchImpl: typeof fetch) => ({ fetchImpl, getToken: () => null, re
 
 describe('the citizen submit verb is gone', () => {
   /**
-   * A GUARD, not a deletion. This block used to POST `/api/apps/:id/submit` and pin its
-   * narrowed result and its 409 copy; the route it called was retired backend-side and
-   * the control that called it lost its button, because only one route into the review
-   * queue is allowed, and it runs through the publish request — which
-   * attaches both answer sets and the citizen's explanation. The retired route attached
-   * none of that, so a queue item could reach an administrator with nothing to read.
-   *
-   * Deleting this file's submit coverage is what an implementer meeting a red suite
-   * reaches for first, and it would leave nothing at all stopping the second way in from
-   * being quietly re-added. `toSubmitResult`'s narrowing test went with the verb: there
-   * is no submit response left to narrow.
+   * A GUARD, not a deletion. `/api/apps/:id/submit` was retired: only one route into the
+   * review queue is allowed now, through the publish request, which attaches both answer
+   * sets and the citizen's explanation — the retired route attached none of that. Deleting
+   * this coverage is what an implementer meeting a red suite reaches for first, and it would
+   * leave nothing stopping the second way in from being quietly re-added.
    */
   it('exports no submitForReview — publishing is the only way into the queue', () => {
     expect('submitForReview' in approvalApi).toBe(false)
-    // Belt and braces against a re-export that resolves to undefined rather than being
-    // absent: either shape must fail to be callable.
+    // Belt and braces: a re-export resolving to undefined must fail this too, not just the key check.
     expect((approvalApi as Record<string, unknown>).submitForReview).toBeUndefined()
   })
 
   it('exports no SubmitResult narrowing helper surface either', () => {
-    // The type is compile-time only; what a runtime guard can pin is that no value-level
-    // submit machinery survived the retirement.
+    // The type is compile-time only; a runtime guard can only pin that no value-level survivor remains.
     expect(Object.keys(approvalApi).filter((k) => /submit/i.test(k))).toEqual([])
   })
 })
@@ -94,18 +85,12 @@ describe('withdrawSubmission', () => {
 
 describe('the app-scoped status read is gone', () => {
   /**
-   * A GUARD, not deleted coverage. `getApprovalStatus` was the typed client
-   * for `GET /apps/:id/status`, written for the approval card at the foot of the chat — the
-   * canvas's `Removals` board took that card out, and nothing reached the getter, its
-   * `AppApprovalStatus` interface or its narrower afterwards. The publish and review surfaces
-   * read the lifecycle off the PROJECT-scoped deploy status instead, so both share one poll
-   * lifetime and cannot end up telling the citizen two different things; re-adding a second,
-   * app-scoped poll here is precisely what would break that. The SERVER route is untouched.
-   *
-   * `toAppStatus`'s unknown-literal refusal and the non-record / missing-appId refusals are the
-   * only narrowing this file lost a caller for, and all three are still exercised — through
-   * `withdrawSubmission`, in the block above. What went with the getter was
-   * `nonEmptyStringOrNull`, which had no other caller.
+   * A GUARD, not deleted coverage. `getApprovalStatus` served the approval card the canvas's
+   * `Removals` board took out; the SERVER route is untouched, but the publish/review surfaces
+   * now read the lifecycle off the PROJECT-scoped deploy status instead — one shared poll
+   * lifetime, so re-adding a second app-scoped poll here is precisely what would break that.
+   * `toAppStatus`'s narrowing behaviors this file lost a caller for are still exercised
+   * through `withdrawSubmission`, in the block above.
    */
   it('exports no app-scoped status read — the lifecycle comes off the deploy poll', () => {
     expect('getApprovalStatus' in approvalApi).toBe(false)

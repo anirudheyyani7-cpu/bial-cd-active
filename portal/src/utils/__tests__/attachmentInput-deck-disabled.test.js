@@ -1,19 +1,14 @@
 /**
  * PRESENTATIONS ARE GONE — the inertness guard.
  *
- * This file used to mock `DECK_ATTACHMENTS_ENABLED` to `false` and describe one of the flag's two
- * positions. There is no flag now: an earlier change deleted it along with the arms it guarded and the
- * media type itself, so there is no "off world" left to pin. What remains worth asserting is that
- * the capability is UNREACHABLE — which is what a removal's tests become, rather than being
- * deleted with the code.
+ * This file used to mock `DECK_ATTACHMENTS_ENABLED` to `false`. There is no flag now — an
+ * earlier change deleted it along with the arms it guarded — so what remains worth asserting is
+ * that the capability is UNREACHABLE, run against the REAL, unmocked module: a mocked flag is
+ * exactly what let the old suite pass in both positions while a citizen met a third behaviour.
  *
- * IT STOPS MOCKING, and that matters. A mocked flag is exactly what let the old suite pass in both
- * positions while a citizen met a third behaviour; every assertion below runs against the real,
- * unmocked module. Its ENABLED sibling (`attachmentInput-deck.test.js`, 6 cases) is deleted rather
- * than converted: every one of its cases asserted a capability that can no longer exist, and a
- * test that mocks a deleted constant into existence proves nothing about the shipped product. That
- * deletion is a documented inertness conversion, and its count is named in the PR so the suite
- * arithmetic reconciles rather than being waved through.
+ * Its ENABLED sibling (`attachmentInput-deck.test.js`, 6 cases) is deleted rather than
+ * converted — a test that mocks a deleted constant into existence proves nothing about the
+ * shipped product — and that count is named here so the suite arithmetic reconciles.
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'

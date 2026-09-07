@@ -100,13 +100,10 @@ async def test_a_dirty_tree_at_unchanged_head_still_writes_a_recovery_copy(
 ) -> None:
     """★★ THE NAMED CONTRACT. Do not rename this test, and do not let it go red.
 
-    HEAD is exactly where the recovery copy is, and the worktree is dirty. The commit step inside
-    the write turns that dirt into a commit, so the tree that actually gets bundled is NOT the one
-    on record — and the write must proceed.
-
-    A "skip when HEAD has not moved" implementation reads the sha BEFORE the commit step and
-    discards this turn's work. Today the agent's own commits mask the difference; once they go
-    away, this is every building turn.
+    HEAD is exactly where the recovery copy is, and the worktree is dirty. The commit step turns
+    that dirt into a commit, so the tree that actually gets bundled is NOT the one on record —
+    and the write must proceed. A "skip when HEAD has not moved" implementation reads the sha
+    BEFORE the commit step and discards this turn's work.
 
     Mutation check: decide the skip on the container's pre-commit HEAD instead of on the bundled
     sha, and this goes red."""
@@ -155,14 +152,13 @@ async def test_the_first_copy_for_an_app_just_proceeds(store: FakeStorage) -> No
 async def test_a_copy_we_cannot_compare_against_is_never_overwritten(store: FakeStorage) -> None:
     """★★ THE ONE THIS FILE GOT WRONG FIRST.
 
-    A bundle written before the head stamp existed carries no claim — `durable_copy.py` documents
-    that population — and the first version of this code read that as "nothing to protect" and
-    wrote straight over it. An app whose container has reverted has EXACTLY this shape, so "we
-    cannot compare" earns caution rather than destruction: the tree is KEPT, diverted rather than
-    dropped, and an operator promotes whichever of the two is real. Mutation check: read
-    `recorded is None` instead of `meta is None` on the first arm and this goes red."""
-    # Mutation check: read `recorded is None` instead of `meta is None` on the first arm and this
-    # goes red.
+    A bundle written before the head stamp existed carries no claim — the first version of this
+    code read that as "nothing to protect" and wrote straight over it. An app whose container has
+    reverted has EXACTLY this shape, so "we cannot compare" earns caution rather than
+    destruction: the tree is KEPT, diverted rather than dropped.
+
+    Mutation check: read `recorded is None` instead of `meta is None` on the first arm and this
+    goes red."""
     await _seed_recovery(store, sha=None)
     before = await store.get(recovery_key(APP))
     client = _container(bundles_to=MOVED_ON, head=MOVED_ON)

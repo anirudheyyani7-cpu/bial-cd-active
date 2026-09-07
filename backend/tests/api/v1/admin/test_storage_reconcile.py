@@ -101,7 +101,7 @@ async def test_owned_attachment_survives_any_age(client, app, db_session) -> Non
 
     assert (await _upload_image(client, citizen, "att_owned")).status_code == 201
     att = await _row(db_session, user.id, "att_owned")
-    store.mtimes[att.storage_key] = _past_grace()  # age it well past the grace
+    store.mtimes[att.storage_key] = _past_grace()
 
     resp = await client.post(_RECONCILE, headers=admin)
     assert resp.status_code == 200
@@ -216,7 +216,6 @@ async def test_never_sent_orphan_is_reclaimed_by_the_sweep(client, app, db_sessi
         )
         is None
     )
-    # Tallies land in the audit trail.
     row = await db_session.scalar(select(AuditLog).where(AuditLog.action == "storage:reconcile"))
     assert row is not None and row.detail is not None
     assert row.detail["reclaimedAttachments"] == 1

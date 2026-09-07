@@ -34,15 +34,15 @@ import {
 } from '../workspaceChannel'
 import type { ReclaimBlocked } from '../../../utils/buildSessionApi'
 
-// THE NAVBAR STUB CONSULTS THE EXIT HOOK, exactly as the real one does. That is the seam this
-// file is answerable for: does the SHELL provide a guard to the chrome sitting ABOVE its Outlet?
-// A `<div/>` stub could not see it, and the real navbar would drag a profile fetch, a usage poll
-// and a feedback modal into every scenario here. That the real navbar routes its links through the
-// hook is `Navbar.test.jsx`'s to prove; this proves there is something for it to route through.
+// THE NAVBAR STUB CONSULTS THE EXIT HOOK, exactly as the real one does — the seam this file is
+// answerable for is whether the SHELL provides a guard to the chrome sitting ABOVE its Outlet.
+// A `<div/>` stub could not see it, and the real navbar would drag a profile fetch, a usage poll,
+// and a feedback modal into every scenario here. That the real navbar routes its links through
+// the hook is `Navbar.test.jsx`'s to prove; this proves there is something for it to route
+// through.
 vi.mock('../../layout/Navbar', () => ({
-  // NAMED, because `default: () => …` is an anonymous arrow and the hooks lint rule reads a
-  // component's identity off its name — a hook inside one it cannot recognise is an error, and it
-  // is right to be: React itself keys a component's hook state on the same thing.
+  // NAMED: `default: () => …` is an anonymous arrow, and the hooks lint rule reads a component's
+  // identity off its name — a hook inside one it can't recognise is an error, rightly so.
   default: function StubNavbar() {
     const exit = useWorkspaceExit()
     return (
@@ -54,11 +54,10 @@ vi.mock('../../layout/Navbar', () => ({
 }))
 
 /**
- * Mount `child` as the shell's outlet content, the way a route element is.
- *
- * Every probe below reads the channel from INSIDE the outlet — the same channel through the same
- * context, but not the pane host's position. The tree-position property is asserted where it
- * lives: `App.test.jsx` for the shell, `AppPaneHost.test.tsx` for the frame.
+ * Mount `child` as the shell's outlet content, the way a route element is. Every probe below
+ * reads the channel from INSIDE the outlet — the same channel through the same context, but not
+ * the pane host's tree position. That property is asserted where it lives: `App.test.jsx` for
+ * the shell, `AppPaneHost.test.tsx` for the frame.
  */
 function renderShell(child: ReactNode) {
   return render(
@@ -73,13 +72,12 @@ function renderShell(child: ReactNode) {
 }
 
 /**
- * EVERY SURFACE THE SHELL FRAMES, by path. The shell's two routes (`App.tsx`) plus the components
- * they render inside its outlet column. A new in-shell surface belongs on this list.
+ * EVERY SURFACE THE SHELL FRAMES, by path — the shell's two routes plus the components they
+ * render inside its outlet column. A new in-shell surface belongs on this list, kept current
+ * rather than left naming files that no longer exist (a rotted inventory reads as a passing one).
+ * It is a SOURCE scan, not a render assertion, so it reaches branches no test mounts — a surface
+ * left off it is not covered by "the tests pass".
  */
-// The list follows the tree rather than being left naming files that no longer exist — a guard
-// whose inventory has rotted reads the same as a guard that passes.
-// The guard is a SOURCE scan, not a render assertion — it reaches branches no test mounts — so a
-// surface left off it is not covered by "the tests pass".
 const IN_SHELL_SURFACES = [
   'pages/ChatRoute.tsx',
   'components/chat/ConversationSurface.tsx',
@@ -128,24 +126,17 @@ describe('WorkspaceShell — one height model, one frame, one grid', () => {
   })
 
   it('nothing in the rendered workspace transcribes the viewport height', () => {
-    // The codebase's only `calc(100vh - 56px)` was the navbar's `h-14` copied into a chat page,
-    // one Tailwind edit away from a scrollbar nobody could explain. It must not come back as an
-    // inline style on any surface the shell frames.
+    // No surface may hardcode the viewport height in a `calc()` — the shell already owns it.
     const { container } = renderShell(<div data-testid="surface" />)
     expect(container.innerHTML).not.toMatch(/100vh/)
   })
 
   it('and no surface the shell frames asserts a viewport height in its source', () => {
-    // READ AS SOURCE, not as a render, and that is the point. The scenario above can only see what
-    // the stub surface it mounts happens to emit, so it was blind to `ChatRoute`'s loading arm —
-    // a `min-h-screen` box inside a column that is 100vh MINUS the navbar and `overflow-hidden`,
-    // which cannot shrink to fit, so it overflowed and pushed its spinner below the visible centre
-    // on every cold chat open. One class on a branch no shell test renders.
-    //
-    // Every surface the shell frames is checked instead, by path, so a new one has to be added to
-    // the list and a returning `h-screen` is caught wherever it lands. Surfaces OUTSIDE the shell
-    // (`Dashboard`, `LoginPage`, `AdminPage`, `HelpPage`, the pre-shell `AuthLoading`) keep their
-    // own viewport heights and are correctly not listed — they are their own document.
+    // READ AS SOURCE, not as a render: the scenario above only sees what the stub surface it
+    // mounts happens to emit, so it was blind to `ChatRoute`'s loading arm — a `min-h-screen` box
+    // in a column already 100vh minus the navbar, which overflowed and pushed its spinner below
+    // centre on every cold chat open. Surfaces OUTSIDE the shell (`Dashboard`, `LoginPage`,
+    // `AdminPage`, `HelpPage`) are correctly not on the list — they are their own document.
     const offending = IN_SHELL_SURFACES.flatMap((file) =>
       readFileSync(`src/${file}`, 'utf8')
         .split('\n')
@@ -213,9 +204,8 @@ describe('WorkspaceShell — the reclaim dialog is mounted here, its handlers st
   }
 
   it('opens from the channel and routes its answer back to the surface that was refused', async () => {
-    // Only the OPEN STATE travels. Stopping the other project's build, saving it, releasing it and
-    // retrying the refused call are all things the surface that made that call knows how to do,
-    // and a shell that re-derived them would be a second authority on a refusal that has one.
+    // Only the OPEN STATE travels — stopping, saving, and retrying stay with the surface that
+    // made the call, so the shell is never a second authority on a refusal that already has one.
     const onResolve = vi.fn().mockResolvedValue(undefined)
     renderShell(<SurfaceWithRefusal onResolve={onResolve} />)
 
@@ -223,11 +213,8 @@ describe('WorkspaceShell — the reclaim dialog is mounted here, its handlers st
     fireEvent.click(screen.getByRole('button', { name: 'refuse' }))
 
     const dialog = await screen.findByRole('dialog')
-    // The refusal names the project standing in the way — the whole reason the state travels
-    // rather than the shell inventing its own copy.
     expect(dialog.textContent).toMatch(/Other Project/)
-    // …and the STARTING project too, so the dialog can name whose changes are lost. The assertion
-    // follows the project name rather than pinning the button's exact wording.
+    // …and the STARTING project too, so the dialog can name whose changes are lost.
     expect(dialog.textContent).toMatch(/Visitor Log/)
 
     fireEvent.click(screen.getByRole('button', { name: /stop “Other Project” without saving/i }))
@@ -266,10 +253,9 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (the leaving
   }
 
   it('warns on a definite `true`, and GOES ON warning after the conversation unmounts', () => {
-    // THE ONLY USER-VISIBLE CONSEQUENCE OF THE HOIST. Bound to the builder page instead, the
-    // effect disarmed the moment the citizen navigated from the chat to the project screen —
-    // which is precisely when they have stopped looking at the conversation that knows about the
-    // unsaved work, and exactly the moment they are most likely to close the tab.
+    // THE ONLY USER-VISIBLE CONSEQUENCE OF THE HOIST: bound to the builder page instead, the
+    // effect would disarm the moment the citizen navigates away — exactly when they are most
+    // likely to close the tab.
     const view = render(<Workspace conversationMounted dirty />)
     expect(tryToLeave()).toBe(true)
 
@@ -285,11 +271,10 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (the leaving
   })
 
   it('says nothing when the state is UNKNOWN, and claims nothing either way', () => {
-    // `null` is "could not check", never "clean", and the silence is deliberate rather than an
-    // oversight: the browser renders fixed text the page cannot supply a "we could not check"
-    // sentence to, so a prompt armed on an unknown is a prompt with nothing answerable behind it —
-    // which is how people learn to dismiss them. The in-app dialog below is where that sentence
-    // lands. What must NOT happen is the other failure: claiming there is nothing unsaved.
+    // `null` is "could not check", never "clean" — the silence is deliberate, not an oversight:
+    // the browser's fixed prompt can't carry a "we could not check" sentence (the in-app dialog
+    // does), and arming it anyway is how people learn to dismiss it. What must NOT happen is the
+    // other failure: claiming there is nothing unsaved.
     const { container } = render(<Workspace conversationMounted dirty={null} />)
 
     expect(tryToLeave()).toBe(false)
@@ -297,10 +282,9 @@ describe('WorkspaceShell — the unsaved-work warning, hoisted here (the leaving
   })
 
   it('says nothing when NOBODY has published, and asks nothing to find out', () => {
-    // A project address with no conversation mounted. "Nobody has reported" is the same `null` as
-    // "the check failed", and nothing here calls the save-state endpoint — the check costs two
-    // `git` executions inside the container and compares container-HEAD against
-    // saved-bundle-HEAD, which a screen with no conversation has nothing to compare.
+    // "Nobody has reported" is the same `null` as "the check failed", and nothing here calls the
+    // save-state endpoint — that check costs two `git` executions inside the container, which a
+    // screen with no conversation has nothing to compare.
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     try {
       render(<Workspace conversationMounted={false} dirty={null} />)
@@ -346,8 +330,8 @@ describe('the workspace channel — a publish wakes only what it concerns', () =
   }
 
   it('a save-state publish does not re-render the pane subscriber', () => {
-    // The rule that keeps the pane host still. One context value republished on every change would
-    // re-render every consumer of the channel — which is the pane host, on every keystroke.
+    // The rule that keeps the pane host still: one republished context value would re-render it
+    // on every keystroke.
     renders.pane = 0
     renders.save = 0
     renderShell(<><PaneSubscriber /><SaveSubscriber /><SavePublisher /></>)
@@ -451,16 +435,11 @@ describe('the workspace channel — what survives its publisher\'s unmount, and 
 })
 
 /**
- * THE IN-PLACE GUARD, MOUNTED AT SHELL LEVEL.
- *
- * Two guards, one requirement pair, and the property that has to hold between them: `beforeunload`
- * covers leaving the TAB and stays armed only on a definite `true`; this one covers leaving the
- * WORKSPACE without an unload and warns on `null` too, because an in-app dialog can carry a reason
- * the browser's fixed prompt cannot.
- *
- * Mounted HERE and not in the Outlet child, and the reason is structural: the exits it exists for —
- * the navbar's links — sit above the Outlet, so a guard mounted below it would lose coverage of
- * exactly the controls it was written for.
+ * THE IN-PLACE GUARD, MOUNTED AT SHELL LEVEL. Two guards divide the work: `beforeunload` covers
+ * leaving the TAB and arms only on a definite `true`; this one covers leaving the WORKSPACE
+ * without an unload and warns on `null` too, since an in-app dialog can carry a reason the
+ * browser's fixed prompt cannot. Mounted here rather than in the Outlet child because the exits
+ * it guards — the navbar's links — sit above the Outlet.
  */
 describe('WorkspaceShell — the in-place unsaved-work guard', () => {
   function SurfaceWithSaveState({ dirty, running }: { dirty: boolean | null; running: boolean }) {

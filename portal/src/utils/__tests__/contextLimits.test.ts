@@ -180,7 +180,6 @@ describe('contextState', () => {
   })
 
   it('follows the administrator’s warn threshold rather than the default', () => {
-    // The same conversation, two users: silent under the default, warned under a lowered one.
     const conversation = [prose(40_000)] // 10k tokens + reserve
     expect(contextState(conversation).gettingLong).toBe(false)
     signedInWith({ contextSoftLimit: 12_000, contextHardLimit: 20_000 })

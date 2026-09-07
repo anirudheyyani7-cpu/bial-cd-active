@@ -127,8 +127,6 @@ async def test_a_confirmed_absent_app_fails_the_row(db_session) -> None:
 
 
 async def test_an_unreachable_arm_leaves_the_row_exactly_as_it_was(db_session) -> None:
-    """THE most expensive one to get wrong. A throttled request must never read as "gone" —
-    collapsing the two would eventually mark a live app failed."""
     app, deployment_id = await _abandoned(db_session)
     aca = FakeAca(fqdn=None, blip=True)
 

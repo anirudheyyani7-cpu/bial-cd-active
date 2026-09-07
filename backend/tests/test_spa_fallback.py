@@ -33,7 +33,6 @@ async def spa_client(spa_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def test_reserved_root_path_is_json_404(spa_client: httpx.AsyncClient) -> None:
-    # A genuinely unmatched /v1/... must 404 as JSON, never fall through to index.html.
     resp = await spa_client.get("/v1/does-not-exist")
     assert resp.status_code == 404
     assert "text/html" not in resp.headers.get("content-type", "")
@@ -51,9 +50,6 @@ async def test_deep_link_returns_index(spa_client: httpx.AsyncClient) -> None:
     resp = await spa_client.get("/dashboard/settings")
     assert resp.status_code == 200
     assert "SPA shell" in resp.text
-
-
-# --- a configured-but-broken SPA image refuses to boot (fail-closed) -----------
 
 
 def test_dist_dir_without_index_refuses_to_boot(

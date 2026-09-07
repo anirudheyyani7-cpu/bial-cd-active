@@ -18,19 +18,10 @@ import path from 'node:path'
 // a jsdom http URL here — so anchor on cwd, not the module URL (matches jsx-deploy-retirement).
 const SRC_ROOT = path.resolve(process.cwd(), 'src')
 
-// WHAT COUNTS AS USING IT — and this is narrower than "the name appears", deliberately.
-//
-// The first version of this guard forbade the STRING anywhere under `src`, with an allowlist of
-// four files permitted to mention it in prose. That is the wrong shape for an L8 guard: the
-// convention it enforces asks every removal to leave a comment saying what used to be here and
-// why it went, so a name-anywhere rule makes following the convention a test failure and the fix
-// under time pressure is to delete the explanation. The allowlist could not keep up either — it
-// went red the moment three suites were rewritten to say, correctly, that the control they used
-// to exercise is gone.
-//
-// So the rule matches its own test name: an IMPORT of the module or a MOUNT of the component.
-// Both are what a re-add would actually look like, and neither can be written by accident in a
-// sentence about the past.
+// WHAT COUNTS AS USING IT is narrower than "the name appears," deliberately. An earlier version
+// banned the bare string, but broke on every legitimate "ModeSwitcher used to..." note, and an
+// allowlist of exempt files couldn't keep up. The rule instead matches an IMPORT or a MOUNT: the
+// only shapes a re-add would actually take, and neither can appear by accident in prose.
 const USES_IT = [
   /from\s+['"][^'"]*ModeSwitcher['"]/, // import … from '…/ModeSwitcher'
   /require\(\s*['"][^'"]*ModeSwitcher['"]/, // require('…/ModeSwitcher')
@@ -64,9 +55,8 @@ describe('ModeSwitcher is retired', () => {
       const text = readFileSync(file, 'utf8')
       if (USES_IT.some((pattern) => pattern.test(text))) offenders.push(rel)
     }
-    // LIVENESS: the walk actually read the tree. An empty `offenders` proves nothing if `walk`
-    // returned nothing — a wrong `SRC_ROOT` (this file's cwd assumption is a real hazard) would
-    // otherwise make this guard pass forever while the component sat there mounted.
+    // LIVENESS: the walk actually read the tree — an empty `offenders` proves nothing if `walk`
+    // returned nothing, which a wrong `SRC_ROOT` would otherwise make pass forever, silently.
     expect(scanned).toBeGreaterThan(100)
     expect(offenders).toEqual([])
   })
@@ -84,8 +74,7 @@ describe('ModeSwitcher is retired', () => {
     for (const line of reAdds) {
       expect(USES_IT.some((pattern) => pattern.test(line)), line).toBe(true)
     }
-    // …and prose about the retired control is NOT a re-add, which is the whole point of the
-    // narrowing above.
+    // Prose about the retired control is NOT a re-add — the whole point of the narrowing above.
     const prose = [
       '// The ModeSwitcher used to sit here; a chat kind is fixed at creation now.',
       "  * mounted on both `BuilderPage` and `ProjectBuilder` — see ModeSwitcher's guard.",

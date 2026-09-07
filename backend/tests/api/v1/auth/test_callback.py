@@ -91,7 +91,6 @@ async def test_first_signin_provisions_user_and_sets_cookies(app, client, db_ses
     assert user.upn == "citizen@rvaiglobal.com"
     assert user.token_version == 0
 
-    # Exactly one refresh-token family row for the new user.
     token_count = await db_session.scalar(
         select(func.count()).select_from(RefreshToken).where(RefreshToken.user_id == user.id)
     )
@@ -169,8 +168,6 @@ _HTTP_STATUS_ERROR = httpx.HTTPStatusError(
     ],
 )
 async def test_entra_error_fails_closed_not_500(app, client, boom: Exception) -> None:
-    # A transient httpx transport/HTTP-status error or malformed JSON from the
-    # token/userinfo exchange must fail CLOSED to the login bounce, never a raw 500.
     _use_fake_oauth(app, error=boom)
     resp = await client.get("/v1/auth/callback")
 

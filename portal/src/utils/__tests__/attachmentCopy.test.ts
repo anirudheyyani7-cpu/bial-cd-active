@@ -1,39 +1,23 @@
 /**
- * The composer's own refusal sentence, reconciled against the allowlist it describes.
+ * The composer's refusal sentence, reconciled against the allowlist it describes — it goes
+ * false the moment `ALLOWED_MEDIA_TYPES` narrows, drift that has shipped here before (".pptx"
+ * survived in the copy after the composer stopped taking it), so every accepted format must be
+ * NAMED and every refused one must NOT be — both directions, not one.
  *
- * The sentence a citizen actually meets when the picker says no —
- * `validateAttachmentFiles`'s "…isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF,
- * a Word (.docx) or Excel (.xlsx) file, or a text file (CSV, TXT)." — is a PROMISE about a file
- * picker, and no test reads it. It goes false the moment `ALLOWED_MEDIA_TYPES` narrows, which is
- * exactly the drift shipped once already, in this same area, in the other direction.
- *
- * TWO DIRECTIONS, like the Help FAQ's block: a format the picker accepts must be NAMED, and a
- * format it refuses must NOT be. A one-way test is what let ".pptx" survive in the copy after the
- * composer stopped taking it.
- *
- * IT DRIVES THE VALIDATOR RATHER THAN SCANNING THE CONSTANT, and that is the whole technique.
- * The message is assembled from a flag-dependent fragment, so reading the source string would
- * reconcile a sentence no citizen is shown; calling the validator reads what a citizen reads.
- * It also gives the reachability rule for free — a branch that cannot be taken at the shipped
- * flag values is a branch this file never sees, so an unreachable contradiction (the legacy
- * `.ppt` advice) cannot redden a release that has not narrowed anything yet.
- *
- * NOT COVERED HERE, on purpose: `LEGACY_DOC_REJECT_MSG`'s "save as .docx (or PDF)". It is
- * REACHABLE today and its advice is true today, and the constant is deleted by the same change
- * that would falsify it (the attachment narrowing, in the file that owns it). Gating a sentence
- * whose removal is already part of the change that breaks it buys nothing.
+ * Drives the validator rather than scanning the constant, since the message is assembled from
+ * a flag-dependent fragment a source-string read would not see. NOT COVERED HERE, on purpose:
+ * `LEGACY_DOC_REJECT_MSG`'s "save as .docx (or PDF)" — reachable and true today, and deleted by
+ * the same change that would falsify it.
  */
 import { describe, it, expect } from 'vitest'
 import { validateAttachmentFiles, ALLOWED_MEDIA_TYPES } from '../attachmentInput'
 
 /**
- * The formats this sentence is ABOUT, as literal media types.
- *
- * They were imported constants until a later narrowing deleted three of them — which is the
- * gate working: the test could not compile against an allowlist that no longer names them. They
- * are literals now precisely SO the reconciliation survives the next narrowing: a format that
- * stops being exported must still be checked for ABSENCE from the copy, and an inventory built
- * out of the module's own exports can only ever check what the module still offers.
+ * The formats this sentence is ABOUT, as literal media types — not imports, deliberately:
+ * they were imported constants until a narrowing deleted three of them, which is the gate
+ * working (it could not compile against an allowlist that no longer named them). Literals
+ * survive the next narrowing too: a format that stops being exported must still be checked
+ * for ABSENCE from the copy.
  */
 const WORD_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const EXCEL_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

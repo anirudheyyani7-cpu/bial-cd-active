@@ -1,28 +1,22 @@
 """The canonical classification policy, exported as a fixture the portal pins against.
 
-`deploy/classification.py` calls its table "ONE POLICY UNIT" that changes "together, in
-review, in this file" — but the portal re-declares the same six `(key, label, weight)` rows
-plus the threshold BY HAND (`portal/src/utils/deployApi.ts`, whose own docstring admits
-"there is no codegen across the two languages"). They match today by careful editing and
-nothing else: a reweight or a rewording on either side has no failing test on the other.
+WHY THIS EXISTS: the portal re-declares the same six `(key, label, weight)` rows plus the
+threshold BY HAND (`portal/src/utils/deployApi.ts` — "no codegen across the two languages"),
+matching today only by careful editing. Drift is user-visible rather than a gate hole — the
+server stays authoritative — but the deploy modal's running total, button label, and score
+line would tell the citizen something the server then contradicts.
 
-The damage is user-visible rather than a gate hole — the server is authoritative, so a
-stale portal table cannot mis-publish anything — but the modal's running total, its
-"Send for review" vs "Publish" label, and its score line would all tell the citizen
-something the server then contradicts.
+This test keeps `classification-policy.json` current; its portal-side twin
+(`deployApi.classification-parity.test.ts`) asserts the TypeScript mirror matches it
+field-for-field. The fixture is the contract; drift becomes a red test on whichever side
+causes it.
 
-This test keeps `classification-policy.json` current; its twin on the portal side
-(`deployApi.classification-parity.test.ts`) asserts the TypeScript mirror matches the same
-file field-for-field. Neither language imports the other and no build step is added — the
-fixture is the contract, and drift becomes a red test in whichever PR causes it.
-
-IF THIS TEST FAILS: the policy changed and the fixture did not. Regenerate with
+IF THIS TEST FAILS, regenerate with:
 
     uv run python -c "from tests.services.deploy.test_classification_fixture_is_current \
         import write_fixture; write_fixture()"
 
-then run the portal suite — its parity test is what will tell you the TypeScript mirror
-still needs the same edit.
+then run the portal suite to catch the matching TypeScript edit.
 """
 
 from __future__ import annotations

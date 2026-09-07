@@ -21,7 +21,6 @@ from tests.factories import ConversationFactory, UserFactory
 
 _TTL = settings.auth.access_ttl_seconds
 
-# Minimal magic-valid bytes for the allowlisted types.
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 _PDF = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
 
@@ -63,7 +62,6 @@ async def test_upload_image_then_download(client, db_session, fake_storage) -> N
     assert att["kind"] == "image"
     assert att["key"].startswith(f"att/{user.id}/")
 
-    # Stored under the owner-scoped key; download returns the exact bytes + sniffed type.
     dl = await client.get("/v1/attachments/att_1", headers=headers)
     assert dl.status_code == 200
     assert dl.content == _PNG
@@ -154,7 +152,6 @@ async def test_over_size_cap_rejected(client, db_session) -> None:
 
 async def test_over_quota_rejected(client, db_session) -> None:
     headers, user = await _auth(db_session)
-    # Pre-fill the user's quota to within a few bytes of the 50 MB cap.
     near_cap = 50 * 1024 * 1024 - 4
     db_session.add(
         Attachment(
@@ -247,7 +244,6 @@ async def test_delete_cross_user_is_noop_and_preserves_owner_data(
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}  # idempotent no-op — B owns nothing
 
-    # A's blob + row survive untouched (no cross-user destruction).
     assert len(fake_storage.objects) == 1
     row = await db_session.scalar(
         select(Attachment).where(
@@ -514,8 +510,6 @@ async def test_office_upload_extracts_markdown(client, db_session) -> None:
 
 
 async def test_upload_non_string_name_400(client, db_session, fake_storage) -> None:
-    # A present wrong-type `name` used to be coerced to "" — the attachment stored nameless
-    # and the SPA lost the filename it renders, with no error.
     headers, _ = await _auth(db_session)
     for bad in (123, ["shot.png"], {"n": "x"}):
         resp = await client.post(
@@ -534,8 +528,8 @@ async def test_upload_non_string_name_400(client, db_session, fake_storage) -> N
 
 
 async def test_upload_over_long_name_400(client, db_session, fake_storage) -> None:
-    # `Attachment.name` is String(512): an over-long name used to sail past the boundary
-    # and 500 at the DB flush instead of 400ing where the client can fix it.
+    # `Attachment.name` is String(512); 513 is one past the boundary — the check must catch
+    # it here, 400ing where the client can fix it, rather than 500ing at the DB flush.
     headers, _ = await _auth(db_session)
     resp = await client.post(
         "/v1/attachments",

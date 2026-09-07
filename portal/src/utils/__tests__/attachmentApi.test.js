@@ -57,7 +57,7 @@ describe('fetchAttachmentObjectUrl — cache + revoke', () => {
     const url1 = await fetchAttachmentObjectUrl('a1', deps(fetchImpl))
     const url2 = await fetchAttachmentObjectUrl('a1', deps(fetchImpl))
     expect(url1).toBe(url2)
-    expect(fetchImpl).toHaveBeenCalledTimes(1) // second call served from cache
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
 
     revokeAttachmentObjectUrl('a1') // releasing it forces a refetch next time
     const url3 = await fetchAttachmentObjectUrl('a1', deps(fetchImpl))

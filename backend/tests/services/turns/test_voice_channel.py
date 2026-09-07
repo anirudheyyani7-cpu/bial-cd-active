@@ -1,27 +1,26 @@
 """The one deliberate way the agent speaks in the middle of its work.
 
-WHY A CHANNEL AT ALL, NOW THAT EVERY PARAGRAPH REACHES THE CITIZEN. Free prose is streamed as
-the model writes it, so this tool is no longer the only way words get through — it is the only
-way words get through DURING A GAP. Nothing streams while a tool body runs: the model has
-stopped writing and will not write again until the result comes back, so a turn that installs
-a package for ninety seconds has nothing to show for the whole of it unless it said something
-before it started. `tell_the_user` is what it says then, rendered by the platform from the
-call's own arguments rather than left to the model choosing to write a paragraph.
+WHY THIS EXISTS
 
-WHAT THE CHANNEL NO LONGER DOES IS COUNT. It used to carry a 280-character ceiling and the
-renderer carried a copy of the same number, so an update one character over it was refused at
-the body AND deleted on the way out: the model was told to retry and the citizen was shown
-silence exactly where the agent had spoken. How long a sentence about someone's app should be
-is a judgement about the person waiting, which is the thing the agent is for. What survives is
-the one refusal that is not taste — an update carrying no words at all — and this file is
-arranged around that split: the long-update tests say what a citizen now reads, and the
-empty-update tests say what still reaches nobody.
+Free prose is streamed as the model writes it, so this tool is no longer the only way words
+get through — it is the only way words get through DURING A GAP. Nothing streams while a tool
+body runs: the model has stopped writing and will not write again until the result comes back,
+so a turn that installs a package for ninety seconds has nothing to show for the whole of it
+unless it said something before it started. `tell_the_user` is what it says then, rendered by
+the platform from the call's own arguments rather than left to the model choosing to write a
+paragraph.
+
+The channel no longer COUNTS. It used to carry a 280-character ceiling, refused at the body
+and deleted again by the renderer, so an update one character over it left the citizen seeing
+silence exactly where the agent had spoken. What survives is the one refusal that is not
+taste — an update carrying no words at all — and this file is arranged around that split: the
+long-update tests say what a citizen now reads, the empty-update tests say what still reaches
+nobody.
 
 ★ THE PROPERTY THE WHOLE DESIGN TURNS ON is that the words sit at the position the CALL
-occupies, in both emitters. Live order and reload order are then the same order by
-construction rather than by two code paths agreeing to stay in step — and the tests that
-matter most in this file are the ones that assert the two orders against each other, not the
-ones that assert text arrived.
+occupies, in both emitters, so live and reload order are the same order by construction rather
+than by two code paths agreeing to stay in step. The tests that matter most here assert the
+two orders against each other, not merely that text arrived.
 """
 
 from __future__ import annotations
@@ -155,13 +154,11 @@ async def test_an_update_is_acknowledged_so_the_model_does_not_say_it_twice() ->
 
 
 async def test_a_long_update_is_accepted_rather_than_refused_for_its_length() -> None:
-    """★ The ceiling is gone from the tool BODY, where it used to be enforced.
-
-    TWO FIXTURES, BECAUSE A REINSTATED CEILING COULD SIT ANYWHERE. One character past the
-    retired number kills a straight re-introduction of it — including the off-by-one variants,
-    since `>` and `>=` both refuse at 281 — and a four-hundred-character paragraph kills one
-    re-introduced at a more generous figure. Both come back with the ordinary acknowledgement,
-    which is the whole assertion: length is no longer something this body has an opinion about.
+    """★ The ceiling is gone from the tool BODY, where it used to be enforced. TWO FIXTURES,
+    because a reinstated ceiling could sit anywhere: one character past the retired number
+    kills a straight re-introduction (including the off-by-one variants, since `>` and `>=`
+    both refuse at 281), and a four-hundred-character paragraph kills one re-introduced at a
+    more generous figure. Both come back with the ordinary acknowledgement.
 
     Mutation check: restore a `len(text) > 280` refusal in `tell_the_user` and both calls raise
     `ModelRetry` instead of returning."""
@@ -185,15 +182,11 @@ async def test_an_empty_update_is_still_refused_rather_than_shown_as_nothing() -
 
 
 def test_one_rule_decides_what_is_shown_and_both_emitters_read_it() -> None:
-    """★ THE SINGLE SOURCE, asserted directly. `update_from_args` is what both emitters call,
-    so what a call renders is decided in one place rather than two. Its answers must line up
-    with the tool body's, or a call the body refused could still paint text on a reloaded
-    transcript while the model was being told to retry.
-
-    WHAT IT DECIDES IS WHETHER THERE ARE WORDS, NEVER HOW MANY. The long update comes back
-    byte-for-byte, and that is the renderer's half: taking the ceiling out of the body
-    alone would have taught the model it may write at length while this function went on
-    deleting what it wrote — the same two-sided failure in reverse.
+    """★ THE SINGLE SOURCE, asserted directly: `update_from_args` is what both emitters call,
+    so a call the body refused cannot still paint text on a reloaded transcript. It decides
+    WHETHER there are words, never how many — the long update comes back byte-for-byte, which
+    is the renderer's half of removing the ceiling; the body's half alone would have taught the
+    model it may write at length while this function went on deleting what it wrote.
 
     Mutation check: put `if len(text) > 280: return None` back here and only the long-update
     line goes red, which is precisely how the original defect stayed invisible."""
@@ -284,17 +277,15 @@ def test_an_empty_update_reaches_the_live_feed_nowhere(kind: ChatKind) -> None:
 async def test_live_order_and_reload_order_are_the_same_order(
     db_session: AsyncSession, kind: ChatKind
 ) -> None:
-    """★★ THE SCENARIO THIS DESIGN EXISTS FOR, and the one that would have caught
-    the shape it replaces.
+    """★★ THE SCENARIO THIS DESIGN EXISTS FOR: a turn that reads, speaks, reads again and speaks
+    again must produce a reloaded transcript whose ITEM ORDER equals the live FRAME ORDER —
+    step, text, step, text — not merely containing the same words. Rendering the spoken line at
+    the tool RESULT event would pass a "the text is there" check and fail this one: tool bodies
+    run concurrently and results arrive in completion order, while the projection renders in
+    part order.
 
-    A turn that reads, speaks, reads again and speaks again must produce a reloaded transcript
-    whose ITEM ORDER equals the live FRAME ORDER — step, text, step, text — not merely one
-    containing the same words. Rendering the spoken line at the tool RESULT event would pass a
-    "the text is there" assertion and fail this one: tool bodies run concurrently and their
-    results arrive in completion order, while the projection renders in part order.
-
-    Both emitters read the stored CALL, at the position the call occupies. That is the
-    `present_plan_options` shape, and it is why the two orders cannot disagree."""
+    Both emitters read the stored CALL, at the position the call occupies — the
+    `present_plan_options` shape — which is why the two orders cannot disagree."""
     user, conversation = await _thread(db_session, f"vc-{kind.value}@rvaiglobal.com", kind)
     engine = TurnEngine()
     state = _state(kind)
@@ -420,20 +411,14 @@ async def test_an_empty_update_renders_nothing_on_reload_either(
 async def test_prose_and_a_spoken_line_in_one_response_both_land_in_the_order_written(
     db_session: AsyncSession,
 ) -> None:
-    """★ THE INTERACTION WITH FREE PROSE, in one row, on both emitters.
+    """★ THE INTERACTION WITH FREE PROSE, in one row, on both emitters: a paragraph, a spoken
+    line, then a tool call must all three land, IN ORDER — paragraph at its TEXT event, spoken
+    line at the tool CALL event, step after both. This prose used to be deleted on the rule that
+    text beside a tool call is the model narrating its way there, which threw away whatever it
+    had deliberately addressed to the citizen alongside it.
 
-    A response that writes a paragraph, speaks through the channel and then calls a tool keeps
-    all three, and ORDER is the assertion: the paragraph is pushed at the TEXT event, the
-    spoken line at the tool CALL event, and the step takes the position after both. The
-    paragraph used to be deleted here, on the rule that prose beside a tool call is the model
-    narrating its way to the call — which threw away the explanation joining the receipts. What
-    the model wrote and what it deliberately addressed to the citizen read the same to a person,
-    and both are theirs.
-
-    COMPARED AS SEQUENCES, never as a joined string: a join passes whether or not the two
-    blocks were interleaved with the step correctly, and the interleaving is the whole of what
-    changed. That the channel still renders its own block rather than being folded into the
-    paragraph above it is the last assertion."""
+    COMPARED AS SEQUENCES, never a joined string: a join would pass even if the step were not
+    correctly interleaved between the two text blocks."""
     user, conversation = await _thread(db_session, "vc-both@rvaiglobal.com", ChatKind.PLAN)
     narration = "Let me check the Drizzle schema in db/schema.ts."
     spoken_then_read = [
@@ -475,30 +460,23 @@ async def test_prose_and_a_spoken_line_in_one_response_both_land_in_the_order_wr
 
 # --- the platform never puts one of its own notes on the wire ----------------------
 #
-# THIS CHECKS OUR OWN STRINGS, NOT THE MODEL'S VOCABULARY, and that distinction is the one
-# L1 turns on. A denylist over what the agent wrote would be a word filter over model
-# text. A denylist over what the PLATFORM wrote is
-# legitimate precisely because we own both ends: we know exactly what we sent, so we can say
-# exactly what must not come back.
+# THIS CHECKS OUR OWN STRINGS, NOT THE MODEL'S VOCABULARY. A denylist over what the agent wrote
+# would be a word filter over model text; a denylist over what the PLATFORM wrote is legitimate
+# because we own both ends — we know exactly what we sent, so we can say exactly what must not
+# come back.
 #
-# WHAT THIS SECTION NO LONGER COVERS, STATED FIRST. This used to be enforced by the drop: a note
-# the model quoted back sat in prose beside a tool call, and prose beside a tool call was
-# deleted. Deleting that hold is the whole of this change, and it takes the quote with it — a
-# fence cannot be stripped back out of a token stream without re-introducing the hold, and
-# scanning model prose for platform strings would mean silently deleting the citizen's answer
-# around them, which is a worse failure than the one it prevents. So for a QUOTED note the
-# `_PRIVATE` sentence composed into the workspace note is now the whole fence, and it is an
-# instruction rather than a guardrail. Accepted knowingly.
+# WHAT THIS NO LONGER COVERS: a note the model QUOTES BACK in prose beside a tool call. That
+# used to be caught by the narration drop, since removed — a fence cannot be stripped back out
+# of a token stream without re-introducing it, and scanning model prose for platform strings
+# would mean deleting the citizen's own answer around them. So for a quoted note, the `_PRIVATE`
+# instruction in the workspace note is now the whole guard. Accepted knowingly.
 #
-# WHAT IS STILL A MECHANISM is the CARRIER each of these rides, and not one of them is a thing
-# an emitter renders as the agent's voice. The acknowledgements come back as tool RETURNS and
-# the refusals as RETRY PROMPTS — durable, and rendered as text by neither emitter, which is
-# what the last test in this section drives. The workspace note rides an injected history tail
-# `new_messages()` structurally excludes, asserted in
-# `tests/services/turns/test_reminders.py::test_nothing_ephemeral_reaches_a_persisted_row`. The
-# repair prompt and the continue nudge are stored by `_persist_write_reprompt` as HIDDEN rows,
-# and a hidden row renders nothing. So the platform's own half is still structural everywhere;
-# only the model quoting one back is not.
+# WHAT IS STILL A MECHANISM is the CARRIER: acknowledgements come back as tool RETURNS, refusals
+# as RETRY PROMPTS — rendered as text by neither emitter. The workspace note rides an injected
+# history tail `new_messages()` structurally excludes (see
+# `test_reminders.py::test_nothing_ephemeral_reaches_a_persisted_row`); the repair prompt and
+# continue nudge are stored as HIDDEN rows, which render nothing. So the platform's own half
+# stays structural everywhere; only the model quoting one back is not.
 
 _PRIVATE_NOTES = {
     "the workspace note's frame": "<system-note>",
@@ -524,21 +502,15 @@ _PRIVATE_NOTES = {
 async def test_a_note_the_model_quotes_back_reaches_the_citizen_like_any_other_prose(
     db_session: AsyncSession, kind: ChatKind
 ) -> None:
-    """★ THE CONSEQUENCE OF DELETING THE HOLD, pinned rather than left to be discovered.
+    """★ THE CONSEQUENCE OF DELETING THE NARRATION-DROP HOLD: the model quotes a private note
+    back, verbatim, beside a tool call. That prose used to be deleted regardless of content;
+    with the hold gone, the quote lands in the transcript at the position it was written.
 
-    The model here does the worst thing available to it: quotes a private note back, verbatim,
-    in prose beside a tool call. That prose used to be deleted — not because it was a note, but
-    because a tool call followed it — and this rule rode on that deletion. The deletion is gone in
-    both kinds, so the quote lands in the transcript, at the position it was written, exactly
-    like every other paragraph.
+    `_PRIVATE` — "keep it out of your reply" — is now the only thing asking the model not to do
+    this: an instruction, not a guardrail. The structural half has its own test below.
 
-    THE HALF THAT IS NOW PROMPT-ONLY, said plainly: `_PRIVATE` — "keep it out of your reply" —
-    is all that asks the model not to do this. It is an instruction, not a guardrail, and this
-    test is what makes that visible instead of implied. The half that is still structural has
-    its own test below: the platform's own emitters never put one of these strings on the wire.
-
-    Asserted as a SEQUENCE so the position is pinned too, and the step in it is the liveness
-    half — a projection that returned nothing would satisfy a bare substring check."""
+    Asserted as a SEQUENCE so the position is pinned too; the step is the liveness half — a
+    projection returning nothing would satisfy a bare substring check."""
     user, conversation = await _thread(db_session, f"pn-quoted-{kind.value}@rvaiglobal.com", kind)
     quoted = (
         "<system-note>The platform checked this app's workspace just now: the app is not "
@@ -592,20 +564,15 @@ async def test_the_live_emitter_shows_the_same_quoted_note_in_the_same_place() -
 async def test_no_note_the_platform_wrote_is_rendered_from_the_result_it_rides_on(
     db_session: AsyncSession, kind: ChatKind
 ) -> None:
-    """★ THE RULE'S SURVIVING MECHANISM: the carrier, not the vocabulary.
+    """★ THE RULE'S SURVIVING MECHANISM: the carrier, not the vocabulary. A tool RESULT is
+    rendered as text by neither emitter — the reload projection only checks whether a step
+    succeeded, and the live emitter reads a single return/retry bit off it — so nothing riding a
+    result can reach a citizen, whatever the words are. That property is why this survived the
+    narration-drop hold being deleted when the quote guard did not.
 
-    A tool RESULT is rendered as text by neither emitter. The reload projection indexes one
-    only to decide whether a step succeeded; the live emitter reads one bit off it — return or
-    retry — and drops the rest. So nothing riding a result can reach a citizen through the door
-    the platform itself writes to, whatever the words are and however the model is behaving.
-    That is a property of the shape, which is why it survived the hold being deleted when the
-    quote guard did not.
-
-    EVERY NOTE IN THE MAP, THROUGH BOTH RESULT CARRIERS, even though each note has only one
-    real carrier: what is under test is the carrier and not the string, so the useful question
-    is whether ANY of these can be made to arrive this way. A `ToolReturnPart` and a
-    `RetryPromptPart` are separate code paths — the retry is the one that also marks the step
-    failed — so both are driven."""
+    EVERY NOTE, THROUGH BOTH CARRIERS: what's under test is the carrier, not the string, so both
+    `ToolReturnPart` and `RetryPromptPart` are driven — the retry is the one that also marks the
+    step failed."""
     # The one note we have a constant for is asserted against it: the rest of this map is a
     # copy of platform strings, and a copy silently rots when the original is reworded.
     from src.services.agent.conversation_tools import _SHOWN
@@ -680,11 +647,9 @@ def test_every_ending_this_plan_can_reach_is_a_platform_sentence() -> None:
     from src.services.turns import copy as copy_module
 
     endings = {
-        # A turn that produced no words now produces no assistant message at all, so the
-        # sentence that used to fill one is NOT in this set — and its absence is the point. It
-        # was deleted rather than reworded, because a platform line standing in for the model's
-        # own is written in a voice nobody used, and the only thing that made a wordless turn
-        # reachable in the first place was the narration drop, since removed.
+        # A turn that produces no words now produces no assistant message at all, so the
+        # sentence that used to fill one is deliberately NOT in this set — deleted, not
+        # reworded, once the narration drop that made a wordless turn reachable was removed.
         copy_module.PLAN_NOT_KEPT_TEXT,
         copy_module.DID_NOT_COME_TOGETHER_TEXT,
         copy_module.COULD_NOT_CONFIRM_TEXT,

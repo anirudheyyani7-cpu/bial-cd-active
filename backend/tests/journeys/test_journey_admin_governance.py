@@ -1,28 +1,12 @@
-"""Journey: admin governance (the API + the SPA fields the admin console renders).
+"""Journey: admin governance — the API a super-admin (email allowlist: admin@bial.com) drives
+through the review desk, matching what the portal's `AppRegistryPanel` / `AuditDrawer` / feedback
+panel render.
 
-A super-admin (email allowlist: admin@bial.com) drives the whole review desk the way the
-portal `AppRegistryPanel` / `AuditDrawer` / feedback panel do:
-
-  * walk the lifecycle state machine — approve one app, reject another, disable+re-enable a
-    third — and prove **every gated action wrote an audit row** (accountability);
-  * read the per-app audit trail back through the admin API, the way `AuditDrawer` does;
-  * read the cross-user feedback stream, newest-first, each row carrying the author email.
-
-Three concerns, one file (mirrors `test_journey_build_deploy_render.py`'s green+red split):
-
-  * `test_admin_governance_walk_is_audited` — the GREEN spine. approve/reject/disable/enable
-    all transition and each writes its audit row; RBAC gates a citizen (403) / anon (401).
-    PASSES today.
-  * `test_admin_feedback_is_newest_first_with_email` — GREEN. `GET /v1/admin/feedback` returns
-    the stream newest-first with each item's author email. PASSES today.
-  * `test_admin_apps_list_exposes_owner_username_for_spa` — RED. `AppRegistryPanel` renders the
-    Owner cell from `app.ownerUsername`, but `AdminAppOut` projects only `ownerId` (a raw uuid),
-    so the cell is always the `—` fallback. CAPTURES BUG.
-  * `test_admin_audit_events_carry_spa_fields` — RED. `AuditDrawer` keys each row on `ev._id`,
-    times it via `ev.at`, names the actor via `ev.username`, and reads `ev.count` top-level, but
-    `AuditEventOut` emits `id`/`createdAt`/`actorId` and buries `count` under `detail`. Every row
-    renders with an undefined key, a `—` time, and `anonymous`. CAPTURES BUG.
-"""
+Walks the lifecycle state machine (approve/reject/disable/enable), proving every gated action
+writes an audit row and that a citizen/anon caller is refused; reads the per-app audit trail and
+the cross-user feedback stream back through the admin API, checking each carries the fields the
+SPA renders — `ownerUsername` on an apps-list row, `id`/`createdAt`/`username`/`count` on an
+audit event."""
 
 from __future__ import annotations
 
@@ -95,17 +79,15 @@ async def _audited_action(db: AsyncSession, app_id: object, action: str) -> Audi
     ).scalar_one()
 
 
-# --- GREEN: the lifecycle walk, every gated action audited ----------------------------------
+# --- the lifecycle walk, every gated action audited ------------------------------------------
 
 
 async def test_admin_governance_walk_is_audited(client, app, db_session) -> None:
     """approve -> reject -> disable -> enable; each transition writes its audit row.
 
-    This is the accountability contract: a permission-gated action MUST leave a
-    durable audit row naming the actor. The admin audit API also reads those rows back (the
-    data the `AuditDrawer` renders — even though it renders them under the wrong keys, see the
-    RED test below).
-    """
+    The accountability contract: a permission-gated action MUST leave a durable audit row
+    naming the actor. The admin audit API also reads those rows back — the data `AuditDrawer`
+    renders."""
     store = FakeStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
     # Both storage seams to ONE store: routes that document a 503 take the None-tolerant
@@ -120,7 +102,6 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
     assert (await client.get("/v1/admin/apps", headers=citizen_headers)).status_code == 403
     assert (await client.get("/v1/admin/apps")).status_code == 401
 
-    # Seed the three apps the walk needs, each in the right starting state.
     to_approve = await _owned_app(db_session, owner, **_pending_seed())
     _stage_bundle(store, to_approve)
     to_reject = await _owned_app(db_session, owner, **_pending_seed())
@@ -133,7 +114,7 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
         approved_commit_sha=_SHA,
     )
 
-    # 1. approve (pending -> approved) — pins EXACTLY the reviewed submission.
+    # approve pins EXACTLY the reviewed submission.
     approved = await client.post(
         f"/v1/admin/apps/{to_approve.id}/approve",
         json={"submissionId": str(to_approve.source_submission_id)},
@@ -143,8 +124,7 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
     assert approved.json() == {"appId": str(to_approve.id), "status": "approved"}
     assert (await _audited_action(db_session, to_approve.id, "approve")).actor_id == admin.id
 
-    # 2. reject (pending -> rejected) — stores the note, which must clear the
-    #    20-character floor (a rejection is the only thing that travels back).
+    # the note must clear a 20-character floor — a rejection is the only thing that travels back.
     rejected = await client.post(
         f"/v1/admin/apps/{to_reject.id}/reject",
         json={"note": "Not yet — this needs a named data owner first."},
@@ -154,13 +134,11 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
     assert rejected.json()["status"] == "rejected"
     assert (await _audited_action(db_session, to_reject.id, "reject")).actor_id == admin.id
 
-    # 3. disable (approved -> disabled).
     disabled = await client.post(f"/v1/admin/apps/{to_toggle.id}/disable", headers=admin_headers)
     assert disabled.status_code == 200
     assert disabled.json()["status"] == "disabled"
     assert (await _audited_action(db_session, to_toggle.id, "disable")).actor_id == admin.id
 
-    # 4. enable (disabled -> approved).
     enabled = await client.post(f"/v1/admin/apps/{to_toggle.id}/enable", headers=admin_headers)
     assert enabled.status_code == 200
     assert enabled.json()["status"] == "approved"
@@ -172,7 +150,7 @@ async def test_admin_governance_walk_is_audited(client, app, db_session) -> None
     assert "approve" in [e["action"] for e in events.json()["events"]]
 
 
-# --- GREEN: feedback stream, newest-first, with author email --------------------------------
+# --- feedback stream, newest-first, with author email -----------------------------------------
 
 
 async def test_admin_feedback_is_newest_first_with_email(client, db_session) -> None:
@@ -197,18 +175,16 @@ async def test_admin_feedback_is_newest_first_with_email(client, db_session) -> 
     assert resp.status_code == 200
     body = resp.json()
     messages = [f["message"] for f in body["feedback"]]
-    # Newest-first (order_by created_at desc).
     assert messages.index("newer note") < messages.index("older note")
-    # Every row carries the resolved author email the SPA renders.
+    # every row carries the resolved author email, not just an id, since the SPA renders it
     assert all(f["email"] == "feedbacker@rvaiglobal.com" for f in body["feedback"])
 
-    # RBAC gate: a citizen cannot read the cross-user feedback stream.
     assert (
         await client.get("/v1/admin/feedback", headers=await _citizen(db_session))
     ).status_code == 403
 
 
-# --- RED: admin apps list must expose an owner username the SPA can render -------------------
+# --- admin apps list exposes an owner username the SPA can render -----------------------------
 
 
 async def test_admin_apps_list_exposes_owner_username_for_spa(client, db_session) -> None:
@@ -221,14 +197,10 @@ async def test_admin_apps_list_exposes_owner_username_for_spa(client, db_session
     assert listed.status_code == 200
     row = next(a for a in listed.json()["apps"] if a["appId"] == str(app.id))
 
-    # CAPTURES BUG: admin apps expose no owner username — `AdminAppOut` projects `ownerId`
-    # (a raw uuid) only, no `ownerUsername`/`ownerEmail`, so the Owner cell is always `—`.
-    # This assertion is RED today and turns GREEN once the projection resolves the owner's
-    # email/display name into a human `ownerUsername`.
     assert row.get("ownerUsername") == owner.email
 
 
-# --- RED: audit events must carry the keys the AuditDrawer reads ----------------------------
+# --- audit events carry the keys the AuditDrawer reads -----------------------------------------
 
 
 async def test_admin_audit_events_carry_spa_fields(client, app, db_session) -> None:
@@ -237,13 +209,10 @@ async def test_admin_audit_events_carry_spa_fields(client, app, db_session) -> N
     owner = await UserFactory.create(db_session, email="audit-owner@rvaiglobal.com")
     row = await _owned_app(db_session, owner, login_required=False, **_pending_seed())
 
-    # Two audited actions so the drawer has rows to render, including a count-bearing
-    # one. Approve verifies the reviewed blob exists, so stage it in a wired store.
+    # Two audited actions so the drawer has rows to render, one of them count-bearing.
+    # Approve verifies the reviewed blob exists, so stage it in a wired store.
     store = FakeStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
-    # Both storage seams to ONE store: routes that document a 503 take the None-tolerant
-    # `storage_or_none_dependency`, `hard_delete` keeps the raising one. Binding both keeps
-    # this journey blind to which seam each route it walks happens to sit on.
     app.dependency_overrides[storage_or_none_dependency] = lambda: store
     _stage_bundle(store, row)
     await client.post(
@@ -259,15 +228,8 @@ async def test_admin_audit_events_carry_spa_fields(client, app, db_session) -> N
     resp = await client.get(f"/v1/admin/apps/{row.id}/audit", headers=admin_headers)
     assert resp.status_code == 200
     events = resp.json()["events"]
-    # GREEN precondition — the read path works and the count-bearing event is present.
-    assert len(events) >= 2
+    assert len(events) >= 2  # the read path works and the count-bearing event is present
     cfg = next(e for e in events if e["action"] == "config:loginRequired")
 
-    # FIXED: AuditEventOut now resolves the actor's `username` (join on actor_id) and surfaces
-    # `count` top-level, alongside the modern `id`/`createdAt`/`actorId`/`resourceId`. The SPA
-    # AuditDrawer was modernized in the same change to read those names (id key, createdAt time,
-    # resourceId) rather than the stale Mongo `_id`/`at`/`recordId`, so every row now renders a
-    # real key, timestamp, and actor. (Resolution mirrors the owner/username admin fixes: add the
-    # missing human field to the API, and point the SPA at the API's canonical camelCase names.)
     missing = [key for key in ("id", "createdAt", "username", "count") if key not in cfg]
     assert not missing, f"audit event missing SPA-required keys: {missing}"

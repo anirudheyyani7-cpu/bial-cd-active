@@ -118,8 +118,6 @@ def test_an_unknown_part_shape_is_still_counted() -> None:
     class SomeFuturePart:
         content: str
 
-    # An unknown shape sitting where a part would; the walk descends by structure, so it is
-    # measured without this module ever having heard of it.
     parts = cast(Any, [TextPart(content="short"), SomeFuturePart(content="z" * 4_000)])
     response = ModelResponse(parts=parts)
 
@@ -127,16 +125,11 @@ def test_an_unknown_part_shape_is_still_counted() -> None:
 
 
 def test_the_window_is_not_the_bill_and_cache_is_the_reason() -> None:
-    """★ KTD-2, and the mutation that must go red.
-
-    A long conversation is served to the model with most of its prompt read from cache. The
-    BILL for that turn is tiny — `weighted_spend` discounts a cache read to a tenth, correctly,
-    because that is what it costs. The WINDOW is full regardless: every one of those tokens is
-    in the prompt.
-
-    So the two numbers must disagree, and by a lot. Route the window check through the spend
-    helper and a conversation at 190,000 reports as ~30,000 — the guardrail never fires, the
-    administrator's number means nothing, and this test is the only thing that notices.
+    """★ KTD-2. The BILL for a long, mostly-cached turn is tiny — `weighted_spend` correctly
+    discounts a cache read to a tenth — but the WINDOW is full regardless: every one of those
+    tokens is still in the prompt. Mutation check: route the window through `weighted_spend`
+    instead and a 190,000-token conversation reports as ~30,000 — the guardrail never fires,
+    and this is the only test that would notice.
     """
     # ~150k tokens of conversation: the shape that would be almost entirely cache-read.
     history: list[ModelMessage] = [_user("a" * 300_000), _assistant("b" * 300_000)]

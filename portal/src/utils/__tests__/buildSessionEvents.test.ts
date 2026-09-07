@@ -53,10 +53,9 @@ describe('buildSessionEvents — dispatch', () => {
   })
 
   it('drops a retired `log` frame (the server can no longer emit one) without throwing, and a known frame still lands right after it (liveness)', () => {
-    // FLIPPED: `log` used to be a recognized envelope member; it was removed end to end because no
-    // production orchestrator path had ever emitted one. The wire-level consumer must now treat it
-    // exactly like any other unrecognized `type` — dropped defensively, never a throw — and a
-    // frame arriving right after it must still dispatch normally (this is not a dead transport).
+    // FLIPPED: `log` was a recognized envelope member, removed because no production path ever
+    // emitted one. It must now be dropped like any unrecognized `type`, never thrown — and a frame
+    // right after it must still dispatch (this is not a dead transport).
     const { fake, envelopes, errors } = setup()
     fake.open()
     expect(() =>

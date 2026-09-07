@@ -70,10 +70,9 @@ describe("what the rail carries at rest", () => {
   })
 
   it('★ carries the PUBLISH status, and no longer the workspace sentence', () => {
-    // TWO DIFFERENT STATUSES. This section is about publishing — what is live,
-    // what was approved, what the citizen last saved. Whether the CONTAINER is up is a different
-    // question, and the boards give it to the pane, where a citizen is already looking for their
-    // app. The rail carried it too, which meant two renderers for one sentence.
+    // TWO DIFFERENT STATUSES: publishing (live / approved / last saved) vs. whether the
+    // CONTAINER is up — the boards give that to the pane, where a citizen is already looking
+    // for their app. The rail carried it too, which meant two renderers for one sentence.
     const status = screen.queryByTestId('rail-app-status')
     expect(status).toBeNull() // nothing rendered yet — guards against a stale query below
     renderRail()
@@ -134,10 +133,9 @@ describe('the save half, which exists only while the app is running', () => {
   })
 
   it('★ says only whether the container has moved on — the VERSION is the panel\'s row now', () => {
-    // The commit line here duplicated a fact the panel states properly: which version the
-    // citizen last saved, with its date, from object-store metadata and with no container in
-    // the request path. This block answers the question only a RUNNING container can — whether
-    // it holds work the saved bundle does not — and says nothing about versions.
+    // The commit line duplicated a fact the panel states properly — which version was last
+    // saved, with its date, from object-store metadata, no container involved. This block
+    // answers what only a RUNNING container can: whether it holds work the saved bundle does not.
     renderRail({ save: save({ savedHead: 'ccccccc1111111' }) })
 
     const block = screen.getByTestId('rail-save-state')

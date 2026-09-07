@@ -29,14 +29,11 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 def redis_broker(monkeypatch: pytest.MonkeyPatch) -> RedisStreamBroker:
     """A real `RedisStreamBroker`, built the way production builds it.
 
-    The suite's own broker is an `InMemoryBroker`: `.env.test` carries no `REDIS__*` block, and
-    `build_broker()` falling back rather than raising is exactly the total-construction property
-    `test_the_broker_falls_back_to_in_memory_without_redis` pins. So the arguments under test
-    have to be asserted against a deliberately-built instance.
-
-    Constructing the broker opens no socket — redis-py connects lazily — so no live Redis is
-    needed to read back what was passed.
-    """
+    The suite's own broker is an `InMemoryBroker` (`.env.test` carries no `REDIS__*` block), and
+    `build_broker()` falling back rather than raising is exactly what
+    `test_the_broker_falls_back_to_in_memory_without_redis` pins — so the arguments under test
+    need a deliberately-built instance. Constructing it opens no socket — redis-py connects
+    lazily — so no live Redis is needed to read back what was passed."""
     from src.broker import build_broker
     from src.config import settings
 
@@ -49,18 +46,13 @@ def redis_broker(monkeypatch: pytest.MonkeyPatch) -> RedisStreamBroker:
 def test_the_blocking_read_cannot_outlast_the_socket_timeout(
     redis_broker: RedisStreamBroker,
 ) -> None:
-    """THE invariant that makes `RedisStreamBroker` safe on redis-py 8.
-
-    redis-py 8 introduced a 5-second default `socket_timeout`. A blocking read that out-waits it
-    raises `TimeoutError` and reconnects forever — upstream taskiq-redis #127, which is why an
-    earlier plan draft wanted to pin `redis>=7,<8`. That pin was unimplementable (the `api` group
-    already requires redis>=8) and unnecessary: the stream broker is safe precisely because its
-    block sits under the timeout.
-
+    """THE invariant that makes `RedisStreamBroker` safe on redis-py 8: it introduced a 5s
+    default `socket_timeout`, and a blocking read that out-waits it raises `TimeoutError` and
+    reconnects forever (upstream taskiq-redis #127). A version pin was rejected as
+    unimplementable and unnecessary — the stream's block sits safely under the timeout instead.
     Both values are passed explicitly so neither a library default change nor a config edit can
-    silently cross them. `socket_timeout` must be read off the POOL's connection kwargs — it is a
-    `Connection` default in redis-py, so a broker that failed to pass it would show no key here
-    at all rather than showing 5.
+    silently cross them; `socket_timeout` must be read off the POOL's connection kwargs, or a
+    broker that failed to pass it would show no key here at all, not a default of 5.
     """
     connection_kwargs = redis_broker.connection_pool.connection_kwargs
 
@@ -90,7 +82,6 @@ def test_the_stream_and_group_names_carry_the_environment(
     assert redis_broker.consumer_group_name.startswith("bial:"), redis_broker.consumer_group_name
     assert redis_broker.queue_name != "taskiq"
     assert redis_broker.consumer_group_name != "taskiq"
-    # The two must not collide with each other either.
     assert redis_broker.queue_name != redis_broker.consumer_group_name
 
 

@@ -66,7 +66,7 @@ async def test_nonzero_exit_is_a_normal_result_not_an_exception() -> None:
     fake.queue_commands(ExecResult(stdout="", stderr="error TS2322: boom", exit=2))
     run_command = fake.exec  # alias avoids a literal method-call token
     result = await run_command(fake.handle(), ["npx", "tsc", "--noEmit"])
-    assert result.exit == 2  # a non-zero exit never raises
+    assert result.exit == 2
     assert "TS2322" in result.stderr
     assert fake.command_calls == [["npx", "tsc", "--noEmit"]]
 

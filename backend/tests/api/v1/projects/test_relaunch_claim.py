@@ -1,17 +1,15 @@
 """N7 — a project only claims a saved build when one actually exists.
 
-`projectHasApp` was derived from the mere EXISTENCE of an app row, and that row is minted at
-`status='draft'` by PROVISION, before a single line of the app is built. So every project whose
-first build failed advertised a saved build, offered Relaunch, and then 404'd when the user
-clicked it — with the affordance silently vanishing rather than saying anything.
+`projectHasApp` was derived from the mere EXISTENCE of an app row, minted at `status='draft'`
+by PROVISION before a single line is built — so every project whose first build failed
+advertised a saved build, offered Relaunch, and 404'd when clicked, the affordance silently
+vanishing.
 
-The obvious fix is wrong, which is why the normal-case test below exists: `AppStatus.DRAFT` is
-also the state of a perfectly good app that nobody has submitted for approval yet, so
-`status != 'draft'` would have hidden Relaunch for the common case while still lying about the
-failed one. The only honest source is the object-store HEAD that `relaunch_preview` itself
-requires, and it has THREE answers — present, confirmed-absent, and unknown-because-the-store-
-errored. An unreachable store must not manufacture a promise in either direction.
-"""
+The obvious fix is wrong: `AppStatus.DRAFT` is ALSO the state of a good app nobody has
+submitted yet, so `status != 'draft'` would hide Relaunch for the common case while still
+lying about the failed one. The only honest source is the object-store HEAD, which has THREE
+answers — present, confirmed-absent, unknown-because-the-store-errored — and an unreachable
+store must not manufacture a promise in either direction."""
 
 from __future__ import annotations
 
@@ -61,8 +59,6 @@ async def test_a_project_with_no_app_at_all_makes_no_claim(client, db_session, b
 async def test_the_bug_a_failed_first_build_does_not_claim_a_saved_build(
     client, db_session, bind_store
 ) -> None:
-    """The defect, exactly: provisioning minted the app row at `draft`, the build then failed,
-    so there is no bundle — and the project used to advertise a saved build anyway."""
     bind_store(FakeStorage())
     headers, user = await _auth(db_session)
     created = (await client.post("/v1/projects", headers=headers, json={"name": "Doomed"})).json()
@@ -79,9 +75,6 @@ async def test_the_bug_a_failed_first_build_does_not_claim_a_saved_build(
 async def test_the_normal_case_a_built_but_unsubmitted_app_still_claims_one(
     client, db_session, bind_store
 ) -> None:
-    """The case a status-based predicate would have broken. A successfully built app STAYS
-    `draft` until someone submits it for approval, so `status != 'draft'` would have hidden
-    Relaunch for the ordinary, healthy project."""
     store = bind_store(FakeStorage())
     headers, user = await _auth(db_session)
     created = (await client.post("/v1/projects", headers=headers, json={"name": "Healthy"})).json()
@@ -98,9 +91,8 @@ async def test_the_normal_case_a_built_but_unsubmitted_app_still_claims_one(
 async def test_an_unreachable_store_claims_nothing_in_either_direction(
     client, db_session, bind_store, monkeypatch
 ) -> None:
-    """The third state. A store outage must not be read as "no saved build" (which hides a
-    Relaunch that would have worked) NOR as "there is one" (which offers a button that 404s).
-    `null` says we cannot tell, and the client renders the plain empty state."""
+    """`null` says we cannot tell — the client renders the plain empty state rather than
+    guessing."""
 
     async def _no_backoff(_seconds: float) -> None:
         """Skip the real retry backoff — the retry COUNT is what this asserts, not the wait."""

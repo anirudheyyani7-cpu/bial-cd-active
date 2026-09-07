@@ -1,5 +1,4 @@
-"""The review runner, end to end against the real store, real Postgres, and
-scripted models.
+"""The review runner, end to end against the real store, real Postgres, and scripted models.
 
 What is under test is the ORDER and the OUTCOMES: the scan runs first and its hits reach
 the prompt (never a value), a truncation short-circuits at the model seam instead of
@@ -7,11 +6,9 @@ burning the agent's own retries, every failure lands in its taxonomy bucket, the
 floor stands exactly when it should, the throwaway extraction is gone on every exit path,
 the citizen's build budget is untouched, and every terminal run leaves an audit row.
 
-The extract seam is faked (it materializes a real tree into whatever `cache_root` the
-runner hands it, and records that root) so the tests can assert on the run's OWN
-directory lifecycle; everything downstream of it — the scan, the agent loop, the store
-writes, the usage fold, the audit append — is real.
-"""
+The extract seam is faked (it materializes a real tree and records the `cache_root` it is
+handed, for the directory-lifecycle assertions); everything downstream — scan, agent loop,
+store writes, usage fold, audit append — is real."""
 
 from __future__ import annotations
 
@@ -249,7 +246,6 @@ async def _audit_rows(db, *, app_id) -> list[AuditLog]:
 
 
 def _detail(row: AuditLog) -> dict[str, Any]:
-    """The audit row's detail, narrowed — every row must carry one."""
     detail = row.detail
     assert detail is not None
     return detail
@@ -619,7 +615,6 @@ async def test_one_truncation_is_retried_in_conversation_and_the_retry_does_not_
 
     _record, stored = await _run_to_settled(wire, db_session, app_id=app.id, user_id=user.id)
 
-    # A complete second answer is stored as a normal complete review.
     assert stored.status is ClassificationReviewStatus.COMPLETE
     assert calls["n"] == 3  # read, truncated output, retried output — nothing more
 

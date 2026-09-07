@@ -163,9 +163,7 @@ describe('AppPaneHost — the frame outlives a move between the two addresses', 
     const wrapper = paneWrapper()
     expect(wrapper).toBeTruthy()
     expect(frame()).toBeTruthy() // the liveness half: a host that threw would read as a pass
-    // AWAITED, because the departure is drawn rather than instant: the column holds
-    // its size for one animation while the card slides out, then collapses. The reader is told it
-    // is gone immediately, which is the assertion that needs no wait.
+    // Awaited because the departure animates — `aria-hidden` lands immediately, `invisible`/`w-0` follow.
     expect(wrapper?.getAttribute('aria-hidden')).toBe('true')
     await waitFor(() => expect(paneWrapper()?.className).toMatch(/invisible/))
     expect(paneWrapper()?.className).toMatch(/w-0/)
@@ -186,11 +184,7 @@ describe('AppPaneHost — the frame outlives a move between the two addresses', 
   })
 
   it('survives the RETURN leg, when the remounted surface has not resolved an address yet', () => {
-    // The half every scenario above was structurally unable to see: they all hand `ChatSurface` a
-    // constant url, so their remount republishes the same address and the return leg is asserted
-    // without ever being exercised. A real surface mounts COLD, and its first commit resolves
-    // `{url: null, status: null}` — a publisher with nothing to say abstains until it has an
-    // answer of its own.
+    // The one leg the constant-url scenarios above cannot exercise — see `ColdChatSurface`.
     render(<Workspace chatSurface={<ColdChatSurface />} />)
     const original = frame()
     expect(original).toBeTruthy()
@@ -237,25 +231,17 @@ describe('AppPaneHost — the frame outlives a move between the two addresses', 
 })
 
 describe('AppPaneHost — which column grows, and which one is sized', () => {
-  // THE REGRESSION THIS EXISTS TO CATCH, and jsdom cannot measure a pixel of it. The two columns
-  // are the conversation and the app. Before the extraction the builder surface owned both, so its
-  // 288px chat panel sat beside a `flex-1` preview. Split across the shell's grid with BOTH columns
-  // at `flex-1`, the workspace halves: the panel keeps its 288px inside a column twice its width
-  // and the app loses half the screen it had. Nothing in the unit suite would have said a word.
-  //
-  // The honest assertion is: at the two-column
-  // breakpoint the rail is the SIZED column (`lg:flex-none` plus a settled `lg:w-[…]`) and the
-  // pane is the growing one. The `flex-1` that remains is the STACKED case, where the two share a
-  // column and both must grow — asserting its absence would now be asserting that the layout below
-  // the threshold is broken.
+  // jsdom cannot measure a pixel, so a column that silently lost its share of the screen would
+  // pass every assertion here unless something checks WHICH column is sized. At the two-column
+  // breakpoint the rail is the sized column (`lg:flex-none` + a settled `lg:w-[…]`) and the pane
+  // grows; `flex-1` on the rail is only correct in the stacked case, so asserting its absence
+  // here is the actual regression check.
   const outlet = () => screen.getByTestId('workspace-outlet')
 
   /** The rail is the sized column: a settled width, and not the one that grows, at `lg`. */
   const expectRailIsSized = (className: string) => {
-    // ONE CLASS, ONE CUSTOM PROPERTY. The width was a literal per rail mode; it is
-    // the citizen's own now, carried on `--rail-w` and consumed only above the stacking threshold.
-    // The class no longer says WHICH width — that is the element's style — so the assertion is
-    // that the rail is SIZED rather than growing.
+    // The class no longer names WHICH width — that's the element's own `--rail-w` style — so
+    // this only asserts the rail is SIZED (not growing), never the number.
     expect(className).toMatch(/wide:flex-none/)
     expect(className).toMatch(/wide:w-\[var\(--rail-w\)\]/)
   }
@@ -294,11 +280,9 @@ describe('AppPaneHost — which column grows, and which one is sized', () => {
   })
 
   it('gives the conversation the WIDER of the two OPENING widths', () => {
-    // Two opening widths, and which is which is not arbitrary: a conversation holds a transcript
-    // and a composer, the project's details do not. Taken from the canvas's 400px and 520px.
-    // They are the OPENING widths now rather than settled ones — once the citizen has dragged,
-    // their own width replaces both, which is the board's "drag it once and every project opens
-    // there". The number lives on the element's style, because the class is shared.
+    // 520px is the wider OPENING width (from the design canvas): a conversation needs a
+    // transcript and composer, the project's details do not. It only holds pre-drag — after
+    // that, the citizen's own width replaces it everywhere ("drag it once, every project opens there").
     render(<Workspace chatSurface={<ChatSurface />} />)
     expect(outlet().style.getPropertyValue('--rail-w')).toBe('520px')
   })

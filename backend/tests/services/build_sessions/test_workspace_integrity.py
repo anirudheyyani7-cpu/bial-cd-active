@@ -1,23 +1,13 @@
 """Does this container still hold this app's work?
 
-WHY THIS FILE IS SEPARATE FROM `test_integrity.py`. That one covers the two probes the health
-verdict asks (baseline identity, the agent watermark), which answer "is this app finished". This
-one covers the verdict that answers "is this app still HERE" — the only question in the system
-whose answer can authorise replacing a live workspace. They share a module because they are both
-facts the container holds about its own git repository; they share nothing else.
+WHY THIS FILE IS SEPARATE FROM `test_integrity.py`: that module asks whether this app is
+FINISHED (baseline identity, the agent watermark); this one asks whether it is still HERE
+— the only question in the system whose answer can authorise replacing a live workspace.
+They share a module because both are facts the container holds about its own git
+repository; they share nothing else.
 
-THE TWO TESTS THAT MATTER MOST, and they pull in opposite directions:
-
-* `test_a_factory_reset_container_with_no_durable_copy_at_all_is_still_a_reversion` guards
-  against a real incident: every check the platform had came back green on that container because
-  each one asked "is an app running here". This one asks whether the app's own repository is
-  still there.
-* `test_a_lineage_that_moved_over_a_tree_that_still_holds_content_is_never_a_reversion` is the
-  guard against the cure being worse than the disease. `git reset --hard`, `--amend` and `rebase`
-  all break the lineage over a perfectly good workspace, and the live Write prompt still teaches
-  `git checkout` for undo. Restoring over that tree would be a NEW data-loss path, invented by
-  the guard meant to close one.
-"""
+The two most consequential cases are marked ★ below; their own docstrings carry the
+reasoning."""
 
 from __future__ import annotations
 
@@ -118,9 +108,8 @@ def test_the_four_field_form_parses_every_field() -> None:
 
 
 def test_a_truncated_three_field_body_still_parses_and_reads_as_unasked() -> None:
-    """★ The shape a container answers with when nobody supplied a reference sha — and the shape
-    every caller of this script produced before callers started supplying one. It must parse,
-    and the ancestry must be `NOT_ASKED` rather than any judgement about the lineage."""
+    """★ The shape a container answers with when nobody supplied a reference sha. It must
+    parse, and the ancestry must be `NOT_ASKED` rather than any judgement about the lineage."""
     state = parse_state("abc123@@@@3")
 
     assert state.head == "abc123"
@@ -172,9 +161,9 @@ def test_the_script_asks_cat_file_before_merge_base() -> None:
 
 
 async def test_a_brand_new_project_is_intact_and_authorises_nothing(store: FakeStorage) -> None:
-    """One commit (the seeded baseline), a clean tree, nothing saved, no recovery copy — the
-    four conditions `_nothing_to_lose` already uses. A brand-new project is SUPPOSED to hold
-    nothing, and calling that a reversion would quarantine every first message anyone sends."""
+    """One commit, a clean tree, nothing saved, no recovery copy — the four conditions
+    `_nothing_to_lose` already uses. A brand-new project is SUPPOSED to hold nothing, and
+    calling that a reversion would quarantine every first message anyone sends."""
     client = _client(_stdout(head="seed", commits=1, ancestry=""))
 
     verdict = await workspace_integrity(client, _HANDLE, APP, restore_source_key=None)
@@ -331,10 +320,9 @@ async def test_a_truncated_porcelain_is_evidence_of_work_not_of_emptiness(
 async def test_a_reference_the_repository_does_not_contain_is_unverifiable(
     store: FakeStorage,
 ) -> None:
-    """`--is-ancestor` never ran, so the lineage question was not answered by git — it was
-    answered by an object being missing, which has innocent explanations. The conservative arm
-    still protects the user: no restore, and the turn-end autosave refuses the recovery write,
-    so the good bundle survives for an operator to promote."""
+    """`--is-ancestor` never ran, so the lineage question was answered by a missing object,
+    not by git — which has innocent explanations. The conservative arm still protects the
+    user: no restore, and the recovery write is refused, so the good bundle survives."""
     await _seed_recovery(store)
     client = _client(_stdout(head="abc", commits=1, ancestry="1 128"))
 
@@ -348,9 +336,8 @@ async def test_a_durable_copy_with_no_head_sha_is_unverifiable_never_reverted(
     store: FakeStorage,
 ) -> None:
     """ "No claim" is what `head_sha_from_metadata` documents for an object written before the
-    stamp existed — a documented live state that no retry heals. Accusing a workspace of
-    reversion on the strength of a missing metadata key is the false positive that destroys
-    work."""
+    stamp existed — a live state that no retry heals. Accusing a workspace of reversion on
+    the strength of a missing metadata key is the false positive that destroys work."""
     await _seed_recovery(store, sha=None)
     client = _client(_stdout(head="abc", commits=1, ancestry=""))
 

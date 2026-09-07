@@ -190,13 +190,12 @@ async def test_the_read_migrates_a_legacy_hash_without_losing_a_field(
         **_record(_LEGACY_APP),
         REGISTRY_FIELD_ADOPTED_FROM_LEGACY: "1",
     }
-    # THE LEGACY KEY SURVIVES THE READ, DELIBERATELY. An earlier draft retired it here, and that
-    # made the remedy worse than the exposure: a process pointed at the WRONG Redis would not
-    # merely read another environment's legacy record, it would relocate it under its own prefix
-    # and delete the original — leaving the owning environment with a running container and no
-    # record. That is exactly the orphan class environment scoping exists to prevent —
-    # manufactured by the very mitigation meant to close it. `delete_registry` is where the
-    # legacy key goes, when the session ends.
+    # THE LEGACY KEY SURVIVES THE READ, DELIBERATELY: retiring it here would let a process
+    # pointed at the WRONG Redis relocate another environment's legacy record under its own
+    # prefix and delete the original, leaving the owning environment with a running container
+    # and no record — the exact orphan class environment scoping exists to prevent, manufactured
+    # by the mitigation meant to close it. `delete_registry` is where the legacy key actually
+    # goes, once the session ends.
     assert await fake_redis.exists(legacy_registry_key(user)) == 1
 
 
@@ -252,21 +251,14 @@ async def test_delete_registry_clears_both_prefixes_for_a_record_we_adopted(
 async def test_ending_our_session_does_not_delete_another_environments_legacy_record(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """THE ONE NAMESPACE WITH NO ENVIRONMENT SEGMENT, and the last place that wrote to it blindly.
+    """THE ONE NAMESPACE WITH NO ENVIRONMENT SEGMENT. `bial:sandbox:registry:{user}` names
+    different containers per deployment on one shared Redis, so deleting it unconditionally
+    let a session-end also destroy another environment's record — the orphan class
+    environment scoping exists to prevent, manufactured by its own cleanup. The record here
+    was born post-cutover, never adopted, so the legacy key beside it is somebody else's.
 
-    `bial:sandbox:registry:{user}` names different containers in different deployments sharing
-    a Redis instance — which is exactly why the prefix is scoped by environment.
-    `delete_registry` deleted it unconditionally, so a process ending its OWN session also
-    destroyed whatever another environment had under that key, leaving them a running container
-    nothing tracks: exactly the orphan class environment scoping exists to prevent,
-    manufactured by its own cleanup. The adoption path already refused to delete on read for
-    this reason; this closes the matching hole on the delete side.
-
-    Here the current record was born post-cutover — never adopted — so the legacy key beside it
-    belongs to somebody else and must survive.
-
-    Mutation-check: delete the legacy key unconditionally and this goes red while its sibling
-    above stays green."""
+    Mutation-check: delete the legacy key unconditionally and this goes red while its
+    sibling above stays green."""
     user = uuid.uuid4()
     await _write(fake_redis, legacy_registry_key(user), _record(a_sandbox_name("theirs")))
     await _write(fake_redis, registry_key(user), _record(a_sandbox_name("ours")))
@@ -465,19 +457,14 @@ def test_no_module_builds_a_sandbox_key_by_hand() -> None:
 async def test_a_read_does_not_strand_another_environments_container(
     fake_redis: aioredis.Redis,
 ) -> None:
-    """The environment-scoping fix's own mitigation must not manufacture the failure it
-    exists to prevent.
+    """The environment-scoping mitigation must not manufacture the failure it exists to
+    prevent: during the dual-read window BOTH environments still read the legacy prefix, so
+    a process pointed at the wrong Redis can reach another environment's record — accepted,
+    unchanged exposure. What is NOT acceptable is the read RELOCATING it, which would leave
+    the owning environment (which scans only its own prefix and the legacy one) with a
+    running container and no record — an anonymous, forever-billing ghost.
 
-    During the dual-read window BOTH environments still read the legacy prefix, so a process
-    pointed at the wrong Redis can reach another environment's pre-cutover record. That is
-    unchanged exposure and is accepted. What is NOT acceptable is the read RELOCATING it:
-    an earlier draft copied the record under the reading process's prefix and deleted the legacy
-    key, so the owning environment — which scans its own prefix and the legacy one, never a
-    foreign environment's — would be left with a running container and no record at all. An
-    anonymous, forever-billing ghost, minted by the remedy.
-
-    Asserted from the owning environment's side, which is the side that gets hurt.
-    """
+    Asserted from the owning environment's side, the side that gets hurt."""
     user = uuid.uuid4()
     await _seed_legacy(fake_redis, user, _LEGACY_APP)
 

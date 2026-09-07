@@ -50,8 +50,8 @@ test.describe('project-first journey', () => {
     const chatUrl = page.url()
 
     await page.goto('/projects')
-    // F-10 fixed: the card is a plain container now, so the delete button's accessible name is
-    // unambiguous again — no strict-mode double match against an outer role="button".
+    // The card is a plain container, so the delete button's accessible name is unambiguous —
+    // no strict-mode double match against an outer role="button".
     await page.getByRole('button', { name: `Delete ${name}` }).click()
 
     // The dialog states what it destroys — including the project's own database, which is
@@ -91,7 +91,7 @@ test.describe('project-first journey', () => {
  * structurally invisible to Vitest, so they need a real browser:
  *
  *  - jsdom never blurs a disabled element, so the busy-state focus collapse that broke
- *    Tab-containment and Escape (405a1d6) cannot reproduce there.
+ *    Tab-containment and Escape cannot reproduce there.
  *  - jsdom has no layout/paint engine (and ProjectPage.test.tsx stubs Navbar to null), so
  *    the overlay-renders-beneath-the-sticky-navbar bug cannot reproduce there either.
  *

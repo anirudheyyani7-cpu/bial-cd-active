@@ -317,7 +317,6 @@ async def test_static_instructions_ahead_of_volatile_content(tmp_path: Path) -> 
     assert "fixture-family" in captured["request_text"]
     assert "app/page.tsx" not in REVIEW_INSTRUCTIONS
     assert "fixture-family" not in REVIEW_INSTRUCTIONS
-    # And the run really carried the settings block.
     settings = captured["settings"]
     assert settings["max_tokens"] == MAX_TOKENS
     assert settings["anthropic_cache_instructions"] == "1h"

@@ -37,10 +37,8 @@ async def test_seq_is_strictly_increasing_gap_free() -> None:
 
 
 def test_emitter_has_no_terminal_helper_so_brain_cannot_emit_ended() -> None:
-    """A structural guarantee. SESSION-API emits the ONE `ended`, after its snapshot, so
-    the frame can carry a true `snapshot_committed`. BRAIN is kept out of that business by
-    construction — not by convention: there is simply no method to call. Re-adding one would
-    let a BRAIN-side terminal race SESSION-API's and reintroduce `snapshot_committed=false`."""
+    """A structural guarantee, not a convention: BRAIN has no method to call, so it cannot
+    race SESSION-API's ONE `ended` frame and reintroduce `snapshot_committed=false`."""
     _, emitter = _collecting_sink()
     assert not hasattr(emitter, "ended")
 
@@ -68,7 +66,6 @@ async def test_every_envelope_validates_against_the_union() -> None:
 
 
 async def test_ended_rejects_a_non_terminal_status() -> None:
-    # A terminal frame carrying a non-terminal status must fail validation, not slip through.
     with pytest.raises(ValidationError):
         EndedEvent.model_validate(
             {"seq": 1, "status": "building", "reason": "nope", "snapshot_committed": False}
@@ -88,10 +85,9 @@ async def test_raising_sink_is_swallowed_and_counter_still_advances() -> None:
         raise RuntimeError("sink is down")
 
     emitter = ProgressEmitter(boom)
-    # Does not propagate…
     await emitter.step(name="s", label="l", state="started")
     await emitter.step(name="s2", label="l2", state="ok")
-    # …and the seq counter still advanced (a lost frame never rewinds the sequence).
+    # The seq counter still advanced — a lost frame never rewinds the sequence.
     assert emitter.last_seq == 2
 
 

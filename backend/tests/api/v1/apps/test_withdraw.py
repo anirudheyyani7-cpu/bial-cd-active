@@ -124,7 +124,6 @@ async def test_withdraw_is_audited_app_scoped_with_the_departing_submission(
     )
     assert len(rows) == 1
     assert rows[0].actor_id == user.id
-    # The trail names the exact submission that left the queue.
     assert rows[0].detail == {
         "submissionId": str(receipt.submission_id),
         "commitSha": receipt.commit_sha,
@@ -134,8 +133,6 @@ async def test_withdraw_is_audited_app_scoped_with_the_departing_submission(
 async def test_withdraw_removes_the_item_from_the_admin_queue(
     client, db_session, fake_storage
 ) -> None:
-    # "Removes rather than replaces": the admin pending queue simply no longer
-    # lists it — an administrator mid-review sees it disappear, never mutate.
     user, headers = await _auth_user(db_session)
     app_row, _receipt = await _submitted_app(db_session, user, fake_storage)
     _, admin_headers = await _auth_user(db_session, email="admin@bial.com")
@@ -221,8 +218,6 @@ async def test_withdraw_keeps_the_approved_pin_of_an_earlier_approval(client, db
 
 
 async def test_withdraw_of_another_users_app_is_a_non_leaking_404(client, db_session) -> None:
-    # 404, NOT 403: a cross-user id is indistinguishable from a missing
-    # one, and nothing about the app — including that it exists — leaks.
     owner, _ = await _auth_user(db_session, email="wdowner@rvaiglobal.com")
     app_row = await AppRegistryFactory.create(
         db_session,

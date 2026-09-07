@@ -1,16 +1,14 @@
 /**
  * The transient-query drop, and the hand-off it must NOT carry forward (N1).
  *
- * `window.history.replaceState` — which both pages call before firing the hand-off — rewrites
- * the browser's history entry but emits no popstate, so react-router's IN-MEMORY `location.state`
- * survives it untouched. This hook then ran `navigate(path, { replace: true, state:
- * current.state })` and wrote that surviving hand-off straight back into history. One reload
- * later the prompt was still there, the fire-once `initFiredRef` had died with the mount, and the
- * opening turn ran a second time: billed twice, against a thread the user was only re-reading.
+ * `window.history.replaceState` rewrites history but emits no popstate, so react-router's
+ * in-memory `location.state` survives it. This hook then wrote that surviving hand-off straight
+ * back into history via `navigate(path, { replace: true, state: current.state })` — so one
+ * reload later the prompt was still there, the fire-once ref had died with the mount, and the
+ * opening turn ran a second time, billed twice against a thread the user was only re-reading.
  *
- * The bug's signature is why these tests exist at the hook rather than only at the page: it fires
- * on exactly the FIRST reload and never again (the second reload has no query left to drop, so
- * the hook early-returns), which is precisely the shape a naive test passes for the wrong reason.
+ * It fires on exactly the FIRST reload and never again (the second has no query left to drop),
+ * which is precisely the shape a naive test passes for the wrong reason.
  */
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'

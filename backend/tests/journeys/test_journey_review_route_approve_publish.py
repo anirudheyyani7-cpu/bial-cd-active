@@ -1,23 +1,15 @@
-"""The journey that makes the publish flow TERMINATE: route → approve → publish.
+"""The journey that makes the publish flow TERMINATE: route -> approve -> publish.
 
-This is the one property an isolated unit test cannot prove. Ladder rule 6 routes any
-weighted Yes, and the review keeps returning the same Yes for the same code — so without
-rule 3 (the approval override, sitting ABOVE rule 6) a flagged app would route on every
-publish forever, and the admin queue would be a roundabout with no exit. This
-journey drives the whole loop once, end to end, through the real composition root:
+No isolated unit test can prove this: ladder rule 6 routes any weighted Yes forever
+unless rule 3 (the approval override, above rule 6) breaks the loop once a version is
+approved. This drives it end to end through the real composition root:
 
-1. a citizen's publish is ROUTED — the review found personal information AND something
-   the citizen did not declare (financial data), so the queue item carries both answer
-   sets and the disagreement;
-2. an administrator approves exactly that version;
-3. the citizen publishes again, unchanged, and the SAME answers that routed in step 1
-   now PUBLISH — rule 3 satisfied by the pinned commit and the self-publish lineage
-   reaching the deploy pipeline, with no second queue entry.
+1. a citizen's publish ROUTES (review found financial data the citizen did not declare);
+2. an administrator approves that exact version;
+3. the SAME answers now PUBLISH, unchanged — rule 3 satisfied, no second queue entry.
 
-The review service is the REAL one (no dependency override): the gate reads the stored
-row through the same singleton production resolves, so a mock returning what it was fed
-cannot green this file. Only the unconfigurable edges are faked: object storage (the
-dict-backed fake) and the deploy pipeline (recording, never reaching Azure).
+Only object storage and the deploy pipeline are faked; the classification review is the
+REAL service, so a mock cannot green this file.
 """
 
 from __future__ import annotations

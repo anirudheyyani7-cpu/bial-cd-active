@@ -42,7 +42,7 @@ async def test_logout_bumps_version_revokes_family_and_clears_cookies(client, db
     assert resp.json() == {"status": "logged_out"}
 
     await db_session.refresh(user)
-    assert user.token_version == 1  # bumped from 0
+    assert user.token_version == 1
     assert await _active_families(db_session, user.id) == 0
 
     cookies = _set_cookies(resp)
@@ -66,7 +66,7 @@ async def test_logout_with_expired_session_cookie_still_revokes_family(client, d
 
     await db_session.refresh(user)
     assert user.token_version == 1  # bumped from 0 despite the expired cookie
-    assert await _active_families(db_session, user.id) == 0  # family revoked
+    assert await _active_families(db_session, user.id) == 0
 
     cookies = _set_cookies(resp)
     assert {"session", "refresh", "csrf"} <= set(cookies)

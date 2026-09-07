@@ -85,7 +85,6 @@ async def test_status_surfaces_the_deployed_url_and_marker(client, db_session) -
     user, headers = await _auth_user(db_session, email="liveowner@rvaiglobal.com")
     app_id = await _provision_app(db_session, user)
 
-    # Before any deploy the marker is simply absent — no Live link, no timestamp.
     fresh_read = await client.get(f"/v1/apps/{app_id}/status", headers=headers)
     assert fresh_read.json()["deployedAt"] is None
     assert fresh_read.json()["deployedUrl"] is None
@@ -125,7 +124,6 @@ async def test_status_read_is_owner_scoped(client, db_session) -> None:
     owner, owner_headers = await _auth_user(db_session, email="owner@rvaiglobal.com")
     app_id = await _provision_app(db_session, owner)
 
-    # The owner reads status fine.
     ok = await client.get(f"/v1/apps/{app_id}/status", headers=owner_headers)
     assert ok.status_code == 200
     assert ok.json()["status"] == "draft"

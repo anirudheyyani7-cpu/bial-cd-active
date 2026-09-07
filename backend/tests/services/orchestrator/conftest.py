@@ -4,12 +4,11 @@ The autouse `_no_live_model` guard forbids any live model request for the whole 
 (mirrors `tests/services/agent/conftest.py`): the `FunctionModel` never hits the network, but an
 accidental real call fails loudly instead of billing Foundry.
 
-`CollectingSink` is the in-process `on_progress` double (every emitted envelope lands in
-`.events`). `billing_factory` binds BRAIN's per-model-step session to the rolled-back test
+`billing_factory` binds BRAIN's per-model-step session to the rolled-back test
 session — the substitution the retired `claude/router.py` used to make via
 `dependency_overrides`, adapted for a construction-time dependency (the live equivalent is
 `conversations/_shared.py`). The run-context-provider fixture lives with the harness that
-consumes it (U6).
+consumes it.
 """
 
 from __future__ import annotations

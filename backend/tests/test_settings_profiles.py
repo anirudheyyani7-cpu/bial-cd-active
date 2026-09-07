@@ -1,27 +1,18 @@
 """Role-scoped settings profiles — the boot matrix.
 
-WHAT THIS PROTECTS. `src/config.py` used to be one `Settings` carrying every field every
-subsystem might need, behind seven production gates. A worker importing it had to satisfy the
-union of everything, so the natural operator response was to narrow `ENVIRONMENT=development` to
-dodge the gates — and that is the single most dangerous misconfiguration available to this
-platform. With object storage unconfigured, `manager.py`'s bundle check answers *"CONFIRMED
-absent"*, which the reclamation destroy path reads as *"nothing to preserve, safe to
-delete"*. A worker booted that way would delete the entire fleet while believing it had verified
-each container.
+WHY THIS EXISTS. `src/config.py` used to be one `Settings` carrying every field every subsystem
+might need, behind prod-only gates — so a worker could dodge the whole union by narrowing
+`ENVIRONMENT=development`. That is the single most dangerous misconfiguration available here:
+with object storage unconfigured, the reclamation destroy path reads "storage unconfirmed" as
+"safe to delete" and wipes the fleet. `WorkerSettings` now refuses to construct without object
+storage, sandbox/ARM access, or Redis, **in every environment** — stronger than a prod gate, which
+lying about `ENVIRONMENT` can still dodge.
 
-THE GUARANTEE. `WorkerSettings` cannot construct without object storage, sandbox/ARM access, or
-Redis — **in every environment**, not merely in production. That is deliberately stronger than a
-prod gate: a prod gate can be dodged by lying about `ENVIRONMENT`, and this cannot.
-
-WHY THE model_config GUARD TESTS ARE NOT PARANOIA. pydantic merges `model_config` along the MRO
-with a plain left-to-right `dict.update` (`pydantic._internal._config.ConfigWrapper.for_model`),
-and *every* `BaseSettings` subclass owns a complete 37-key config dict with explicit `None`
-defaults. A profile composed from several `BaseSettings` bases can therefore have `env_file` and
-`env_nested_delimiter` silently reset to `None` — it then boots, reads no env file, and ignores
-every nested `X__Y` variable. A later change made each manifest single-inheritance, so there is
-now no merge to clobber it and the redeclaration was dropped; these tests stay because they pin
-the OUTCOME (the delimiter and env file survive) rather than the mechanism, and they are what
-would catch a manifest that later gains a second base without reasserting the config.
+The `model_config` guard tests below are not paranoia: pydantic merges `model_config` across the
+MRO with a plain `dict.update`, so a multi-base profile can silently lose `env_nested_delimiter`
+or `env_file` to a `None` default and boot while ignoring every env var. Each manifest is now
+single-inheritance, so nothing clobbers it today — these tests pin the OUTCOME so a manifest that
+later gains a second base without reasserting its config is what they'd catch.
 """
 
 from __future__ import annotations
@@ -93,13 +84,12 @@ _API_ENV = {**_CORE, **_AUTH, **_ADMINS, **_SUPPORT}
 def _environment_of(env: dict[str, str]) -> Iterator[None]:
     """Replace `os.environ` with EXACTLY `env` (plus PATH) for the duration.
 
-    Two reasons this is not overkill. First, `__` nesting is a property of the ENVIRONMENT
-    source — passing `OBJECT_STORE__CONTAINER=...` as a constructor kwarg goes through the init
-    source instead, where it is an unknown top-level key rather than a nested one, so a test
-    written that way asserts nothing about the delimiter. Second, without scrubbing, the
-    developer's own exported variables quietly supply whatever a block omits, and every "refuses
-    without X" assertion below would pass for the wrong reason.
-    """
+    Two reasons this matters. `__` nesting is a property of the ENVIRONMENT source — passing
+    `OBJECT_STORE__CONTAINER=...` as a constructor kwarg goes through the init source instead,
+    an unknown top-level key rather than a nested one, so that route asserts nothing about the
+    delimiter. And without scrubbing, the developer's own exported variables quietly supply
+    whatever a block omits, so every "refuses without X" assertion below would pass for the
+    wrong reason."""
     saved = dict(os.environ)
     os.environ.clear()
     os.environ["PATH"] = saved.get("PATH", "")
@@ -242,12 +232,8 @@ _PROD_GATES: list[tuple[str, dict[str, str], str]] = [
 def test_each_api_production_gate_fires_on_its_own(
     field: str, supplied: dict[str, str], message: str
 ) -> None:
-    """One gate per case, each reached by satisfying the ones declared before it.
-
-    A deleted gate is invisible without this: nothing fails, production simply boots
-    misconfigured. Pydantic runs `mode="after"` validators in declaration order and the first
-    raise wins, so a single-case test can only ever reach the first gate.
-    """
+    """A deleted gate would be invisible without this: nothing fails, production simply boots
+    misconfigured."""
     env = {
         **_API_ENV,
         **supplied,

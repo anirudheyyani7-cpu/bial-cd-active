@@ -55,9 +55,8 @@ def hostile_tree(tmp_path: Path) -> Path:
     (root / "scripts" / "db-migrate.mjs").write_text("// the app's own lenient migrator")
     (root / "tsconfig.json").write_text("{}")
 
-    # The app's config — with the exact keys the platform must take back, and one it must
-    # keep. `basePath` is the address grab: an agent that picks its own path takes the app off
-    # the only one the router forwards to it.
+    # The exact keys the platform must take back. `basePath` is the address grab: an agent
+    # that picks its own path takes the app off the only one the router forwards to it.
     (root / "next.config.ts").write_text(
         'export default { basePath: "/whatever-the-agent-wants", '
         "typescript: { ignoreBuildErrors: true }, images: { unoptimized: true } }"
@@ -156,10 +155,8 @@ def test_an_agent_disabling_type_checking_is_overridden(hostile_tree: Path) -> N
 def test_an_agent_choosing_its_own_address_is_overridden(hostile_tree: Path) -> None:
     """`basePath` decides where the app answers, and the platform decides `basePath`.
 
-    OVERRIDDEN, NOT MERGED: the wrapper reads the value from the build environment and never
-    spreads the app's, so the agent's choice survives only in the moved-aside config where
-    nothing reads it. Merging would hand an app the ability to leave its own address, which
-    surfaces as a 404 behind the router rather than as a bad config anyone could see."""
+    OVERRIDDEN, NOT MERGED: merging would hand an app the ability to leave its own address,
+    which surfaces as a 404 behind the router rather than as a bad config anyone could see."""
     files = _unpack(build_context(hostile_tree))
     wrapper = files["next.config.ts"].decode()
 
@@ -184,9 +181,8 @@ def test_an_app_with_no_config_still_builds(tmp_path: Path) -> None:
 
 
 def test_an_app_with_no_config_still_receives_its_base_path(tmp_path: Path) -> None:
-    """The address comes from the wrapper, which the overlay writes whether or not the app
-    brought a config of its own — so the empty-stub branch needs nothing extra to be correct.
-    Worth pinning: it is the branch nobody thinks about, and its failure mode is an app that
+    """Worth pinning because it's the branch nobody thinks about: the address comes from the
+    wrapper regardless of whether the app brought a config, and its failure mode is an app that
     builds and then answers 404 to everything."""
     root = tmp_path / "bare"
     root.mkdir()

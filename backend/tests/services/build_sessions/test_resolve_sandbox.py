@@ -139,7 +139,6 @@ async def _seed_saved(store: FakeStorage, app_id: uuid.UUID, sha: str = RECORDED
 async def test_an_intact_workspace_is_attached_exactly_as_before(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """No message, no quarantine, no restore, and the same container."""
     user, project_id = await _mk(db_session, "u2a@rvaiglobal.com")
     manager = SessionManager()
     client, app_id = await _attached(db_session, manager, user, project_id)
@@ -161,16 +160,11 @@ async def test_an_intact_workspace_is_attached_exactly_as_before(
 async def test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """★ THE INERTNESS GUARD, and it is worth more than it looks.
-
-    `FakeSandboxClient.exec` used to answer every unrecognised command with an empty stdout at
-    exit 0, which `parse_state` reads as `head=None` — and a repo-less container with a
-    recovery bundle present is a CONFIRMED REVERSION. So without a default arm for the state
-    probe, every pre-existing turn test that happened to seed a bundle would silently have
-    exercised the quarantine-and-restore branch while asserting something else entirely.
-
-    This test does NOT script `exec`. That is the whole point: it fails the day the default stops
-    being the ordinary case.
+    """★ THE INERTNESS GUARD, and it is worth more than it looks: an unrecognised exec command
+    must default to a real answer, not `head=None`, or a repo-less container with a recovery
+    bundle present reads as a CONFIRMED REVERSION and quarantines apps nobody touched. This test
+    does NOT script `exec`, on purpose — it fails the day the default stops being the ordinary
+    case.
 
     Mutation check: delete the `_STATE_MARKER` arm from `tests/fakes.py` and this goes red."""
     user, project_id = await _mk(db_session, "u2b@rvaiglobal.com")
@@ -190,7 +184,6 @@ async def test_a_seeded_bundle_alone_does_not_make_a_container_look_reverted(
 async def test_a_brand_new_project_attaches_with_nothing_to_say(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """Never-built by U1's four conditions: one commit, a clean tree, no bundles anywhere."""
     user, project_id = await _mk(db_session, "u2c@rvaiglobal.com")
     manager = SessionManager()
     client, _ = await _attached(db_session, manager, user, project_id)
@@ -455,8 +448,8 @@ async def test_a_check_that_times_out_touches_nothing(
 async def test_a_structurally_unanswerable_check_lets_the_turn_through(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """Retrying cannot help, so refusing would lock the citizen out of their own project for good.
-    Proceed, say so once, restore nothing, destroy nothing."""
+    """Retrying cannot help, so refusing would lock the citizen out of their own project for
+    good."""
     user, project_id = await _mk(db_session, "u2m@rvaiglobal.com")
     manager = SessionManager()
     client, app_id = await _attached(db_session, manager, user, project_id)

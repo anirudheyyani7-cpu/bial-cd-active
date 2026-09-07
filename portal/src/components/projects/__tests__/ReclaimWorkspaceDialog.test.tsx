@@ -17,9 +17,7 @@ const BUILDING = { ...BLOCKED, dirty: null, building: true }
 function setup(over = {}) {
   const props = {
     blocked: BLOCKED,
-    // The dialog leads with the app being STARTED. Every scenario in this file supplies one,
-    // because a dialog that cannot name it is a different case with its own test at the bottom
-    // of this file.
+    // The dialog leads with the app being STARTED — the unnamed case has its own test below.
     startingProjectName: 'Visitor Log',
     onSaveAndSwitch: vi.fn().mockResolvedValue(undefined),
     onSwitchAnyway: vi.fn().mockResolvedValue(undefined),
@@ -75,9 +73,9 @@ describe('ReclaimWorkspaceDialog — naming, both actions, and a failed save', (
 })
 
 /**
- * KEYBOARD, not clicks. Every test above fires `click`, which cannot catch a missing focus
- * trap: a mouse never notices that Tab escapes, that Escape does nothing, or that focus was
- * never taken in the first place. These drive the dialog the way a keyboard user does.
+ * KEYBOARD, not clicks: a mouse never notices that Tab escapes, that Escape does nothing, or
+ * that focus was never taken in the first place. These drive the dialog the way a keyboard
+ * user does.
  */
 describe('ReclaimWorkspaceDialog — focus and keyboard', () => {
   const card = (): HTMLElement => screen.getByRole('dialog').querySelector('[tabindex="-1"]')!
@@ -157,11 +155,9 @@ describe('ReclaimWorkspaceDialog — focus and keyboard', () => {
 })
 
 /**
- * The BUILDING variant. Not a tone change — a different set of true statements.
- *
- * The first cut of this dialog rendered this case with the idle copy, telling a user whose
- * agent was mid-write that their project "has unsaved changes" and offering a Save the server
- * then refused. These pin the three things that must differ.
+ * The BUILDING variant states different facts, not a different tone — a project mid-write has no
+ * settled tree to describe, so the idle copy's claims ("has unsaved changes", a working Save)
+ * would be false here.
  */
 describe('ReclaimWorkspaceDialog — a project that is still being built', () => {
   it('never claims unsaved changes — there is no settled tree to describe', () => {
@@ -210,12 +206,10 @@ describe('ReclaimWorkspaceDialog — a project that is still being built', () =>
 })
 
 /**
- * THE CLEAN ARM — new; it arrives because the server changed.
- *
- * `dirty === false` could not reach this dialog before: the guard reclaimed a clean incumbent
- * silently. The old copy collapsed the tri-state — `dirty === true ? 'has unsaved changes' :
- * 'may have unsaved changes'` — which was CORRECT under that server and becomes a lie under this
- * one, telling a person their confirmed-clean project "may have unsaved changes".
+ * THE CLEAN ARM — new, because the server changed. `dirty === false` could not reach this dialog
+ * before (the guard reclaimed a clean incumbent silently), so the old tri-state copy
+ * (`dirty === true ? 'has unsaved changes' : 'may have unsaved changes'`) becomes a lie here,
+ * telling a person their confirmed-clean project "may have unsaved changes".
  */
 describe('ReclaimWorkspaceDialog — a CLEAN incumbent', () => {
   const CLEAN = { ...BLOCKED, dirty: false as boolean | null }

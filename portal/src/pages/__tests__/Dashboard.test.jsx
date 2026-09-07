@@ -1,22 +1,15 @@
 /**
  * The welcome page is gone — this file is its INERTNESS GUARD.
  *
- * `pages/Dashboard.tsx` was a screen whose whole purpose was a button to `/projects`. Once
- * the project list carries the three summary numbers, that hop has nothing left to do, so
- * the page was deleted and `/dashboard` became a redirect.
+ * `pages/Dashboard.tsx` was a screen whose whole purpose was a button to `/projects`; once the
+ * project list carried the summary numbers itself, that hop had nothing left to do, so the page
+ * was deleted and `/dashboard` became a redirect. This suite is not deleted alongside it: a
+ * removal is only real once nothing can quietly bring it back, so re-adding the page has to be
+ * argued for, not merely land beside the new landing screen.
  *
- * This suite must NOT simply be deleted: a removal is only real
- * when nothing can quietly bring it back. So instead of testing a component that no longer
- * exists, this asserts the module is absent and that nothing imports it. Re-adding the page
- * fails here, and has to be argued for rather than landed beside the new landing screen.
- *
- * IT CHECKS THE FILESYSTEM, not a dynamic import: Vite resolves imports at transform time,
- * so `import('../Dashboard')` inside a test is a build error rather than a rejected promise
- * — the suite would fail to load instead of reporting. Same reason
- * `jsx-deploy-retirement.test.ts` walks the tree.
- *
- * The route-level half — `/dashboard` renders the project list and no welcome page — lives
- * in `App.test.jsx`, where the route table is.
+ * IT CHECKS THE FILESYSTEM, not a dynamic import: Vite resolves imports at transform time, so
+ * the suite would fail to LOAD rather than report a rejected promise (same reason
+ * `jsx-deploy-retirement.test.ts` walks the tree). The route-level half lives in `App.test.jsx`.
  */
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
@@ -42,9 +35,8 @@ describe('the welcome page stays deleted', () => {
   })
 
   it('is imported by nothing', () => {
-    // The stale `vi.mock('./pages/Dashboard')` in App.test.jsx is exactly the kind of
-    // leftover this catches: a mock of a path that no longer exists passes locally and
-    // fails oddly later.
+    // A stale `vi.mock` or import still naming the deleted path is exactly the kind of
+    // leftover this catches — it can pass locally and fail oddly later.
     const offenders = walk(SRC)
       .filter((file) => !file.endsWith(path.join('__tests__', 'Dashboard.test.jsx')))
       .filter((file) => /pages\/Dashboard|pages\\Dashboard/.test(fs.readFileSync(file, 'utf8')))

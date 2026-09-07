@@ -41,7 +41,6 @@ async def test_audit_roundtrip_defaults(db_session) -> None:
 
 
 async def test_actor_id_nullable(db_session) -> None:
-    # A system/anonymous actor (Express stores username-or-null).
     entry = AuditLog(actor_id=None, action="clear-data", resource_type="app", resource_id="app-1")
     db_session.add(entry)
     await db_session.flush()
@@ -50,9 +49,8 @@ async def test_actor_id_nullable(db_session) -> None:
 
 
 async def test_delete_actor_sets_null_not_cascade(db_session) -> None:
-    # ON DELETE SET NULL (NOT CASCADE): deleting the actor PRESERVES the audit row
-    # and unlinks the actor — the accountability trail outlives the user. Enforced
-    # by PostgreSQL, so we re-read the DB value after the delete.
+    # ON DELETE SET NULL (NOT CASCADE): the audit row survives actor deletion so
+    # the accountability trail outlives the user.
     user = _make_user()
     db_session.add(user)
     await db_session.flush()

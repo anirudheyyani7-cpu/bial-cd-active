@@ -1,16 +1,15 @@
 """The `classification_reviews` row shape and — the real subject — the one-row-per-app
 constraint the claim-or-return semantics stand on.
 
-`uq_classification_reviews_app` is both the invariant (a stored answer can never coexist
-with a rival answer for the same app) and the store's `ON CONFLICT` inference target, so
-these tests pin it against the real migrated schema, not the ORM's idea of it: the DATABASE
-refuses a second row, and the migration round-trip proves the constraint, the enum type and
-every column actually travel with the revision in both directions.
+`uq_classification_reviews_app` is both the invariant (a stored answer can never coexist with
+a rival answer for the same app) and the store's `ON CONFLICT` inference target, so these
+tests pin it against the real migrated schema, not the ORM's idea of it: the database refuses
+a second row, and the migration round-trip proves the constraint, the enum type, and every
+column travel with the revision in both directions.
 
-Mirrors `test_deployments_model.py` / `test_deployments_migration.py` — the round-trip is
-marked `destructive_migration` (out of the default lane) because creating and dropping a
-table permanently burns pg_attribute slots on the shared test DB.
-"""
+Mirrors `test_deployments_model.py` / `test_deployments_migration.py` — marked
+`destructive_migration` (out of the default lane) because creating and dropping a table
+permanently burns pg_attribute slots on the shared test DB."""
 
 from __future__ import annotations
 
@@ -54,7 +53,6 @@ async def test_a_fresh_row_is_running_stamped_and_uncounted(db_session) -> None:
     assert row.head_sha == _SHA
     assert row.started_at is not None
     assert row.finished_at is None
-    # Everything the run fills in later starts empty…
     assert row.verdicts is None
     assert row.evidence is None
     assert row.answers_complete is None

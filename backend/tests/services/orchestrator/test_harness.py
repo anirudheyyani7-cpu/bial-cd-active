@@ -68,14 +68,14 @@ async def test_happy_path_scaffold_to_completed(db_session, billing_factory, sin
     _assert_seq_gap_free(sink.events)
     _assert_no_terminal(sink.events)
     types = [e.type for e in sink.events]
-    assert "step" in types  # the write + declare_done steps
+    assert "step" in types
     assert "preview_ready" in types
     assert result.reason == "completed"
     assert result.status == BuildSessionStatus.ENDED
     assert result.app_id == app_id
     assert result.last_seq == sink.events[-1].seq  # the verdict hands the seq baton over
     assert result.snapshot_committed is False
-    assert fake.workspace["app/records/page.tsx"] == "export {}\n"  # the feature file landed
+    assert fake.workspace["app/records/page.tsx"] == "export {}\n"
     assert fake.dev_start_calls == 1
     assert fake.teardown_calls == 0
 
@@ -222,7 +222,7 @@ async def test_quota_mid_loop_is_graceful(db_session, billing_factory, sink) -> 
 
     _assert_seq_gap_free(sink.events)
     _assert_no_terminal(sink.events)
-    assert result.status == BuildSessionStatus.ENDED  # graceful
+    assert result.status == BuildSessionStatus.ENDED
     assert result.reason == "quota_exceeded"
     # Cumulative usage equals only the step that actually ran (the blocked step never billed).
     row = await db_session.scalar(select(TokenUsage).where(TokenUsage.user_id == user.id))
@@ -333,13 +333,11 @@ async def test_metering_sum_matches_scripted_usage(db_session, billing_factory) 
 async def test_a_green_declare_done_ends_the_legacy_harness_run_too(
     db_session, billing_factory, sink
 ) -> None:
-    """★ THE OTHER CONSUMER OF THE SAME TOOL.
-
-    `declare_done` is ONE tool body serving two harnesses, and its return text now tells the model
-    "this turn ends here and nothing further is asked of you" on a passing check. The Write engine
-    was taught to mean it; this loop was not, so it walked into one more real, paid model request
-    whose entire premise the model had just been told was false — and the closing paragraph that
-    request bought is rendered nowhere.
+    """★ THE OTHER CONSUMER OF THE SAME TOOL. `declare_done` is ONE tool body serving two
+    harnesses, and its return text now tells the model "this turn ends here" on a passing check.
+    The Write engine was taught to mean it; this loop was not, so it walked into one more real,
+    paid model request whose premise had just been told false — and its closing paragraph is
+    rendered nowhere.
 
     Mutation check: delete the `done_requested` break in `_run_one`'s node loop and the request
     count goes to 3."""
@@ -371,13 +369,8 @@ async def test_a_green_declare_done_ends_the_legacy_harness_run_too(
 
 
 async def test_multimodal_prompt_reaches_the_model(db_session, billing_factory, sink) -> None:
-    """The whole point of the unit: what SESSION-API materialized actually arrives at the
-    model. Captures the first request's parts off a `FunctionModel` and asserts the instruction
-    text, the fenced office markdown, and the image BYTES are all there.
-
-    This content used to never leave the database — the build ran on `prompt` alone and the
-    user's spreadsheet was silently ignored.
-    """
+    """The whole point of the unit: what SESSION-API materialized actually reaches the model,
+    not just what sits in the database."""
     user = await UserFactory.create(db_session)
     fake = FakeSandbox()
     fake.dev_ready = True
@@ -463,10 +456,9 @@ class _WarmOrderSandbox(FakeSandbox):
     about which came first. A subclass rather than a monkeypatched attribute because assigning
     over a bound method is a type error under `ty`, and the fakes here are subclassed anyway.
 
-    It IS the fake, deliberately — an earlier cut took an `inner: FakeSandbox` and copied two
-    attributes off it, which silently discarded any `queue_commands` / `push_dev_logs` /
-    `compile_error_appears_on_first_request` programming the caller had done. Two fakes where
-    only one is driven is the green-for-the-wrong-reason trap."""
+    It IS the fake, not a wrapper copying attributes off one — copying only a few would silently
+    drop any `queue_commands` / `push_dev_logs` / `compile_error_appears_on_first_request`
+    programming the caller did on it, leaving two fakes where only one is driven."""
 
     def __init__(self, sink: CollectingSink) -> None:
         super().__init__()

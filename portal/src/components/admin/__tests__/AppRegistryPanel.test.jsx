@@ -1,8 +1,6 @@
-// `act()`'s catch branch calls `onToast(message, 'problem')` — the severity
-// AdminPage's shared toast channel uses to render a failure differently from a
-// confirmation, so an administrator can tell which one they're looking at without
-// reading the words. Every failure-path `onToast` assertion below carries that second
-// argument; the success-path ones (a bare `onToast(okMsg)`) are unchanged.
+// `onToast(message, 'problem')` is the severity AdminPage's shared toast channel
+// uses to render a failure differently from a confirmation. Every failure-path
+// assertion below carries that second argument; success-path ones don't.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 import AppRegistryPanel from '../AppRegistryPanel.jsx'
@@ -120,7 +118,6 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
     expect(h.listApps).toHaveBeenCalledWith('pending')
-    // registry sub-tabs exist; the mock "Security Flags"/"under_review" vocabulary does not
     expect(screen.getByTestId('apps-tab-approved')).toBeTruthy()
     expect(screen.getByTestId('apps-tab-disabled')).toBeTruthy()
     expect(screen.queryByText('Security Flags')).toBeNull()
@@ -128,10 +125,8 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
   })
 
   it('warns that rejecting a LIVE app de-lists it, and says how to actually take it down', async () => {
-    // Rejecting sets a standing rejection, which the marketplace query reads — so the app
-    // vanishes from the catalog while its URL keeps serving, and only the OWNER can undo it
-    // by submitting again. Submit is legal from APPROVED, so an admin rejecting a
-    // re-submission of a running app was doing this blind.
+    // Rejecting sets a standing rejection the marketplace query reads: the app vanishes
+    // from the catalog while its URL keeps serving, and only the owner can undo it.
     h.listApps.mockResolvedValue([{ ...PENDING, deployedUrl: 'https://live.example/' }])
     render(<AppRegistryPanel onToast={() => {}} />)
     await screen.findByText('Gate Tool')
@@ -173,9 +168,8 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     expect(screen.queryByTestId('review-submission-id')).toBeNull()
     expect(screen.getByTestId('review-criterion')).toBeTruthy()
 
-    // A MISSING submitted-at reads as missing, never as the epoch. Folding null into
-    // `new Date(0)` rendered "1/1/1970" directly above the Approve button, which an
-    // administrator reads as a fact about the submission rather than as absent data.
+    // A missing submitted-at must read as missing, never the epoch: folding null into
+    // `new Date(0)` rendered "1/1/1970" above the Approve button as if it were a fact.
     cleanup()
     h.listApps.mockResolvedValue([{ ...PENDING, submittedAt: null }])
     render(<AppRegistryPanel onToast={() => {}} />)
@@ -211,8 +205,7 @@ describe('AppRegistryPanel — registry vocabulary + actions', () => {
     fireEvent.click(screen.getByTestId('review-app-1'))
     fireEvent.click(screen.getByTestId('approve-btn'))
     await waitFor(() => expect(onToast).toHaveBeenCalledWith(copy, 'problem'))
-    // The modal stays OPEN on the 409 — the admin still needs the submission metadata
-    // to re-review; act() reports failure so onApprove does not setReview(null).
+    // The modal stays OPEN on the 409: act() reports failure, so onApprove never nulls the review.
     expect(screen.getByTestId('approve-btn')).toBeTruthy()
   })
 

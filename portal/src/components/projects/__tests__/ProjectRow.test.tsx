@@ -1,8 +1,8 @@
 /**
- * `ProjectRow` — round-4 review, finding 3: the clipped-text tooltip branch had ZERO
- * automated coverage, because jsdom reports `scrollWidth`/`clientWidth` as `0`/`0` for every
- * element, so `clipped` was always `false` under test and the `Tooltip` branch never
- * rendered. A mutant deleting the whole branch passed the entire suite.
+ * `ProjectRow` — the clipped-text tooltip branch had ZERO automated coverage, because jsdom
+ * reports `scrollWidth`/`clientWidth` as `0`/`0` for every element, so `clipped` was always
+ * `false` under test and the `Tooltip` branch never rendered. A mutant deleting the whole
+ * branch passed the entire suite.
  *
  * `scrollWidth`/`clientWidth` are stubbed per-element via `Object.defineProperty`, which is
  * the only way to force the measurement jsdom cannot produce on its own.
@@ -85,16 +85,11 @@ describe('ProjectRow — the description tooltip', () => {
 
 describe('ProjectRow — the ref never remounts across a clipped transition', () => {
   it('keeps the SAME DOM node whether or not the description is clipped', () => {
-    // Round-4 minor: the old branch put the ref'd <p> at a DIFFERENT tree position
-    // depending on `clipped` — bare, versus nested inside TooltipProvider/Tooltip/
-    // TooltipTrigger — which React treats as a remount. The effect's deps ([measure, text])
-    // do not change on that remount, so a real ResizeObserver (inert in this test
-    // environment, which is why this checks node IDENTITY rather than the observer firing)
-    // never rebinds to the new node: false→true worked once, true→false never fired again.
-    //
-    // The fix keeps the wrapper mounted always, so the node must be THE SAME element across
-    // a transition forced here by changing `text` (a real effect dependency) alongside the
-    // clip stub — proof that nothing downstream of this component ever loses its target.
+    // The old branch put the ref'd <p> at a DIFFERENT tree position depending on `clipped`,
+    // which React treats as a remount — so a real ResizeObserver (inert here, hence checking
+    // node IDENTITY rather than the observer firing) never rebound: false→true worked once,
+    // true→false never fired again. The fix keeps the wrapper mounted always, so the node must
+    // stay THE SAME element across a transition forced here by changing `text`.
     stubClip(true)
     const { rerender } = render(
       <ProjectRow project={project({ description: 'Clipped today' })} onOpen={vi.fn()} onDelete={vi.fn()} />,
@@ -114,9 +109,9 @@ describe('ProjectRow — the ref never remounts across a clipped transition', ()
 
 describe('ProjectRow — a project with no description', () => {
   it('opens the project when the "No description yet" strip is clicked', () => {
-    // Round-4 finding 8: this branch had `relative z-10` (to sit above the name button's
-    // stretched ::after) but no `onClick` — a dead strip across the newest, emptiest
-    // projects, the ones most likely to be clicked into.
+    // This branch had `relative z-10` (to sit above the name button's stretched ::after) but
+    // no `onClick` — a dead strip across the newest, emptiest projects, the ones most likely
+    // to be clicked into.
     const onOpen = vi.fn()
     render(<ProjectRow project={project({ description: null })} onOpen={onOpen} onDelete={vi.fn()} />)
 
@@ -128,8 +123,8 @@ describe('ProjectRow — a project with no description', () => {
 
 describe('ProjectRow — no nested interactive elements, still', () => {
   it('keeps Delete out of the name button, even with the tooltip wrapper added', () => {
-    // The tooltip restructuring (round 4) wraps the name in TooltipProvider/Tooltip/
-    // TooltipTrigger — worth re-confirming the invariant survives the extra nesting.
+    // The tooltip restructuring wraps the name in TooltipProvider/Tooltip/TooltipTrigger —
+    // worth re-confirming the invariant survives the extra nesting.
     render(<ProjectRow project={project()} onOpen={vi.fn()} onDelete={vi.fn()} />)
 
     const del = screen.getByLabelText('Delete Visitor Log')

@@ -152,7 +152,6 @@ describe('MarketplacePage', () => {
     expect((prev as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByTestId('marketplace-next') as HTMLButtonElement).disabled).toBe(false)
 
-    // Navigate to the LAST page and assert the other end of the boundary.
     h.listMarketplace.mockResolvedValue(
       page({ page: 3, pageSize: 10, total: 25, totalPages: 3 }),
     )
@@ -329,7 +328,6 @@ describe('MarketplacePage', () => {
     )
     fireEvent.click(screen.getByTestId('marketplace-page-3'))
 
-    // It re-requests the last page that actually exists rather than stranding the reader.
     await waitFor(() => expect(lastCall()).toMatchObject({ page: 1 }))
   })
 
@@ -353,7 +351,6 @@ describe('MarketplacePage', () => {
     fireEvent.click(screen.getByTestId('marketplace-page-2'))
     await waitFor(() => expect(lastCall()).toMatchObject({ page: 2 }))
 
-    // The effect snaps back rather than stranding them behind an unmounted nav.
     await waitFor(() => expect(lastCall()).toMatchObject({ page: 1 }))
     await waitFor(() =>
       expect(screen.getByTestId('marketplace-empty').textContent).toMatch(
@@ -428,8 +425,6 @@ describe('MarketplacePage', () => {
     fireEvent.click(screen.getByTestId('marketplace-page-3'))
     await waitFor(() => expect(lastCall()).toMatchObject({ page: 3 }))
 
-    // Auto-correct re-requests the last real page, and the reader lands on actual results
-    // rather than a dead end with no control mounted.
     await waitFor(() => expect(lastCall()).toMatchObject({ page: 1 }))
     expect(await screen.findByText('Baggage Belt Faults', {}, { timeout: 5000 })).toBeTruthy()
     expect(screen.queryByTestId('marketplace-empty')).toBeNull()

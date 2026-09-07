@@ -1,15 +1,14 @@
 """The publish gate — the precedence ladder.
 
-Every cell of the ladder's state table resolves to exactly one branch, and this file
-pins them one rung at a time, in ladder order, then the properties that hold across
-rungs (the declaration, the audit trail, the 503 that must NOT fire on a routed
-publish, and the impossibility of a browser-supplied review).
+Every cell of the ladder's state table resolves to exactly one branch; this file pins
+them one rung at a time, in ladder order, then the properties holding across rungs (the
+declaration, the audit trail, the 503 that must NOT fire on a routed publish, and the
+impossibility of a browser-supplied review).
 
-Two fixtures carry the load. `wire` binds the whole composition — a dict-backed store,
-a recording pipeline, and the REAL classification review service (no override): the
-ladder reads the stored row through the same singleton production resolves, so a mock
-returning what it was fed cannot green these tests. `_seed_review` writes rows through
-the real store, in the exact document shape the review's runner produces.
+Two fixtures carry the load. `wire` binds the whole composition with the REAL
+classification review service (no override), so a mock returning what it was fed cannot
+green these tests. `_seed_review` writes rows through the real store, in the exact
+document shape the review's runner produces.
 """
 
 from __future__ import annotations
@@ -515,16 +514,14 @@ async def test_a_rejected_app_routes_even_with_a_clean_review_and_clean_answers(
 async def test_a_rejection_survives_the_publish_then_withdraw_round_trip(
     wire, client, db_session
 ) -> None:
-    """THE LAUNDERING CHAIN, end to end. Rule 5 used to read `status`, and two ordinary
-    citizen calls walked the row out of it: publishing a REJECTED app ROUTES it (the
-    submit service writes PENDING and nulls the note), and withdrawing a PENDING app
-    writes DRAFT. By the third call the row had forgotten the refusal and published
-    unattended — with a clean review and clean answers, exactly the state rule 5 says must
-    still route. The rejection now lives in a column no citizen path writes.
+    """THE LAUNDERING CHAIN, end to end: publishing a REJECTED app writes PENDING and
+    clears the note, then withdrawing a PENDING app writes DRAFT — by the third call
+    the row has forgotten the refusal, with a clean review and clean answers, exactly
+    the state rule 5 must still route.
 
-    Deliberately walks the REAL routes rather than seeding the intermediate states: the
-    bug lived in the seam between two handlers that were each correct alone, so a test
-    that seeds DRAFT directly would go green against the very code this pins."""
+    Walks the REAL routes rather than seeding the intermediate states: the bug lived
+    in the seam between two handlers that were each correct alone, so seeding DRAFT
+    directly would go green against the very code this pins."""
     user, app_row = await _owner_with_saved_app(
         db_session,
         wire.store,

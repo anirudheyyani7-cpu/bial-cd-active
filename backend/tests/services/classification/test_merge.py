@@ -1,16 +1,13 @@
 """The per-question merge truth table — written FIRST, before merge.py.
 
-Every cell of the plan's merge table gets a named test. The module under test is PURE —
-no database, no model, no I/O — so the table can be pinned exhaustively, which is the
-point: the merge is the one genuinely new decision in the feature, and a mock-based test
-would prove nothing about it.
+Every cell of the plan's merge table gets a named test. The module under test is PURE — no
+database, no model, no I/O — so the table can be pinned exhaustively: the merge is the one
+genuinely new decision in the feature, and a mock-based test would prove nothing about it.
 
-Two upstream mappings the table relies on are documented by their own tests here rather
-than hidden in the service: a Yes with invalid evidence was ALREADY downgraded to
-unanswered before storage (the merge never sees it), and "no review at all",
-"review still running" and "review never returned" all reach the merge as the SAME
-absent verdict (`review_verdict=None`) — the gate's ladder rule 4 is what routes those,
-not the merge.
+Two upstream mappings the table relies on are tested here rather than hidden in the service:
+a Yes with invalid evidence was ALREADY downgraded to unanswered before storage (the merge
+never sees it), and "no review", "still running", and "never returned" all reach the merge as
+the SAME absent verdict (`review_verdict=None`) — ladder rule 4 routes those, not the merge.
 """
 
 from __future__ import annotations
@@ -125,11 +122,9 @@ def test_review_unanswered_citizen_no_decides_no() -> None:
 
 
 def test_a_yes_discarded_for_bad_evidence_routes_instead_of_falling_to_the_citizen() -> None:
-    # The upstream downgrade turns a Yes whose every cited location is absent into UNANSWERED,
-    # which from the verdict alone is indistinguishable from an honest abstention — so it used to
-    # land on the citizen's answer and publish. "Not evidence" and "not a signal" are different
-    # things: the agent DID raise this, and raising it on hallucinated citations is the last state
-    # that should buy less scrutiny. It routes and the discard is recorded.
+    # A Yes discarded for hallucinated citations is not an honest abstention: it used to fall
+    # to the citizen and publish silently. Raising it deserves MORE scrutiny, not less — so it
+    # routes, and the discard is recorded.
     merged = _merge(review=Verdict.UNANSWERED, citizen_yes=False, downgraded_from_yes=True)
     assert merged.effective_yes is True
     assert merged.weighted_yes is True
@@ -173,8 +168,6 @@ def test_no_review_at_all_citizen_decides() -> None:
 
 
 def test_review_still_running_maps_to_the_same_absent_verdict() -> None:
-    # Documented mapping: the caller renders a RUNNING row as "no completed verdict"
-    # (`None`); the merge treats it exactly like an absent review, and rule 4 routes.
     merged = _merge(review=None, citizen_yes=False)
     assert merged.effective_yes is False
     assert merged.recorded == ()
@@ -194,12 +187,9 @@ def test_tier_a_with_review_yes_is_yes_and_no_dispute() -> None:
 
 
 def test_tier_a_overrule_routes_even_when_both_sides_answered_no() -> None:
-    # THE CELL THE WHOLE DISPUTE RECORD EXISTS FOR, and the one where it used to reach
-    # nobody. The model was SHOWN a Tier A hit and said No; the citizen said No too.
-    # Recording the disagreement was the compensation for making the scan non-binding,
-    # but the record renders only on the administrator's review screen, which is only
-    # ever opened for an app that ROUTED — so on the one app where the scan is the sole
-    # remaining signal, the note was written to a page nobody would open. It routes now.
+    # THE CELL THE DISPUTE RECORD EXISTS FOR: a Tier A hit both review and citizen say No to.
+    # The record renders only on the admin review screen, opened only for ROUTED apps — so
+    # before this cell routed, the disagreement went to a page nobody would ever open.
     merged = _merge(review=Verdict.NO, citizen_yes=False, scan=ScanSignal.TIER_A)
     assert merged.effective_yes is True
     assert merged.weighted_yes is True  # credentials carries weight — this reaches a human
@@ -288,8 +278,6 @@ def test_public_data_merges_the_same_way_but_never_weights() -> None:
         weight=_PUBLIC_WEIGHT,
         key="public_data",
     )
-    # The effective answer and the recorded disagreement are computed exactly as for a
-    # weighted question — only the routing contribution is zero.
     assert merged.effective_yes is True
     assert merged.weighted_yes is False
     assert merged.recorded == (DisagreementKind.REVIEW_YES_OVER_CITIZEN_NO,)

@@ -1,8 +1,5 @@
-"""Project description generation.
-
-Foundry-only agent path (a TestModel/FunctionModel stands in): fresh project rejects with
-409, code-bearing project generates + persists, regenerate feeds the current description in,
-the daily gate is honored, the fed code is bounded, and the result is length-capped.
+"""Project description generation, exercised through the Foundry-only agent path — a
+TestModel/FunctionModel stands in for the real client.
 """
 
 from __future__ import annotations
@@ -56,7 +53,7 @@ def _all_text(messages: list[ModelMessage]) -> str:
 async def test_generate_fresh_project_409(client, db_session, set_chat_model) -> None:
     set_chat_model(TestModel(custom_output_text="should not run"))
     headers, user = await _auth(db_session)
-    project = await ProjectFactory.create(db_session, user.id)  # no app at all
+    project = await ProjectFactory.create(db_session, user.id)
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 409
@@ -68,7 +65,6 @@ async def test_generate_null_current_code_409(client, db_session, set_chat_model
     set_chat_model(TestModel(custom_output_text="should not run"))
     headers, user = await _auth(db_session)
     project = await ProjectFactory.create(db_session, user.id)
-    # An app with NULL current_code — provisioned but never built.
     await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project.id)
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
@@ -85,7 +81,7 @@ async def test_generate_from_code_persists(client, db_session, set_chat_model) -
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
-    assert resp.json()["description"] == "Tracks VIP movements at the airport."  # stripped
+    assert resp.json()["description"] == "Tracks VIP movements at the airport."
     reloaded = await db_session.get(Project, project.id)
     assert reloaded is not None
     assert reloaded.description == "Tracks VIP movements at the airport."
@@ -111,7 +107,6 @@ async def test_regenerate_feeds_current_description(client, db_session, set_chat
     assert resp.status_code == 200
     # The current description was fed to the model so it revises rather than discards.
     assert "An old, stale description the author wrote." in captured["prompt"]
-    # ...and the result overwrites.
     assert resp.json()["description"] == "A revised, sharper description."
 
 
@@ -136,7 +131,6 @@ async def test_generated_input_is_bounded(client, db_session, set_chat_model, mo
 
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
-    # The code was truncated to the budget — the full 500-char body is not present.
     assert "[... code truncated" in captured["prompt"]
     assert big_source not in captured["prompt"]
 
@@ -167,7 +161,7 @@ async def test_generation_bills_usage(client, db_session, set_chat_model) -> Non
     resp = await client.post(f"/v1/projects/{project.id}/description:generate", headers=headers)
     assert resp.status_code == 200
     row = await db_session.scalar(select(TokenUsage).where(TokenUsage.user_id == user.id))
-    assert row is not None  # a usage row was written for the turn
+    assert row is not None
     # The billable total is input + output (cache is already inside input_tokens).
     total = row.input_tokens + row.output_tokens
     assert total > 0

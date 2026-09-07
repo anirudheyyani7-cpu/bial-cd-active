@@ -1,22 +1,18 @@
-"""The data-classification policy.
+"""The data-classification policy — pins the POLICY (weights + threshold), not the
+plumbing. The decision PROCEDURE that reads them is pinned separately, in
+`tests/api/v1/deploy/test_publish_gate.py`.
 
-These tests pin the POLICY, not the plumbing: the weights and the threshold. The
-decision PROCEDURE that reads them is the publish gate's precedence ladder, pinned in
-`tests/api/v1/deploy/test_publish_gate.py` — this file deliberately knows nothing about
-the review, the merge, or the queue, exactly as the module it tests does not.
+WHY THIS EXISTS
 
 Post-issue-#115: the deploy gate runs LOW score = safe = auto-deploy, HIGH score = needs a
-human. `AUTO_DEPLOY_MAX_SCORE = 0` means only a fully-clean declaration (nothing sensitive
-checked) ever auto-deploys — any weighted category at all routes to a human, regardless of
-how small its weight is.
+human. `AUTO_DEPLOY_MAX_SCORE = 0` means only a fully-clean declaration ever auto-deploys —
+any weighted category at all routes to a human, however small its weight.
 
-Post-issue-#117 follow-up: `notes_required()` is TIED to `AUTO_DEPLOY_MAX_SCORE`, not a
-separate threshold — every declaration that fails the deploy gate is also obliged to explain
-itself, and nothing can fail the gate without being asked why. The two used to be
-independent (a since-removed `NOTES_REQUIRED_AT = 25` sat strictly inside the refused
-region), which meant a declaration could be compelled to explain itself on a refusal that
-threw the explanation away unread. That's the case worth a test now: there is no longer a
-band that's refused but never asked to explain, nor one that must explain but isn't refused.
+Post-issue-#117: `notes_required()` is TIED to `AUTO_DEPLOY_MAX_SCORE`, not a separate
+threshold — every declaration that fails the gate is also obliged to explain itself. The two
+used to be independent (a since-removed `NOTES_REQUIRED_AT = 25` sat inside the refused
+region), so a declaration could be refused without ever being asked to explain. That gap is
+what this file now tests against.
 """
 
 from __future__ import annotations
@@ -54,7 +50,6 @@ def test_the_questionnaire_is_six_questions_with_the_agreed_weights() -> None:
 
 
 def test_an_all_no_declaration_scores_zero_and_can_auto_deploy() -> None:
-    """The one and only shape of answer set safe enough to publish with no human review."""
     assert total_weight(_flags()) == 0
     assert qualifies_for_deploy(_flags())
 
@@ -67,11 +62,10 @@ def test_public_data_is_a_real_answer_that_adds_nothing() -> None:
 
 def test_notes_required_and_needing_a_human_are_now_the_same_condition() -> None:
     """Issue #117 follow-up: `notes_required()` is tied to `AUTO_DEPLOY_MAX_SCORE`, not a
-    separate threshold. Confidential Business Data alone (15) — the lowest nonzero weight
-    the questionnaire can produce — both fails the deploy gate AND obliges an explanation;
-    before this, it fell inside the old NOTES_REQUIRED_AT=25 gap: not obliged to explain
-    itself, yet still refused. A future change that re-splits the two thresholds, or lets a
-    declaration fail one without the other, breaks here."""
+    separate threshold (see module docstring). Confidential Business Data alone (15) — the
+    lowest nonzero weight the questionnaire can produce — both fails the gate AND obliges an
+    explanation. A future change that re-splits the two thresholds, or lets a declaration
+    fail one without the other, breaks here."""
     flags = _flags(confidential_business_data=True)
     assert total_weight(flags) == 15
     assert not qualifies_for_deploy(flags)
@@ -96,9 +90,9 @@ def test_a_declaration_needing_a_human_is_never_left_unable_to_explain_why() -> 
 
 def test_the_threshold_is_inclusive_and_any_weighted_yes_fails_it() -> None:
     """`<=`, not `<`: exactly 0 qualifies. Above 0 — even the smallest single category —
-    does not, regardless of how far it is from the old-world "50"."""
+    does not."""
     assert qualifies_for_deploy(_flags())
-    smallest = _flags(confidential_business_data=True)  # the lowest nonzero weight, 15
+    smallest = _flags(confidential_business_data=True)
     assert total_weight(smallest) == 15
     assert not qualifies_for_deploy(smallest)
     highest = _flags(credentials_secrets=True, personal_information=True)
@@ -137,19 +131,12 @@ def test_declared_categories_omits_the_zero_weight_one() -> None:
 
 
 def test_refusal_message_is_gone_along_with_the_refusal_it_explained() -> None:
-    """A GUARD, not a deletion (the repo's documented convention for retiring a
-    behaviour): the test that pinned `refusal_message`'s wording is flipped into one
-    that fails if the function ever comes back.
+    """A GUARD, not a deletion: `refusal_message` was retired with the terminal refusal it
+    existed to explain (U9) — the publish gate now ROUTES a weighted Yes into the admin
+    queue instead of dead-ending, so restoring the function means restoring that dead end.
+    This test fails if it ever comes back.
 
-    It was retired with the terminal refusal it existed to explain (U9). Its whole job
-    was to say "ask an administrator" while being scrupulously honest that nothing on
-    the platform would actually perform that review — no queue, no notification. The
-    publish gate now ROUTES a weighted merged Yes into the admin queue, so every
-    sentence in it became false in the safest-sounding way: it would tell a citizen
-    whose app IS in the queue, waiting for a named administrator, to go find one
-    themselves. Restoring it means restoring a dead end the ladder replaced.
-
-    The routed outcome's copy lives on the deploy route (`_ROUTED_MSG`), beside the
-    branch that sends it, and `declared_categories` — the actionable half this function
-    used to wrap — is still here and still tested above."""
+    The routed outcome's copy now lives on the deploy route (`_ROUTED_MSG`);
+    `declared_categories` — the actionable half this function used to wrap — is still here
+    and tested above."""
     assert not hasattr(policy, "refusal_message")

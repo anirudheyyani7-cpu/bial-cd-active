@@ -80,8 +80,6 @@ def test_all_sandbox_families_share_the_environment_scoped_root() -> None:
 
 
 def test_families_are_disjoint_for_one_user() -> None:
-    # For the SAME user, no two family keys can ever be equal (the discriminator segment
-    # differs), so a lock is never misread as a heartbeat, registry or lease.
     keys = {lock_key(_U1), heartbeat_key(_U1), registry_key(_U1), lease_key(_U1)}
     assert len(keys) == 4
 
@@ -94,8 +92,6 @@ def test_a_family_key_never_collides_across_users() -> None:
 
 
 def test_one_users_key_is_never_another_families_key() -> None:
-    # No lock key equals any heartbeat/registry/lease key for ANY pair of users — the families
-    # cannot alias even across different owners.
     locks = {lock_key(_U1), lock_key(_U2)}
     beats = {heartbeat_key(_U1), heartbeat_key(_U2)}
     regs = {registry_key(_U1), registry_key(_U2)}
@@ -131,7 +127,6 @@ def test_the_environment_segment_is_read_per_call_not_frozen_at_import(
 
 
 def test_the_scan_patterns_are_literals_and_never_wildcard_the_environment() -> None:
-    """Two literal patterns, current and legacy, never one glob across the environment."""
     patterns = registry_scan_patterns()
     assert patterns == (f"bial:{_ENV}:sandbox:registry:*", "bial:sandbox:registry:*")
     for pattern in patterns:

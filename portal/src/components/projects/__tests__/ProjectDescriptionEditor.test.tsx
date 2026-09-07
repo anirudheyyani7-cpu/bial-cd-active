@@ -130,7 +130,6 @@ describe('ProjectDescriptionEditor — read view and pop-up open/close', () => {
     expect(dialog()).toBeNull()
     expect(screen.getByText('stored text')).toBeTruthy()
 
-    // Reopening shows the original, not the discarded edit.
     openEditor()
     expect(textarea().value).toBe('stored text')
   })
@@ -172,7 +171,7 @@ describe('ProjectDescriptionEditor — generate', () => {
     fireEvent.click(generateBtn())
 
     await waitFor(() => expect(textarea().value).toBe('Generated summary of the app.'))
-    expect(h.patchProject).not.toHaveBeenCalled() // field was not dirty → no pre-save
+    expect(h.patchProject).not.toHaveBeenCalled()
   })
 
   it('with a DIRTY field, PATCHes the typed text FIRST and only then generates', async () => {
@@ -340,8 +339,6 @@ describe('ProjectDescriptionEditor — a dirty save survives a failed generate',
   })
 })
 
-// --- keyboard + focus (405a1d6 regression coverage) -----------------------------------------
-//
 // 405a1d6 (Escape-to-close + focus trap) added NO tests, which is exactly how its trap half
 // went out as a no-op: nothing here fired a keydown against the dialog, so "843/843 passing"
 // read as confirmation of a fix that wasn't one. These pin the actual contract — Escape and Tab

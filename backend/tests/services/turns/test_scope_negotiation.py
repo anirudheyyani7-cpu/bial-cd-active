@@ -315,19 +315,15 @@ def test_no_marks_and_nothing_touched_names_the_whole_agreed_list() -> None:
 
 
 def test_no_marks_and_work_landed_says_it_could_not_tell() -> None:
-    """★★ THE ONE THAT WOULD HAVE SHIPPED A LIE, and the likeliest real trace.
+    """★★ THE ONE THAT WOULD HAVE SHIPPED A LIE.
 
-    An agent that built all three pieces and marked none is indistinguishable, FROM THE MARKS
-    ALONE, from one that built nothing. The tempting rendering — "these three remain" — is a
-    false fact in the platform's own voice, which the citizen has no reason to doubt and which
-    is strictly worse than the agent's own recollection.
-
-    So the claim is keyed on `workspace_touched`, which the platform genuinely holds, and the
-    honest answer when work landed but nothing was marked is that it could not tell.
+    An agent that built all three pieces and marked none looks, FROM THE MARKS ALONE, exactly
+    like one that built nothing — so "these three remain" would be a false fact in the
+    platform's own voice. The claim is keyed on `workspace_touched` instead: the honest answer
+    when work landed but nothing was marked is that it could not tell.
 
     Mutation check: drop the `workspace_touched` branch and fall through to naming the agreed
-    list; every other test in this file stays green and the product starts telling citizens
-    that finished work is outstanding."""
+    list — every other test in this file stays green."""
     state = _state()
     state.agreed_pieces = list(_THREE)
 
@@ -567,24 +563,12 @@ async def test_a_mark_naming_a_piece_nobody_agreed_to_cannot_defeat_the_could_no
 ):
     """★★ THE TRI-STATE'S GUARD, ATTACKED FROM THE ONE ANGLE THAT REACHES IT.
 
-    `FunctionToolCallEvent` is emitted while pydantic-ai VALIDATES a batch of calls, before any
-    tool body runs — `_validate_function_calls` yields every event, then `_call_tools` executes.
-    So at the moment the live emitter records a mark, `tell_the_user`'s refusal of a piece nobody
-    agreed to HAS NOT HAPPENED YET, and a site that assumed otherwise was trusting a body that
-    runs afterwards.
-
-    WHY THAT IS NOT MERELY AN UNTIDY SET. The remainder's third arm is selected by
-    `if not state.finished_pieces` — so a single hallucinated mark makes the set truthy and routes
-    the run past "I could not tell which pieces landed" into "Still to do: <everything agreed>".
-    On a turn where the agent built all three and named one piece wrongly, the platform would
-    assert in its own voice that finished work was outstanding: precisely the false fact the
-    tri-state exists to prevent, arriving through the one door that skipped the check.
-
-    So the recording site validates for itself, exactly as the proposal branch does — the marks
-    that survive are a subset of what was agreed, whatever the model sent and whenever the body
-    runs.
-
-    Mutation check: drop the membership guard on the add and this goes red on the remainder."""
+    `FunctionToolCallEvent` fires during pydantic-ai's validation of a call batch, BEFORE the
+    tool body runs — so at the moment the live emitter records a mark, `tell_the_user`'s own
+    refusal has not happened yet. Unguarded, a single hallucinated mark makes
+    `finished_pieces` truthy and routes the remainder past "could not tell" into naming
+    everything agreed as outstanding. Mutation check: drop the membership guard on the add
+    and this goes red on the remainder."""
     engine = TurnEngine()
     state = _state()
     state.agreed_pieces = list(_THREE)
@@ -674,23 +658,13 @@ def _mark_call(piece: str, call_id: str) -> ModelResponse:
 def test_a_piece_finished_in_an_earlier_turn_is_not_named_as_still_to_do() -> None:
     """★★ THE ASYMMETRY THAT MADE THE REMAINDER LIE ON THE SECOND TURN.
 
-    `agreed_slice` re-derives the agreement from history on every turn, so the agreement
-    survived a turn. The marks were per-turn memory and did not. A citizen building one piece
-    per turn — the ordering this whole plan asks for — would finish a piece in turn one and be
-    told at the end of turn two that it was still to do.
+    `agreed_slice` re-derives the agreement from history every turn; the marks were per-turn
+    memory and did not survive one — a citizen finishing one piece per turn would be told at
+    turn two's end that it was still to do, with no misbehaviour by the model at all.
 
-    That is the platform asserting that finished work is undone, in its own voice, on evidence
-    it holds and misread. It is the same false fact the tri-state exists to prevent, and it was
-    reachable without any misbehaviour by the model at all: the agent marked correctly, and the
-    platform forgot.
-
-    WHAT THIS PINS, AND WHAT IT DOES NOT. It seeds the state the way the engine seeds one, so
-    it pins `finished_slice` and the remainder's use of it. It does NOT prove the engine calls
-    it: the seeding happens deep inside `_run_write`, and this test writes the field directly.
-    Removing the engine's call leaves this green — I ran that mutant to check rather than
-    assuming — so the call site is pinned structurally by
-    `test_the_engine_seeds_both_halves_of_the_record` below. Two tests, because one of them
-    would otherwise be claiming coverage it does not have."""
+    Seeds state the way the engine does, so it pins `finished_slice` and the remainder's use of
+    it — NOT that the engine calls it (verified: removing that call stays green here). That
+    call site is pinned structurally by `test_the_engine_seeds_both_halves_of_the_record`."""
     history: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart("propose_first_slice", _args(_NINE, _THREE), "p1")]),
         _mark_call(_THREE[0], "m1"),
@@ -747,15 +721,11 @@ def test_a_mark_naming_something_outside_the_agreement_is_ignored_on_the_way_bac
 def test_the_engine_seeds_both_halves_of_the_record() -> None:
     """★ THE CALL SITE, PINNED STRUCTURALLY — because the behavioural test above cannot.
 
-    The remainder is only honest if the turn starts from what the record says on BOTH halves.
-    Seeding just the agreement is what made the second turn of a piece-at-a-time build report
-    a finished piece as outstanding, and that defect is invisible to any test that sets
-    `finished_pieces` itself.
-
-    So this reads the source: wherever the engine seeds `agreed_pieces` from `agreed_slice`, it
-    must seed `finished_pieces` from `finished_slice` in the same place. Structural for the same
-    reason the three-bounds guard is — what matters is that the call exists, and a test that
-    could observe it would have to stand up most of a turn.
+    Seeding just the agreement is what made a piece-at-a-time build's second turn report a
+    finished piece as outstanding — invisible to any test that sets `finished_pieces` itself.
+    So this reads the source: wherever the engine seeds `agreed_pieces` from `agreed_slice`,
+    it must seed `finished_pieces` from `finished_slice` in the same place — what matters is
+    that the call exists, not what a live turn would observe.
 
     Mutation check (run): replace the seeding with `set()` and this goes red."""
     import ast

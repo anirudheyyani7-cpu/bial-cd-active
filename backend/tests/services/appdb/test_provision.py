@@ -96,7 +96,6 @@ async def test_provision_creates_the_role_and_its_database(
     assert record is not None
     assert record.db_name == database_name(project_id)
     assert record.role_name == role_name(project_id)
-    # The role owns its own database — full DDL inside its box, zero cluster reach.
     assert await _catalog(maintenance, _OWNER_SQL, db=record.db_name) == record.role_name
 
 
@@ -108,7 +107,6 @@ async def test_provision_revokes_public_connect_and_grants_only_the_app_role(
     record = await ensure_project_database(db_session, project_id)
     assert record is not None
 
-    # THE cross-app wall.
     assert await _catalog(maintenance, _PUBLIC_CONNECT_SQL, db=record.db_name) is False
     assert (
         await _catalog(
@@ -167,7 +165,6 @@ async def test_markers_reflect_reality_with_db_ready_committed_last(
     assert record is not None
     assert record.db_ready is True
     assert record.provisioned_at is not None
-    # Exactly one registry row, and the stored names are what was actually created.
     rows = (
         (
             await db_session.execute(
@@ -241,7 +238,6 @@ async def test_a_failing_role_ddl_never_carries_the_password_in_its_error(
     rendered = f"{failure.value}{failure.value!r}{traceback.format_exception(failure.value)}"
     assert password not in rendered
     assert "PASSWORD" not in rendered
-    # The diagnostic an operator actually acts on survives.
     assert "sqlstate=" in str(failure.value)
     # And the claim stays non-terminal, so the next ensure retries.
     assert row.db_ready is False
@@ -374,7 +370,6 @@ async def test_role_a_cannot_connect_to_project_b_database(
     record_b = await ensure_project_database(db_session, project_b)
     assert record_a is not None and record_b is not None
 
-    # A reaches its own database.
     assert await scalar_on(control_plane_dsn(record_a), "SELECT 1") == 1
 
     # A pointed at B's database is refused BEFORE a single query runs: asyncpg raises at
@@ -389,18 +384,12 @@ async def test_role_a_cannot_connect_to_project_b_database(
 async def test_an_app_role_cannot_reach_the_control_plane_database(
     db_session: AsyncSession, salted: list[uuid.UUID]
 ) -> None:
-    # The app-vs-app wall is `REVOKE CONNECT ... FROM PUBLIC` on each app database. This is
-    # the OTHER direction — app-vs-control-plane — and it is not automatic: PostgreSQL
-    # creates every database with PUBLIC holding CONNECT, so an app role could open a
-    # session against `citizen_one` and read `pg_catalog` (every table name, every column
-    # name, the role list). No table data — the control plane's tables are owned by `bial`
-    # with no PUBLIC grants — but a schema map is reconnaissance, and the DSN is treated as
-    # disclosed-by-assumption, which makes "an app role exists in the wild" the PLANNED
-    # case rather than the unlikely one.
-    #
-    # The fix is a provisioning-time REVOKE on the control-plane database itself, not
-    # something the per-project sequence can do — hence a runbook step (DEPLOYMENT-FACTS)
-    # and this test, which fails loudly on any cluster where that step was skipped.
+    # The OTHER direction from the per-database wall — app-vs-control-plane — and it is not
+    # automatic: PostgreSQL grants PUBLIC CONNECT on every new database, so an app role could
+    # open a session against the control plane and read `pg_catalog` as reconnaissance. The
+    # fix is a provisioning-time REVOKE on the control-plane database itself, not something
+    # the per-project sequence can do — hence a runbook step (DEPLOYMENT-FACTS) and this test,
+    # which fails loudly on any cluster where that step was skipped.
     project_id = await _new_project(db_session)
     salted.append(project_id)
     record = await ensure_project_database(db_session, project_id)

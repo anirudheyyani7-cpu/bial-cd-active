@@ -30,7 +30,6 @@ async def test_sweep_survives_any_failure_and_finishes_the_batch() -> None:
     storage = _FlakyStorage()
     storage.objects = {"a": b"1", "c": b"3"}
 
-    # "boom" raises a raw RuntimeError mid-batch — the sweep neither raises nor stops.
     await sweep_blobs(storage, ["a", "boom", "c"])
 
     assert storage.objects == {}  # every real key was still swept
@@ -67,8 +66,7 @@ async def test_sweep_runs_concurrently_but_bounded() -> None:
 
     await sweep_blobs(storage, keys)
 
-    assert storage.objects == {}  # every key swept
-    # Fanned out past a serial sweep (peak > 1) yet never exceeded the semaphore ceiling.
+    assert storage.objects == {}
     assert storage.max_in_flight > 1
     assert storage.max_in_flight <= _SWEEP_CONCURRENCY
 
@@ -101,7 +99,6 @@ async def test_sweep_app_containers_deletes_every_id() -> None:
 
 async def test_sweep_app_containers_survives_failure_and_finishes_the_batch() -> None:
     store = _FakeContainerStore()
-    # _BOOM raises a raw RuntimeError mid-batch — the sweep neither raises nor stops.
     await sweep_app_containers(store, [_A1, _BOOM, _A2])
     assert set(store.deleted) == {_A1, _A2}  # the other two were still swept
 

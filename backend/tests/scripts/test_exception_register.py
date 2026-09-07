@@ -1,15 +1,12 @@
-"""The remediation report has to be arithmetically self-checking, so its arithmetic is tested.
+"""The remediation report has to be arithmetically self-checking, so its arithmetic is tested here.
 
-The report's whole claim to credibility is that a reviewer can ADD IT UP: every row on BIAL's
-original list lands in exactly one sheet, the sheets sum back to the scanner's own totals, and
-`Summary` is derived from the other sheets rather than typed. Those are properties, not
-formatting, and each one has a test here that fails when the property breaks.
+The report's whole claim to credibility is that a reviewer can add it up: every row lands in
+exactly one sheet, the sheets sum back to the scanner's totals, and `Summary` is derived from
+the other sheets rather than typed. Each of those properties has a test that fails when it breaks.
 
-NO REAL CLIENT DATA. Every fixture below is synthetic — invented CVE ids, invented packages, a
-made-up registry. The real exports are client vulnerability data about a live system and never
-enter this repository (the generator's own module docstring explains the split). Synthetic data
-is also strictly better for these tests: it lets a fixture encode the exact shape a scenario
-needs, including shapes the real export does not currently contain.
+NO REAL CLIENT DATA. Every fixture below is synthetic — invented CVE ids, packages, and a
+made-up registry; the real exports are client vulnerability data and never enter this
+repository. Synthetic data also lets a fixture encode shapes the real export doesn't have.
 """
 
 from __future__ import annotations
@@ -52,9 +49,7 @@ DIGEST_OLD = "sha256:" + "a" * 64
 DIGEST_NEW = "sha256:" + "b" * 64
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Factories — the two export shapes BIAL actually sends
-# ─────────────────────────────────────────────────────────────────────────────
 
 _ASSET_HEADERS = [
     "CVE ID",
@@ -179,9 +174,7 @@ def asset_ref(repo: str, digest: str = DIGEST_OLD) -> str:
     return f"{REGISTRY}/{repo}@{digest}"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Version comparison — the logic a wrong answer here quietly corrupts everything
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -256,9 +249,7 @@ def test_already_at_or_past_fix(installed: str, fixed: str, expected: bool) -> N
     assert already_at_or_past_fix(installed, fixed) is expected
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Ingest
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_both_export_shapes_normalise_to_one_table(tmp_path: Path) -> None:
@@ -337,9 +328,7 @@ def test_pivot_sheets_are_skipped_not_counted_twice(tmp_path: Path) -> None:
     assert len(load_export(path)) == 1
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Dispositions
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _one(tmp_path: Path, image: str, r: dict[str, str], *, name: str = "x.xlsx") -> Entry:
@@ -462,9 +451,7 @@ def test_a_mixed_group_takes_the_strictest_verdict_never_the_cleared_one(tmp_pat
     assert entries[0].verdict.disposition is not Disposition.FIXED
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Granularity and the partition invariant
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_one_cve_across_sibling_packages_and_paths_collapses_per_package(
@@ -495,7 +482,6 @@ def test_one_cve_across_sibling_packages_and_paths_collapses_per_package(
 
 
 def test_every_scanner_row_lands_in_exactly_one_entry(tmp_path: Path) -> None:
-    """The partition invariant, checked at the row level via provenance."""
     rows = [row(f"CVE-9000-01{i:02d}", f"pkg{i % 4}", "1.0") for i in range(30)]
     path = write_severity_shape(tmp_path / "many.xlsx", asset_ref(SANDBOX), rows)
     findings = load_export(path)
@@ -509,7 +495,7 @@ def test_every_scanner_row_lands_in_exactly_one_entry(tmp_path: Path) -> None:
 
 def test_integrity_fails_loudly_when_a_row_is_dropped_or_duplicated(tmp_path: Path) -> None:
     """The check must actually be capable of failing — a partition test that cannot go red
-    proves nothing. Both directions are exercised: a lost row and a double-counted one."""
+    proves nothing."""
     rows = [row(f"CVE-9000-02{i:02d}", "pkg", "1.0") for i in range(5)]
     path = write_severity_shape(tmp_path / "drop.xlsx", asset_ref(SANDBOX), rows)
     findings = load_export(path)
@@ -524,9 +510,7 @@ def test_integrity_fails_loudly_when_a_row_is_dropped_or_duplicated(tmp_path: Pa
     assert any("more than once" in p for p in doubled.problems)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Reconciliation
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _entries(
@@ -648,9 +632,7 @@ def test_an_anticipated_addition_carries_its_reason_and_an_unanticipated_one_is_
     assert "NOT ANTICIPATED" in by_pkg["who-put-this-here"].verdict.reason
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Human annotations
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_a_rejected_dispute_falls_back_to_accepted_risk_rather_than_disappearing(
@@ -758,9 +740,7 @@ def test_a_missing_required_field_in_the_annotations_file_fails_loudly(tmp_path:
         load_overrides(path)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # The workbook
-# ─────────────────────────────────────────────────────────────────────────────
 
 _SUMIFS = re.compile(r"SUMIFS\(([^()]*)\)")
 _REF = re.compile(r"'([^']+)'!\$([A-Z]+):\$[A-Z]+")
@@ -806,8 +786,7 @@ def _build(tmp_path: Path, entries: list[Entry], before_rows: dict[str, int]) ->
 
 
 def test_the_workbook_partitions_every_row_across_the_sheets(tmp_path: Path) -> None:
-    """Every row from the original list appears in exactly ONE sheet, and the accounted counts
-    sum back to the scanner's own total. This is the report's self-check."""
+    """This is the report's self-check: a reviewer can add it up."""
     rows = [
         row("CVE-9000-0050", "libexpat1", "2.5.0-1", fixed="2.5.0-2"),  # fixed by the base move
         row("CVE-9000-0051", "libsystemd0", "252.39-1", fixed="-"),  # held (debian, no fix)
@@ -976,9 +955,7 @@ def test_no_finding_is_ever_labelled_not_affected(tmp_path: Path) -> None:
         assert "not-affected" not in str(entry.verdict.disposition)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # The CLI — where the exit-code contract lives
-# ─────────────────────────────────────────────────────────────────────────────
 #
 # WHY THIS SECTION EXISTS. Every test above calls an internal function directly, so `main()` —
 # argparse wiring, the `map`/`register` split, `--current-digest` parsing, and the ready/not-ready

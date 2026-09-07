@@ -85,10 +85,8 @@ afterEach(cleanup)
 
 describe('the state pill', () => {
   it('★ shares the section label\'s row, carried to its right', () => {
-    // `PreviewOff`, `NothingBuilt` and `Main` draw the label and the pill on one band. The pill was
-    // a `float-right` in the block BELOW the heading — and a float cannot rise onto a preceding
-    // block's line, so it dropped to a row of its own and left a stray strip of empty rail under
-    // "APP STATUS" in every single state.
+    // The pill was a `float-right` in the block BELOW the heading — a float cannot rise onto a
+    // preceding block's line, so it dropped to a row of its own.
     wire({ deployment: view('draft') })
     mount()
     const pill = screen.getByTestId('status-pill')
@@ -232,11 +230,10 @@ describe('the action', () => {
   })
 
   it('★ draws the ONE action the canvas does not paint teal as a secondary', () => {
-    // `StatusCardStates` fills every action button with `#0D7377` except state 3's, which it draws
-    // white with ink on a hairline. Every other action moves the app forward — send for review,
-    // send the newer version, publish. Taking a submission back moves it backwards, out of an
-    // administrator's queue, and painting it in the encouraging colour asked a citizen to withdraw
-    // their own work in exactly the same voice as it asked them to submit it.
+    // Every other action moves the app forward — send for review, send the newer version, publish.
+    // Taking a submission back moves it backwards, out of an administrator's queue, and painting it
+    // in the encouraging colour asked a citizen to withdraw their own work in the same voice as it
+    // asked them to submit it.
     wire({ deployment: view('in_review'), approval: approval({ status: 'pending' }) })
     mount()
     const back = screen.getByTestId('status-action')

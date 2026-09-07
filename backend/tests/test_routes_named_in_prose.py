@@ -1,28 +1,10 @@
 """Every route a comment hands a reader must resolve against the mounted app.
 
-WHY THIS IS A TEST AND NOT A REVIEW HABIT. A URL in a docstring is an instruction someone
-follows — usually an operator, usually mid-incident, always by pasting it — and prose cannot go
-red. Two of them had already rotted the same way: the reaper's `POST /v1/admin/reconcile-sandboxes`
-(the governance router mounts at `/admin/apps`), and `POST /v1/internal/reap` in
-`services/sandbox/config.py` and `workers/sandbox_reap.py` (the reap lever is on the
-build-sessions router). In every case the prefix moved underneath a sentence that kept pointing
-at where it used to be, and the symptom was a 404 at the moment the lever was most needed.
-
-`tests/services/build_sessions/test_reaper.py` already does this for ONE module. This is the same
-assertion widened to the whole of `src/`, which is the version that catches the next one: the
-single-module guard is only ever as good as somebody remembering to add a second copy of it.
-
-ASSERTED AGAINST THE MOUNTED APP, never against a hard-coded list — the failure mode is a prefix
-moving, so pinning literals would go green on the rot and red on the fix. `openapi()` is the
-resolution point: `include_router` defers to `_IncludedRouter`, so `app.routes` holds no paths
-until the schema is built.
-
-PATH PARAMETER NAMES ARE NORMALISED AWAY, deliberately, and this is the line between what this
-guard is for and what it is not. Prose legitimately writes `{id}` or `{projectId}` where the route
-declares `{app_id}` or `{project_id}` — that is an abbreviation a reader resolves without trouble,
-and pasting it was never going to work anyway because a real id has to be substituted in. What
-CANNOT be resolved by a reader is a wrong prefix or a wrong segment, because it looks exactly like
-a right one. So `{...}` collapses to `{}` on both sides and everything else must match exactly.
+Checked against the MOUNTED app, never a hard-coded list, since the failure mode is a prefix
+moving — pinned literals would go green on the rot. Path parameter names are normalised away
+(`{id}` vs `{app_id}`) since a reader resolves that abbreviation fine; only a wrong prefix or
+segment is unresolvable. `test_reaper.py` runs the same check for one module; this widens it
+to all of `src/`.
 
 Mutation check: drop `/apps` from the reaper docstring's reconcile URL, or write
 `/v1/internal/reap` in either sweep module, and this goes red naming the file.
@@ -38,11 +20,9 @@ from src.main import create_app
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
 _A_ROUTE_IN_PROSE = re.compile(r"`(?:GET|POST|PATCH|PUT|DELETE) (/v1/[A-Za-z0-9/_{}.-]+)`")
-"""A backticked method+path — the shape a comment uses when it is handing someone a URL. Anchored
-on `/v1/` so the pattern cannot drag in a portal path, a supervisor path, or an example."""
+# Anchored on `/v1/` so this can't pick up a portal, supervisor, or example path.
 
 _A_PATH_PARAMETER = re.compile(r"\{[^{}]*\}")
-"""One `{…}` segment. Collapsed to `{}` on both sides so `{id}` and `{app_id}` compare equal."""
 
 
 def _shape(path: str) -> str:

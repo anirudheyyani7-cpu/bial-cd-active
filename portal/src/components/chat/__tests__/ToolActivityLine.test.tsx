@@ -49,9 +49,8 @@ describe('the label and the state, and nothing else', () => {
   })
 
   it('carries failure as TEXT, not colour alone (WCAG 1.4.1)', () => {
-    // A red tint is invisible to a reader who cannot distinguish it and to anything reading the
-    // DOM. The glyph SHAPE changes and an sr-only word says so; the label itself stays neutral,
-    // because colouring the label would be the colour-only signal wearing a different hat.
+    // A red tint alone is invisible to a reader who cannot distinguish it — the glyph SHAPE
+    // changes and an sr-only word says so; the label itself stays neutral (WCAG 1.4.1).
     render(<ToolActivityLine label="Ran the type check" state="failed" />)
     expect(screen.getByText('failed')).toBeTruthy()
     expect(screen.getByText('failed').className).toContain('sr-only')
@@ -91,14 +90,12 @@ describe('prefers-reduced-motion', () => {
 
 describe('ActivityRow — what a converted part becomes', () => {
   /**
-   * A tool-call part as the library hands one over, rendered through a locally-typed alias.
-   *
-   * `ToolCallMessagePartComponent` is a union that includes a class component, so it cannot be
-   * read with `Parameters<…>`; and the library's part type carries a dozen fields this row never
-   * reads, so spelling them out would be a fixture maintained against a dependency for no gain.
+   * A tool-call part as the library hands one over, via a locally-typed alias — the library's
+   * own type is a union including a class component (unreadable via `Parameters<…>`) and carries
+   * fields this row never reads.
    *
    * The cases below deliberately pass SHAPES THE TYPE FORBIDS — a missing label, an unknown state
-   * — which is the point: the wire is not typed and the row has to survive them.
+   * — the wire is not typed, and the row has to survive them.
    */
   const Row = ActivityRow as (props: Record<string, unknown>) => JSX.Element
   const part = (args: unknown) => ({

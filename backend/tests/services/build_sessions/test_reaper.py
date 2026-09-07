@@ -52,12 +52,10 @@ OTHER = uuid.uuid4()
 def attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
     """Every copy-before-reclaim outcome this test recorded, WITHOUT touching the database.
 
-    AUTOUSE, AND NOT FOR CONVENIENCE. `record_durable_copy_attempt` opens its own session and
-    COMMITS — it must, because the row has to land even when the reap it describes has just
-    failed — so every gated reap driven from this file would otherwise leave a permanent row in
-    the SHARED test database, and `test_reclamation_report_only.py` counts every row in that
-    table. The real writer is exercised in `test_durable_copy_gate.py`, against a connection that
-    rolls back."""
+    AUTOUSE, AND NOT FOR CONVENIENCE: `record_durable_copy_attempt` opens its own session and
+    COMMITS, so an unspied reap here would leave a permanent row in the SHARED test database
+    that `test_reclamation_report_only.py` counts. The real writer is exercised, against a
+    connection that rolls back, in `test_durable_copy_gate.py`."""
     recorded: list[CopyAttempt] = []
 
     async def _spy(attempt: CopyAttempt) -> None:
@@ -75,9 +73,7 @@ def _forget_the_divert_streak() -> None:
 
 
 #: A name the platform could actually have MINTED — `sbx-` + 28 lowercase hex, the exact shape
-#: `manager.app_name_for` produces. The old fixture said "sbx-x", which no code path can emit, and
-#: that shorthand is precisely what let a missing name guard on the ARM delete path go unnoticed:
-#: a fixture that cannot represent a real name cannot test what happens to an unreal one.
+#: `manager.app_name_for` produces, not the old "sbx-x" that no code path can emit.
 
 
 SBX = a_sandbox_name("x")
@@ -152,20 +148,12 @@ async def test_reap_user_marks_ending_before_teardown_then_releases(
 async def test_a_record_naming_something_that_is_not_a_sandbox_deletes_nothing(
     fake_redis: aioredis.Redis, app_name: str
 ) -> None:
-    """THE ONE PLACE A BAD STRING BECOMES AN ARM DELETE.
+    """THE ONE PLACE A BAD STRING BECOMES AN ARM DELETE: `reap_user` hands the registry's
+    `app_name` to the control plane unchecked, so a corrupted write or a `pub-` name (a
+    citizen's live app) would be a delete request for something that is not ours.
 
-    `reap_user` rebuilds a teardown handle from the registry with `reg.get(app_name, "")` and hands
-    it straight to the control plane. Whatever that record says gets deleted — and the record is
-    the least trustworthy input in the system: it is the store this whole design distrusts, it has
-    no
-    TTL, it is written by several code paths, and the reap path had no check that the name it was
-    about to destroy was even a sandbox. An empty string, a corrupted write, or a `pub-` name that
-    got in by any route was a delete request for something that is not ours.
-
-    FAILS CLOSED AND CLEARS THE RECORD. Refusing but keeping the record would retry the same
-    refusal every five minutes forever; clearing it stops the loop and leaves the loud log line as
-    the only trace, which is the correct trade for a record we have already established is wrong.
-    The container itself is untouched — if it is real, it is somebody else's to delete.
+    Fails closed but still clears the bad record — refusing without clearing would retry
+    the same refusal every five minutes forever; the container itself is untouched.
 
     Mutation-check: drop the guard and the `pub-` case deletes a published application."""
     await _seed(fake_redis, USER, app_name=app_name)
@@ -197,7 +185,6 @@ async def test_reconcile_reaps_on_lapsed_heartbeat(fake_redis: aioredis.Redis) -
 async def test_reconcile_leaves_a_live_session_untouched(fake_redis: aioredis.Redis) -> None:
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=True)
     client = FakeSandboxClient()
-    # A session this process still owns is never reaped by heartbeat lapse.
     assert await reaper.reconcile_user(fake_redis, USER, client, has_live_session=True) is False
     assert client.torn_down == []
     assert await locks.read_registry(fake_redis, USER) is not None
@@ -218,9 +205,8 @@ async def test_reconcile_leaves_a_live_session_untouched(fake_redis: aioredis.Re
 async def test_certified_dead_reaps_through_a_lingering_lock_and_heartbeat(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # THE WALKTHROUGH 409: dead session, lock + heartbeat still lingering. The
-    # certified reconcile reaps the ghost and the immediately-following acquire succeeds —
-    # the user is never told a build is running when nothing is.
+    # dead session, lock + heartbeat still lingering: the certified reconcile reaps the
+    # ghost so the user is never told a build is running when nothing is.
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=True)
     client = FakeSandboxClient()
     assert (
@@ -238,9 +224,8 @@ async def test_the_sweep_never_certifies_and_still_trusts_the_facade(
     fake_redis: aioredis.Redis,
 ) -> None:
     # The sweep holds neither certifying fact, so lock+heartbeat MUST still shield — that
-    # window is exactly where an in-flight start lives between its heartbeat seed and its
-    # `_active_by_user` registration. `sweep_all` has no certified_dead parameter at all;
-    # this pins that its inner reconcile keeps the default.
+    # window is where an in-flight start lives, between its heartbeat seed and its
+    # `_active_by_user` registration. `sweep_all` takes no certified_dead parameter at all.
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=True)
     client = FakeSandboxClient()
     assert (await reaper.sweep_all(fake_redis, client)).reaped == 0
@@ -269,7 +254,6 @@ async def test_certification_never_overrides_an_in_process_session(
 async def test_reconcile_reclaims_drifted_lock_and_next_start_acquires(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The core scenario: registry + a LIVE lock + an ABSENT heartbeat + no in-proc session.
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=False)
     client = FakeSandboxClient()
     assert await locks.lock_is_held(fake_redis, USER) is True
@@ -296,7 +280,6 @@ async def test_sweep_all_reaps_lapsed_and_is_idempotent(fake_redis: aioredis.Red
 async def test_sweep_all_skips_live_users(fake_redis: aioredis.Redis) -> None:
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=False)
     client = FakeSandboxClient()
-    # A user with a live in-proc session is never reaped, so its registry survives.
     assert (await reaper.sweep_all(fake_redis, client, live_users={USER})).reaped == 0
     assert await locks.read_registry(fake_redis, USER) is not None
 
@@ -314,14 +297,13 @@ async def test_reaper_teardown_failure_keeps_state_for_retry(fake_redis: aioredi
 async def test_the_scheduled_sweep_resolves_the_owning_app_id_and_the_operator_one_does_not(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """THE ASYMMETRY THAT PUTS THE SCHEDULED SWEEP UNDER THE DURABLE-COPY GATE. `reap_user`
-    consults `confirm_durable_copy` only when handed an `app_id` — how the gate is opted out of.
-    Reconcile-on-start opts out on purpose (a builder is standing right there about to get a
-    fresh container); the scheduled sweep has nobody watching and does almost all of the
-    deleting, so it resolves the id and is gated. The operator endpoint (`POST /v1/internal/reap`)
-    passes no map and is unchanged. Mutation-check: drop `app_ids_by_name=app_ids_by_name` from
-    `sweep_all`'s `reconcile_user` call and the first assertion goes red — the sweep reaps exactly
-    as it did, ungated."""
+    """`reap_user` consults `confirm_durable_copy` only when handed an `app_id`. Reconcile-on-start
+    opts out (a builder is standing right there); the scheduled sweep has nobody watching and does
+    almost all of the deleting, so it resolves the id and is gated — the operator endpoint passes
+    no map and stays ungated.
+
+    Mutation-check: drop `app_ids_by_name=app_ids_by_name` from `sweep_all`'s `reconcile_user`
+    call and the first assertion goes red — the sweep reaps exactly as it did, ungated."""
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=False)
     app_id = uuid.uuid4()
     gated_with: list[uuid.UUID | None] = []
@@ -353,12 +335,10 @@ async def _preserve(store: FakeStorage, app_id: uuid.UUID, *, head: str = "a" * 
 async def test_the_janitor_destroys_the_container_it_judged_not_the_one_the_record_names(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    """THE INVERSION, and it is the worst outcome this feature can produce.
-
-    Between enumeration and delete the builder started a fresh sandbox, so the registry now names
-    `sbx-new`. Reaping by USER destroys `sbx-new` — a container somebody is building in right now
-    — and leaves `sbx-old`, the orphan that was actually judged, standing and billing. The pass
-    then reports one destruction, and it is the wrong one in both directions at once.
+    """THE INVERSION, the worst outcome this feature can produce: between enumeration and
+    delete the builder started a fresh sandbox, so the registry now names `sbx-new`. Reaping
+    by USER destroys the live `sbx-new` and leaves `sbx-old` — the actual orphan — standing
+    and billing, then reports one destruction that is wrong in both directions.
 
     Mutation-check: key the teardown off `reg[app_name]` instead of the argument and this goes
     red — `sbx-new` is torn down and the live user's record is wiped."""
@@ -384,9 +364,7 @@ async def test_an_unregistered_orphan_is_actually_deleted_and_says_so(
     all. `reap_user` takes its no-registry early-out here: it clears an orphaned lock, returns
     False, and deletes NOTHING, while the pass that called it counted a destruction. The container
     goes on billing and the report says it is gone, which is the single most misleading thing this
-    feature could tell an operator.
-
-    The contrast is asserted rather than described: the same state, both functions."""
+    feature could tell an operator."""
     await _preserve(fake_storage, APP)
     by_name, by_user = FakeSandboxClient(), FakeSandboxClient()
 
@@ -397,7 +375,6 @@ async def test_an_unregistered_orphan_is_actually_deleted_and_says_so(
         is True
     )
     assert by_name.torn_down == [a_sandbox_name("ghost")]
-    # And what the user-keyed reap does with the identical state:
     assert await reaper.reap_user(fake_redis, USER, by_user, app_id=APP) is False
     assert by_user.torn_down == []
 
@@ -460,10 +437,10 @@ async def test_a_failed_teardown_is_not_reported_as_a_destruction(
 
 # --- The janitor takes the copy too, and it is a SECOND call site -------------
 #
-# `reap_user` and `reap_the_container_we_judged` each had their own `confirm_durable_copy` call
-# and each one only logged. A test suite that exercised only `reap_user` — the obvious one,
-# since that is where the gate tests live — would leave the janitor ungated:
-# the caller with nobody watching it, sparing the same containers pass after pass forever.
+# `reap_user` and `reap_the_container_we_judged` each had their own `confirm_durable_copy`
+# call, and each one only logged. A test suite that exercised only `reap_user` — the obvious
+# one, since that is where the gate tests live — would leave the janitor ungated: the caller
+# with nobody watching it, sparing the same containers pass after pass forever.
 
 
 def _a_container_that_bundles(
@@ -525,17 +502,14 @@ async def test_the_janitor_takes_the_copy_before_it_destroys_what_it_judged(
 async def test_an_orphan_with_no_copy_is_spared_with_a_record_rather_than_in_silence(
     fake_redis: aioredis.Redis, fake_storage: FakeStorage, attempts: list[CopyAttempt]
 ) -> None:
-    """THE POPULATION THAT BILLS FOREVER, and the reason the record exists at all.
+    """THE POPULATION THAT BILLS FOREVER, and the reason the record exists at all: an
+    unregistered orphan has no address (`attach_existing` builds its handle from the registry),
+    so it cannot be bundled from, and the honest answer stays "spare" — exactly as before. What
+    changes is that it stops being silent: the same spared container is now a row an operator
+    can find instead of a log line repeating every fifteen minutes.
 
-    An unregistered orphan has no address: `attach_existing` builds its handle from the registry,
-    so a container the store no longer claims cannot be bundled from — and the handle we COULD
-    build names a different container, which must never be copied into this app's slot. So the
-    honest answer stays "spare", exactly as before. What changes is that it stops being silent:
-    the same container spared on every pass is now a row an operator can find, rather than a log
-    line that repeats every fifteen minutes and reads like a guard doing its job.
-
-    Mutation check: drop the `record_durable_copy_attempt` call from the unreachable arm and this
-    goes red — nothing else in the codebase notices a permanently-spared container."""
+    Mutation check: drop the `record_durable_copy_attempt` call from the unreachable arm and
+    this goes red — nothing else in the codebase notices a permanently-spared container."""
     await _seed(fake_redis, USER, app_name=a_sandbox_name("live"))  # names a DIFFERENT container
     client = FakeSandboxClient()
 
@@ -648,7 +622,6 @@ async def test_a_malformed_stay_is_lapsed_not_a_reprieve(fake_redis: aioredis.Re
 
 
 async def test_an_absent_stay_reads_as_lapsed(fake_redis: aioredis.Redis) -> None:
-    # No registry at all, and a registry with no stay field: both False (reapable).
     assert await locks.stay_of_execution_is_current(fake_redis, USER) is False
     await _seed(fake_redis, USER, with_lock=False, with_heartbeat=False)
     assert await locks.stay_of_execution_is_current(fake_redis, USER) is False
@@ -667,22 +640,20 @@ async def test_grant_stay_never_conjures_a_registry(fake_redis: aioredis.Redis) 
 
 
 async def test_a_naive_stay_stamp_is_read_as_utc(fake_redis: aioredis.Redis) -> None:
-    # A tz-naive stamp must not blow up, and must be interpreted as UTC — never as the
-    # HOST's local time. Seeding a single naive stamp of the CURRENT instant does not prove
-    # that: read as local it lands a whole UTC offset away from now, which on UTC itself
-    # and on every host EAST of it still reads as lapsed — so the assertion holds while the
-    # tz handling is wrong. Measured against a local-reading mutation: UTC and +05:30 both
-    # stayed green; only a westward host went red. CI runs on UTC, i.e. exactly where the
-    # single-stamp version proves nothing.
+    # A tz-naive stamp must be read as UTC, never as the HOST's local time. A SINGLE naive
+    # stamp at the current instant does not prove that: read as local it lands a whole UTC
+    # offset away from now, which on UTC itself and every host EAST of it still reads as
+    # lapsed — so the assertion would hold even with the tz handling wrong. Measured against
+    # a local-reading mutation: UTC and +05:30 both stayed green; only a westward host went
+    # red. CI runs on UTC, exactly where the single-stamp version proves nothing.
     #
-    # The PAIR is what pins it, on a host at any UTC offset. Both stamps are derived from
-    # UTC and sit 10 minutes either side of it, which is far outside any real offset's
-    # ability to flip a verdict by accident:
-    #   * naive UTC now+10min  -> True  as UTC; on any host EAST of UTC (e.g. +05:30),
-    #                                   reading it as local shifts it into the PAST -> False.
-    #   * naive UTC now-10min  -> False as UTC; on any host WEST of UTC (e.g. -08:00),
-    #                                   reading it as local shifts it into the FUTURE -> True.
-    # So one of the two goes red the moment the stamp is read as local time anywhere off UTC.
+    # The PAIR pins it on a host at any UTC offset — both stamps sit 10 minutes either side of
+    # UTC now, far outside any real offset's ability to flip a verdict by accident:
+    #   * naive UTC now+10min  -> True  as UTC; read as local on any EAST host (e.g. +05:30)
+    #                                   it shifts into the PAST -> False.
+    #   * naive UTC now-10min  -> False as UTC; read as local on any WEST host (e.g. -08:00)
+    #                                   it shifts into the FUTURE -> True.
+    # So either stamp goes red the moment it is read as local time anywhere off UTC.
     naive_utc_now = datetime.now(UTC).replace(tzinfo=None)
     await _seed_preview(fake_redis, USER, stay=(naive_utc_now + timedelta(minutes=10)).isoformat())
     assert await locks.stay_of_execution_is_current(fake_redis, USER) is True
@@ -695,10 +666,9 @@ async def test_a_naive_stay_stamp_is_read_as_utc(fake_redis: aioredis.Redis) -> 
 async def test_an_absurdly_distant_stay_is_lapsed_not_an_unbounded_reprieve(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # FAIL CLOSED on the OTHER side too. A year-9999 stamp is perfectly parseable, so a
-    # bare `deadline > now` check hands a container nobody owns a reprieve measured in
-    # millennia — the unbounded reprieve the fail-closed contract exists to forbid, reached
-    # THROUGH the parse instead of around it. The window is bounded on both sides:
+    # FAIL CLOSED on the OTHER side too: a year-9999 stamp is perfectly parseable, so a bare
+    # `deadline > now` check would hand out a reprieve measured in millennia — reached THROUGH
+    # the parse instead of around it. The window is bounded both ways:
     # now < deadline <= now + RELAUNCH_PREVIEW_STAY_SECONDS.
     await _seed_preview(fake_redis, USER, stay="9999-12-31T23:59:59+00:00")
     assert await locks.stay_of_execution_is_current(fake_redis, USER) is False
@@ -724,15 +694,13 @@ async def test_a_sweep_that_trips_on_one_user_still_reaps_the_rest(
     fake_redis: aioredis.Redis,
 ) -> None:
     """★ SWEEP ISOLATION. The scan loop used to be unguarded, so the FIRST exception ended the
-    whole cycle and every user later in SCAN order went unreconciled — silently, because SCAN
-    order is not stable enough for anyone to notice the same victims twice.
+    whole cycle and every later user in SCAN order went unreconciled, silently — SCAN order is
+    not stable enough to notice the same victims twice.
 
-    The reachable case is an ARM throttle: `reap_user` deletes through a blocking ARM poller,
-    and `attach_existing`'s liveness confirmation raises `AcaError`, which is NOT a
-    `SandboxError` and so escapes every handler on the path.
+    The reachable case is an ARM throttle: `attach_existing`'s liveness confirmation raises
+    `AcaError`, which is NOT a `SandboxError` and so escapes every handler on the path.
 
-    Mutation-check: drop the per-user `try/except` in `sweep_all` and this goes red.
-    """
+    Mutation-check: drop the per-user `try/except` in `sweep_all` and this goes red."""
     doomed, healthy = uuid.uuid4(), uuid.uuid4()
     await _seed(fake_redis, doomed, app_name=a_sandbox_name("boom"), with_heartbeat=False)
     await _seed(fake_redis, healthy, app_name=a_sandbox_name("fine"), with_heartbeat=False)
@@ -756,11 +724,10 @@ async def test_a_sweep_that_trips_on_one_user_still_reaps_the_rest(
 # --- The wall-clock liveness lease --------------------------------
 #
 # The lock+heartbeat pair is a FACADE in both directions: a crashed builder leaves it
-# standing, and a live one loses its heartbeat 90 seconds in. The lease is the positive
-# signal, and it is the one input here that is readable from a process that is NOT running
-# the build. The two behaviours below are opposite ON PURPOSE — a timer must be
-# conservative, a request path must be decisive — and the pair is the regression guard
-# against collapsing them into one.
+# standing, and a live one loses its heartbeat 90 seconds in. The lease is the one input
+# here that is readable from a process NOT running the build. The two behaviours below are
+# opposite ON PURPOSE — a timer must be conservative, a request path decisive — and the pair
+# is the regression guard against collapsing them into one.
 
 
 async def _hold_a_lease(redis: aioredis.Redis, user: uuid.UUID) -> None:
@@ -796,22 +763,19 @@ async def test_the_sweep_reaps_once_the_lease_lapses(fake_redis: aioredis.Redis)
 async def test_certified_dead_deletes_the_lease_and_reaps_through_it(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # ★ THE CRASHED-TAB LOCKOUT, in new clothes. A turn killed mid-build leaves a live lease
-    # behind. If reconcile-on-start honoured it, the SAME builder's next start would 409
-    # until the TTL expired — precisely the lockout reconcile-on-start exists to prevent,
-    # reintroduced by the mechanism added to protect them.
+    # ★ THE CRASHED-TAB LOCKOUT, in new clothes: a turn killed mid-build leaves a live lease
+    # behind, and if reconcile-on-start honoured it the SAME builder's next start would 409
+    # until the TTL expired — the exact lockout reconcile-on-start exists to prevent.
     #
-    # And it has to be DELETED, not merely ignored: a lease left in place would go on sparing
-    # the container from the background sweep after the reconcile had already decided it was
-    # dead and torn it down.
+    # It has to be DELETED, not merely ignored: a lease left in place would keep sparing the
+    # container from the background sweep after the reconcile had already torn it down.
     #
-    # Mutation-checked, with the honest result recorded rather than the flattering one: this
-    # test does NOT go red when `reconcile_user`'s certified-dead delete is removed, because
-    # the reap it then performs clears the lease anyway one step later. The two tests below
-    # are what cover that call — the stray-lease case (nothing to reap, so nothing else
-    # clears it) and the survives-the-delete case. All three exist because the pre-existing
-    # `test_certified_dead_reaps_through_a_lingering_lock_and_heartbeat` seeds only the lock
-    # and the heartbeat, and would have stayed green through every one of these regressions.
+    # Mutation-checked, honest result recorded: this test does NOT go red when the
+    # certified-dead delete is removed, because the reap that follows clears the lease anyway
+    # one step later. The two tests below cover that call directly (the stray-lease case and
+    # the survives-the-delete case) — all three exist because the pre-existing
+    # `..._reaps_through_a_lingering_lock_and_heartbeat` test seeds only lock+heartbeat and
+    # would stay green through every one of these regressions.
     await _seed(fake_redis, USER, with_lock=True, with_heartbeat=True)
     await _hold_a_lease(fake_redis, USER)
     client = FakeSandboxClient()
@@ -831,15 +795,14 @@ async def test_certification_reaps_through_a_lease_that_survives_the_delete(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # THE BELT, WITH THE BRACES REMOVED. The certified path both deletes the lease and
-    # declines to read it, and the delete alone hides the second half from every other test
-    # here — a held lease is never observed because it was just removed. So the delete is
-    # neutered for this one test, leaving the `not certified_dead` guard as the only thing
-    # standing between the builder and a 409 that lasts until the TTL.
+    # declines to read it; the delete alone hides the held-lease case from every other test
+    # here. So the delete is neutered for this one test, leaving the `not certified_dead`
+    # guard as the only thing standing between the builder and a 409 that lasts until the TTL.
     #
-    # It is not a hypothetical pair of belts: the lease has a RENEWAL LOOP behind it, so a
-    # zombie task re-writing the key between the delete and the read would restore exactly
-    # this state — and the reaper would then refuse to reclaim a slot it has already
-    # certified nobody is using.
+    # Not a hypothetical pair of belts: the lease has a RENEWAL LOOP behind it, so a zombie
+    # task re-writing the key between the delete and the read would restore exactly this
+    # state — and the reaper would then refuse to reclaim a slot it has already certified
+    # nobody is using.
     #
     # Mutation-check: drop `not certified_dead` from the lease check and this goes red;
     # every other test in this file stays green, which is the whole reason it exists.
@@ -926,31 +889,15 @@ async def test_a_failed_teardown_keeps_the_lease_with_the_rest_of_the_state(
 
 
 def test_no_worker_module_may_certify_death() -> None:
-    """★ `certified_dead=True` is a CALLER ASSERTION, and one of its three premises is the
-    single-replica deploy — the very premise a worker removes.
+    """★ `certified_dead=True` is a CALLER ASSERTION resting on single-replica deploy — the
+    premise a worker removes; a worker passing it would reap live builds while their owners
+    watched them die. Asserted on the SOURCE, not by calling anything, because the property
+    is "no such call exists" with no runtime moment to observe it.
 
-    The certification reads: this process holds the per-user start lock, has established the
-    user has no in-process session, and is the only replica. A background process on another
-    container can establish none of the three, so a worker passing it would reap live builds
-    while their owners watched them die.
-
-    Asserted on the SOURCE rather than by calling anything, because the property is "no such
-    call exists" — there is no runtime moment at which to observe it, and a worker that
-    acquires the call in six months is exactly the regression worth catching. The parameter
-    already defaults to `False`, so the flag has to be spelled out to be wrong: its textual
-    absence under `src/workers/` IS the boundary.
-
-    RECURSIVE ON PURPOSE. A non-recursive `glob` was the first spelling here, and it let a
-    worker organised as a subpackage — `src/workers/reclamation/tasks.py` — carry a literal
-    `certified_dead=True` with this test still green, while `assert modules` stayed satisfied
-    by the top-level files beside it.
-
-    AND IT PARSES RATHER THAN GREPS, for the mirror-image reason. A substring scan fired on
-    `sandbox_reap.py`'s own docstring, which says a worker may never pass this flag — a matcher
-    that flags the WARNING trains people to delete the warning. What is forbidden is the
-    keyword argument, so that is what is looked for: `certified_dead=True` as an actual call
-    site, in prose nowhere.
-    """
+    RECURSIVE ON PURPOSE: a non-recursive glob let a worker organised as a subpackage
+    (`src/workers/reclamation/tasks.py`) carry the flag with `assert modules` still satisfied
+    by files beside it. PARSES RATHER THAN GREPS for the mirror reason: a substring scan would
+    fire on this very docstring's warning and train people to delete the warning instead."""
     worker_dir = Path(__file__).resolve().parents[3] / "src" / "workers"
     modules = sorted(worker_dir.rglob("*.py"))
     assert modules, "the worker package moved; this boundary is no longer being checked"
@@ -973,17 +920,16 @@ def test_no_worker_module_may_certify_death() -> None:
 
 # --- The pre-adopt window, and the one signal that can cover it ------------------
 #
-# A turn's life splits into three intervals, and the point of this section is that each needs a
-# signal that can ACTUALLY BE HELD in it — "at least one spare signal is held" is only checkable
-# interval by interval.
+# A turn's life splits into three intervals, each needing a signal that can ACTUALLY BE HELD
+# in it — checkable only interval by interval:
 #
 #   1. claim → a registry hash exists. Nothing can be written here and nothing needs to be:
 #      `reconcile_user` returns above without reaping when there is no registry, and both write
 #      primitives refuse in this window on purpose (a lease written for a user with no record
 #      would spare whatever container that user gets NEXT).
-#   2. registry hash → adopt-and-seed-the-heartbeat. THIS ONE. The lock/heartbeat disjunct is an
-#      AND, so lock-held-with-no-heartbeat is reapable, and the turn's own door grants nothing
-#      across it. The starting marker spans exactly this interval.
+#   2. registry hash → adopt-and-seed-the-heartbeat. THIS ONE. The lock/heartbeat disjunct is
+#      an AND, so lock-held-with-no-heartbeat is reapable; the starting marker below spans
+#      exactly this interval.
 #   3. adopt → terminal. The liveness lease, covered above and in `test_liveness_lease.py`.
 
 

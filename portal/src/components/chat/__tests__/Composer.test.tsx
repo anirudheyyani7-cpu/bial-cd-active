@@ -37,7 +37,6 @@ const send = () => screen.getByTestId('composer-send')
 const gateNote = () => screen.queryByTestId('composer-gate-note')
 const type = (text: string) => fireEvent.change(box(), { target: { value: text } })
 
-/** The sweep. Every state this composer can be in has to pass it. */
 const noRealDisabled = (container: HTMLElement) =>
   expect(container.querySelector('[disabled]')).toBeNull()
 
@@ -50,7 +49,6 @@ describe('a turn in flight: typing stays, sending waits', () => {
 
     expect(send().getAttribute('aria-disabled')).toBe('true')
     expect(gateNote()?.textContent).toMatch(/send unlocks when it is done/i)
-    // ONE line, not a stack of them.
     expect(screen.getAllByTestId('composer-gate-note')).toHaveLength(1)
     noRealDisabled(container)
   })
@@ -103,7 +101,7 @@ describe('nothing is ever `disabled` — swept in every state', () => {
     type('x'.repeat(10_001))
     expect(send().getAttribute('aria-disabled')).toBe('true')
     noRealDisabled(container)
-    expect(box().value.length).toBe(10_001) // and NOTHING was cut
+    expect(box().value.length).toBe(10_001)
   })
 
   it('the textarea carries no `maxLength` attribute', () => {
@@ -402,17 +400,14 @@ describe('one composer, both kinds', () => {
 })
 
 /**
- * WHICH REASON WINS WHEN MORE THAN ONE IS TRUE.
+ * WHICH REASON WINS WHEN MORE THAN ONE IS TRUE. `unavailableReason` is a four-arm cascade, and
+ * every other test in this file drives exactly one arm, so the ORDER — the only thing a cascade
+ * encodes — was never actually asserted before this block.
  *
- * `unavailableReason` is a four-arm cascade, and every other test in this file drives exactly one
- * arm — so the ORDER, which is the only thing a cascade encodes, was never actually asserted.
- * Reordering it would have broken nothing.
- *
- * The order is by immediacy, and the offer is deliberately LAST: the first three describe
- * something happening right now — the citizen's own text is too long, a reply is arriving, their
- * app is being built — while a pending offer describes a question still waiting. The offer also
- * stays pending for the whole round trip its own Build press starts, so putting it first told a
- * citizen to "choose one of the two above" while the build they had just chosen was starting.
+ * The order is by immediacy: the first three describe something happening right now (too-long
+ * text, a reply arriving, the app being built), while a pending offer describes a question still
+ * waiting — and stays pending through its own Build press's whole round trip, so putting it first
+ * would tell a citizen to "choose one of the two above" while the build they just chose starts.
  */
 describe('the send-unavailable cascade, with more than one arm true', () => {
   const OVER_CAP = 'x'.repeat(20000)

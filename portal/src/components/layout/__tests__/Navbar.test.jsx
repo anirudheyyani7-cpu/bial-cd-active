@@ -227,7 +227,6 @@ describe('the waiting-count badge is accurate, accessible, and admin-only', () =
     // is the sentence beside it.
     expect(screen.getByText('7 apps waiting for review')).toBeTruthy()
     expect(badge.querySelector('[aria-hidden="true"]').textContent).toBe('7')
-    // …and it hangs off the ADMIN entry, not off Projects or Help.
     expect(badge.closest('a').getAttribute('href')).toBe('/admin')
   })
 
@@ -299,12 +298,7 @@ describe('the waiting-count badge is accurate, accessible, and admin-only', () =
 
 
 /**
- * The avatar menu's state machine.
- *
- * An earlier change removed three of the four header dropdowns, which left a `DropdownName`
- * union with one member and a `toggle(name)` comparing it against itself; a later commit collapsed both into a
- * boolean. Nothing in this file covered the open/close behaviour either before or after, so the
- * rewrite rested entirely on a manual browser pass. These are the three ways the menu closes.
+ * The avatar menu's state machine — these are the three ways it closes.
  */
 describe('the avatar menu opens and closes', () => {
   // Resolved ONCE, while the menu is closed, and the node is reused afterwards. Two traps
@@ -374,15 +368,12 @@ describe('the avatar menu opens and closes', () => {
 })
 
 /**
- * THE HEADLINE. A failed sign-out used to call `showToast(...)` and then
- * `navigate('/login')` on the very next line: the navigate unmounts ProjectsPage —
- * unmounts the navbar — which OWNS the toast state, destroying the message in the same
- * tick it was created. Nobody has ever seen it, on any device. The fix hands the warning
- * forward as router state instead, so the screen the person actually LANDS ON renders it.
+ * THE HEADLINE: a failed sign-out used to `showToast(...)` then `navigate('/login')` on the next
+ * line — the navigate unmounts Navbar, which OWNS the toast state, destroying the message in the
+ * same tick it was created. The fix carries the warning forward as router state instead.
  *
- * `LoginScreenProbe` stands in for LoginPage here — it reads exactly the same
- * `location.state.signoutWarning` LoginPage reads, so a passing test proves what reaches
- * the destination screen, not merely what Navbar tried to render before leaving.
+ * `LoginScreenProbe` reads the same `location.state.signoutWarning` LoginPage reads, so a pass
+ * proves what reaches the destination screen, not what Navbar tried to render before leaving.
  */
 function LoginScreenProbe() {
   const location = useLocation()

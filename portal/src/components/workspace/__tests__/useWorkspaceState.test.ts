@@ -1,15 +1,14 @@
 /**
  * THE READ BEHIND THE WORKSPACE STATE — the half that talks to the server.
  *
- * Two scenarios depend on a timer EXISTING, not merely on the map being right:
- * a `starting` read has to reach `running` with no user gesture, and a stay that lapses at thirty
- * minutes has to be noticed rather than left on screen as a lie. So the cadence is asserted here
- * directly, with fake timers, rather than left as an implementation detail.
+ * Two scenarios depend on a timer EXISTING, not merely on the map being right: a `starting`
+ * read has to reach `running` with no user gesture, and a stay that lapses at thirty minutes
+ * has to be noticed rather than left on screen as a lie. So the cadence is pinned directly,
+ * with fake timers.
  *
- * The other half of this file is about COST. `fetchPreviewState` is cheap by contract — one cache
- * read, no container call — and safe on a timer. `fetchSaveState` runs two `git` executions inside
- * the container, and asking a stopped project whether it has unsaved work is a start the screen
- * caused. The gating is a requirement, not an optimisation, so it is pinned.
+ * The other half is COST. `fetchPreviewState` is cheap and safe on a timer; `fetchSaveState`
+ * runs two `git` execs inside the container, and asking a stopped project is a start the
+ * screen caused. The gating is a requirement, not an optimisation, so it is pinned too.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'

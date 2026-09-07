@@ -1,16 +1,13 @@
 /**
  * A COMPOSER, UNDER A RUNTIME — the harness every composer suite mounts through.
  *
- * The composer is the library's box now, and every library composer primitive resolves against
- * `useAui()`. So a suite that renders `<Composer/>` bare gets "You are using a component or hook
- * that requires an AuiProvider" rather than a composer — which is not a testing inconvenience, it
- * is the shape of the thing under test: on both real screens the composer sits inside a provider,
- * and a test that could render it without one would be testing something the product does not
- * mount.
+ * Every library composer primitive resolves against `useAui()`, so `<Composer/>` rendered bare
+ * throws for a missing AuiProvider — which is not a testing inconvenience, it is the shape of
+ * the thing under test: on both real screens the composer sits inside a provider.
  *
- * THE RUNTIME HERE IS THE REAL ONE, not a double. `ChatRuntimeProvider` is what the conversation
- * surface mounts, with the same adapter and the same capability derivation, so a suite that passes
- * here is exercising the composer the citizen gets.
+ * The runtime here is the REAL one, not a double: `ChatRuntimeProvider` is what the conversation
+ * surface mounts, with the same adapter and capability derivation, so a suite that passes here
+ * exercises the composer the citizen gets.
  */
 import type { ReactNode } from 'react'
 import { vi } from 'vitest'

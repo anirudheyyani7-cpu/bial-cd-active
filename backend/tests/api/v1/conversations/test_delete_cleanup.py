@@ -1,8 +1,7 @@
-"""DELETE /v1/conversations/{id} — delete-with-cleanup over the NATIVE message store (U4).
+"""DELETE /v1/conversations/{id} — delete-with-cleanup over the NATIVE message store.
 
-Carried forward from the retired append/delete suite: the delete flow survives the reset,
-but attachment discovery now walks native payloads for `bial-attachment-ref` markers (the
-externalized-binary shape) instead of the legacy SPA `file` parts.
+Attachment discovery walks native payloads for `bial-attachment-ref` markers (the
+externalized-binary shape), not the legacy SPA `file` parts.
 """
 
 from __future__ import annotations
@@ -72,7 +71,6 @@ async def test_delete_sweeps_attachments(client, db_session, fake_storage) -> No
     resp = await client.delete(f"/v1/conversations/{conv.id}", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
-    # Conversation + its messages gone (cascade), attachment row + object swept.
     assert await db_session.scalar(select(Conversation).where(Conversation.id == conv.id)) is None
     assert (
         await db_session.execute(select(Message).where(Message.conversation_id == conv.id))
@@ -90,7 +88,6 @@ async def test_delete_cross_user_404(client, db_session) -> None:
     theirs = await ConversationFactory.create(db_session, other.id)
     resp = await client.delete(f"/v1/conversations/{theirs.id}", headers=headers)
     assert resp.status_code == 404
-    # Untouched.
     assert (
         await db_session.scalar(select(Conversation).where(Conversation.id == theirs.id))
         is not None

@@ -315,13 +315,7 @@ async def test_the_declare_done_description_the_model_reads_says_the_turn_ends(
 
     `declare_done` used to promise the opposite of what it now does ("This does NOT end the
     build on its own"), and a model that believes it gets one more turn keeps its closing
-    message OUT of `summary` and saves it for prose the harness has just stopped rendering.
-    That is the exact failure this unit exists to prevent, so the description is asserted with
-    the same seriousness as the code.
-
-    Asserted on the description the TOOLSET REGISTERS — the text pydantic-ai actually sends —
-    rather than on `__doc__`, because the framework composes one from the other and only one of
-    them reaches the model.
+    message out of `summary`, saved for prose the harness has already stopped rendering.
 
     Mutation check: restore either retired sentence and the two absence asserts go red; drop
     the diagnostic clause and the liveness assert does."""
@@ -379,7 +373,6 @@ async def test_declare_done_tells_the_model_its_summary_is_the_last_word(
     assert "nothing further is asked of you" in returned
     # The repair arm survives verbatim — a red check still hands over the diagnostic.
     assert "you will get the diagnostic to fix" in returned
-    # The retired stand-by phrasing is gone.
     assert "will now type-check the app" not in returned
 
 
@@ -419,7 +412,7 @@ async def test_run_command_emits_one_friendly_row_no_raw_shell(sink: CollectingS
         fake, sink, [tool_turn("run_command", {"command": ["npm", "install", "zod"]}), text_turn()]
     )
     rc = [e for e in _steps(sink) if e.name == "run_command"]
-    assert len(rc) == 1  # ONE row per command (no separate `started` emit)
+    assert len(rc) == 1
     assert rc[0].state == "ok"
     assert rc[0].label == "Setting up the tools your app needs"
     for leaked in ("$ ", "npm", "install", "zod"):
@@ -484,17 +477,11 @@ async def test_run_command_blocked_sql_emits_a_friendly_failed_label(sink: Colle
 async def test_a_read_only_command_is_a_visible_step_and_housekeeping_is_not(
     sink: CollectingSink,
 ) -> None:
-    """★ WHAT `hidden` MEANS NOW, asserted as the pair that defines the line.
-
-    Reads used to be hidden as a class, which is why a build's activity opened on a write with
-    no account of what the agent had looked at to get there. Looking at the app before changing
-    it is work the citizen recognises, so it is drawn. Housekeeping — `mkdir`, `mv`, `touch` —
-    is not: drawing it prints a generic line that says nothing about their app.
-
-    BOTH HALVES IN ONE TEST, deliberately. Asserting only that a read is visible would pass just
-    as well against a change that deleted the flag outright, which is the thing this unit
-    explicitly did not do.
-
+    """★ WHAT `hidden` MEANS NOW: reads used to be hidden as a class, so a build's activity
+    opened on a write with no account of what the agent had looked at first — looking at the
+    app is work the citizen recognises, so it's drawn; housekeeping (`mkdir`, `mv`, `touch`)
+    isn't. BOTH HALVES IN ONE TEST: asserting only that a read is visible would pass just as
+    well against a change that deleted the flag outright.
     Mutation check: flip either arm's `hidden` in `_classify_command` and exactly one of these
     two assertions goes red."""
     fake = FakeSandbox()
@@ -523,18 +510,12 @@ async def test_a_read_only_command_is_a_visible_step_and_housekeeping_is_not(
 async def test_housekeeping_that_fails_is_drawn_rather_than_hidden(
     sink: CollectingSink,
 ) -> None:
-    """★ NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, on this emitter too.
-
-    The turn engine's `_resolve_step` clears `hidden` on a failed step and the reload projection
-    does the same, and `classify_command`'s docstring states that parity for this emitter by
-    name — while this feed passed the classifier's flag straight through, so a `mkdir` that
-    failed was a problem counted in the group's total with no row anyone could open. A citizen
-    reading "1 problem" and finding nothing that says what it was is the failure the whole
-    hidden/failed rule exists to prevent.
-
-    THE PAIR IS THE TEST. The same command succeeding stays hidden — the flag is narrowed by
-    state, not deleted — which is what makes the visible arm mean something.
-
+    """★ NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, on this emitter too — `_resolve_step` and
+    the reload projection both clear `hidden` on a failure, and this feed used to pass the
+    classifier's flag straight through instead, so a failed `mkdir` was a problem counted in
+    the group's total with no row anyone could open. THE PAIR IS THE TEST: the same command
+    succeeding stays hidden — narrowed by state, not deleted — which is what makes the visible
+    arm mean something.
     Mutation check: pass `hidden=hidden` through `_step` again and the failed arm goes red while
     the succeeding one stays green."""
     fake = FakeSandbox()
@@ -717,15 +698,11 @@ async def test_run_command_never_leaks_the_supervisor_token(sink: CollectingSink
 
 # --- the commit reminder that no longer exists -----------------------------------------
 #
-# The Write segment's COMMIT AS YOU WORK block is gone; who commits the tree, and when, is in
-# `services/build_sessions/snapshot.py`. These tests replace four that pinned the retired
-# reminder's cadence and its reset.
-#
-# THE ENFORCER HAD TO GO WITH THE INSTRUCTION, and that is the whole point of testing it here.
-# `_note_write_and_maybe_remind` lived in `tools.py` — the toolset BOTH agents build from —
-# while the instruction it enforced lived only in the Write segment. Delete one and not the
-# other, and every third file write comes back carrying a `<system-reminder>` telling the model
-# to commit a slice nothing ever asked it to commit.
+# Who commits the tree, and when, now lives in `services/build_sessions/snapshot.py`, not here.
+# The enforcer had to go WITH the instruction: `_note_write_and_maybe_remind` lived in
+# `tools.py`, the toolset both agents build from, while the instruction it enforced lived only
+# in the Write segment — deleting one and not the other means a `<system-reminder>` telling the
+# model to commit a slice nothing ever asked it to commit rides every third write.
 
 
 async def test_no_reminder_rides_a_write_result_any_more(sink: CollectingSink) -> None:
@@ -779,16 +756,14 @@ async def test_a_git_commit_through_run_command_is_still_an_ordinary_command(
 # cap tool output by usefulness, not by a fixed head
 # ═══════════════════════════════════════════════════════════════════════════════════════
 #
-# THE DEFECT THESE PIN: the cap was HEAD-ONLY. A failing `tsc` or `npm run build` puts its
-# message at the top and the failing assertion at the bottom, so a head cap threw away the half
-# the model needed and it paid a re-run to see the middle. The fix is exit-code-conditional
-# (summarise a success, dump a failure), keeps BOTH ends, and hands back a handle to what it cut.
+# A head-only cap threw away a failure's message while keeping its irrelevant top. Fixed
+# exit-code-conditional (summarise a success, dump a failure), keeping both ends and handing
+# back a handle to what it cut.
 #
-# THE ONE TO RUN UNDER MUTATION is `test_a_secret_inside_the_elided_middle_is_never_retrievable`:
-# delete the `scrub_untrusted` call in `_redacted_lines` (the redact-before-buffering line) and it
-# goes red. It is DISTINCT from the boundary test below it — that one is about a cut splitting a
-# credential; this one is about the buffer being built from the wrong string in the first place,
-# and a secret sitting entirely inside an elided middle is the ordinary case, not an edge one.
+# Mutation target: `test_a_secret_inside_the_elided_middle_is_never_retrievable` — delete the
+# `scrub_untrusted` call in `_redacted_lines` and it goes red. Distinct from the boundary test
+# below (a cut splitting a credential): this one is a secret sitting entirely inside an elided
+# middle, the ordinary case, not an edge one.
 
 _ERROR_AT_THE_VERY_END = "error TS2322: Type 'string' is not assignable to type 'number'."
 _TRACE_TITLE_AT_THE_TOP = "FATAL: the migration runner refused to start"
@@ -1452,13 +1427,11 @@ async def test_the_live_step_says_what_the_citizen_sees_never_the_shell(
 async def test_the_composite_gets_the_long_operation_status_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ The stillness narrator exists for exactly this tool: the composite
-    removes the per-step narration that used to fill the gap, so a citizen watching a schema change
-    would otherwise watch a row that stopped changing when the generate started.
-
-    Driven at `_on_event`, the seam where a tool call becomes a step frame and the narrator is
-    armed — the threshold and cadence are compressed rather than waited out, because the property
-    under test is "past the threshold, and repeatedly", not the number of seconds.
+    """★ The stillness narrator exists for exactly this tool: the composite removes the per-step
+    narration that used to fill the gap, so a citizen watching a schema change would otherwise
+    watch a row that stopped changing when the generate started. Driven at `_on_event`;
+    threshold and cadence are compressed rather than waited out, since the property under test
+    is "past the threshold, and repeatedly", not the number of seconds.
 
     Mutation-check: classify the composite as `hidden` and this goes red, because
     `_start_long_operation` refuses to narrate a step that renders nowhere."""

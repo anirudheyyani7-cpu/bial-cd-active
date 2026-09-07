@@ -44,17 +44,15 @@ const step = (seq: number) => ({
 
 describe('turnPhase — nothing to say', () => {
   it('says nothing until a workspace frame has arrived', () => {
-    // The pane keeps whatever it already had. A turn that has not reported on the workspace has
-    // told us nothing about the app, and inventing a phase here would cover a live preview with a
-    // provisioning screen on every ordinary send.
+    // A turn that has not reported on the workspace has told us nothing about the app; inventing
+    // a phase here would cover a live preview with a provisioning screen on every ordinary send.
     expect(turnPhase(narrative(), { running: true, terminal: null })).toBeNull()
     expect(turnPhase(narrative(), { running: false, terminal: 'completed' })).toBeNull()
   })
 
   it('an unavailable workspace is terminal, whatever else arrived', () => {
-    // First in the order on purpose: there is no phase after this one worth reporting, and a
-    // later arm claiming `building` over a workspace that could not be prepared is the pane
-    // telling a citizen their app is being written when nothing is.
+    // First in the order on purpose: a later arm claiming `building` over a workspace that could
+    // not be prepared is the pane telling a citizen their app is being written when nothing is.
     expect(
       turnPhase(
         narrative({
@@ -69,11 +67,6 @@ describe('turnPhase — nothing to say', () => {
 })
 
 describe('turnPhase — a turn that only answered a question', () => {
-  // THE ARM THAT WAS UNREACHABLE. `narrativeStatus` took `isBuild`, and its one caller passed the
-  // literal `true`, so nothing in the shipped product could ever reach this. It is reachable now
-  // because the FRAMES decide, and these are the cases that prove the decision is made on
-  // evidence rather than on a chat's kind.
-
   it('reports the container wait while it is still happening, and nothing after it', () => {
     const preparing = narrative({ workspace: { state: 'preparing', message: null } })
     expect(turnPhase(preparing, { running: true, terminal: null })).toBe('provisioning')
@@ -91,9 +84,8 @@ describe('turnPhase — a turn that only answered a question', () => {
   })
 
   it('a failed QUESTION does not paint the app pane failed', () => {
-    // The distinction the old `isBuild` existed to make, now made by evidence: a question that
-    // errored says nothing about the app, and reporting `failed` here would put a build-failure
-    // treatment over an app that is running perfectly well.
+    // A question that errored says nothing about the app — reporting `failed` here would put a
+    // build-failure treatment over an app that is running perfectly well.
     expect(
       turnPhase(narrative({ workspace: { state: 'ready', message: null } }), {
         running: false,
@@ -161,10 +153,8 @@ describe('turnPhase — a turn that worked on the app', () => {
 
 describe('atLimitSendState', () => {
   it('the SEND control will not act, and its title names when sending works again', () => {
-    // THE COMPOSER STAYS ENABLED — this describes the send control only. A citizen who is
-    // refused mid-thought has usually just typed something worth keeping, and disabling the
-    // textarea takes their draft hostage until midnight (and blurs focus to the
-    // document body).
+    // THE COMPOSER STAYS ENABLED — disabling the textarea would take a citizen's draft hostage
+    // until midnight.
     //
     // Mutation check: return `null` unconditionally from `atLimitSendState` and this goes red.
     const state = atLimitSendState([quota()])
@@ -184,13 +174,11 @@ describe('atLimitSendState', () => {
 
   it('takes the NEWEST reset time by seq, not the last envelope that happened to arrive', () => {
     // A reconnect replays the stream, so envelopes arrive out of order. Reading the last ARRIVED
-    // envelope hands the citizen a stale reset time from a replayed frame — and "when can I send
-    // again" is the only question this answers.
+    // envelope hands the citizen a stale reset time from a replayed frame.
     //
-    // The two instants differ in TIME OF DAY, not merely in date. `formatResetTime` renders a
-    // clock time, so two different DATES at the same hour render identically and the assertion
-    // would pass against either implementation — which is exactly what an earlier version of
-    // this test did.
+    // The two instants differ in TIME OF DAY, not merely in date: `formatResetTime` renders a
+    // clock time, so two different DATES at the same hour would render identically and pass
+    // against either implementation.
     //
     // Mutation check: pick the last array element instead of sorting by seq and this goes red.
     const stale: QuotaExceededEvent = { ...quota(9), resets_at: '2026-07-15T06:15:00.000Z' }

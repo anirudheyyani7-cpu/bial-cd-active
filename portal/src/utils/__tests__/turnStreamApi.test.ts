@@ -106,7 +106,6 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
     }
 
     expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":true}')).toBe(true)
-    // Absent — the server said nothing, so the block already open continues.
     expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there"}')).toBe(false)
     expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":false}')).toBe(false)
     // Present but not the boolean: a coercion would read either of these as a paragraph break.
@@ -142,10 +141,8 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
     // A terminal with an unreadable status is still a terminal — never lost, read as failed.
     const [ended] = parseOne('{"type":"turn_ended","seq":9,"turnId":"t","status":"nonsense"}')
     expect(ended).toMatchObject({ type: 'turn_ended', status: 'failed' })
-    // An unreadable snapshot status reads as idle, and its unusable PARTS are dropped one by
-    // one rather than spread through. Three shapes at once: a part that is not an object at
-    // all, a step part with no `toolCallId` (the key the live tail replaces it by — without one
-    // it is a row that can never resolve), and a good text part that must survive beside them.
+    // An unreadable snapshot status reads as idle, and its unusable parts are dropped one by
+    // one rather than spread through.
     const [snap] = parseOne(
       '{"type":"snapshot","seq":1,"turnStatus":"nonsense","parts":' +
         '["x",{"type":"step","item":{"type":"step","seq":1,"tool":"t","label":"l","state":"ok"}},' +
@@ -281,12 +278,9 @@ describe('readTurnStream', () => {
   })
 
   it('resolves stalled when the REQUEST itself never answers', async () => {
-    // THE HUNG-SUBSCRIBE HOLE. The watchdog used to guard only `reader.read()` — i.e. only
-    // after response HEADERS arrived. A server that accepted the connection and then never
-    // answered left this promise pending FOREVER, and `BuilderPage`'s `endGenerating` sits
-    // after the await, so `generatingChatId` was never cleared: the composer kept animating
-    // "Setting up your sandbox… running Nm Ns" with a live Stop button (and a disabled mode
-    // toggle) on a turn the server had already failed in under a second.
+    // THE HUNG-SUBSCRIBE HOLE: the watchdog used to guard only `reader.read()`, i.e. only after
+    // response headers arrived — a server that accepted the connection and never answered left
+    // this promise pending forever, with no timeout to fall back on.
     const fetchFn = vi.fn(() => new Promise<Response>(() => {})) // accepted, never answers
     const outcome = await readTurnStream({
       conversationId: 'c1',
@@ -352,8 +346,6 @@ describe('startTurn', () => {
     )
     expect(result.turnId).toBe('t9')
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
-    // The edge rewrite is `^/api → /v1`, so the client base must be `/api/...` (un-prefixed).
-    // A `/api/v1/...` base doubled to `/v1/v1/...` → 404 for every turn call.
     expect(url).toBe('/api/conversations/c1/turns')
     expect(JSON.parse(init.body as string)).toEqual({
       message: { text: 'hello', attachmentTexts: [], attachmentIds: [] },
@@ -361,12 +353,7 @@ describe('startTurn', () => {
   })
 
   it("binds a new chat's KIND into the create block on a first message", async () => {
-    // RELOCATED HERE from the retired `createConversation` / `createBuild`
-    // wrappers' own tests. Those made a `POST /conversations` round trip of their own and pinned
-    // that the chat's kind reached the wire; the round trip is gone — the server writes the row
-    // inside the turn's transaction, after every side-effect-free refusal — and its arguments
-    // moved onto THIS request. So the contract is pinned where it now travels. The test above is
-    // the other half: with no parentage, the body carries no `create` key at all.
+    // Pairs with the test above: with no parentage, the body carries no `create` key at all.
     const fetchFn = vi.fn(async () =>
       new Response(JSON.stringify({ turnId: 't1' }), { status: 202 })
     )
@@ -407,15 +394,10 @@ describe('startTurn', () => {
   })
 
   it('carries the context refusal through with the SERVER\'s sentence, not a generic one', async () => {
-    // ★ The whole client half of the restored per-conversation guardrail is this line. The
-    // hard boundary is enforced on the server and the sentence a citizen reads is WRITTEN
-    // there — `ConversationSurface` puts `TurnStartError.message` straight into `TurnBanner`.
-    // So "refused with a reason" is true only if the reason survives this hop.
-    //
-    // The catch-all in `ConversationSurface` ("The message could not be sent. Try again.")
-    // fires for anything that is NOT a `TurnStartError`, and that generic line is exactly the
-    // dead end this guardrail exists to replace. A 413 that arrived without its message would
-    // reproduce today's opaque failure while looking fixed.
+    // `ConversationSurface` puts `TurnStartError.message` straight into `TurnBanner`; anything
+    // that isn't a `TurnStartError` falls to its generic catch-all ("The message could not be
+    // sent. Try again."). A 413 arriving without its message would silently regress to that
+    // generic line while looking fixed.
     const sentence =
       'This chat has got too long to carry on. Start a new chat to keep going — your app and everything you have built stays exactly as it is.'
     const fetchFn = vi.fn(

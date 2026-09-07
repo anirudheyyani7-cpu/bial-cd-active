@@ -4,8 +4,7 @@ import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-li
 import UsersLimitsPanel from '../UsersLimitsPanel.jsx'
 import { ApiError } from '../../../utils/apiError'
 
-// Mock the data layer; the real useKeysetList hook drives pagination/search so the
-// panel's cursor + reset behavior is exercised end to end (not stubbed away).
+// Mocks the data layer only — the real useKeysetList hook still drives pagination/search.
 const h = vi.hoisted(() => ({
   fetchUsers: vi.fn(),
   updateUserLimits: vi.fn(),
@@ -47,7 +46,6 @@ beforeEach(() => {
   Element.prototype.setPointerCapture = vi.fn()
 })
 
-/** Opens a <Select> filter (role-filter / status-filter) and picks the option with this text. */
 async function pickSelect(triggerTestId, optionText) {
   fireEvent.click(screen.getByTestId(triggerTestId))
   fireEvent.click(await screen.findByRole('option', { name: optionText }))
@@ -102,7 +100,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     await waitFor(() => expect(h.fetchUsers).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor: 'c1' })))
     await waitFor(() => expect(screen.getByText(/Page 1 of 2/)).toBeTruthy())
     fireEvent.click(screen.getByTestId('users-next-page'))
-    expect(screen.getByTestId('row-u25@x.com')).toBeTruthy() // the 26th user, silently truncated in the old bug
+    expect(screen.getByTestId('row-u25@x.com')).toBeTruthy()
   })
 
   it('a failed background page shows an error with the rows already loaded intact, and Retry resumes it', async () => {
@@ -165,8 +163,7 @@ describe('UsersLimitsPanel — roster + suspension', () => {
   })
 
   it("the caller's own super-admin row cannot be self-suspended", async () => {
-    // Only a super-admin can load this panel, and they appear in their own roster;
-    // the super-admin guard therefore also covers self-suspension.
+    // Only a super-admin loads this panel and appears in their own roster, so the guard below also covers self-suspension.
     h.fetchUsers.mockResolvedValue(
       pageOf([
         user({ userId: 'me', role: 'super_admin', email: 'me@x.com', displayName: 'Me' }),
@@ -187,7 +184,6 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     fireEvent.click(screen.getByTestId('deactivate-a@x.com'))
     const banner = await screen.findByTestId('action-error')
     expect(within(banner).getByText(/super-admin cannot be suspended/i)).toBeTruthy()
-    // reverted: the row is Active again and the deactivate action is back
     const row = screen.getByTestId('row-a@x.com')
     await waitFor(() => expect(within(row).getByText('Active')).toBeTruthy())
     expect(screen.getByTestId('deactivate-a@x.com')).toBeTruthy()
@@ -269,7 +265,6 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     render(<UsersLimitsPanel onToast={() => {}} />)
     await screen.findByText('Alice')
 
-    // set daily = 200000
     fireEvent.click(screen.getByTestId('edit-a@x.com'))
     fireEvent.click(screen.getByTestId('usedefault-daily')) // uncheck → enable the input
     fireEvent.change(screen.getByTestId('limit-daily'), { target: { value: '200000' } })
@@ -283,7 +278,6 @@ describe('UsersLimitsPanel — roster + suspension', () => {
     )
     await waitFor(() => expect(screen.queryByTestId('save-limits')).toBeNull()) // modal closed
 
-    // reopen and clear daily back to default
     fireEvent.click(screen.getByTestId('edit-a@x.com'))
     fireEvent.click(screen.getByTestId('usedefault-daily')) // re-check → reset override to default
     fireEvent.click(screen.getByTestId('save-limits'))
@@ -441,7 +435,7 @@ describe('UsersLimitsPanel — review-fix regressions', () => {
 
     fireEvent.click(screen.getByTestId('deactivate-u25@x.com')) // u25 lives on page 2
     await waitFor(() => expect(h.deactivateUser).toHaveBeenCalledWith('u25'))
-    expect(screen.getByText(/Page 2 of 2/)).toBeTruthy() // still page 2, not bounced to page 1
+    expect(screen.getByText(/Page 2 of 2/)).toBeTruthy()
   })
 
   it('does not append a stale-cursor page once the search query has moved on (debounce race guard)', async () => {
@@ -604,7 +598,6 @@ describe('UsersLimitsPanel — second-round review fixes', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(h.fetchUsers).toHaveBeenCalledTimes(2) // the 300ms debounce hasn't landed yet
 
-    // Let the debounce actually fire, then resolve its fetch successfully.
     await waitFor(() => expect(resolveSecondPage).toBeDefined())
     expect(h.fetchUsers).toHaveBeenCalledTimes(3)
     resolveSecondPage(pageOf([], { hasMore: false }))
@@ -648,30 +641,20 @@ describe('UsersLimitsPanel — second-round review fixes', () => {
   })
 
   it('self-heals from React StrictMode double-invoking the mount effect (dev-only mount→cleanup→remount)', async () => {
-    // StrictMode intentionally mounts, cleans up, and remounts every component once
-    // in development to catch effects that aren't safe to interrupt and restart. A
-    // controller created lazily on the ref (`if (!abortRef.current) abortRef.current
-    // = new AbortController()`) is permanently aborted by the simulated unmount and
-    // never replaced, since the ref is already non-null on the simulated remount —
-    // every real fetch from then on carries an already-aborted signal. This mock
-    // honours the AbortSignal the way a real fetch() does (an abort-blind mock, like
-    // a plain mockResolvedValue, would never exercise this at all).
+    // A controller created lazily on the ref is permanently aborted by the simulated unmount and
+    // never replaced on remount, so every real fetch from then on would carry an already-aborted
+    // signal — this mock honours the AbortSignal the way a real fetch() does, unlike an
+    // abort-blind mockResolvedValue.
     h.fetchUsers.mockImplementation(({ signal } = {}) => {
-      // Reject with `signal.reason` — whatever DOMException the SAME AbortController
-      // implementation the component uses actually produces — rather than a
-      // hand-built `new DOMException(...)` of this test's own. jsdom/Node's
-      // DOMException doesn't reliably satisfy `instanceof Error` the way a real
-      // browser's does, and `error instanceof Error ? error : new Error(...)` in
-      // useKeysetList's catch block re-wraps a non-Error into a plain Error, losing
-      // `.name` — so a hand-built rejection here would test a DIFFERENT object
-      // shape than production ever actually sees.
+      // Rejects with `signal.reason` rather than a hand-built DOMException: jsdom's DOMException
+      // doesn't reliably satisfy `instanceof Error`, and useKeysetList's catch re-wraps a
+      // non-Error into a plain Error, losing `.name`.
       if (signal?.aborted) return Promise.reject(signal.reason)
       return new Promise((resolve, reject) => {
         const onAbort = () => reject(signal.reason)
         signal?.addEventListener('abort', onAbort)
-        // A macrotask tick, so StrictMode's synchronous mount→cleanup→remount cycle
-        // has already run (and aborted the FIRST attempt's controller) before this
-        // settles — reproducing the exact race, not just the steady state after it.
+        // A macrotask tick lets StrictMode's mount→cleanup→remount cycle run first, reproducing
+        // the exact race rather than just the steady state after it.
         setTimeout(() => {
           signal?.removeEventListener('abort', onAbort)
           if (!signal?.aborted) resolve(pageOf([user()], { hasMore: false }))
@@ -691,21 +674,14 @@ describe('UsersLimitsPanel — second-round review fixes', () => {
 })
 
 describe('UsersLimitsPanel — the per-conversation hints describe what actually happens', () => {
-  // ══ WHY THIS BLOCK EXISTS ══
+  // WHY THIS BLOCK EXISTS: both hints were FALSE — they described a guardrail deleted with
+  // `ChatPage.tsx`, so the fields saved cleanly and changed nothing. Copy on its own cannot be
+  // tested (a hint asserted against itself is a tautology, worse than none if satisfied by
+  // deleting the words), so each hint is asserted in a PAIR: the sentence says what happens, and
+  // the field it labels demonstrably writes the value the enforcement reads.
   //
-  // Both hints were FALSE. "Show the 'getting long' banner at this many tokens" and "Hard stop
-  // for a single chat" described a guardrail that had been deleted with `ChatPage.tsx`: the
-  // fields saved cleanly and changed nothing, front or back. An administrator was typing a
-  // number into a promise.
-  //
-  // Copy on its own cannot be tested — a hint asserted against itself is a tautology, and one
-  // that can be satisfied by DELETING the words is worse than none. So each hint is asserted
-  // in a PAIR: the sentence says what happens, and the field it labels demonstrably writes the
-  // value the enforcement reads. Delete the words and the first half fails; rewire the field
-  // and the second does.
-  //
-  // The hard limit's enforcement itself lives on the server, where it belongs and where it is
-  // pinned: `backend/tests/api/v1/conversations/test_context_gate.py`.
+  // The hard limit's enforcement itself lives on the server, pinned at
+  // `backend/tests/api/v1/conversations/test_context_gate.py`.
 
   async function openEditor() {
     h.fetchUsers.mockResolvedValue(pageOf([user({ limits: {}, effectiveLimits: { ...DEFAULTS } })]))
@@ -751,10 +727,9 @@ describe('UsersLimitsPanel — the per-conversation hints describe what actually
     // acts on the NEXT MESSAGE, and what the user is told.
     expect(hint.textContent).toMatch(/server refuses/i)
     expect(hint.textContent).toMatch(/start a new chat/i)
-    // BOTH ENDS OF THE RANGE. The hint used to name only the ceiling, because only the ceiling
-    // was enforced — a max below the system-prompt reserve was accepted and then refused every
-    // chat that person opened, including a brand-new empty one, with a message telling them to
-    // start a new chat. The floor is now the first thing an administrator reads.
+    // BOTH ENDS OF THE RANGE, not just the ceiling: a max below the system-prompt reserve used
+    // to be accepted and then refuse every chat that person opened, including a brand-new empty
+    // one. The floor is now the first thing an administrator reads.
     expect(hint.textContent).toMatch(/Between 16,000 and 200,000 \(model window\)/)
 
     // 180,000 rather than something smaller: the modal refuses a max at or below the warn

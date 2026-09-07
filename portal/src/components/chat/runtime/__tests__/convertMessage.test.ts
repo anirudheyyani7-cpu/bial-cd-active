@@ -82,10 +82,8 @@ describe('convertMessage — parts', () => {
 
 describe('the wall is the converter, not a promise at the draw site', () => {
   it('drops every platform-internal field a step frame may carry', () => {
-    // The wire's step frame carries `detail.args` and `detail.result`, redacted and clipped but
-    // PRESENT, and the diagnostic frame carries a developer half whose own schema records that
-    // "safe to render verbatim" once produced a stack trace under a file path in a citizen's
-    // chat. A part that never holds the field cannot leak it, however the expander is written.
+    // The wire's step frame carries `detail.args`/`detail.result` — redacted but still PRESENT. A
+    // part that never holds the field cannot leak it, however the expander is written.
     const leaky = {
       ...step(),
       detail: { args: '/srv/app/.env AZURE_KEY=abc', result: 'Traceback (most recent call last)' },

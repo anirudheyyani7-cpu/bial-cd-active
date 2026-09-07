@@ -24,11 +24,9 @@ from tests.factories import AppRegistryFactory, UserFactory
 
 
 def test_status_transitions_pinned_verbatim() -> None:
-    # Target → allowed sources. If this fails, someone changed the lifecycle state
-    # machine — that must be a deliberate, reviewed decision, not a side effect.
-    # The one post-Express addition IS such a decision: `DRAFT: {PENDING}` is the
-    # withdrawal — an owner pulls their own pending submission back out of the
-    # queue, and draft stopped being provision-only the day that route landed.
+    # Target → allowed sources. `DRAFT: {PENDING}` is the one post-Express addition: the
+    # withdrawal path, where an owner pulls their own pending submission back out of the
+    # queue — draft stopped being provision-only the day that route landed.
     assert STATUS_TRANSITIONS == {
         AppStatus.DRAFT: frozenset({AppStatus.PENDING}),
         AppStatus.PENDING: frozenset({AppStatus.DRAFT, AppStatus.REJECTED, AppStatus.APPROVED}),
@@ -75,7 +73,6 @@ async def test_submission_refs_roundtrip_typed(db_session) -> None:
 
 
 async def test_orm_columns_match_live_schema(db_session) -> None:
-    # No drift between the model and the 0018-migrated DB, in either direction.
     live = set(
         (
             await db_session.execute(

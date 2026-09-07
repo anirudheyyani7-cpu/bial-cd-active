@@ -176,7 +176,6 @@ def test_a_jwt_lookalike_that_does_not_decode_is_not_a_hit() -> None:
 def test_every_hit_is_tiered_and_login_form_shapes_never_reach_tier_a() -> None:
     for shape in _LOGIN_FORM_SHAPES:
         assert all(h.tier is Tier.B for h in detect_credentials(shape).hits), shape
-    # And on a mixed document every hit carries exactly one of the two labels.
     mixed = "\n".join((*_LOGIN_FORM_SHAPES, 'const password = "hunter2";', _JWT))
     hits = detect_credentials(mixed).hits
     assert hits  # the mixed doc is not accidentally clean

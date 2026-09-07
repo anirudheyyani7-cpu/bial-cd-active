@@ -1,24 +1,13 @@
 /**
- * WHAT THIS FILE ITSELF CLAIMS — the properties of the surface as a whole.
+ * WHAT THIS FILE ITSELF CLAIMS — properties true of the surface as a WHOLE, not any one behaviour:
+ * a running turn stays STOPPABLE now the old stop card is gone; exactly ONE control starts a
+ * build; exactly ONE scroll container in the chat slot and no `calc(100vh - …)` anywhere; no chat
+ * list crept back during the rewrite; and the save-state tri-state reaches the shell UNCOLLAPSED
+ * (`null` as `null`).
  *
- * The fifteen re-pointed page suites pin the BEHAVIOUR that came across the migration. This file
- * pins the things that are only true of the surface once the deletions have happened, and which no
- * individual behaviour test would notice going wrong:
- *
- *   - a running turn is still STOPPABLE now that the card carrying the old stop is gone.
- *     The verification sentence is otherwise a claim about a commit that nothing checks;
- *   - exactly ONE control on the whole surface starts a build;
- *   - exactly ONE scroll container inside the chat slot, and no `calc(100vh - …)` anywhere;
- *   - no chat list reappeared while the pages around it were being rewritten (the chat list was
- *     removed earlier; this is the assertion that it STAYED removed);
- *   - the save-state tri-state is published UNCOLLAPSED, so the shell's unsaved-work guard gets
- *     `null` as `null`.
- *
- * The last of those is the one worth being unhappy about getting wrong. The guard itself is
- * covered in `components/workspace/__tests__/WorkspaceShell.test.tsx` — `true` arms it, `false`
- * and `null` do not, and it never claims "nothing unsaved" from an unknown. What THAT file cannot
- * see is whether this surface hands it a `null` at all, or quietly turns one into a boolean on the
- * way past. This does.
+ * The last one matters most: `WorkspaceShell.test.tsx` covers what the guard does with
+ * `true`/`false`/`null`, but not whether THIS surface hands it a `null` at all, or quietly turns
+ * one into a boolean on the way past. This file does.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react'
@@ -96,10 +85,8 @@ afterEach(cleanup)
 
 describe('a running turn is STILL stoppable now the card is gone', () => {
   it('the surface renders a stop control and pressing it calls the turn-stop path', async () => {
-    // THE SCENARIO THE WHOLE ORDERING EXISTS FOR. An earlier commit shipped the relocated stop
-    // before anything was deleted so that no commit in this migration left a build startable and
-    // not stoppable; this is what checks the claim AFTER the deletion rather than trusting the
-    // sequence.
+    // This checks the STOPPABLE claim AFTER the deletion, rather than trusting that the relocated
+    // stop shipped before anything was removed.
     // THE SNAPSHOT IS WHAT CARRIES THE TURN ID, and every subscribe gets one first on cursor 0
     // (the server emits it before any model byte). Without it the control resolves no target and
     // correctly falls through to the legacy session stop — a real arm, but not the one under test.
@@ -242,11 +229,9 @@ describe('the save-state TRI-STATE is published uncollapsed', () => {
 })
 
 describe('the per-conversation guardrail reaches the composer', () => {
-  // ★ WHY THIS FILE AND NOT A UNIT TEST. `contextLimits.ts` is unit-tested and `Composer`'s
-  // rendering of the prop is unit-tested, and BOTH stayed green while the one line joining
-  // them was deleted — the whole 1,649-test suite did. That is the same shape as the incident
-  // this branch exists to repair: the client-side guardrail died with `ChatPage.tsx` and
-  // nothing went red, because what was covered was the parts and never the wiring.
+  // ★ WHY THIS FILE AND NOT A UNIT TEST: `contextLimits.ts` and `Composer`'s rendering of the
+  // prop are BOTH unit-tested, and both stayed green while the one line joining them was
+  // deleted — covering the parts never covered the wiring.
   //
   // So this asserts the SEAM: a long conversation loaded into the surface puts the sentence on
   // the composer. Delete the `contextWarning` prop pass in `ConversationSurface.tsx`, or the
@@ -283,11 +268,10 @@ describe('the per-conversation guardrail reaches the composer', () => {
 
 describe('the offer\'s Build reaches the SAME hand-over dialog as the composer', () => {
   it('opens the shell\'s dialog naming both projects, in citizen language', async () => {
-    // THE THIRD DOOR. Three presses can be refused because another project holds the one
-    // workspace — a rail send, the pane's start control, and this one — and the plan asks that
-    // they be proven identical rather than correct on the one that was tested. This is the one
-    // with no test: it once shipped rendering the refusal as plain red text with no way to act,
-    // and a regression there would look exactly like that again while every suite stayed green.
+    // THE THIRD DOOR: three presses can be refused because another project holds the one
+    // workspace — a rail send, the pane's start control, and this one — and this is the one of
+    // the three with no coverage elsewhere, proving it converges on the SAME dialog rather than
+    // degrading silently.
     h.readTurnStream.mockImplementation(turnStreaming(planReply('Here is the plan.', PLAN_CARD_ID)))
     h.buildFromPlan.mockRejectedValue(
       Object.assign(new Error('“Car pool” is still open.'), {
@@ -314,11 +298,8 @@ describe('the offer\'s Build reaches the SAME hand-over dialog as the composer',
 
 describe('a failed launch INSIDE a chat says why', () => {
   it('puts the server\'s reason on the pane, not just a stopped spinner', async () => {
-    // The press used to report nothing at all here: the spinner stopped, the same sentence came
-    // back, and pressing again did the same thing — because this surface handed the shared map a
-    // hardcoded `null` for the outcome on the grounds that it had a relaunch path of its own.
-    // That path belongs to a different control. Nothing rendered the pane's own failure, and
-    // nothing went red when it did not.
+    // This surface's own launch path hands the shared map a real outcome now — a hardcoded `null`
+    // here would silently swallow the pane's own failure and show only a stopped spinner.
     h.fetchPreviewState.mockResolvedValue({
       state: 'asleep', alive: false, previewUrl: null,
       occupyingProjectName: null, occupyingProjectId: null, restorable: true,

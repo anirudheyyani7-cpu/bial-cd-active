@@ -29,8 +29,6 @@ async def test_health_returns_not_configured_without_a_redis_fixture(client) -> 
 
 
 async def test_health_returns_ok_when_redis_is_reachable(client, fake_redis) -> None:
-    # Happy path: DB reachable (real test session via the get_db override) and a Redis
-    # that answers PING. No auth required — health is public.
     response = await client.get("/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "ok", "redis": "ok"}
@@ -97,7 +95,6 @@ async def test_health_503_when_db_down(app, client, fake_redis) -> None:
 
 
 async def test_health_sets_security_headers(client) -> None:
-    # The security-headers middleware applies to every response.
     response = await client.get("/v1/health")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"

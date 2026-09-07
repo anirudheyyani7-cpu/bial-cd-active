@@ -96,7 +96,6 @@ def test_upstream_host_is_the_container_not_the_browser_host(router: Router) -> 
 
 
 def test_post_body_and_method_survive_the_hop(router: Router) -> None:
-    """Method and body are preserved, not just the path."""
     status, _, body = router.request(
         f"/a/{SBX_KEY}/submit",
         method="POST",
@@ -497,15 +496,14 @@ def test_the_good_environment_actually_boots(images: None, docker_network: str) 
 def test_the_access_log_separates_no_such_app_from_a_dead_app(
     images: None, docker_network: str
 ) -> None:
-    """The router answers a flat 404 for BOTH an unknown key and a live app that stopped
-    listening, because naming the upstream to a browser would disclose the environment's naming
-    convention. That makes the log the ONLY place an operator can tell "the link is stale" from
-    "the app crashed" — and DEPLOYMENT-FACTS.md now sends them here to do it, so it is pinned.
+    """The router answers a flat 404 for BOTH an unknown key and a dead app, since naming the
+    upstream to a browser would disclose the environment's naming convention. The log is the
+    ONLY place an operator can tell them apart — DEPLOYMENT-FACTS.md sends them here — so it
+    is pinned.
 
-    The discriminating field is `$upstream_addr`, NOT `$upstream_status`. That is measured, and
-    it is the opposite of the intuitive reading: a refused connect reports `upstream_status=502`
-    even though nothing ever answered, so only the presence of a resolved address separates
-    them.
+    The discriminating field is `$upstream_addr`, NOT `$upstream_status`: a refused connect
+    reports `upstream_status=502` even though nothing ever answered, so only a resolved
+    address separates them.
     """
     import subprocess
     import uuid as _uuid

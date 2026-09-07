@@ -61,9 +61,8 @@ async def _seed(db: AsyncSession, name: str, value: int, *, age_days: int = 0) -
 
 
 async def test_a_citizen_cannot_read_the_operational_counters(client, db_session) -> None:
-    """★ THE GATE IS OPT-IN PER ROUTE in this package, so its absence is invisible: the route
-    works, and it hands aggregate operational and usage data across every user in the tenant to
-    anyone signed in."""
+    """★ The gate is opt-in per route here, so its absence is invisible: the route would work
+    and hand aggregate usage data across every user in the tenant to anyone signed in."""
     resp = await client.get(_ROUTE, headers=await _citizen(db_session))
 
     assert resp.status_code == 403

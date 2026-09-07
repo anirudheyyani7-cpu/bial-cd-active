@@ -87,10 +87,9 @@ async def test_get_returns_header_projection_and_null_active_turn(client, db_ses
     assert projection[1]["text"] == "It tracks visitors."
     assert projection[2]["banner"] == "completed"
     assert projection[2]["previewUrl"] == PREVIEW  # camelCase on the wire
-    # `seq` still identifies the row. The per-item kind stamp is GONE from the wire rather than
-    # renamed: nothing ever rendered it, no requirement asks for a per-message kind — kind
-    # classification concerns CHATS being listed, and the header already carries that — and
-    # every item type carried one.
+    # `seq` still identifies the row. The per-item `kind` stamp is GONE from the wire, not
+    # renamed: nothing ever rendered it, and kind classification concerns CHATS being listed —
+    # which the header already carries — not individual items.
     assert all("seq" in item for item in projection)
     assert all("mode" not in item and "kind" not in item for item in projection)
 

@@ -80,9 +80,8 @@ class AppRegistryFactory:
 
     @classmethod
     async def create(cls, db: AsyncSession, **overrides: Any) -> AppRegistry:
-        # One app per project: mint a fresh owning project unless the caller
-        # placed the app in an explicit one (uq_app_registry_project forbids two apps
-        # in the same project). The project is owned by the app's user.
+        # uq_app_registry_project forbids two apps in one project, so mint a fresh one
+        # unless the caller supplied one.
         if "project_id" not in overrides:
             owner = overrides["user_id"]  # ownership boundary is always supplied
             project = await ProjectFactory.create(db, owner)
@@ -114,8 +113,6 @@ class ConversationFactory:
 
     @classmethod
     async def create(cls, db: AsyncSession, user_id: uuid.UUID, **overrides: Any) -> Conversation:
-        # Every conversation is a session under a project; mint a fresh owning
-        # project unless the caller supplied one (pass project_id= to co-locate sessions).
         if "project_id" not in overrides:
             project = await ProjectFactory.create(db, user_id)
             overrides["project_id"] = project.id

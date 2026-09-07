@@ -1,32 +1,21 @@
-"""The environment a child interpreter needs to START, and deliberately nothing else.
+"""The environment a child interpreter needs to START, and nothing else.
 
-Several suites spawn a fresh interpreter to prove something about a cold import — that
-`reaper` loads without the FastAPI app, that the worker profile builds from `os.environ`,
-that a sample `.env` file boots valid settings. The point of each is that the child inherits
-NOTHING from the parent, so they hand `subprocess.run` a hand-built `env=` instead of a copy
-of `os.environ`.
+Several suites spawn a fresh interpreter to prove something about a cold import, so the
+child inherits NOTHING from the parent — `subprocess.run` gets a hand-built `env=`, never
+a copy of `os.environ`.
 
-That dict was `{"PATH": ..., "ENV_FILE": ...}`, which is POSIX-shaped. On Windows, Winsock
-cannot initialise without `SystemRoot`, so the child dies in `import asyncio` →
-`_overlapped` with `OSError: [WinError 10106] The requested service provider could not be
-loaded or initialized` — before any project code is reached. Every one of these tests then
-fails for a reason unrelated to what it asserts, and the failure looks like a broken local
-checkout rather than a portability bug (it was misread as exactly that, twice).
+On Windows, Winsock needs `SystemRoot` before `asyncio` can import `_overlapped`; without it
+these tests fail with a WinError that looks like a broken checkout, not a portability bug —
+it was misread as exactly that, twice. POSIX needs no such variable.
 
-Linux CI never saw it, because POSIX needs no such variable.
-
-So this adds ONLY what the OS needs to get an interpreter running. `PATH` and the
-project-level variables stay explicit at each call site, and on POSIX the result is
-byte-identical to what those sites built by hand before.
-"""
+This module adds ONLY what the OS needs to boot Python; `PATH` and project-level variables
+stay explicit at each call site."""
 
 from __future__ import annotations
 
 import os
 
-# Windows: Winsock initialisation reads SystemRoot, and `asyncio` imports `_overlapped` at
-# module scope, so anything importing sqlalchemy/asyncio needs it. POSIX requires nothing,
-# so this is empty there and the child env stays exactly as minimal as it was.
+# Only Windows needs this — see the module docstring.
 _OS_REQUIRED: tuple[str, ...] = ("SystemRoot",) if os.name == "nt" else ()
 
 

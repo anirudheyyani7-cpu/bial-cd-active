@@ -125,16 +125,12 @@ async def test_a_registered_and_busy_container_is_spared_and_not_reported(
 async def test_a_second_record_naming_the_same_container_cannot_unclaim_it(
     fake_redis: aioredis.Redis, busy_first: bool
 ) -> None:
-    """TWO RECORDS, ONE NAME — and the claim map is keyed by name.
-
-    Written as a plain assignment, the scan's LAST writer won: an unrelated user's empty record
-    erased a live builder's claim, and a container holding a lock, a live heartbeat AND a valid
-    liveness lease was classified `claimed_but_expired` and staged for destruction. Every other
-    gate in this system fails toward sparing. That one failed toward destroying, which is why it
-    is worth a test even though a crossed registry entry is rare.
-
-    BOTH ORDERS, because the defect is invisible in one of them, and the invariant is precisely
-    that scan order cannot decide whether a live build survives.
+    """TWO RECORDS, ONE NAME — the claim map is keyed by name, and a plain assignment let the
+    scan's LAST writer win: an unrelated user's empty record erased a live builder's claim, and
+    a container holding a lock, heartbeat AND liveness lease was staged for destruction — every
+    other gate here fails toward sparing, this one failed toward destroying. BOTH ORDERS, because
+    the defect is invisible in one of them: scan order must never decide whether a live build
+    survives.
 
     MUTATION-CHECK: restore `claims[name] = await _claim_of(...)` and `busy_first=True` goes
     red while `busy_first=False` stays green — the shape that let this ship."""
@@ -171,15 +167,11 @@ async def test_a_second_record_naming_the_same_container_cannot_unclaim_it(
 def test_the_cadence_constant_describes_the_cron_it_claims_to() -> None:
     """`PASS_CADENCE` READ FIVE MINUTES WHILE THE PASS RAN EVERY FIFTEEN.
 
-    Five is the *sweep's* cadence (`SANDBOX_REAP_CRON`) — a different worker, doing different
-    work. Everything derived from "the cadence" was therefore derived from the wrong one, and the
-    derivation that mattered was `MINIMUM_STAGING_AGE`: the two-independent-reads rule documented
-    a full interval between the staging read and the destroying read, and enforced a third of it.
-    The comment at that constant even says "sized to a full cadence interval", which is precisely
-    what it was not.
-
-    Pinned here rather than restated, because these two live in modules that cannot import each
-    other: `reclaim.py` is a pure leaf and the cron belongs to the worker.
+    Five was the *sweep's* cadence (`SANDBOX_REAP_CRON`), a different worker — so
+    `MINIMUM_STAGING_AGE`, derived from "the cadence", enforced a third of the full interval
+    the two-independent-reads rule actually needs between the staging and destroying reads.
+    Pinned here, not restated, because `reclaim.py` (a pure leaf) and the cron (the worker's)
+    cannot import each other.
 
     Mutation-check: set `PASS_CADENCE` back to 5 minutes and this goes red."""
     from src.services.build_sessions.pass_history import _minutes_between_passes
@@ -270,17 +262,12 @@ class _RecordPassHarness:
 def record_pass_writes_here(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
     """Point the REAL `_record_pass` at this test's connection instead of a fresh factory one.
 
-    THE TESTS USED TO CALL A COPY OF IT. A local `_recorder` re-implemented the insert against
-    the test session, and every assertion below ran against that copy — including the one billed
-    "THE LOAD-BEARING ONE", which is supposed to prove the platform can tell a dead worker from a
-    quiet fleet. It proved the test file could write a row. Deleting `_record_pass` outright, or
-    dropping its `await db.commit()`, left all of them green.
-
-    The production function opens its OWN session on purpose: it must land even when the pass it
-    describes has just failed. That is exactly what makes it invisible to a suite running inside
-    one rolled-back transaction, so the factory is rebound to hand back THIS connection's session
-    — with `commit` neutered, because committing the harness transaction would leak these rows
-    into every later test."""
+    THE TESTS USED TO CALL A COPY OF IT, proving only that the test file could write a row —
+    not that the platform can tell a dead worker from a quiet fleet. Deleting `_record_pass`
+    outright, or dropping its `await db.commit()`, left them green. The production function
+    opens its OWN session on purpose (it must land even when the pass it describes just
+    failed), so the factory is rebound to hand back THIS connection's session, with `commit`
+    neutered to avoid leaking rows into later tests."""
     import src.db.base as db_base
 
     class _NoCommitSession:
@@ -350,12 +337,10 @@ async def test_a_record_that_cannot_be_written_is_logged_and_never_raised(
 ) -> None:
     """THE SWALLOW IS DELIBERATE AND HAS TO STAY LOUD.
 
-    A pass whose WORK succeeded must not be reported as failed because its bookkeeping was — the
-    containers really were spared or destroyed, and re-raising here would turn a database blip
-    into a crashlooping worker. But the staleness alarm reads this table, so a silent swallow
-    makes a healthy worker look dead: the alarm fires, an operator goes looking for a process
-    that is running fine, and the log line is the only thing that tells them which of the two
-    they are in.
+    A pass whose WORK succeeded must not be reported as failed because its bookkeeping was —
+    re-raising would turn a database blip into a crashlooping worker. But the staleness alarm
+    reads this table, so a silent swallow makes a healthy worker look dead, and the log line is
+    the only thing telling an operator which of the two they are looking at.
 
     Mutation-check: delete the `_log.exception` and this goes red; delete the `except` and it
     raises instead."""

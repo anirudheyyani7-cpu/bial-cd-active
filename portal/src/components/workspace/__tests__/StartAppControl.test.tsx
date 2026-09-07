@@ -1,13 +1,10 @@
 /**
  * THE ONE CONTROL THAT STARTS THE APP.
  *
- * ═══ WHAT A TEST IN THIS FILE CAN HONESTLY PROVE ═══
- *
- * That this component makes one request, discriminates the refusals correctly, and never names a
- * destructive verb. It CANNOT prove the endpoint is non-destructive — the component was never the
- * thing that could have destroyed a container. That proof is server-side, against L3's confirmation
- * triple, in `backend/tests/api/v1/build_sessions/test_preview_state.py`, on the exact arm this
- * button enters.
+ * A test here can honestly prove: one request, refusals discriminated correctly, no destructive
+ * verb named. It CANNOT prove the endpoint is non-destructive — the component never could have
+ * destroyed a container. That proof is server-side, against L3's confirmation triple, in
+ * `backend/tests/api/v1/build_sessions/test_preview_state.py`, on the exact arm this button enters.
  *
  * So there is deliberately NO test here shaped "no stop, release or restore call was made". It
  * would pass in the very state that loses work, and its greenness would be mistaken for evidence.
@@ -212,7 +209,6 @@ describe('marked unavailable, never disabled', () => {
 
     await waitFor(() => expect(button().getAttribute('aria-disabled')).toBe('true'))
     expect(button().hasAttribute('disabled')).toBe(false)
-    // Still named, and now carrying the reason.
     expect(button().getAttribute('aria-label')).toMatch(/Launch Application — Starting your app/)
     button().focus()
     expect(document.activeElement).toBe(button())

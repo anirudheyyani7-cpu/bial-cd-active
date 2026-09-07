@@ -1,28 +1,25 @@
 """The BUILT backend image must carry the binaries the control plane shells out to.
 
 WHY THIS EXISTS. `services/storage/snapshot_read.py` runs `git clone` to restore an app's
-snapshot, and that path sits under BOTH the Plan-mode read and the entire publish pipeline
-(`services/deploy/service.py`). The base image shipped none — `python:3.14-slim` has no
-`/usr/bin/git` and no `/usr/lib/git-core` — so publish was broken in every environment running
-that image, and nothing in the suite noticed, because every other test runs on a developer
-machine where git is on the PATH by accident.
+snapshot, on both the Plan-mode read path and the whole publish pipeline
+(`services/deploy/service.py`). The base image shipped none — `python:3.14-slim` has neither
+`/usr/bin/git` nor `/usr/lib/git-core` — so publish broke in every environment running that
+image, and nothing in the suite noticed: every other test runs on a developer machine where
+git is on the PATH by accident.
 
-WHY IT ASSERTS AGAINST THE PINNED PATH, NOT THE DEFAULT ONE. This is the part a naive version
-of this test gets wrong. `_git_env` hands the clone subprocess an explicit, minimal environment
-whose `PATH` is `/usr/local/bin:/usr/bin:/bin` and nothing else — no inherited PATH, deliberately,
-so an untrusted bundle's checkout cannot reach a planted binary. A test that runs a bare
-`git --version` inside the image would therefore pass on a base that installs git to, say,
-`/opt/git/bin` while production still fails. So the check runs git under `env -i` with EXACTLY
-the PATH the source pins, imported from the source module rather than retyped here — the two
-cannot drift apart, because there is only one copy of the string.
+WHY IT ASSERTS AGAINST THE PINNED PATH, NOT THE DEFAULT ONE. `_git_env` hands the clone
+subprocess an explicit, minimal environment — `PATH=/usr/local/bin:/usr/bin:/bin`, nothing
+inherited — so an untrusted bundle's checkout cannot reach a planted binary. A naive test
+running bare `git --version` would pass on a base that installs git to, say, `/opt/git/bin`
+while production still fails, so this runs git under `env -i` with EXACTLY the PATH the
+source pins, imported from the source module rather than retyped — the two cannot drift apart.
 
-WHAT WOULD BREAK THIS. Any base-image change that drops git (the Alpine rebase is the immediate
-one, but so is any future move), or a change to `_git_env`'s PATH that no longer covers wherever
-the new base puts git. That is precisely the pair of mistakes this is here to catch, and it is
-why the guard is an IMAGE test rather than another unit test with a mocked subprocess.
+WHAT WOULD BREAK THIS. Any base-image change that drops git (the Alpine rebase is the
+immediate one), or a `_git_env` PATH change that stops covering wherever the new base puts
+git — precisely why this is an IMAGE test, not a unit test with a mocked subprocess.
 
-Marked `integration` because it needs a Docker daemon: the default lane deselects it
-(`pyproject.toml` `addopts`), and it skips cleanly rather than erroring when Docker is absent.
+Marked `integration`: needs a Docker daemon, so the default lane deselects it
+(`pyproject.toml` `addopts`) and it skips cleanly when Docker is absent.
 
     uv run pytest tests/test_image_contract.py -m integration
     BIAL_BACKEND_IMAGE=bial-backend:local uv run pytest tests/test_image_contract.py -m integration
@@ -134,13 +131,11 @@ def test_tls_trust_store_is_present(backend_image: str) -> None:
 def test_the_application_user_is_unprivileged(backend_image: str) -> None:
     """The image must not run as root. Pinned here because the Alpine rebase rewrites the
     user-creation syntax (`useradd` does not exist on Alpine), and a botched rewrite that
-    silently leaves the image running as root is a change no unit test would see.
-
-    ASSERTS THE EFFECTIVE USER, NOT A PASSWD LOOKUP. `id -u app` answers "what uid is the
-    account named app?" — which /etc/passwd will happily report on an image that then runs
-    every process as root. Deleting `USER app` from the Dockerfile left that form green, so it
-    passed on precisely the regression it exists to catch. `id -u` with no operand asks the
-    only question that matters: who is this container actually running as.
+    silently leaves it running as root is a change no unit test would see.
+    ASSERTS THE EFFECTIVE USER, NOT A PASSWD LOOKUP: `id -u app` reports a uid even after
+    `USER app` is deleted from the Dockerfile — that form of this test passed on precisely
+    the regression it exists to catch. `id -u` with no operand asks the only question that
+    matters: who the container is actually running as.
     """
     result = _run_in_image(backend_image, "id -u; id -un")
     assert result.returncode == 0, f"could not read the container's user: {result.stderr!r}"

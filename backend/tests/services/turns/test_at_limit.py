@@ -62,14 +62,12 @@ _HANDLE = SandboxHandle(
 @dataclass
 class _Workspace:
     """A stand-in for the orchestrator's `SandboxSession`, satisfying `SecurableWorkspace`.
+    Structural, exactly as the production seam is: if `SandboxSession` ever renames one of
+    these three attributes, the type gates catch it at the engine's call site rather than here.
 
-    Structural, exactly as the production seam is: if `SandboxSession` ever renames one of these
-    three attributes, the type gates catch it at the engine's call site rather than here.
-
-    `sandbox_client` is annotated as the ABC rather than as the fake, and that is not pedantry: a
-    protocol member declared as a mutable attribute is checked INVARIANTLY, so narrowing it here
-    makes this class stop satisfying `SecurableWorkspace` — the test would then be exercising a
-    shape production could never hand in."""
+    `sandbox_client` is annotated as the ABC, not the fake — a protocol member declared as a
+    mutable attribute is checked INVARIANTLY, so narrowing it here would stop this class
+    satisfying `SecurableWorkspace`, exercising a shape production could never hand in."""
 
     sandbox_client: SandboxClient
     handle: SandboxHandle
@@ -132,15 +130,12 @@ async def _head_in_recovery_slot(store: FakeStorage) -> str | None:
 async def test_the_at_limit_sentence_says_what_happened_when_it_comes_back_and_who_to_ask(
     store: FakeStorage,
 ) -> None:
-    """The three facts a citizen needs, and the platform used to supply none of them
-    properly: what happened, when they can carry on, and a real address to ask for more.
+    """The three facts a citizen needs, and the platform used to supply none properly: what
+    happened, when they can carry on, and a real address to ask for more — "contact your
+    administrator" named a ROLE, a dead end at exactly the moment they most needed a way out.
 
-    "Contact your administrator" was the previous answer to the third, and it names a ROLE. A
-    citizen has no way to turn a role into an address, so the sentence ended in a dead end at
-    exactly the moment they most needed a way out of it.
-
-    Deleting this test would let the message lose any one of the three and still ship, because
-    every other test here is about the securing rather than the words.
+    Deleted, the message could lose any one of the three and still ship: every other test here
+    is about the securing, not the words.
 
     Mutation check: drop `{contact}` from `AT_LIMIT_TEXT` and this goes red."""
     await _seed_recovery(store)
@@ -151,8 +146,8 @@ async def test_the_at_limit_sentence_says_what_happened_when_it_comes_back_and_w
     assert "budget" in ending.message, "what happened, in the reader's own vocabulary"
     assert "midnight" in ending.message, "when they can carry on"
     assert settings.SUPPORT_CONTACT_EMAIL in ending.message, "a real address, not a role"
-    # The address is the CONFIGURED one, never a constant baked into the copy — that is the whole
-    # reason the setting exists, and a hardcoded fallback would satisfy the assertion above.
+    # The address is CONFIGURED, never hardcoded — a baked-in fallback would still pass the
+    # assertion above.
     assert settings.SUPPORT_CONTACT_EMAIL not in AT_LIMIT_TEXT
 
 
@@ -160,12 +155,9 @@ async def test_the_message_carries_no_file_path_command_library_or_framework_ter
     store: FakeStorage,
 ) -> None:
     """The half of the no-developer-jargon rule that checks the RENDERED sentence, not the
-    template.
-
-    `test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon` already sweeps the copy
-    module, but it can only see the template — and the one substitution this message makes comes
-    from deployment configuration, which nobody reviews as prose. A support address configured as
-    `ops@…/srv/logs` would sail past that guard and land in front of a citizen.
+    template: `test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon` already
+    sweeps the copy module, but only the template — the one substitution here comes from
+    deployment configuration, which nobody reviews as prose (e.g. `ops@…/srv/logs`).
 
     Mutation check: put any of the terms below into `AT_LIMIT_TEXT` and this goes red."""
     await _seed_recovery(store)
@@ -215,9 +207,8 @@ def test_the_two_halves_of_the_promise_are_separate_constants() -> None:
 
     Mutation check: fold `KEPT_A_COPY` into `AT_LIMIT_TEXT` and this goes red."""
     assert "{kept}" in AT_LIMIT_TEXT
-    # Both halves are exposed as module-level SENTENCES, which is what puts them inside the copy
-    # module's own jargon sweep — that guard iterates `vars(copy)` for strings with a space in
-    # them, so a half inlined at its call site would be outside it by construction.
+    # Exposed as module-level SENTENCES on purpose: the copy module's jargon sweep iterates
+    # `vars(copy)` for strings with a space, so a half inlined at its call site would escape it.
     sentences = {
         name: value
         for name, value in vars(copy_module).items()
@@ -235,13 +226,11 @@ def test_the_two_halves_of_the_promise_are_separate_constants() -> None:
 async def test_the_work_is_stored_before_the_citizen_is_told_they_are_at_the_limit(
     store: FakeStorage, alarms: list[tuple[str, dict[str, object]]]
 ) -> None:
-    """★ THE POINT OF THE UNIT. The recovery slot holds THIS turn's tree by the time the message
-    exists — not by the time the exit path gets round to its best-effort autosave, and not by the
-    time the citizen notices the word "Save".
-
-    Ordering matters because of what comes next in the turn: the `finally` pardons the container
-    and frees the slot, after which the reclamation path may take it. Anything not stored by then
-    is stored on a machine somebody else is entitled to reclaim.
+    """★ THE POINT OF THE UNIT. The recovery slot holds THIS turn's tree by the time the
+    message exists — not by the exit path's best-effort autosave, and not by the time the
+    citizen notices "Save". It matters because of what comes next: the `finally` pardons the
+    container and frees the slot, after which the reclamation path may take it — anything not
+    stored by then is stored on a machine somebody else is entitled to reclaim.
 
     Mutation check: make `at_limit_ending` return the sentence without calling
     `write_recovery_copy` and this goes red — the slot still holds the older tree."""
@@ -267,8 +256,6 @@ async def test_a_recovery_write_that_fails_still_tells_the_citizen_and_alarms_it
     the pinned event with `reason="failed"` — the arm only a call site can raise, because only
     the call site knows the write threw. Mutation check: swap the `except Exception` arm for a
     bare `raise` (or delete the `_log.error`) and this goes red."""
-    # Mutation check: swap the `except Exception` arm for a bare `raise` (or delete the
-    # `_log.error`) and this goes red.
     await _seed_recovery(store)
     client = FakeSandboxClient()
 
@@ -293,15 +280,12 @@ async def test_a_recovery_write_that_fails_still_tells_the_citizen_and_alarms_it
 async def test_a_refused_promotion_never_claims_the_work_is_safe(
     store: FakeStorage, alarms: list[tuple[str, dict[str, object]]]
 ) -> None:
-    """A tree with no ancestry to the copy on record is DIVERTED by the guard, not promoted.
+    """A tree with no ancestry to the copy on record is DIVERTED by the guard, not promoted. The
+    bytes survive under the divert prefix, but a restore would still hand this citizen the older
+    tree — so "nothing you did today is lost" would be false in exactly the case that matters.
 
-    The bytes survive under the divert prefix, but what a restore would hand this citizen is still
-    the older tree — so "nothing you did today is lost" would be false in the most damaging way
-    available: reassuring, and specifically about the work that is not there.
-
-    The alarm is NOT re-raised here. `write_recovery_copy` already fired it on the way past with
-    the two heads that explain the refusal attached, and a second copy of the one event an
-    operator counts would double every diverted turn.
+    The alarm is NOT re-raised here: `write_recovery_copy` already fired it on the way past, and
+    re-raising would double-count every diverted turn.
 
     Mutation check: treat `DIVERTED` as secured and this goes red."""
     await _seed_recovery(store)
@@ -342,20 +326,14 @@ async def test_a_turn_that_never_took_a_container_is_told_the_same_thing_without
 async def test_a_second_send_at_the_limit_is_refused_before_any_turn_exists(
     client, db_session
 ) -> None:
-    """★ The refusal is written ONCE. A citizen who sends again — and they do, because the first
-    message is easy to read as a transient hiccup — must not stack a second identical paragraph
-    into their transcript.
+    """★ The refusal is written ONCE: a citizen who sends again must not stack a second
+    identical paragraph into their transcript. The two refusals come from different places —
+    the FIRST is an in-turn ending; every later send never reaches a turn at all, since the
+    route's `enforce_daily_limit` answers 429 first — asserted on the transcript, not the status
+    code alone, because "refused" and "nothing was written" are different claims.
 
-    What guarantees it is that the two refusals come from different places. The FIRST is an
-    in-turn ending, produced by `at_limit_ending` at a model step. Every subsequent send never
-    gets that far: the route's own `enforce_daily_limit` answers 429 before a turn is created, so
-    there is no turn to append anything.
-
-    Asserted on the transcript rather than on the status code alone, because "the route refused"
-    and "nothing was written" are different claims and only the second one is the promise.
-
-    Mutation check: move the route's `enforce_daily_limit` to after the turn is persisted and this
-    goes red."""
+    Mutation check: move the route's `enforce_daily_limit` to after the turn is persisted and
+    this goes red."""
     import sqlalchemy as sa
 
     from src.db.models.conversation import ChatKind
@@ -444,8 +422,8 @@ def _api_env(*, without: str | None = None) -> dict[str, str]:
         "AUTH__REDIRECT_URI": "http://localhost:8000/api/v1/auth/callback",
         "SUPERADMIN_EMAILS": "admin@bial.com",
         "SUPPORT_CONTACT_EMAIL": "help@bial.com",
-        # Required of every role with no default — a profile built without it would fail for a
-        # reason that has nothing to do with the support contact this file is about.
+        # Required with no default by every role — omitting it would fail for a reason unrelated
+        # to the support contact this file is about.
         "APPS_BASE_URL": "https://citizenapps.bialairport.com",
     }
     if without is not None:
@@ -478,13 +456,11 @@ def _boot(env: dict[str, str]):
 
 
 def test_the_api_refuses_to_start_without_a_support_contact() -> None:
-    """★ The fail-first guard, and the deployment consequence is the intended one: this must be
-    set in the App Service configuration before the release ships or the API does not boot.
-
-    That is the cheaper failure by a wide margin. The alternative is a default, which can only be
-    a placeholder address — and a placeholder address sends a citizen who is already stuck to a
-    mailbox nobody reads. That failure surfaces as silence, weeks later, from the person least
-    able to escalate it.
+    """★ The fail-first guard: this must be set in the App Service configuration before the
+    release ships, or the API does not boot — the cheaper failure by a wide margin. The
+    alternative is a default, which can only be a placeholder address that sends a citizen who
+    is already stuck to a mailbox nobody reads, surfacing as silence weeks later from the person
+    least able to escalate it.
 
     Mutation check: give `SUPPORT_CONTACT_EMAIL` any default and this goes red."""
     from pydantic import ValidationError
@@ -492,8 +468,8 @@ def test_the_api_refuses_to_start_without_a_support_contact() -> None:
     with pytest.raises(ValidationError, match="SUPPORT_CONTACT_EMAIL"):
         _boot(_api_env(without="SUPPORT_CONTACT_EMAIL"))
 
-    # The control: the same block WITH the variable boots, so the failure above is about this
-    # field and not about something else the scrubbed environment is missing.
+    # The control: the same block WITH the variable boots — the failure above is about this
+    # field, not something else the scrubbed environment is missing.
     assert _boot(_api_env()).SUPPORT_CONTACT_EMAIL == "help@bial.com"
 
 
@@ -529,11 +505,10 @@ def test_a_configured_address_is_stripped_rather_than_trusted_verbatim() -> None
 # The same securing path, carrying a second sentence
 # =============================================================================
 #
-# The per-run spend bound has to end a turn exactly the way the daily budget does: copy taken
-# here, on the way out of the model loop, confirmed before the turn's `finally` pardons the
-# container. Writing a second function to do that would put a second snapshot→teardown ordering
-# on the one path in this codebase where getting the ordering wrong loses a citizen's tree — so
-# `at_limit_ending` takes the sentence, and everything above it stays as it was.
+# The per-run spend bound ends a turn exactly like the daily budget does, so `at_limit_ending`
+# takes the sentence as a parameter rather than gaining a sibling function — a second copy of
+# this snapshot→teardown ordering is the one place in this codebase where getting it wrong
+# loses a citizen's tree.
 
 
 async def test_the_daily_budget_endings_bytes_are_unchanged_by_the_parameterisation(
@@ -560,16 +535,14 @@ async def test_the_daily_budget_endings_bytes_are_unchanged_by_the_parameterisat
 async def test_the_spend_bound_secures_the_tree_before_its_sentence_exists(
     store: FakeStorage, alarms: list[tuple[str, dict[str, object]]]
 ) -> None:
-    """★ THE ORDERING, asserted for the NEW caller rather than inherited from the old one.
-
-    The recovery slot holds THIS turn's tree by the time the message exists. It matters because
-    of what comes next: the turn's `finally` pardons the container and frees the slot, after
-    which the reclamation path may take it, and anything not stored by then is stored on a
-    machine somebody else is entitled to reclaim.
+    """★ THE ORDERING, asserted for the NEW caller rather than inherited from the old one: the
+    recovery slot holds THIS turn's tree by the time the message exists, because the turn's
+    `finally` pardons the container and frees the slot right after — anything not stored by
+    then is stored on a machine somebody else is entitled to reclaim.
 
     Mutation check: give the spend bound its own securing function that composes the sentence
-    first, and this goes red on the slot's head — which is precisely why `at_limit_ending` took
-    a parameter instead of gaining a sibling."""
+    first, and this goes red on the slot's head — precisely why `at_limit_ending` took a
+    parameter instead of gaining a sibling."""
     await _seed_recovery(store)
     workspace = _Workspace(_container(bundles=THIS_TURN, head=ON_RECORD), _HANDLE, APP)
 

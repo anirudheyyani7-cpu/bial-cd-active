@@ -1,23 +1,13 @@
 """GUARDS: the legacy chat relay `POST /v1/claude` is GONE.
 
-The relay was the SECOND way of running a turn: its own history load, its own stream reader,
-its own send path, its own copy of the build-in-flight gate. Retiring it — rather than gating
-it, or leaving it mounted and uncalled — is what makes "one turn engine" true, because a
-mounted second engine is a way around every bound the first one enforces. The portal's last
-caller was removed already; this removes the door.
+It was a second way to run a turn — its own history load, stream, send path, and
+build-in-flight gate. Retiring it (not gating it) is what makes "one turn engine"
+true: a mounted second engine is a way around every bound the first enforces.
 
-Per the repo's retire-a-behaviour convention — the same flip
-`tests/api/v1/apps/test_submit_retired.py` carries for `POST /apps/{id}/submit` — the route's
-tests become guards that it stays gone. If any of these fails, someone reinstated the relay.
-
-The BEHAVIOUR the relay carried is not gone — it is the turn engine
-(`POST /v1/conversations/{id}/turns`), and its coverage lives under
-`tests/api/v1/conversations/` and `tests/journeys/`. Two of the relay's own suites were moved
-rather than deleted: the multi-turn/attachment journeys, and the project-description grounding
-tests (`tests/api/v1/conversations/test_project_grounding.py`).
-
-`tests/api/v1/claude/test_chat_stream.py` used to assert the OPPOSITE of the OpenAPI check
-below — that `/v1/claude` WAS documented. It died with its directory; this is its inverse.
+The BEHAVIOUR it carried lives on as the turn engine
+(`POST /v1/conversations/{id}/turns`); coverage moved to
+`tests/api/v1/conversations/` and `tests/journeys/` rather than being deleted,
+including the project-description grounding suite (`test_project_grounding.py`).
 """
 
 from __future__ import annotations

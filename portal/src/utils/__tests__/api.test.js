@@ -33,10 +33,9 @@ function res403(detail, { nonJson = false } = {}) {
 }
 
 describe('authFetch', () => {
-  // Evolved from the characterization test: once the interceptor exists, a 403
-  // CSRF failure IS peeked (one clone) to rule out suspension, then handed back
-  // to the caller untouched — no redirect, no throw. (AdminPage / CSRF retry
-  // paths keep owning their own 403s.)
+  // A 403 CSRF failure is peeked (one clone) to rule out suspension, then handed back to the
+  // caller untouched — no redirect, no throw. AdminPage and other CSRF-retry paths keep
+  // owning their own 403s.
   it('403 CSRF failure is peeked then returned to the caller — no redirect, no throw', async () => {
     const res = res403('CSRF check failed')
     const out = await authFetch('/api/x', {}, { getToken: () => 't', refresh: vi.fn(), fetchImpl: async () => res })

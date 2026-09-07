@@ -1,15 +1,13 @@
 """The two deploy routes — the PLUMBING around the publish gate.
 
-The 202 is the load-bearing assertion. A deploy runs for minutes and the edge gateway times
-out at twenty seconds, so a route that waited for the result would 504 on deploys that are
-in fact going fine, the citizen would retry, and the second claim would 409.
+The 202 is the load-bearing assertion: a deploy runs for minutes and the edge gateway
+times out at twenty seconds, so a route that waited for the result would 504 on a deploy
+going fine, the citizen would retry, and the second claim would 409. The 503 matters too —
+a provider that RAISED when unconfigured would surface as a 500 in the wrong envelope.
 
-The 503 test is the other one worth having: a provider that RAISED when publishing is
-unconfigured would surface as a 500 in the wrong envelope, so both are pinned.
-
-THE DECISION ITSELF LIVES IN `test_publish_gate.py`. Every test here seeds a clean
-stored review for the saved version so the ladder lands on rule 7 (publish) and a failure
-in this file is never the gate quietly routing."""
+THE DECISION ITSELF LIVES IN `test_publish_gate.py`. Every test here seeds a clean stored
+review so the ladder lands on rule 7 (publish), and a failure in this file is never the
+gate quietly routing."""
 
 from __future__ import annotations
 
@@ -47,9 +45,8 @@ _HEAD_SHA = "7e" * 20
 def _answers(**overrides: object) -> dict[str, object]:
     """A data-classification declaration, all-No by default (score 0).
 
-    camelCase keys because that is the wire shape — asserting through the alias is the only
-    way these tests would catch a `CamelModel` misconfiguration that a snake_case body would
-    sail straight past thanks to `populate_by_name`."""
+    camelCase keys: asserting through the alias is the only way these tests would catch a
+    `CamelModel` misconfiguration that `populate_by_name` would let a snake_case body past."""
     body: dict[str, object] = {
         "credentialsSecrets": False,
         "healthData": False,
@@ -71,20 +68,17 @@ def _body(*, save_first: bool = False, **overrides: object) -> dict[str, object]
     return request
 
 
-# All-No, score 0 — the ONE shape of declaration that auto-deploys (the
-# gate runs LOW score = safe = auto-deploy, HIGH score = needs a human; see
-# classification.py). Every test that is NOT about the gate sends this, so a failure
-# elsewhere is never the gate quietly refusing.
+# All-No, score 0 — the ONE shape of declaration that auto-deploys (LOW score = safe =
+# auto-deploy, HIGH score = needs a human; see classification.py). Every test that is NOT
+# about the gate sends this, so a failure elsewhere is never the gate quietly refusing.
 #
-# Carries a voluntary explanation (still scores 0 — `notes` isn't a category) so
+# Carries a voluntary explanation (still scores 0) so
 # `test_the_declaration_is_handed_to_the_service_to_record` can assert `notes` reaches
-# `service.start()`: `_NEEDS_REVIEW` can't cover that, since it 409s before `start()` is
-# ever called, which is otherwise the only shape in which `notes` reaches the service at all.
+# `service.start()` — `_NEEDS_REVIEW` can't cover that, since it 409s before `start()` runs.
 _QUALIFIES: dict[str, object] = _body(notes="Reads the public flight board only.")
 
-# 40 + 15 = 55: well above AUTO_DEPLOY_MAX_SCORE (0), so an explanation is obligatory too
-# (notes-required is tied to the same threshold). The case the
-# gate tests below actually exercise a refusal with.
+# 40 + 15 = 55, well above AUTO_DEPLOY_MAX_SCORE (0) — the case the gate tests below
+# exercise a refusal with.
 _NEEDS_REVIEW: dict[str, object] = _body(
     credentialsSecrets=True,
     confidentialBusinessData=True,
@@ -154,9 +148,8 @@ def wire(app: FastAPI, db_session, monkeypatch):
     app.dependency_overrides[sandbox_dependency] = lambda: sbx
     app.dependency_overrides[sandbox_or_none_dependency] = lambda: sbx
     app.dependency_overrides[deploy_service_or_none] = lambda: service
-    # The gate resolves the shipping commit from the snapshot blob's metadata stamp and
-    # reads the stored review by that commit, so storage is no longer optional plumbing
-    # for a publish — an unbound store is a documented 503 on every branch.
+    # The gate reads the stored review off the snapshot blob's metadata stamp, so storage
+    # is no longer optional plumbing — an unbound store is a documented 503 on every branch.
     app.dependency_overrides[storage_or_none_dependency] = lambda: store
     return SimpleNamespace(app=app, service=service, manager=manager, store=store)
 
@@ -168,10 +161,9 @@ async def _clean() -> CleanSaveState:
 async def _owner_with_app(db, wire=None):
     """An owner and their app, saved at `_HEAD_SHA` with a CLEAN stored review for it.
 
-    Seeding the review is what keeps this file about the plumbing: with one present and
-    all-No, the ladder lands on rule 7 and publishes, so a 202 here means the route
-    worked rather than the gate having been bypassed. Tests that never reach the gate
-    (owner scoping, CSRF) pass `wire=None` and skip the seeding."""
+    Seeding the review is what keeps this file about the plumbing: all-No lands the ladder
+    on rule 7 and publishes, so a 202 here means the route worked, not the gate bypassed.
+    Tests that never reach the gate (owner scoping, CSRF) pass `wire=None` and skip it."""
     user = await UserFactory.create(db)
     app_row = await AppRegistryFactory.create(db, user_id=user.id)
     if wire is not None:
@@ -243,11 +235,9 @@ async def test_the_deploy_is_scoped_to_the_owner(wire, client, db_session) -> No
 
 async def test_a_project_with_no_app_is_refused_not_provisioned(wire, client, db_session) -> None:
     """The build path's resolver UPSERTS a draft app; deploy must not, or a Deploy on an
-    empty project would quietly mint one and then fail on the missing snapshot.
-
-    This refusal is CODED (`no_saved_build` — the pipeline's own name for the
-    same fact, `FAIL_NO_SNAPSHOT`), so a client asserts on `error.code` rather than
-    parsing this sentence."""
+    empty project would quietly mint one and then fail on the missing snapshot. The refusal
+    is CODED (`no_saved_build`, the pipeline's own name for `FAIL_NO_SNAPSHOT`), so a client
+    asserts on `error.code` rather than parsing this sentence."""
     user = await UserFactory.create(db_session)
     project = await ProjectFactory.create(db_session, user.id)
 
@@ -264,9 +254,8 @@ async def test_an_app_with_nothing_ever_saved_is_refused_with_the_same_code(
     wire, client, db_session
 ) -> None:
     """The OTHER "nothing saved" site (`_shipping_head`'s `meta is None` branch): an app
-    row exists, but no snapshot has ever been written for it — a different code path
-    from the test above (no app row at all), the same citizen-facing fact, and now the
-    SAME machine code."""
+    row exists but no snapshot was ever written for it — a different code path from the
+    test above, the same citizen-facing fact, and now the same machine code."""
     user, app_row = await _owner_with_app(db_session)  # no `wire` arg: nothing is seeded
 
     resp = await client.post(
@@ -282,9 +271,8 @@ async def test_a_deploy_already_in_flight_is_a_409(
     wire, app, client, db_session, monkeypatch
 ) -> None:
     """The claim's own refusal, surfaced with its code. Built on `wire` so the ladder
-    reaches the pipeline at all (a publish now needs the saved version and its review),
-    then swapping in a refusing service — the 409 has to come from the CLAIM, not from
-    the gate declining to get that far."""
+    reaches the pipeline at all, then swaps in a refusing service — the 409 has to come
+    from the CLAIM, not from the gate declining to get that far."""
     user, app_row = await _owner_with_app(db_session, wire)
 
     @contextlib.asynccontextmanager
@@ -385,14 +373,11 @@ async def test_publishing_unconfigured_is_a_503_with_the_right_envelope(
 
 
 async def test_the_terminal_classification_refusal_is_gone(wire, client, db_session) -> None:
-    """A GUARD, not a deletion — this file's four gate tests collapse into this one.
-
-    The retired 409 `classification_below_threshold` was a dead end: nothing queued, nobody
-    notified. The same declaration is now ROUTED, so that 409 must not come back.
-
-    The kept assertion from the old block is the NOT-a-403 note: `chatErrors.ts` reads a 403
-    on this surface as "your session lapsed", so nothing here may answer 403. The ladder's
-    own outcomes are pinned in `test_publish_gate.py`."""
+    """A GUARD, not a deletion. The retired 409 `classification_below_threshold` was a dead
+    end: nothing queued, nobody notified. The same declaration is now ROUTED, so that 409
+    must not come back — and it must not answer 403 either, since `chatErrors.ts` reads a
+    403 on this surface as "your session lapsed". The ladder's own outcomes are pinned in
+    `test_publish_gate.py`."""
     user, app_row = await _owner_with_app(db_session, wire)
 
     resp = await client.post(
@@ -414,14 +399,12 @@ async def test_the_terminal_classification_refusal_is_gone(wire, client, db_sess
 async def test_a_routed_deploy_leaves_the_app_queued_at_the_version_examined(
     app, client, db_session, monkeypatch
 ) -> None:
-    """The retired test here asserted "a refused deploy never saves the workspace", with the
-    gate running before `_resolve_unsaved_work`. That ordering is deliberately reversed: the
-    ladder's version-dependent rules must run against the POST-save commit, so a
-    save-and-publish saves first.
+    """The gate's ordering is deliberate: the ladder's version-dependent rules must run
+    against the POST-save commit, so a save-and-publish saves first, before the gate runs.
 
-    What replaces it is the property that protects the citizen: a routed deploy leaves the
-    app in the queue at exactly the version examined, and publishes nothing. The save is the
-    thing they asked for, not a side effect of a declined request."""
+    What that buys the citizen: a routed deploy leaves the app queued at exactly the
+    version examined, and publishes nothing. The save is the thing they asked for, not a
+    side effect of a declined request."""
     user, app_row = await _owner_with_app(db_session)
     saved: list[uuid.UUID] = []
     store = FakeStorage()
@@ -467,8 +450,6 @@ async def test_a_routed_deploy_leaves_the_app_queued_at_the_version_examined(
         ),
     )
 
-    # The save happened — it is what was asked for — and the app is queued at exactly the
-    # commit the gate examined, with nothing published.
     assert saved == [app_row.project_id]
     assert resp.status_code == 200
     assert resp.json()["outcome"] == "routed_for_review"
@@ -479,11 +460,8 @@ async def test_a_routed_deploy_leaves_the_app_queued_at_the_version_examined(
 async def test_a_weighted_declaration_without_an_explanation_is_still_a_422(
     wire, client, db_session
 ) -> None:
-    """Incomplete, not refused — unchanged in status and meaning, moved in mechanism.
-
-    It used to fire at the schema boundary from the citizen's own answers; it now fires
-    inside the ladder, on the MERGED answers, which is the only place the review
-    can be taken into account. The distinction that mattered is preserved exactly: an
+    """Incomplete, not refused. This fires inside the ladder, on the MERGED answers — the
+    only place the review can be taken into account — but the distinction still holds: an
     unexplained sensitive declaration is an incomplete submission, never a rejected one."""
     user, app_row = await _owner_with_app(db_session, wire)
 
@@ -530,9 +508,6 @@ async def test_the_declaration_is_handed_to_the_service_to_record(
     assert isinstance(declared, dict)
     assert declared["credentials_secrets"] is False
     assert declared["personal_information"] is False
-    # The only shape in which `notes` reaches `service.start()` at all: a voluntary
-    # explanation on an otherwise-qualifying (score 0) declaration. `_NEEDS_REVIEW` can't
-    # cover this — it 409s before `start()` is ever called.
     assert declared["notes"] == "Reads the public flight board only."
 
 
@@ -550,8 +525,7 @@ async def test_a_never_deployed_app_reads_as_empty_not_missing(wire, client, db_
     assert body["appId"] == str(app_row.id)
     assert body["deploymentId"] is None
     assert body["status"] is None
-    # Never deployed, never submitted — `draft`, not a lie borrowed from a
-    # neighbouring state.
+    # Never deployed, never submitted — `draft`, not a neighbouring state's lie.
     assert body["publishState"] == "draft"
 
 
@@ -583,15 +557,12 @@ async def test_the_status_carries_the_apps_approval_state(wire, client, db_sessi
     resp = await client.get(_STATUS.format(pid=app_row.project_id), headers=auth_headers(user))
 
     assert resp.status_code == 200
-    # camelCase, because that is the wire shape the portal narrows — asserting through
-    # the alias is the only way a `CamelModel` misconfiguration is caught here.
     assert resp.json()["approval"] == {
         "status": "pending",
         "approvedCommitSha": None,
-        # Beside the pin, and NULL for the same reason it is: this app is pending, so
-        # nobody has approved anything yet. The two are written together and are never
-        # apart. Asserted as an exact dict on purpose — a field added to the wire without
-        # a client that reads it should have to come through here.
+        # NULL for the same reason `approvedCommitSha` is: nobody has approved this yet.
+        # Asserted as an exact dict on purpose — a field added to the wire should have to
+        # come through here.
         "approvedAt": None,
         "approvalRoute": "self_publish",
         "rejectionNote": "Explain where the vendor key is stored.",
@@ -669,14 +640,13 @@ async def test_the_approval_carries_when_it_was_approved_not_only_which_commit(
 async def test_the_status_read_answers_without_a_deploy_pipeline(
     app: FastAPI, client, db_session
 ) -> None:
-    """A `DEPLOY__*`-less deployment is a SUPPORTED state, and this route used to 503 on it.
+    """A `DEPLOY__*`-less deployment is a SUPPORTED state: every field this route answers
+    with is a committed row, and the ladder routes without a pipeline, so a rejection note
+    has to reach its developer through this call regardless.
 
-    Every field it answers with is a committed row, and the ladder routes without a
-    pipeline, so a rejection note has to reach its developer through this call.
-
-    No `wire` and no `fake_storage` — the deploy service and the store are both unbound, the
-    two postures this route must tolerate at once. `publishState` still comes back from an
-    unconfigured store, the same as from a `StorageError`."""
+    No `wire` and no `fake_storage` — deploy service and store both unbound, the two
+    postures this route must tolerate at once. `publishState` still comes back, the same
+    as from a `StorageError`."""
     assert deploy_service_or_none not in app.dependency_overrides, (
         "this test is only meaningful with the deploy service UNBOUND — a fixture that "
         "binds it makes the branch under test unreachable"
@@ -707,11 +677,10 @@ async def test_publishing_still_refuses_without_a_deploy_pipeline(
     """Reading status needs no pipeline; PUBLISHING does, and that refusal is load-bearing —
     without it "publishing is switched off" becomes a silent no-op.
 
-    It uses `wire` and then unbinds ONLY the deploy service. Written without the fixture it
-    passed for the wrong reason: storage is checked FIRST, so an all-unbound request 503s as
-    `storage_unavailable` and never reaches the pipeline branch. With everything else wired
-    the missing pipeline is the only failure left, and the `code` assertion keeps the two
-    503s apart."""
+    Uses `wire` and unbinds ONLY the deploy service: storage is checked FIRST, so an
+    all-unbound request 503s as `storage_unavailable` without ever reaching the pipeline
+    branch. With everything else wired, the missing pipeline is the only failure left, and
+    the `code` assertion keeps the two 503s apart."""
     wire.app.dependency_overrides[deploy_service_or_none] = lambda: None
     user, app_row = await _owner_with_app(db_session, wire)
 
@@ -775,12 +744,10 @@ async def test_the_status_read_issues_no_new_query_and_exactly_one_metadata_head
     wire, client, db_session, test_engine
 ) -> None:
     """The cost argument, pinned on the statement stream rather than trusted from a
-    docstring. `latest_deployment` already issued the owner check, the `AppRegistry`
-    select and `deployment_for_app`'s select before this unit; the ONLY I/O this unit
-    may add is exactly one `storage.head()` — never a second SELECT, and never a
-    `storage.get()` of the snapshot bytes (`build_sessions/manager.py::_saved_head` is the
-    named anti-pattern this counts against). Asserted in BOTH directions: the head call
-    happened once, and the download path never ran at all."""
+    docstring: the ONLY I/O this unit may add beyond the three SELECTs already issued is
+    exactly one `storage.head()` — never a second SELECT, and never a `storage.get()` of
+    the snapshot bytes (`build_sessions/manager.py::_saved_head` is the named anti-pattern
+    this counts against). Asserted in BOTH directions."""
     user, app_row = await _owner_with_app(db_session, wire)
     await _live_deployment(db_session, app_id=app_row.id, user_id=user.id)
     await db_session.commit()
@@ -805,8 +772,8 @@ async def test_the_status_read_issues_no_new_query_and_exactly_one_metadata_head
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["publishState"] == "live_current"
-    # Today's three reads (the project-ownership `get`, the `AppRegistry` select, and
-    # `deployment_for_app`'s select) — this unit must not add a fourth.
+    # The three: the project-ownership `get`, the `AppRegistry` select, and
+    # `deployment_for_app`'s select. A fourth is what this unit refuses.
     assert len(statements) == 3, f"expected exactly today's three SELECTs, got {statements}"
     assert store.head_calls == 1
     assert store.get_calls == 0, "the snapshot bytes must never be downloaded for this read"
@@ -815,12 +782,10 @@ async def test_the_status_read_issues_no_new_query_and_exactly_one_metadata_head
 async def test_a_storage_error_reading_the_saved_head_answers_200_not_503(
     wire, client, db_session
 ) -> None:
-    """THE named departure from the storage-down rule. `_shipping_head` and
-    `classification`'s own reader both turn this exact exception into a 503 — correctly,
-    because both are about to ACT on the bundle. This read only answers "is there newer
-    work", and this endpoint is the only publishing surface in the product, so a blip here
-    must not blank the rest of the response: the approval block stays present, and the
-    drift question alone falls back to `live_drift_unknown`."""
+    """THE named departure from the storage-down rule: `_shipping_head` turns this same
+    exception into a 503 because it's about to ACT on the bundle. This read only answers
+    "is there newer work", so a blip here must not blank the response — the approval block
+    stays present, and the drift question alone falls back to `live_drift_unknown`."""
     user, app_row = await _owner_with_app(db_session, wire)
     await _live_deployment(db_session, app_id=app_row.id, user_id=user.id)
     app_row.status = AppStatus.PENDING
@@ -832,9 +797,8 @@ async def test_a_storage_error_reading_the_saved_head_answers_200_not_503(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # PENDING wins outright (see `compute_publish_state`'s ordering), so this particular
-    # app does not itself land on `live_drift_unknown` — the point here is the STATUS
-    # CODE and the fact that nothing else in the response went missing.
+    # PENDING wins outright, so this app doesn't itself land on `live_drift_unknown` — the
+    # point is the STATUS CODE, and that nothing else in the response went missing.
     assert body["publishState"] == "in_review"
     assert body["approval"]["rejectionNote"] == "Explain the third-party API key."
 
@@ -874,26 +838,21 @@ async def test_an_unstamped_bundle_also_reads_drift_unknown(wire, client, db_ses
 
 # --- the citizen's own last save, on the wire ------------------------------------------
 #
-# The rail draws three provenance rows — LIVE NOW, APPROVED, YOUR LATEST — and until this
-# unit the third one had no source: `publish_state` consumed the saved head and threw it
-# away. These tests pin the two halves that now reach the browser (`savedHead`, `savedAt`)
-# and, more importantly, the three traps the unit sits between: the read must not wake a
-# container, it must not invent a head for an unstamped bundle, and it must read the
-# CITIZEN'S save key rather than the platform's autosave key.
+# The rail draws three provenance rows — LIVE NOW, APPROVED, YOUR LATEST — pinned here
+# through the three traps the unit sits between: the read must not wake a container, it
+# must not invent a head for an unstamped bundle, and it must read the CITIZEN'S save
+# key rather than the platform's autosave key.
 
-# The board's own instant, so the wire value and the row the boards draw
-# ("YOUR LATEST 25 Aug 2026, 14:20 f9e8d7c") are visibly the same fact.
 _SAVED_AT = datetime(2026, 8, 25, 14, 20, tzinfo=UTC)
 _SAVED_SHA = "f9" * 20
 _AUTOSAVED_SHA = "11" * 20
 
 
 class _NoContainersHere:
-    """A sandbox nobody may touch. Any attribute access at all is recorded AND raises, so
-    a container call in this request path fails as itself rather than as a mystery 500 —
-    `__getattr__` rather than an override list because a list of method names goes stale
-    the moment `SandboxClient` grows one, and the whole claim being tested is "NONE of
-    them"."""
+    """A sandbox nobody may touch. Any attribute access is recorded AND raises, so a
+    container call in this path fails as itself rather than as a mystery 500 — `__getattr__`
+    rather than an override list, because a method-name list goes stale the moment
+    `SandboxClient` grows one."""
 
     def __init__(self) -> None:
         self.reached_for: list[str] = []
@@ -906,11 +865,9 @@ class _NoContainersHere:
 async def test_the_published_approved_and_saved_rows_arrive_together(
     wire, client, db_session
 ) -> None:
-    """The rail's three provenance rows, from ONE response: what is live (the deployment's
-    own commit), when it was approved, and the citizen's latest save with its date and id.
-
-    Asserted together on purpose — the rows are drawn as a group, and a client that had to
-    make three calls to fill them would render them at three different moments.
+    """The rail's three provenance rows, from ONE response — asserted together on purpose,
+    since a client that had to make three calls to fill them would render them at three
+    different moments.
 
     Mutation receipt: drop `saved_head=`/`saved_at=` from `DeploymentResponse.of` and this
     goes red on the saved row while the two above it stay green."""
@@ -946,14 +903,11 @@ async def test_the_published_approved_and_saved_rows_arrive_together(
 async def test_a_stopped_project_still_reports_its_saved_row_and_wakes_no_container(
     app: FastAPI, client, db_session, monkeypatch
 ) -> None:
-    """THE POINT OF THE FIELD. A citizen whose workspace was reclaimed still gets the saved
-    row, because both halves come from object-store metadata and nothing on this route can
-    reach a container.
+    """THE POINT OF THE FIELD: a citizen whose workspace was reclaimed still gets the saved
+    row, because both halves come from object-store metadata, never a container.
 
-    No `wire`: the sandbox providers are bound to a tripwire instead, and BOTH directions are
-    asserted on it — the provider was never even resolved (this route declares no sandbox
-    dependency), and no attribute of the sandbox was ever reached for. `save-state` is the
-    read that cannot answer this, because it attaches to a container first."""
+    No `wire`: the sandbox providers are bound to a tripwire instead, asserted in BOTH
+    directions — never resolved, and no attribute ever reached for."""
     tripwire = _NoContainersHere()
     resolved: list[str] = []
 
@@ -990,13 +944,12 @@ async def test_a_bundle_with_no_stamped_head_reports_null_rather_than_a_guess(
     wire, client, db_session
 ) -> None:
     """A bundle written before the metadata stamp existed has NO claim about which commit
-    it holds, and the wire says so. The client renders "cannot tell" for the id; an
-    invented value (the deployment's head, the approved pin, an empty string) would make a
-    missing fact look like a present one.
+    it holds, and the wire says so — an invented value (the deployment's head, the approved
+    pin, an empty string) would make a missing fact look like a present one.
 
-    THE TWO HALVES ARE INDEPENDENT, and that is asserted here rather than assumed: the
-    store still knows WHEN that bundle was written, so the date survives while the id does
-    not. Nulling both would throw away a fact nobody lost."""
+    THE TWO HALVES ARE INDEPENDENT: the store still knows WHEN the bundle was written, so
+    the date survives while the id does not. Nulling both would throw away a fact nobody
+    lost."""
     user, app_row = await _owner_with_app(db_session, wire)
     key = snapshot_key(app_row.id)
     wire.store.objects[key] = a_git_bundle(_SAVED_SHA)
@@ -1014,11 +967,10 @@ async def test_a_bundle_with_no_stamped_head_reports_null_rather_than_a_guess(
 async def test_the_saved_row_reads_the_citizens_save_not_the_platforms_autosave(
     wire, client, db_session
 ) -> None:
-    """`manager.restore_presence` PREFERS `recovery_key` — the platform's turn-boundary
-    autosave — over the citizen's `snapshot_key`, and `newest_restore_source` returns
-    whichever is newer. Both are right for resuming a workspace and wrong here: the row says
-    "YOUR LATEST", so it must name the version the citizen chose to keep. Seeded so the wrong
-    read is unmistakable — the autosave is a DIFFERENT commit and a NEWER object.
+    """`manager.restore_presence` PREFERS `recovery_key` — the platform's autosave — over
+    the citizen's `snapshot_key`. Both are right for resuming a workspace and wrong here:
+    the row says "YOUR LATEST", so it must name the version the citizen chose to keep.
+    Seeded so the wrong read is unmistakable — the autosave is a DIFFERENT, NEWER object.
 
     Mutation receipt: change `snapshot_key` to `recovery_key` in
     `_saved_version_for_publish_state` and both assertions below go red."""
@@ -1043,12 +995,10 @@ async def test_the_saved_row_reads_the_citizens_save_not_the_platforms_autosave(
 async def test_another_citizen_never_learns_the_saved_head_or_when_it_was_saved(
     wire, client, db_session
 ) -> None:
-    """Owner scoping, asserted on the LEAK rather than only on the status code. The
-    ownership predicate is in the WHERE clause, so a stranger gets a
-    non-leaking 404 — and this checks the two new values specifically, because a field
+    """Owner scoping, asserted on the LEAK rather than only on the status code — a field
     added to a response is exactly the kind of change that can widen what a wrong answer
-    would have said. Neither the commit id nor the save time may appear anywhere in the
-    body the stranger receives."""
+    says. Neither the commit id nor the save time may appear anywhere in the stranger's
+    body."""
     owner, app_row = await _owner_with_app(db_session, wire)
     key = snapshot_key(app_row.id)
     wire.store.objects[key] = a_git_bundle(_SAVED_SHA)
@@ -1064,8 +1014,8 @@ async def test_another_citizen_never_learns_the_saved_head_or_when_it_was_saved(
     assert "savedHead" not in resp.text
     assert "savedAt" not in resp.text
 
-    # And the owner, for the same project, does get both — otherwise the assertions above
-    # would pass just as well against a field that was never sent to anyone.
+    # The owner, same project, does get both — else the leak checks above would pass just
+    # as well against a field never sent to anyone.
     owner_resp = await client.get(
         _STATUS.format(pid=app_row.project_id), headers=auth_headers(owner)
     )

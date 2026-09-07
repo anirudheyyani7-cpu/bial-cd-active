@@ -1,20 +1,15 @@
 """What the Save indicator reports once the agent stops committing.
 
-THE CHANGE THIS FILE GUARDS IS A CHANGE OF WEIGHT, NOT OF SHAPE, which is exactly why it needs
-tests of its own. `_save_state_of` has always answered "uncommitted tree → dirty" before it
-compared any commits. While the Write prompt told the agent to commit each coherent slice, that
-arm was a backstop for a model that skipped one. That instruction was later deleted — the platform
-commits the tree itself, once, inside the turn-boundary bundle (`snapshot._COMMIT_SCRIPT`) — so
-for the whole of every building turn, and forever afterwards if the turn died before its
-finalizer ran, the user's new work exists ONLY as an uncommitted worktree at an unmoved HEAD.
+THE CHANGE THIS FILE GUARDS IS A CHANGE OF WEIGHT, NOT OF SHAPE. `_save_state_of` has always
+answered "uncommitted tree → dirty" first — a backstop, once, for a model that skipped the
+Write prompt's per-slice commit instruction. That instruction is gone: the platform now
+commits once, at the turn boundary (`snapshot._COMMIT_SCRIPT`), so for the whole of every
+building turn (and forever after, if the turn died before its finalizer ran) the user's new
+work exists ONLY as an uncommitted worktree at an unmoved HEAD.
 
-That arm is now the entire answer for that shape. Delete it and the ladder falls through to
-"HEAD == savedHead", the Save button disappears, and the citizen is told "all changes saved" over
-a tree nothing has saved anywhere. Silent, and in the direction that loses work — the same
-failure the turn-end recovery write has its own named contract for, one surface over.
-
-Tri-state is pinned here too: `null` is "nobody could check", never "clean".
-"""
+Delete that arm and the ladder falls through to "HEAD == savedHead" — the Save button
+disappears and the citizen is told "all changes saved" over a tree nothing has saved anywhere.
+Tri-state is pinned here too: `null` is "nobody could check", never "clean"."""
 
 from __future__ import annotations
 

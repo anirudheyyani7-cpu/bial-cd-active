@@ -40,11 +40,9 @@ async def test_login_redirects_to_entra_with_pkce(client) -> None:
     assert resp.status_code == 302
     location = resp.headers["location"]
     assert location.startswith(f"https://login.microsoftonline.com/{_TID}/oauth2/v2.0/authorize")
-    # PKCE (S256) + state present.
     assert "code_challenge=" in location
     assert "code_challenge_method=S256" in location
     assert "state=" in location
-    # redirect_uri equals the configured AUTH__REDIRECT_URI, byte-for-byte.
     assert f"redirect_uri={quote(settings.auth.redirect_uri, safe='')}" in location
 
 

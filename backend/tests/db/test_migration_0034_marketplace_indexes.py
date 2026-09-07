@@ -1,10 +1,9 @@
-"""The 0034 migration's three round-3 fixes, none of which had a regression test.
+"""The 0034 migration's three fixes, previously unguarded by any test.
 
 `--autogenerate` drift, the two partial collapse indexes, and the `lock_timeout` guard all
-landed on #147 without anything pinning them: deleting the `__table_args__` declarations in
-`deployment.py` and `project.py` left 164 tests green. The drift in particular was found by
-running `alembic revision --autogenerate` BY HAND during review, and nothing stopped it
-recurring (#147 round 3 review).
+landed with nothing pinning them: deleting the `__table_args__` declarations in
+`deployment.py` and `project.py` left 164 tests green, and the drift was found only by
+running `alembic revision --autogenerate` by hand during review.
 
 The autogenerate check is the sharp one. A raw-SQL index in a migration that the ORM does not
 also declare is invisible to `Base.metadata`, so the next `--autogenerate` emits a `drop_index`
@@ -95,20 +94,14 @@ async def test_the_collapse_indexes_exist_with_their_partial_predicates(db_sessi
 def test_both_halves_of_the_migration_reset_lock_timeout() -> None:
     """`SET LOCAL lock_timeout` must be handed back in BOTH `upgrade()` and `downgrade()`.
 
-    THIS IS A SOURCE-LEVEL ASSERTION, and deliberately so. An earlier version connected to
-    the migrated database and asserted `SHOW lock_timeout` was `0` — which passed with the
-    reset DELETED, because `SET LOCAL` is scoped to the TRANSACTION that set it and every
-    test here gets a fresh connection. It could not observe the failure it claimed to pin.
-
-    The real leak is intra-transaction: `alembic/env.py` leaves `transaction_per_migration`
-    at False, so one `alembic upgrade` runs every pending revision in a SINGLE transaction
-    and an unreset `SET LOCAL` applies to all of them. A later revision that legitimately
-    waits more than 5s on a lock would then abort with `lock_not_available` and roll back
-    the whole upgrade. Reproducing that needs a multi-revision upgrade staged one revision
-    back, which is `test_migration_downgrade.py`'s territory rather than a unit test's.
-
-    So this pins what actually regresses: someone deleting the reset. It fails the moment
-    either half loses it, which the behavioural version did not.
+    SOURCE-LEVEL, deliberately: a version that instead ran the migration and asserted
+    `SHOW lock_timeout` was `0` passed even with the reset deleted, because `SET LOCAL` is
+    scoped to the transaction and every test gets a fresh connection — it could not observe
+    the real leak. That leak is intra-transaction: `alembic/env.py` runs every pending
+    revision in ONE transaction (`transaction_per_migration=False`), so an unreset value
+    applies to later revisions too, one of which could then abort a legitimate long lock
+    wait. The multi-revision reproduction belongs to `test_migration_downgrade.py`; this
+    pins the simpler regression — someone deleting the reset — directly.
     """
     source = MIGRATION_PATH.read_text(encoding="utf-8")
     upgrade_src = source[source.index("def upgrade()") : source.index("def downgrade()")]

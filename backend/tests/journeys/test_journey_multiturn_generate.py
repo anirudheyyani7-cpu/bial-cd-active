@@ -1,22 +1,14 @@
 """Journey: multi-turn chat on the turn engine — create → three turns → reload.
 
-The full server-authoritative-history story, end to end through the real routes:
+End-to-end proof, through the real routes, that the server assembles history: the browser
+sends one message per turn, and turn N's wire request to the model carries every earlier
+question and answer, in order, none of it from the HTTP body. The reload read then projects
+the same conversation back as display items that match what streamed.
 
-* `POST /v1/conversations` creates the row the SPA just minted (CSRF-protected), and
-  re-POSTing the same mint is an idempotent 200.
-* Three turns each send ONLY the new message; a recording `FunctionModel` proves the wire
-  request to the model carried the prior transcript the SERVER assembled from the DB —
-  turn N's request contains every earlier question and answer, in order, none of which
-  rode the HTTP body.
-* The reload read (`GET /v1/conversations/{id}`) projects the same conversation back as
-  display items that match what streamed — the reload story at the journey level.
-
-This USED to drive the retired `POST /v1/claude` relay. The relay is gone (one turn engine,
-one send path), so the journey now drives `POST /v1/conversations/{id}/turns` + the
-`/events` subscription — the same server-assembled-history property, on the surface that
-survived. Keeping it rather than deleting it with the relay is deliberate: the property it
-pins (the browser sends one question, the server supplies the transcript) has no other
-journey-level test.
+This test used to drive the retired `POST /v1/claude` relay; the relay is gone, but the
+property it pins — one turn engine, one send path, server-assembled history — has no other
+journey-level test, so it now drives `POST /v1/conversations/{id}/turns` instead of being
+deleted with the relay.
 """
 
 from __future__ import annotations
@@ -121,7 +113,6 @@ async def _settle(engine: Any, conversation_id: Any) -> None:
 
 
 def _delta_texts(sse: str) -> list[str]:
-    """Pull the ordered `text_delta` payloads out of a turn-stream SSE body."""
     texts: list[str] = []
     for line in sse.splitlines():
         if not line.startswith("data: "):
@@ -159,7 +150,7 @@ async def test_stateless_multiturn_journey_with_reload_parity(
     assert created.status_code == 201, created.text
     assert created.json()["conversation"]["_id"] == conversation_id
 
-    # Re-POSTing the same mint is idempotent (a retry, a second tab) — 200, same header.
+    # Re-POSTing the same mint is idempotent (a retry, a second tab).
     again = await client.post(
         "/v1/conversations",
         headers=headers,
@@ -219,8 +210,7 @@ async def test_stateless_multiturn_journey_with_reload_parity(
 
     assert len(runs) == 3
 
-    # Turn 3's wire request carries the WHOLE prior story, assembled server-side — the
-    # browser only ever sent one question per POST.
+    # Turn 3's wire request carries the whole prior story, assembled server-side.
     final_run = str(runs[-1])
     for expected in (
         "build a gate tracker",

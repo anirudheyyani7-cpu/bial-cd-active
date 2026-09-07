@@ -30,17 +30,14 @@ async def test_acquire_is_exclusive_per_user(fake_redis: aioredis.Redis) -> None
     assert token is not None
     # A second acquire for the same user is refused (the NX one-per-user enforcement).
     assert await locks.acquire_lock(fake_redis, USER) is None
-    # A different user acquires independently.
     assert await locks.acquire_lock(fake_redis, OTHER) is not None
 
 
 async def test_holder_release_is_compare_and_delete(fake_redis: aioredis.Redis) -> None:
     token = await locks.acquire_lock(fake_redis, USER)
     assert token is not None
-    # A stale token never releases someone else's lock.
     assert await locks.release_lock_as_holder(fake_redis, USER, "not-the-token") is False
     assert await locks.lock_is_held(fake_redis, USER) is True
-    # The holder's own token releases.
     assert await locks.release_lock_as_holder(fake_redis, USER, token) is True
     assert await locks.lock_is_held(fake_redis, USER) is False
 
@@ -59,12 +56,11 @@ async def test_heartbeat_sets_ttl_and_reports_alive(fake_redis: aioredis.Redis) 
     assert await locks.heartbeat_is_alive(fake_redis, USER) is True
     ttl = await fake_redis.ttl(heartbeat_key(USER))
     assert 0 < ttl <= HEARTBEAT_TTL_SECONDS
-    assert expires > datetime.now(UTC)  # a future idle instant
+    assert expires > datetime.now(UTC)
 
 
 def test_lock_ttl_has_renew_headroom() -> None:
-    # The frozen constants (900/300), not the 300 s lock default once proposed: a renew
-    # always has head-room, so an active build never drops its lock at the cadence.
+    # A renew always has head-room, so an active build never drops its lock at the cadence.
     assert LOCK_TTL_SECONDS == 900
     assert LOCK_TTL_SECONDS > LOCK_RENEW_CADENCE_SECONDS
 
@@ -74,7 +70,6 @@ async def test_reap_lock_reclaims_a_drifted_lock(fake_redis: aioredis.Redis) -> 
     assert await locks.lock_is_held(fake_redis, USER) is True
     assert await locks.reap_lock(fake_redis, USER) is True  # value-guarded reclaim
     assert await locks.lock_is_held(fake_redis, USER) is False
-    # A second reap on an absent lock is a clean no-op.
     assert await locks.reap_lock(fake_redis, USER) is False
 
 
@@ -194,9 +189,8 @@ async def test_registry_state_helpers(fake_redis: aioredis.Redis) -> None:
 # `write_starting_marker` / `read_starting_marker` / `clear_starting_marker` are the
 # primitives `_holding_user_lock` (manager.py) builds the `starting` fact from; this section
 # pins them in isolation, the way `read_registry`/`mark_registry_ending` are pinned above.
-# The pipelined read `project_preview_state` actually calls is `test_preview_state.py`'s to
-# prove end to end — here it is pinned as a primitive: what it returns, and that it fails the
-# same way a bare `hgetall` would have.
+# The pipelined read `project_preview_state` actually calls is proven end to end in
+# `test_preview_state.py`; here it is pinned as a primitive only.
 
 PROJECT = uuid.uuid4()
 
@@ -234,7 +228,7 @@ async def test_clearing_is_idempotent(fake_redis: aioredis.Redis) -> None:
 
     await locks.clear_starting_marker(fake_redis, USER)
     assert await locks.read_starting_marker(fake_redis, USER) is None
-    await locks.clear_starting_marker(fake_redis, USER)  # a second clear is a clean no-op
+    await locks.clear_starting_marker(fake_redis, USER)
     assert await locks.read_starting_marker(fake_redis, USER) is None
 
 

@@ -12,11 +12,10 @@ function renderAt(path) {
   )
 }
 
-// The other half of the sign-out-warning fix. Navbar's handleLogout hands this
-// exact shape to `navigate('/login', { state })` on a failed revoke — a real in-SPA
-// `initialEntries` array entry (not just a path string) is how MemoryRouter lets a test
-// seed that router state without going through Navbar at all. `pathname`/`search` are
-// split out explicitly so a query string in `path` still reaches `useSearchParams()`.
+// Navbar's handleLogout hands this exact shape to `navigate('/login', { state })` on a failed
+// revoke; a real in-SPA `initialEntries` array entry (not a path string) is how MemoryRouter
+// seeds that router state without going through Navbar. `pathname`/`search` are split out so
+// a query string in `path` still reaches `useSearchParams()`.
 function renderAtWithState(path, state) {
   const [pathname, search = ''] = path.split('?')
   return render(
@@ -39,7 +38,6 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
     renderAt('/login')
     expect(screen.getByTestId('login-microsoft')).toBeTruthy()
     expect(screen.getByTestId('login-microsoft').textContent).toContain('Sign in with Microsoft')
-    // The POC username/password inputs are gone.
     expect(screen.queryByTestId('login-password')).toBeNull()
     expect(screen.queryByTestId('login-email')).toBeNull()
   })
@@ -64,28 +62,15 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
     expect(text).not.toContain('BIAL organization')
   })
 
-  // Regression test for the prototype-pollution fix (c2822c7). Before the
-  // Object.hasOwn guard, AUTH_ERROR_BANNERS[authError] resolved a key like `__proto__` to a
-  // real Object.prototype value; the `|| GENERIC_AUTH_ERROR` fallback never fired because
-  // that value is truthy, and React threw "Objects are not valid as a React child" rendering
-  // it — with no error boundary anywhere in portal/src, that white-screens the unauthenticated
-  // /login page for anyone who clicks a crafted link.
+  // Regression test for the prototype-pollution fix (c2822c7): before the Object.hasOwn guard,
+  // AUTH_ERROR_BANNERS[authError] resolved a key like `__proto__` to a real Object.prototype
+  // value, the `|| GENERIC_AUTH_ERROR` fallback never fired (truthy), and React threw —
+  // white-screening the unauthenticated /login page for anyone who clicks a crafted link.
   //
-  // Reverting the guard to a bare index fails all four, but NOT the same way — worth keeping
-  // exactly because each key exercises a different failure mode, not a redundant repeat of
-  // one:
-  //   __proto__      -> Object.prototype (an object) -> React throws "Objects are not
-  //                      valid as a React child", the crash the issue describes
-  //   constructor     -> Object (a function)          -> no error at all; notice renders
-  //                      as an empty string, so the banner text assertion fails
-  //   toString        -> a function                   -> renders as the string
-  //                      "[object Undefined]" (a function coerced to a child), not
-  //                      "Sign-in failed"
-  //   hasOwnProperty  -> a function                   -> TypeError inside React's own
-  //                      state reducer, converting undefined/null to an object
-  // React does not throw on a function child, so only __proto__ reproduces the issue's exact
-  // crash; the other three are real regressions of a different shape, and trimming this list
-  // to just __proto__ would silently drop the only TypeError case and the only no-error case.
+  // Mutation receipt: reverting the guard to a bare index fails all four keys, but NOT the
+  // same way — `__proto__` reproduces the crash, `constructor` renders an empty notice,
+  // `toString`/`hasOwnProperty` fail differently again — so trimming this list to just
+  // `__proto__` would silently drop the other failure shapes.
   it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])(
     'does not crash and shows the generic banner for ?authError=%s (prototype-pollution guard)',
     (key) => {
@@ -95,20 +80,19 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
     },
   )
 
-  // The companion assertion for the same commit's SIGNOUT_BANNERS[reason] guard — lower
-  // severity since `reason` comes from localStorage (an existing same-origin write
-  // primitive), not directly off the URL. Unlike authError there is no generic fallback
-  // here: an unrecognized reason simply never calls setNotice, so the correct behavior is
-  // no banner at all, not a crash and not a substitute message.
+  // Companion assertion for the same commit's SIGNOUT_BANNERS[reason] guard — lower severity
+  // since `reason` comes from localStorage, not the URL. Unlike authError there is no generic
+  // fallback: an unrecognized reason never calls setNotice, so the correct behavior is no
+  // banner at all, not a crash and not a substitute message.
   it('does not crash and shows no banner for a poisoned signout-reason key (prototype-pollution guard)', () => {
     localStorage.setItem('bial_signout_reason', '__proto__')
     renderAt('/login')
-    // Page survived FIRST: an absent notice is also what a crashed page renders, so on its
-    // own that assertion is satisfied by the exact failure this test exists to catch — add
-    // an error boundary around LoginPage and this goes green with the guard fully reverted,
-    // because vitest's unhandled-rejection surfacing (not this test) is what makes the bare
+    // Page survived FIRST: an absent notice is ALSO what a crashed page renders, so on its own
+    // that assertion would false-green with the guard fully reverted — add an error boundary
+    // around LoginPage and this goes green with the guard fully reverted, because vitest's
+    // unhandled-rejection surfacing (not this test) is what makes the bare
     // `queryByTestId('login-notice')).toBeNull()` discriminate today. Asserting the sign-in
-    // button is still there proves the page rendered at all.
+    // button is still there is what proves the page actually rendered.
     expect(screen.getByTestId('login-microsoft')).toBeTruthy()
     expect(screen.queryByTestId('login-notice')).toBeNull()
   })
@@ -140,9 +124,7 @@ describe('LoginPage — Entra "Sign in with Microsoft" only', () => {
     expect(screen.queryByTestId('login-notice')).toBeNull()
   })
 
-  // The sign-out warning carried across the redirect as router state. This is the
-  // rendering half of the headline fix — Navbar.test.jsx proves the state reaches this
-  // route at all; this proves LoginPage reads it and shows it.
+  // Rendering half of the fix — Navbar.test.jsx proves the state reaches this route at all.
   it('shows the sign-out warning carried as router state', () => {
     renderAtWithState('/login', { signoutWarning: 'Sign-out may be incomplete on this device.' })
     expect(screen.getByTestId('login-notice').textContent).toBe(

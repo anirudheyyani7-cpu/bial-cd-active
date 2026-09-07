@@ -49,7 +49,6 @@ async def test_completed_signals_without_git_or_teardown(
     assert any(e.type == "preview_ready" for e in sink.events)
     # last_seq hands the seq baton to the manager, which continues at last_seq + 1.
     assert result.last_seq == max(e.seq for e in sink.events)
-    # The orchestrator never ran git and never tore down.
     assert not _ran_git(fake)
     assert fake.teardown_calls == 0
 
@@ -73,7 +72,6 @@ async def test_quota_emits_its_envelope_but_still_no_terminal(
 
     # `quota_exceeded` is informational and stays the orchestrator's; only the terminal moved.
     assert any(e.type == "quota_exceeded" for e in sink.events)
-    # last thing the orchestrator says, and not terminal
     assert sink.events[-1].type == "quota_exceeded"
     assert not any(e.type == "ended" for e in sink.events)
     assert result.status == BuildSessionStatus.ENDED  # graceful, NOT failed
@@ -199,6 +197,6 @@ async def test_cancellation_unwinds_without_emitting_or_tearing_down(
     with pytest.raises(asyncio.CancelledError):
         await task  # the orchestrator re-raises (returns no value) — the manager owns the terminal
 
-    assert not any(e.type == "ended" for e in sink.events)  # emitted nothing further
+    assert not any(e.type == "ended" for e in sink.events)
     assert fake.teardown_calls == 0
     assert not _ran_git(fake)

@@ -58,7 +58,6 @@ describe('validateAttachmentFiles', () => {
   it('rejects a text file over the 256 KB per-file limit (binary 4 MB cap unchanged)', () => {
     const res = validateAttachmentFiles([file('big.csv', 'text/csv', MAX_TEXT_FILE_SIZE + 1)], 0)
     expect(res.error).toMatch(/256 KB/)
-    // A 4 MB PDF is still accepted under the binary cap.
     expect(validateAttachmentFiles([file('spec.pdf', 'application/pdf', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
   })
 
@@ -135,7 +134,6 @@ describe('validateConversationAttachmentCap', () => {
   it('rejects when an incoming batch would cross the cap', () => {
     const res = validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION, 1)
     expect(res.error).toMatch(new RegExp(`limit of ${MAX_ATTACHMENTS_PER_CONVERSATION} attachments`))
-    // a batch that crosses the boundary is rejected wholesale
     expect(validateConversationAttachmentCap(MAX_ATTACHMENTS_PER_CONVERSATION - 1, 3).error).toBeTruthy()
   })
 

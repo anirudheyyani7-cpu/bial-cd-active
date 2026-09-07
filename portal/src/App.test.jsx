@@ -1,22 +1,15 @@
 /**
  * The route table, and the workspace shell's wiring.
  *
- * Project-first put every chat on a flat `/chat/:id`, and the standalone App Builder / Sandbox
- * scheme is now fully retired: `/workspace*`, `/sandbox`, and `/builder` have NO routes and NO
- * redirect shims. Any such stray URL falls through to the `*` catch-all (→ /login) rather than
- * being carried anywhere.
+ * Project-first put every chat on a flat `/chat/:id`; the standalone App Builder / Sandbox
+ * scheme is fully retired, with no routes and no redirect shims — a stray URL under
+ * `/workspace*`, `/sandbox`, or `/builder` falls through to the `*` catch-all (→ /login).
  *
- * WHY THE SHELL'S CLAIM IS ASSERTED HERE AND NOT IN A COMPONENT TEST. The whole of that claim
- * rests on one structural fact — that `/projects/:projectId` and `/chat/:chatId` are children of a
- * pathless layout route, so React Router renders the same shell element at the same position across
- * a move between them and only the outlet content is replaced. A hand-built route table inside a
- * component test would prove the component and not the wiring, and the wiring is the part that can
- * be got wrong. This file renders the REAL `<App/>` and drives it by URL, so the thing under test
- * is the table the product ships.
- *
- * Every page is stubbed: this file asserts routing, nothing else. `RequireAuth` is NOT stubbed —
- * where the guard sits relative to the shell is one of the claims (an unauthenticated visit must
- * not paint the workspace frame around a redirect), so it runs for real against a mocked session.
+ * This file renders the REAL `<App/>` and drives it by URL rather than a hand-built route
+ * table, because a component test would prove the component and not the wiring — the part that
+ * can be got wrong. Every page is stubbed except `RequireAuth`, which runs for real: where the
+ * guard sits relative to the shell is one of the claims (an unauthenticated visit must not paint
+ * the workspace frame around a redirect).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'

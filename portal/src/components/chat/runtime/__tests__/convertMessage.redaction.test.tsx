@@ -1,25 +1,14 @@
 /**
  * THE SPLIT-AUDIENCE WALL IS AT THE CONVERTER, NOT AT THE DRAW SITE.
  *
- * ══ WHY THAT PLACEMENT IS THE REQUIREMENT ══
+ * A diagnostic's developer half (source, compiler title) stays on the wire — the agent needs it —
+ * but `StepItem.detail.*` is no longer sent at all (`StepDetail` was removed server-side), so the
+ * converter's silence here is belt-and-braces, not the sole guard. Stated plainly because an
+ * earlier draft of this docblock claimed the opposite.
  *
- * A diagnostic frame carries a developer half — the source, and the compiler's own title — whose
- * schema docstring records that "safe to render verbatim" is the sentence that once produced a
- * stack trace under a file-path title in a citizen's chat. That half is still on the wire, because
- * the agent is the party that can act on it.
- *
- * `StepItem.detail.args` / `detail.result` are NOT on the wire: `StepDetail` was removed from the
- * server outright (`services/messages/projection.py` now pins its emitted field set in a test) and
- * `StepItem` here has no `detail` to copy. The converter's silence about those fields is therefore
- * belt and braces rather than the only guard — which is worth stating plainly, because an earlier
- * draft of this docblock claimed the opposite and would have had the next reader believe the wall
- * was load-bearing where it is not, and merely tidy where it is.
- *
- * A promise at the component ("this row only renders the label") is only as good as the next
- * person editing that component. A converter that never copies the field means the expander
- * has NOTHING TO LEAK even if someone later renders every field a part holds. That is why the
- * assertions below are made on the CONVERTED OBJECT as well as on the rendered tree: the first is
- * the guarantee, the second is only its symptom.
+ * Assertions below target the CONVERTED OBJECT, not just the rendered tree: a converter that
+ * never copies a field means the expander has nothing to leak even if a later render shows every
+ * field.
  */
 import { describe, it, expect } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
@@ -70,13 +59,12 @@ describe('the converted part carries the label and the state, and NOTHING else',
     const args = (part as { args: Record<string, unknown> }).args
     expect(Object.keys(args).sort()).toEqual(['label', 'state'])
 
-    // …and no `result` or `artifact` rides on the part beside the args.
     expect(Object.keys(part as object).sort()).toEqual(['args', 'toolCallId', 'toolName', 'type'])
   })
 
   it('drops the RAW TOOL NAME too — an unrecognised command must never reach the screen as argv', () => {
-    // `tool` is `run_command` here. The server's classifier computes the friendly label and fails
-    // closed; this is the second wall, and it is what stops a command line rendering as a step.
+    // The server's classifier computes the friendly label and fails closed; this is the second
+    // wall, stopping a command line from rendering as a step.
     const args = (convertPart(loadedStep()) as { args: Record<string, unknown> }).args
     expect(args.label).toBe('Updated the home page')
     expect(JSON.stringify(args)).not.toContain('run_command')
@@ -111,9 +99,8 @@ describe('…and none of it reaches the DOM either — the symptom half', () => 
 describe('the parts with no rendered form', () => {
   it('a diagnostic’s developer half is never mapped into a part at all', () => {
     // A diagnostic is not a `MessagePart` — it arrives as a turn FRAME, and the surface takes only
-    // its citizen-facing sentence when it turns one into a row. There is no converter path that
-    // could carry the developer half, which is stated here so the absence is deliberate rather
-    // than accidental.
+    // its citizen-facing sentence when it turns one into a row. No converter path exists that
+    // could carry the developer half; stated here so the absence reads as deliberate.
     const parts: MessagePart['type'][] = ['build', 'build_in_progress', 'plan_options']
     expect(parts).not.toContain('diagnostic')
   })
@@ -127,9 +114,8 @@ describe('the parts with no rendered form', () => {
   })
 
   it('a message made only of them converts to empty content, not to a missing message', () => {
-    // Dropping a PART is not dropping a MESSAGE. The message still exists with empty content, and
-    // the thread renders no element for it — which is what lets the surface decide separately
-    // whether such a row belongs in the transcript at all.
+    // Dropping a PART is not dropping a MESSAGE: it still exists with empty content, letting the
+    // surface decide separately whether such a row belongs in the transcript at all.
     const converted = convertMessage(message([{ type: 'build_in_progress', sessionId: 's1' } as MessagePart]))
     expect(converted.id).toBe('m1')
     expect(converted.content).toEqual([])

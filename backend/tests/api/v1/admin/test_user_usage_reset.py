@@ -80,7 +80,6 @@ async def test_reset_does_not_touch_other_days(client, db_session) -> None:
 
     assert (await _reset(client, admin_headers, user.id)).status_code == 200
 
-    # Today's row is gone; yesterday's row (the historical ledger) is untouched.
     today_row = await db_session.scalar(
         select(TokenUsage).where(
             TokenUsage.user_id == user.id, TokenUsage.usage_date == ist_today()
@@ -97,10 +96,9 @@ async def test_reset_does_not_touch_other_days(client, db_session) -> None:
 async def test_reset_deletes_only_the_build_row_review_attribution_survives(
     client, db_session
 ) -> None:
-    # The reset exists to let the citizen BUILD again today, and the gate reads
-    # build spend only — so the same-day `review` row is left alone. Deleting it would
-    # change nothing the cap measures while erasing the attribution record that is the
-    # whole point of metering review cost.
+    # The gate reads build spend only, so the same-day `review` row is deliberately
+    # left alone: deleting it would change nothing the cap measures while erasing the
+    # attribution record that metering review cost depends on.
     user = await UserFactory.create(db_session, email="reviewed@rvaiglobal.com")
     await record_usage(db_session, user.id, input_tokens=100, output_tokens=20)
     await record_usage(
@@ -122,7 +120,6 @@ async def test_reset_deletes_only_the_build_row_review_attribution_survives(
         .scalars()
         .all()
     )
-    # The build row is gone; the review row — and only it — survives, untouched.
     assert [row.kind for row in rows] == [TokenUsageKind.REVIEW]
     assert (rows[0].input_tokens, rows[0].output_tokens) == (40, 10)
     roster = await _roster_row(client, admin_headers, "reviewed@rvaiglobal.com")
@@ -137,7 +134,7 @@ async def test_reset_on_a_user_with_no_usage_is_idempotent_not_a_conflict(
     admin_headers = await _admin(db_session)
 
     resp = await _reset(client, admin_headers, fresh.id)
-    assert resp.status_code == 200  # no 409 — nothing to conflict with
+    assert resp.status_code == 200
     assert resp.json()["usageToday"] == 0
 
     # A second reset is equally harmless.

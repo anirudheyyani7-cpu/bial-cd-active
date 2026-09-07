@@ -78,7 +78,7 @@ async def test_roster_pages_walk_without_dup_or_skip(client, db_session) -> None
             assert body["nextCursor"] is None
             break
         cursor = body["nextCursor"]
-    assert len(seen) == 5  # every user exactly once — no duplicates, no skips
+    assert len(seen) == 5
     assert len(set(seen)) == 5
 
     # Newest-first: UUIDv7 ids sort by creation time, so the admin (created last)
@@ -113,7 +113,7 @@ async def test_search_matches_email_and_display_name(client, db_session) -> None
     await UserFactory.create(db_session, email="carol@rvaiglobal.com", display_name="Carol")
     headers = await _admin(db_session)
 
-    body = await _roster(client, headers, q="ALICE")  # case-insensitive
+    body = await _roster(client, headers, q="ALICE")
     assert {u["email"] for u in body["users"]} == {"alice@rvaiglobal.com", "bob@rvaiglobal.com"}
 
 
@@ -165,14 +165,12 @@ async def test_usage_today_is_cost_weighted(client, db_session) -> None:
     # Weighted: fresh=100-3-4=93 + output 20 + reads 0.3 + writes 5 = 118.3 → rounds to 118.
     assert by_email["spender@rvaiglobal.com"]["usageToday"] == 118
     assert by_email["idle@rvaiglobal.com"]["usageToday"] == 0
-    assert idle.suspended_at is None  # sanity: fresh users active
+    assert idle.suspended_at is None
 
 
 async def test_roster_usage_today_agrees_with_the_daily_gate(client, db_session) -> None:
-    # The roster and the daily gate share ONE billable-spend expression, so
-    # they can never drift. Seed a cache-heavy row and assert the roster's usageToday equals
-    # the gate's `_used_today` for the same user/day — a half-landed fix (one reader corrected,
-    # the other not) would break this exactly.
+    # The roster and the daily gate share ONE billable-spend expression, so they can never
+    # drift — a half-landed fix (one reader corrected, the other not) would break this exactly.
     user = await UserFactory.create(db_session, email="agree@rvaiglobal.com")
     await record_usage(
         db_session,

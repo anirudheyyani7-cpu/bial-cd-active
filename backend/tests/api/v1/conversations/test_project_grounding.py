@@ -24,9 +24,8 @@ from src.db.models.conversation import ChatKind
 from tests.api.v1.conversations.conftest import _headers
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 
-# The turn-driving fixtures live in `conftest.py` — four files needed the same four, and
-# two of them were the 3rd and 4th copy. Named here rather than autouse there, because the
-# other files in this directory drive no turns.
+# The turn-driving fixtures live in `conftest.py`, named explicitly here (not autouse)
+# because the other files in this directory drive no turns.
 pytestmark = pytest.mark.usefixtures("_fresh_engine", "_override_billing")
 
 

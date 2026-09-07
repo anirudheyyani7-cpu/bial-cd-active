@@ -1,20 +1,14 @@
 /**
- * Retirement guard (flipped from the deleted DeployBar/compileJsx suites).
+ * Retirement guard (flipped from the deleted DeployBar/compileJsx suites). Walks the real
+ * source tree and fails if any retired symbol creeps back, so a reintroduction must be
+ * deliberate and reviewed rather than a drive-by import.
  *
- * The JSX-era deploy path — the in-browser Babel compile, the client-supplied
- * artifact, the DeployBar — is REMOVED, not hidden. This walks the real source
- * tree and fails if any retired symbol creeps back, so a reintroduction must be
- * deliberate and reviewed rather than a drive-by import. (The dead-UI doctrine:
- * remove the affordance, keep a guard that the removed path stays inert.)
+ * Also guards the three publish controls and four client predicates retired when publishing
+ * collapsed onto one chip reading one server-computed field — added in the SAME commit that
+ * deleted them, since a guard lagging a deletion is a failure this repo has already had.
  *
- * IT NOW ALSO GUARDS THE THREE PUBLISH CONTROLS AND THE FOUR CLIENT PREDICATES that fed
- * them, retired together when publishing collapsed onto one chip reading one
- * server-computed field. The list grew in the SAME change that deleted them — a guard that
- * lags a deletion by one commit is a failure this repo has already had.
- *
- * ONE THING IS DELIBERATELY ABSENT: the publish hook's old name. It was RENAMED, not
- * retired, and banning a renamed symbol guards nothing — it only stops anyone writing the
- * old name in a comment explaining the rename.
+ * Deliberately absent: the publish hook's old name. It was RENAMED, not retired, and banning
+ * a renamed symbol guards nothing — it would only stop a comment from explaining the rename.
  */
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
@@ -98,7 +92,6 @@ describe('JSX-era deploy retirement', () => {
       'Packaging your app',
       'Setting up the server',
       'Starting it up',
-      // The vocabulary the retired cards spoke, on surfaces that no longer exist.
       'Review &amp; approval',
       'Waiting for review',
       'Taken down',

@@ -728,7 +728,6 @@ async def test_reapproval_after_deploy_surfaces_redeploy_needed(client, app, db_
         await client.post(f"/v1/admin/apps/{row.id}/mark-deployed", headers=headers)
     ).status_code == 200
 
-    # The owner re-submits (fresh submission id), the admin re-approves it.
     new_sid = uuid.uuid4()
     await db_session.execute(
         sa.update(AppRegistry)
@@ -783,12 +782,10 @@ _DECLARATION = {
 async def test_self_publish_approval_projects_without_the_runbook_prompts(
     client, app, db_session
 ) -> None:
-    # Scenario 1, driven through the real approve endpoint: a publish-flow
-    # submission (self_publish lineage + declaration) is approved, and the projection
-    # then shows NO deploy-needed prompt — the bare id derivation would say True
-    # (approved pin set, deployed marker never set), which is exactly the forever-
-    # prompt the self-publish route exists to prevent. The declaration rides along for the review
-    # screen.
+    # A publish-flow submission (self_publish lineage + declaration) approved via the real
+    # endpoint must show NO deploy-needed prompt — the bare id derivation would say True
+    # (approved pin set, deployed marker never set), which is exactly the forever-prompt
+    # the self-publish route exists to prevent.
     store = _wire_storage(app)
     row = await _app(
         db_session,
@@ -929,12 +926,10 @@ async def test_mark_deployed_refuses_a_self_publish_app(client, db_session) -> N
 
 
 async def test_historical_runbook_address_survives_the_lineage_change(client, db_session) -> None:
-    # The edge case: an app runbook-deployed in its past life, later approved
-    # through the review lineage. The recorded address (and its timestamp) stay
-    # visible — the administrator sees both of the app's addresses, the older one
-    # labelled by the SPA — while the runbook PROMPT stops: no deploy-needed flag
-    # (though the approved pin has moved past the old marker), and mark-deployed is
-    # refused rather than re-recording a runbook that must no longer be run.
+    # The edge case: an app runbook-deployed in its past life, later approved through the
+    # review lineage. The recorded address (and its timestamp) stay visible, the runbook
+    # PROMPT stops (no deploy-needed flag), and mark-deployed is refused rather than
+    # re-recording a runbook that must no longer be run.
     row = await _app(
         db_session,
         **_approved(
@@ -969,7 +964,6 @@ async def test_governance_actions_are_audited_with_artifact_detail(
     await client.post(f"/v1/admin/apps/{row.id}/approve", json=_approve_body(row), headers=headers)
     events = await client.get(f"/v1/admin/apps/{row.id}/audit", headers=headers)
     approve_event = next(e for e in events.json()["events"] if e["action"] == "approve")
-    # The audit detail identifies the artifact (submission id + commit SHA).
     assert approve_event["detail"]["submissionId"] == str(row.source_submission_id)
     assert approve_event["detail"]["commitSha"] == _SHA
 
@@ -1031,7 +1025,6 @@ async def test_hard_delete_purges_everything(client, db_session, app) -> None:
 
     resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=headers)
     assert resp.json() == {"ok": True}
-    # Registry row gone; the snapshot blob swept.
     assert await db_session.get(AppRegistry, row.id) is None
     assert store.objects == {}
     audited = (

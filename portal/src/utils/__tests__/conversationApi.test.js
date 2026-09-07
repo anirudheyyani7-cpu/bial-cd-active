@@ -345,9 +345,6 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row', () 
   })
 
   it('keys stay unique across kinds that can repeat within one row', () => {
-    // Two user turns, one coalesced reply carrying both steps, and two in-progress markers —
-    // five messages, five distinct keys. What matters here is uniqueness, not the count: a
-    // duplicate key is what React says "may cause children to be duplicated and/or omitted".
     const keys = keysOf([
       { type: 'user_text', seq: 1, mode: 'ask', text: 'a', attachmentIds: [] },
       { type: 'user_text', seq: 1, mode: 'ask', text: 'b', attachmentIds: [] },
@@ -391,19 +388,15 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row', () 
   })
 
   it('a hidden step does not renumber the items after it', () => {
-    // The ordinal counts SOURCE position precisely so that flipping a step's `hidden` cannot
-    // shift every later key — which an output-array index would have done.
-    // A user turn between the two replies, so each one opens its OWN message and therefore
-    // shows its own key — otherwise the trailing text joins the reply above it and the ordinal
-    // under test never reaches an id.
+    // The ordinal counts SOURCE position, so a hidden step does not shift the keys after it —
+    // which an output-array index would have done. The interposed user turn gives the trailing
+    // text its own message, so `srv_3_u_2` (not `_2`) is the ordinal actually under test.
     const withHidden = [
       { type: 'step', seq: 1, tool: 'write_file', label: 'x', state: 'ok', hidden: false },
       { type: 'step', seq: 2, tool: 'read_file', label: 'y', state: 'ok', hidden: true },
       { type: 'user_text', seq: 3, mode: 'ask', text: 'and now?', attachmentIds: [] },
       { type: 'assistant_text', seq: 4, mode: 'write', text: 'done' },
     ]
-    // `_3` and not `_2`: the ordinal counts SOURCE position, so dropping the hidden step at
-    // index 1 does not pull the items after it down.
     expect(keysOf(withHidden)).toEqual(['srv_1_s_0', 'srv_3_u_2', 'srv_4_a_3'])
   })
 })

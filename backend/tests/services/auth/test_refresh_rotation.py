@@ -78,7 +78,7 @@ def test_hash_is_deterministic_and_64_hex() -> None:
 
 def test_generated_tokens_are_url_safe_high_entropy_and_unique() -> None:
     tokens = {generate_refresh_token() for _ in range(200)}
-    assert len(tokens) == 200  # no collisions across 200 draws
+    assert len(tokens) == 200
     for token in tokens:
         assert len(token) >= 43  # 32 bytes base64url-encoded
         assert set(token) <= _URL_SAFE
@@ -107,7 +107,6 @@ async def test_happy_rotation_marks_old_used_and_keeps_family(db_session) -> Non
     assert result.user_id == user.id
     assert result.token_version == user.token_version
     assert result.new_refresh_token != raw
-    # Old token is now consumed; the successor shares family + absolute cap.
     await db_session.refresh(old)
     assert old.used_at is not None
     successor = await db_session.scalar(
@@ -120,7 +119,6 @@ async def test_happy_rotation_marks_old_used_and_keeps_family(db_session) -> Non
 
 
 async def test_reuse_revokes_entire_family(db_session) -> None:
-    # The security-critical path (execution note: reuse detection).
     user = await UserFactory.create(db_session)
     raw = await issue_new_family(db_session, user.id)
     result = await rotate_refresh_token(db_session, hash_refresh_token(raw))

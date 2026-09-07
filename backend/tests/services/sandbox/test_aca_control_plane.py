@@ -157,7 +157,6 @@ def _fake_app(fqdn: str | None) -> SimpleNamespace:
     ],
 )
 def test_is_transient_threshold(status: int, expected: bool) -> None:
-    # Retry only on 429 or >= 500; every other 4xx is terminal.
     assert is_transient(_http_error(status)) is expected
 
 
@@ -394,16 +393,12 @@ async def test_stamp_tags_uses_patch_and_never_put(monkeypatch: pytest.MonkeyPat
 
 
 async def test_a_stamp_carries_the_tags_it_did_not_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    """THE PROVIDER REPLACES; THE MERGE HAS TO BE OURS.
-
-    Observed against real Azure, twice, after every unit test said otherwise. `PATCH` on
-    `Microsoft.App/containerApps` is documented as JSON Merge Patch, but the provider treats
-    `tags` as ONE property and swaps the whole map for whatever the body carries. So stamping
-    `bial-reclaim-staged-at` onto a staging candidate DELETED its owner, its app id and its
-    created-at — and a container carrying no identity is escalate-only, which means the second
-    pass of the two-pass protocol could never reach `Verdict.DESTROY` on a container the first
-    pass had staged. The protocol destroyed its own evidence.
-
+    """THE PROVIDER REPLACES; THE MERGE HAS TO BE OURS. Observed against real Azure, twice: PATCH
+    on `Microsoft.App/containerApps` is documented as JSON Merge Patch, but the provider treats
+    `tags` as ONE property and swaps the whole map for whatever the body carries — stamping
+    `bial-reclaim-staged-at` onto a staging candidate DELETED its owner, app id and created-at,
+    making the container escalate-only so the two-pass protocol could never reach
+    `Verdict.DESTROY` on a container the first pass had staged.
     MUTATION-CHECK: send `tags=stamp` instead of the union and this goes red on the identity keys
     while every other stamp test stays green — which is exactly what shipping looked like."""
     seen: dict[str, object] = {}
@@ -615,15 +610,12 @@ async def test_an_sdk_enum_status_projects_as_its_wire_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FOUND AGAINST THE REAL FLEET, not here — which is the point of writing it down.
-
     `azure-mgmt-appcontainers` types `running_status` as `ContainerAppRunningStatus`, not `str`,
     so a bare `str()` yields `"ContainerAppRunningStatus.RUNNING"` — a Python repr where the
     projection promises Azure's own wire value. Every fake in this suite hands back a plain
-    string, so nothing here could ever have caught it: the fake did not record what the real
-    client records, and the tests certified a fiction until the enumerator was pointed at a live
-    subscription.
-
-    Modelled with a real `enum.Enum` rather than a sentinel, because the failure IS the enum."""
+    string, so nothing here could have caught it until the enumerator was pointed at a live
+    subscription. Modelled with a real `enum.Enum` rather than a sentinel, because the failure
+    IS the enum."""
 
     class _RunningStatus(enum.Enum):
         RUNNING = "Running"

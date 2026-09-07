@@ -200,11 +200,9 @@ async def test_an_over_long_conversation_is_refused_before_anything_persists(
 
 
 async def test_the_refusal_names_the_way_out(client, db_session) -> None:
-    """The sentence a citizen reads is written on the SERVER and rendered verbatim, so what it
-    says is a server-side property and this is where it is pinned.
-
-    Two facts, both load-bearing: what to do (start a new chat) and that the app survives it.
-    Without the second, "this chat has got too long" reads as "you have lost your work"."""
+    """The sentence a citizen reads is written on the SERVER and rendered verbatim, so this
+    is where the property is pinned. Two facts, both load-bearing: what to do (start a new
+    chat) and that the app survives it — without the second, "too long" reads as "lost"."""
     user, _project, conversation = await _a_conversation(db_session)
     await _stuff_the_conversation(db_session, user, conversation, tokens=DEFAULT_CONTEXT_HARD)
 
@@ -212,8 +210,7 @@ async def test_the_refusal_names_the_way_out(client, db_session) -> None:
 
     assert "new chat" in message
     assert "stays exactly as it is" in message
-    # And it does NOT do the thing the old admin copy implied it would: quote the number.
-    assert str(DEFAULT_CONTEXT_HARD) not in message
+    assert str(DEFAULT_CONTEXT_HARD) not in message  # never quotes the number
     assert "200,000" not in message
 
 
@@ -227,13 +224,10 @@ async def test_an_administrator_override_changes_what_the_platform_accepts(
 ) -> None:
     """★ THE TEST THAT PROVES THE ADMIN FIELD IS NO LONGER A LIE.
 
-    One size, two users. Under the default limit the conversation sends. With a per-user hard
-    limit set below that size it is refused. Nothing else differs — so the ONLY thing that can
-    have changed the answer is the number an administrator typed.
-
-    Without this test the unit has not done its job: a gate hard-wired to `DEFAULT_CONTEXT_HARD`
-    would pass every other test in this file and leave `UsersLimitsPanel.tsx`'s "Hard stop
-    for a single chat" hint exactly as false as it was."""
+    One size, two users: the default limit sends it, a per-user hard limit set below that
+    size refuses it, and nothing else differs — the number is the only thing that changed.
+    Without this, a gate hard-wired to `DEFAULT_CONTEXT_HARD` would pass every other test
+    here and leave `UsersLimitsPanel.tsx`'s "Hard stop" hint exactly as false as it was."""
     size = 40_000
 
     allowed_user, _p1, allowed_conv = await _a_conversation(db_session)
@@ -288,24 +282,18 @@ async def test_a_user_with_no_override_is_governed_by_the_default(client, db_ses
 async def test_the_same_refusal_fires_on_the_build_from_plan_path(
     client, app, db_session, _fresh_engine
 ) -> None:
-    """★ THE MOST LIKELY IMPLEMENTATION MISTAKE, and the reason the preflight is one function.
+    """★ THE MOST LIKELY IMPLEMENTATION MISTAKE: `build_it` is the second route that starts
+    a turn, and wiring the guardrail to the send route alone lets "Build this plan" walk
+    straight past the administrator's number.
 
-    `build_it` is the second route that starts a conversation turn. Wire the guardrail to the
-    send route alone and pressing "Build this plan" walks straight past the administrator's
-    number — the exact shape the daily cap's three hand-copied call sites are on record for.
-
-    Driven at the LOWEST ceiling an administrator can set, against a plan deliberately larger
-    than it. It used to be driven at a ceiling of 1 — which was possible then and is not now:
-    a value that low locked the citizen out of every chat they owned, so it is refused at the
-    admin route and clamped on the way back out (`CONTEXT_HARD_FLOOR`). Setting one below the
-    floor here would silently stop testing the gate, because the clamp would hand the route a
-    ceiling the plan fits comfortably inside."""
-    # A REAL pending offer, produced through the genuine engine path — the handoff refuses a
-    # press with no card long before it reaches any limit, so the card has to be real for the
-    # GATE to be what this test is about rather than the check above it.
+    Driven at `CONTEXT_HARD_FLOOR`, the lowest ceiling an administrator can set, against a
+    plan deliberately larger than it — anything lower gets silently clamped back up to the
+    floor, which would let the plan fit and stop testing the gate at all."""
+    # A REAL pending offer, through the genuine engine path — the handoff refuses a press
+    # with no card before it reaches any limit, so the GATE has to be what fails this test.
     user, _project, plan_chat = await _a_conversation(db_session)
-    # Comfortably past the floor once the system-prompt reserve is added to it, and well under
-    # the stored-message ceiling that would refuse the offer for a different reason entirely.
+    # Comfortably past the floor with the reserve added, and under the stored-message
+    # ceiling that would refuse the offer for a different reason entirely.
     oversized_plan = "Log every visitor. " * 2_500
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model(plan=oversized_plan)
     planned = await _send(client, user, plan_chat.id, "plan the visitors app")
@@ -353,31 +341,22 @@ def test_the_refusal_is_documented_on_both_routes() -> None:
 
 def test_the_code_is_byte_stable() -> None:
     """Nothing in the refusal path is exhaustive — no `Literal` union, no native enum, no
-    `assertNever`. Every code is an open string compared by hand, so a rename is free and silent
-    and every reader keeps compiling. This is the guard that notices."""
+    `assertNever`. Every code is an open string, so a rename is free, silent, and still
+    compiles. This is the guard that notices."""
     assert CHAT_TOO_LONG_CODE == "context_hard_limit_exceeded"
 
 
 async def test_a_refused_turn_does_not_burn_a_pending_plan_card(
     client, app, db_session, _fresh_engine
 ) -> None:
-    """★ THE ORDERING TRAP, AND IT WAS REAL — this test failed before the gate was moved.
+    """★ THE ORDERING TRAP: `start_turn` resolves a pending plan-options card as an implicit
+    "keep refining" once free text passes it — a WRITE the rollback does not cover, because
+    `resolve_pending_as_refine` reaches `append_batch`, which owns its own commit. A refusal
+    raised after that write leaves the card resolved on disk and the offer silently burned,
+    with nothing on screen saying so. The gate sits ABOVE that write for exactly this reason.
 
-    `start_turn` resolves a pending plan-options card as an implicit "keep refining" when the
-    citizen types free text past it. That is a WRITE, and the route's own comment states the
-    invariant: "a refused start must never burn the user's pending plan-options card."
-
-    THE ROLLBACK DOES NOT COVER IT. `resolve_pending_as_refine` reaches `append_batch`, whose
-    docstring says it OWNS ITS COMMIT — so a refusal raised after it leaves the card resolved on
-    disk however cleanly `get_db` rolls the session back. The citizen's message is refused AND
-    their offer is silently consumed, and nothing on screen says the second thing happened.
-
-    The gate therefore sits ABOVE that write, and the history is re-read afterwards only when
-    the resolve actually wrote something.
-
-    Mutation check: move `enforce_context_limit` back below `resolve_pending_as_refine` and this
-    goes red while every other test in this file stays green.
-    """
+    Mutation check: move `enforce_context_limit` back below `resolve_pending_as_refine` and
+    this goes red while every other test in this file stays green."""
     user, _project, conversation = await _a_conversation(db_session)
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model()
     assert (await _send(client, user, conversation.id, "plan it")).status_code == 202
@@ -402,11 +381,8 @@ async def test_a_refused_turn_does_not_burn_a_pending_plan_card(
 async def test_an_accepted_turn_still_resolves_a_pending_card(
     client, app, db_session, _fresh_engine
 ) -> None:
-    """The other half, so the fix above cannot be "never resolve anything".
-
-    Moving the guardrail above `resolve_pending_as_refine` reordered a write. This is the test
-    that the write still happens on the path where it should: free text past a pending card, in
-    a conversation comfortably under the limit, resolves the card."""
+    """The other half, so the fix above cannot be "never resolve anything": free text past a
+    pending card, in a conversation comfortably under the limit, still resolves the card."""
     user, _project, conversation = await _a_conversation(db_session)
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model()
     assert (await _send(client, user, conversation.id, "plan it")).status_code == 202

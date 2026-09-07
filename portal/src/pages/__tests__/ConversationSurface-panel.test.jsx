@@ -1,30 +1,17 @@
 /**
  * THIS SURFACE OWNS NO CHAT-PANEL COLLAPSE, AND THIS FILE IS WHAT HOLDS THAT.
  *
- * The conversation IS the rail (`WorkspaceShell` derives the rail's mode from the address), so a
- * toggle here would collapse the identical column through a second, independent boolean — and it
- * would have to render into `LivePreview`'s toolbar, which mounts only when there is something to
- * frame, leaving a plan chat, an unbuilt project or a sleeping app with no control at all. The one
- * that survives is `WorkspaceToolbar`'s, drawn above both columns, so it has one home whether the
- * rail is collapsed, the pane is gone, or both.
+ * The conversation IS the rail (`WorkspaceShell` derives its mode from the address), so a toggle
+ * here would be a second boolean over the same column. The surviving control is
+ * `WorkspaceToolbar`'s, drawn above both columns regardless of rail or pane state.
  *
- * THE SLOT ITSELF IS GONE, so no test here asserts it is empty. An earlier draft of this file
- * asserted `queryByRole('button', {name: /hide chat panel/i})` is null and it passed — but it
- * would have passed identically had the retired toggle still been wired up, because this fixture
- * never resolves a preview address and the pane it rendered into never mounts. What guards it now
- * is the TYPE system: `UnacceptedPaneProps` in `workspaceChannel.ts` fails the build if `PaneView`
- * ever grows a field `LivePreview` does not accept, and there is no slot left for a surface to
- * publish chrome into.
+ * THE SLOT ITSELF IS GONE — no test here asserts it is empty, since that would pass whether or
+ * not a retired toggle were still wired up. What guards it now is the TYPE system:
+ * `UnacceptedPaneProps` fails the build if `PaneView` ever grows a field `LivePreview` rejects.
  *
- * EVERY TEST BELOW NOW PROVES THE SAME UNDERLYING FACT FROM A DIFFERENT ANGLE: this surface
- * publishes no toggle, drives no width swap, and holds no collapse state of its own any more —
- * each is an INERTNESS GUARD (never a bare deletion), paired with a LIVENESS assertion so
- * none of them can pass by accident on a surface that rendered nothing at all. Where the ORIGINAL
- * property they pinned (draft/scroll survive a hide-show cycle; the toggle stays reachable while
- * collapsed) still genuinely holds, it holds at the SHELL level now — pinned in
- * `src/components/workspace/__tests__/ProjectWorkspace.test.tsx`'s "the collapse control — hidden,
- * not unmounted, and never a one-way door" suite — and each guard below says so rather than
- * silently going quiet about where that coverage went.
+ * Every test below is an INERTNESS GUARD paired with a LIVENESS assertion; where the ORIGINAL
+ * property still holds, it holds at the SHELL level — pinned in `ProjectWorkspace.test.tsx`'s
+ * "the collapse control — hidden, not unmounted, and never a one-way door" suite.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -104,10 +91,7 @@ describe('BuilderPage — the retired chat-panel collapse, now the shell rail\'s
     await renderReady()
 
     // The surface mounts and runs, and there is no slot on `PaneView` for it to push a toggle
-    // into: `UnacceptedPaneProps` fails the build if the shape grows a field back. The
-    // collapse control that survived is the shell's, drawn once in the toolbar row and pinned in
-    // `ProjectWorkspace.test.tsx` ("★ lives in the TOOLBAR ROW, so it is still reachable once
-    // the rail is hidden").
+    // into: `UnacceptedPaneProps` fails the build if the shape grows a field back.
     expect(composer()).toBeTruthy()
   })
 
@@ -116,9 +100,7 @@ describe('BuilderPage — the retired chat-panel collapse, now the shell rail\'s
 
     fireEvent.change(composer(), { target: { value: 'a visitor pass tracker' } })
     // LIVENESS: the draft is genuinely held by this surface's own composer state — which is what
-    // the retired cycle put at risk. There is no toggle left here to cycle it with, so the
-    // survival property is exercised where the surviving collapse lives (ProjectWorkspace.test.tsx,
-    // "keeps the rail MOUNTED while collapsed").
+    // the retired cycle put at risk.
     expect(composer().value).toBe('a visitor pass tracker')
   })
 
@@ -142,17 +124,14 @@ describe('BuilderPage — the retired chat-panel collapse, now the shell rail\'s
     viewport.scrollTop = 40
 
     // LIVENESS: the viewport this test is about is really mounted and really holds the value.
-    // There is no toggle on this surface that could hide and show it again, so the survival
-    // property is exercised at the shell instead (ProjectWorkspace.test.tsx, same suite).
     expect(screen.getByTestId('thread-viewport').scrollTop).toBe(40)
   })
 
   it('publishes no toggle of its own to keep reachable — "stays reachable while collapsed" is entirely the shell\'s property now (ProjectWorkspace.test.tsx, "★ lives in the TOOLBAR ROW…")', async () => {
     await renderReady()
 
-    // LIVENESS: the surface rendered its ordinary chrome. There is nothing here to ask "does it
-    // stay reachable while hidden" about. The control that must answer it is drawn in the
-    // workspace's toolbar row, and is pinned in `ProjectWorkspace.test.tsx` under "★ lives in the TOOLBAR ROW…".
+    // LIVENESS: the surface rendered its ordinary chrome; there is nothing here to ask "does it
+    // stay reachable while hidden" about.
     expect(screen.getByTestId('chat-panel')).toBeTruthy()
   })
 })

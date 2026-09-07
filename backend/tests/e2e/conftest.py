@@ -1,37 +1,22 @@
 """Live end-to-end harness for the crash-recovery feature.
 
-Everything here is REAL except Azure Resource Manager itself:
+WHY THIS EXISTS: only `AcaControlPlane` is faked, against local Docker — the sandbox container,
+every `/exec`/`/files`/`/dev/*` call, git operations, Azurite, Redis and PostgreSQL are all real.
+Azurite matters specifically: its `Last-Modified` is whole seconds, exactly like Azure, which is
+the resolution the recovery-vs-saved comparison depends on and the unit suite's microsecond-
+stamped fake cannot exercise. That gap is not hypothetical — this lane caught a real data-loss
+bug the unit suite structurally could not, where a same-second tie silently discarded newer
+work; see `test_s13b_a_forced_same_second_tie_does_not_silently_restore_the_older_tree`.
 
-* the sandbox container is the actual image built from `sandbox/Dockerfile.sandbox`, running
-  under local Docker, with the real Caddy + supervisor inside it;
-* every `/exec`, `/files` and `/dev/*` call is a real HTTP round trip to that supervisor;
-* every git operation — `git init`, `add`, `commit`, `bundle create`, `fetch`, `checkout` —
-  runs for real inside the container;
-* blob storage is Azurite, which gives the SAME `Last-Modified` semantics as Azure (whole
-  seconds), the resolution the recovery-vs-saved comparison depends on and which the unit
-  suite's microsecond-stamped fake cannot exercise;
-* Redis and PostgreSQL are real servers.
-
-Only `AcaControlPlane` is substituted, for local Docker. That is the one seam that would
-otherwise bill a subscription and create real cloud resources.
+Each fixture skips cleanly when its dependency is absent, so the lane degrades to a clear skip
+rather than a hang or a false pass. It is `-m integration` — OUT of the default lane, since each
+scenario boots a real container and the suite runs in minutes, not seconds.
 
 TO RUN:
-
     docker build -t bial-sandbox:e2e -f Dockerfile.sandbox ../sandbox
     docker compose -f docker-compose.test.yml up -d          # Azurite on :10000
     docker run -d --name bial-redis -p 6379:6379 redis:7-alpine
     uv run pytest tests/e2e -m integration
-
-Every fixture skips cleanly when its dependency is absent, so the lane degrades to a clear
-skip rather than a hang or a false pass. It is `-m integration`, i.e. OUT of the default lane:
-each scenario boots a real container, so the suite is minutes, not seconds.
-
-WHY THIS LANE EARNS ITS KEEP: it found a data-loss bug the unit suite structurally could not.
-`FakeStorage` stamps `last_modified` in microseconds; Azure and Azurite stamp WHOLE SECONDS.
-A Save and a turn-boundary write landing in the same second therefore compared EQUAL in
-production and never in the fake — and the restore path resolved that tie toward the older
-saved tree, silently discarding the newer work. See
-`test_s13b_a_forced_same_second_tie_does_not_silently_restore_the_older_tree`.
 """
 
 from __future__ import annotations

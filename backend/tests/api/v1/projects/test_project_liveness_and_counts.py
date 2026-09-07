@@ -1,24 +1,13 @@
 """What "live" means on the projects list, and the three numbers above it (#158 §1, §10).
 
-"Live" was settled on the #158 call as a DEPLOYMENT fact:
+"Live" was settled on the #158 call as a DEPLOYMENT fact, not a lifecycle one:
 
 >   we have live = deployed / published — if the application is published and has url we
 >   will show that status
 
-The tempting shortcut is `AppStatus.APPROVED`, and it is wrong: approved means an
-administrator said yes, not that anything is serving. `PublishStatusChip` already keeps
-`Approved` and `Live` apart, and a list that conflated them would tell a citizen their app
-is live when it may never have been deployed.
-
-Two things these tests hold, and the second is the reason the predicate is shared rather
-than written twice:
-
-1.  **`isServing` follows the deployment, not the lifecycle.** An approved app that never
-    deployed is not live; a draft app that did deploy is.
-2.  **The count and the rows cannot disagree.** `in_production` and the per-row flag read
-    the same `live_app_ids` collapse, so "3 in production" above a list showing two live
-    apps is not expressible. A dashboard that contradicts the list beneath it is worse than
-    a wrong number, because the reader cannot tell which half to believe.
+`isServing` follows the deployment, not `AppStatus` — an approved app that never deployed
+is not live, a draft app that did deploy is — and the count and the per-row flag share one
+`live_app_ids` collapse, so the dashboard number and the list beneath it can never disagree.
 """
 
 from __future__ import annotations
@@ -249,15 +238,12 @@ async def test_a_disabled_app_is_not_live_even_with_a_standing_deployment(
 ) -> None:
     """THE KILL SWITCH MUST WIN OVER THE DEPLOYMENT ROW.
 
-    `disable` transitions the status and SEVERS the app's database — it does not stamp
-    `unpublished_at` on the deployment. So an app that was serving keeps a newest-succeeded
-    row with a URL and no takedown, and a purely deployment-side liveness predicate calls it
-    live: the row renders the green Live badge, `Switched off` becomes unreachable because
-    `statusFor` checks serving first, and "In production" counts an app an administrator
-    has already killed.
+    `disable` transitions the status and SEVERS the app's database, but does not stamp
+    `unpublished_at` on the deployment — so a purely deployment-side predicate would still
+    call a killed app live off its last-succeeded row.
 
-    Liveness is "published AND not withdrawn", and a disable IS a withdrawal — it just
-    records it on the registry rather than on the deployment.
+    Liveness is "published AND not withdrawn", and disable IS a withdrawal; it just records
+    it on the registry rather than on the deployment.
     """
     headers, user = await _auth(db_session)
     _, app = await _project_with_app(db_session, user.id, name="Killed", status=AppStatus.DISABLED)
@@ -288,10 +274,8 @@ async def test_the_single_project_endpoint_reports_serving_too(client, db_sessio
     THE GAP THIS CLOSES. `is_serving` reached `_to_response` with a `bool = False` default,
     and three of the five call sites never passed it — so a live app read as not serving on
     every endpoint except the list, and the default is exactly what let the omission
-    type-check. Nothing was visibly broken because no portal code read the field off those
-    responses yet; the project page being rebuilt on a parallel branch is the consumer that
-    would have.
-    """
+    type-check. Nothing was visibly broken yet because no portal code read the field off
+    those responses."""
     headers, user = await _auth(db_session)
     project, app = await _project_with_app(db_session, user.id, name="Visitor Log")
     await _deploy(db_session, app, user.id)

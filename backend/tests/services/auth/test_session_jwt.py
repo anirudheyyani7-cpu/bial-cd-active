@@ -40,7 +40,7 @@ def test_mint_decode_roundtrips_sub_and_version() -> None:
 
 def test_expired_token_rejected() -> None:
     uid = uuid.uuid7()
-    token = mint_session_jwt(uid, token_version=0, ttl_seconds=-3600)  # already expired
+    token = mint_session_jwt(uid, token_version=0, ttl_seconds=-3600)
     with pytest.raises(AuthError):
         decode_session_jwt(token)
 
@@ -49,7 +49,7 @@ def test_ignore_exp_accepts_expired_but_signed() -> None:
     # Revocation-only path: an expired-but-validly-signed token still yields its
     # identity when the expiry check is disabled (never used to authenticate).
     uid = uuid.uuid7()
-    token = mint_session_jwt(uid, token_version=7, ttl_seconds=-3600)  # already expired
+    token = mint_session_jwt(uid, token_version=7, ttl_seconds=-3600)
     claims = decode_session_jwt(token, verify_exp=False)
     assert claims.user_id == uid
     assert claims.token_version == 7
@@ -68,7 +68,6 @@ def test_ignore_exp_still_rejects_bad_signature() -> None:
 
 
 def test_ignore_exp_still_requires_token_version() -> None:
-    # Every non-expiry claim check stays intact even in expiry-blind mode.
     uid = uuid.uuid7()
     now = int(time.time())
     claims = {"sub": str(uid), "iat": now, "exp": now - 3600}  # expired AND no token_version

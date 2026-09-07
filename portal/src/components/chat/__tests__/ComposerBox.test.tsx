@@ -1,23 +1,14 @@
 /**
- * THE SHARED COMPOSER BOX — one control, on both screens.
+ * THE SHARED COMPOSER BOX — one control, on both screens. Adopting the library's composer costs
+ * three properties this codebase held by hand, each pinned against a specific way the library
+ * gets it wrong on its own:
  *
- * ═══ WHAT THIS SUITE IS FOR ═══
- *
- * Adopting the library's composer costs three properties this codebase held by hand, each of
- * which had to be re-established inside the library's flow rather than assumed to survive it.
- * Each is a scenario here, and each is written against a specific way the library gets it wrong
- * on its own:
- *
- *   1. THE BOX CLEARS ONLY ONCE THE SERVER HAS ACCEPTED. `composer.send()` sets `_text = ""`
- *      before it awaits anything and restores it only if the ATTACHMENT tasks throw — never if the
- *      append does. That is the defect that destroyed a citizen's typed message and their staged
- *      files, in the library's own code.
- *   2. NO INTERACTIVE CONTROL RENDERS A REAL `disabled`. `ComposerPrimitive.Send` is built by
- *      `createActionButton`, which renders `<button disabled={…}>`, and `useComposerSend` returns
- *      no callback for the whole of every turn. `disabled` on the focused element blurs it to
- *      `document.body`.
- *   3. THE ATTACHMENT PIPELINE STAYS OURS. The library renders a chip; it does not decide which
- *      content is re-sent, which binaries are inlined, or what a refusal says.
+ *   1. CLEARS ONLY ONCE ACCEPTED — `composer.send()` empties the text before it awaits and
+ *      restores it only if the ATTACHMENT tasks throw, the defect that lost a typed message.
+ *   2. NO CONTROL RENDERS A REAL `disabled` — it blurs the focused element to `document.body`,
+ *      and the library's Send/Input both reach for it.
+ *   3. THE ATTACHMENT PIPELINE STAYS OURS — the library renders a chip; it does not decide what
+ *      is re-sent, inlined, or refused.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
@@ -96,10 +87,9 @@ describe('the board\'s shape: one box, both controls inside it', () => {
   })
 
   it('★ carries the two controls TOGETHER at the right edge', () => {
-    // Every board that draws a composer puts `margin-left:auto` on the paperclip and lets Send
-    // follow it on the row's gap, so the pair sits in the box's bottom-right corner. With the auto
-    // margin on Send instead they were pushed to opposite ends: measured 308px apart on the project
-    // rail at 1440 and 932px apart at 1024, which is one control at each end of the screen.
+    // Every board puts `margin-left:auto` on the paperclip, and Send follows it across the row's
+    // gap — the pair sits together in the box's bottom-right corner. The margin on Send instead
+    // pushes the two to opposite ends of the box.
     draw()
     const classes = (el: HTMLElement) => el.className.split(/\s+/)
     expect(classes(screen.getByTestId('composer-attach'))).toContain('ms-auto')
@@ -108,12 +98,10 @@ describe('the board\'s shape: one box, both controls inside it', () => {
 })
 
 describe('★ the pale send circle means LOCKED, not "you have not typed yet"', () => {
-  // The canvas paints the send circle #D6DDE4 (`bg-canvas-sendoff`) in exactly two boards —
-  // PlanReady and PlanRevised — and in both the composer is locked by a pending offer, with the
-  // greyed circle beside "Choose one of the two above". Fourteen other boards draw an EMPTY
-  // composer, placeholder showing, with the circle teal. Keying the treatment off "is there text"
-  // therefore put the locked look on the resting state of every screen in the product — and white
-  // on #D6DDE4 is about 1.4:1, a contrast failure the boards do not have.
+  // The pale circle (`bg-canvas-sendoff`) means the composer is locked by a pending offer
+  // (PlanReady/PlanRevised) — not "nothing typed yet", the resting state of every other board.
+  // Keying it off "is there text" would put white-on-#D6DDE4 (about 1.4:1, a contrast failure)
+  // on every idle composer.
 
   it('is teal over an empty box', () => {
     draw()
@@ -145,11 +133,10 @@ describe('★ the pale send circle means LOCKED, not "you have not typed yet"', 
 })
 
 describe('★ the board\'s locked box, while an offer waits for an answer', () => {
-  // `PlanReady` and `PlanRevised` draw the whole box locked, not just its send circle: the input
-  // row on `#F8FAFC`, the paperclip at 40%, and the sentence sitting INSIDE the box where the
-  // placeholder was. Only the send circle carried it, so a citizen read a composer that still
-  // looked writable while a tool call waited on an answer — the exact confusion the board's own
-  // annotation exists to remove.
+  // `PlanReady`/`PlanRevised` lock the WHOLE box, not just the send circle: input row on
+  // `#F8FAFC`, paperclip at 40%, and the reason sitting INSIDE the box where the placeholder was —
+  // otherwise a citizen reads a composer that still looks writable while a tool call waits on an
+  // answer.
 
   it('puts the reason where the placeholder was, on the board\'s ground, with the paperclip dimmed', () => {
     const { container } = draw({ unavailableReason: 'Choose one of the two above to carry on…', locked: true })

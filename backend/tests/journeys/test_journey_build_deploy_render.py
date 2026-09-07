@@ -73,7 +73,6 @@ async def test_provisioned_app_is_addressable_at_its_returned_id(client, db_sess
     # The app has its OWN fresh id — one app per project, NOT the conversation id.
     assert app_id != str(conv.id)
 
-    # It is addressable flat by that returned id — GET /v1/apps/{appId}/status is 200 draft.
     status_resp = await client.get(f"/v1/apps/{app_id}/status", headers=headers)
     assert status_resp.status_code == 200
     body = status_resp.json()
@@ -81,7 +80,6 @@ async def test_provisioned_app_is_addressable_at_its_returned_id(client, db_sess
     assert body["appId"] == app_id
     assert body["appKey"].startswith("bial_")
 
-    # The app lives in the conversation's project.
     app = await db_session.get(AppRegistry, uuid.UUID(app_id))
     assert app is not None
     assert app.project_id == conv.project_id

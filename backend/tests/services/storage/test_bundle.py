@@ -55,7 +55,7 @@ def real_bundle(tmp_path_factory: pytest.TempPathFactory) -> tuple[bytes, str]:
 
 def test_real_bundle_parses_to_the_rev_parse_sha(real_bundle: tuple[bytes, str]) -> None:
     raw, expected_sha = real_bundle
-    assert raw.startswith(b"# v")  # the pinned raw-bundle assertion
+    assert raw.startswith(b"# v")
     assert parse_bundle_head_sha(raw) == expected_sha
 
 

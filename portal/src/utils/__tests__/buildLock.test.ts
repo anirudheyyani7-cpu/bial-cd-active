@@ -24,11 +24,10 @@ const until = async (predicate: () => boolean): Promise<void> => {
   if (!predicate()) throw new Error('condition never held — the channel never delivered')
 }
 
-// BroadcastChannel delivery is queued, and a message posted at the very end of one test can
-// land inside the next one — a retract for `chat-A` bleeding forward would silently cancel the
-// announce a later test just made for the same id. Give every test its own channel NAME so the
-// bus cannot carry anything across a test boundary. The production name is still exercised, by
-// `openBuildLockChannel` below.
+// A message posted at the end of one test can land inside the next: a retract for `chat-A`
+// bleeding forward would silently cancel a later test's announce for the same id. Each test
+// gets its own channel NAME so the bus can't carry anything across a boundary — the production
+// name is still exercised, by `openBuildLockChannel` below.
 let channelName = BUILD_LOCK_CHANNEL
 let channelSeq = 0
 const openChannels: BroadcastChannel[] = []
@@ -89,9 +88,8 @@ describe('buildLock — same manager', () => {
   })
 
   it('a late acquire() on a DISPOSED lock is a no-op — no claim, no restarted heartbeat', () => {
-    // BuilderPage re-acquires after an awaited start()/reattach(); if the page unmounted
-    // mid-await, that acquire lands on a disposed lock — it must not restart a heartbeat
-    // interval that nothing can ever clear (a zombie timer for the SPA lifetime).
+    // A page can re-acquire after an awaited start()/reattach() and unmount mid-await, landing
+    // on a disposed lock — it must not restart a heartbeat interval nothing can ever clear.
     const lock = createBuildLock({ channel: null })
     lock.dispose()
     const intervalSpy = vi.spyOn(globalThis, 'setInterval')
@@ -102,9 +100,8 @@ describe('buildLock — same manager', () => {
   })
 
   it('dispose() CLOSES the channel — every builder-route entry opens one', async () => {
-    // Detaching the listener without closing orphans the handle on the page's channel bus
-    // for the life of the document. A closed channel throws on postMessage, which is the
-    // observable signal that close() actually ran.
+    // Detaching the listener without closing orphans the handle on the page's channel bus for
+    // the life of the document. A closed channel throws on postMessage — the observable signal.
     const c = channel()
     const lock = createBuildLock({ channel: c })
     lock.acquire('p1', 'chat-A')
@@ -227,15 +224,13 @@ describe('buildLock — no BroadcastChannel', () => {
 describe('buildLock — advisory only', () => {
   it('blockedBy stays the fast cross-tab pre-check, but the module enforces nothing — the server start’s 409 is authoritative', () => {
     const lock = createBuildLock({ channel: null })
-    // A local claim gives the instant "another chat is building" signal (the toast pre-check)...
+    // The instant "another chat is building" signal (the toast pre-check) — mirroring, not
+    // enforcing, the backend's per-user lock, which is the real barrier.
     expect(lock.acquire('p1', 'chat-A')).toBeNull()
     expect(lock.blockedBy('p1', 'chat-B')?.conversationId).toBe('chat-A')
 
-    // ...but it is ADVISORY: nothing here can gate a real build. The authoritative barrier moved
-    // server-side (C3 start's 409). A stale/lost local claim must never be the thing that blocks a
-    // start — that decision belongs to the backend per-user lock, mirrored (not enforced) here.
     lock.release('chat-A')
-    expect(lock.blockedBy('p1', 'chat-B')).toBeNull() // the mirror clears; the server remains the source of truth
+    expect(lock.blockedBy('p1', 'chat-B')).toBeNull()
     lock.dispose()
   })
 })

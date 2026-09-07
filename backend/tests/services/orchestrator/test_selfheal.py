@@ -59,16 +59,11 @@ async def _verify(
     had_prior_building_turns: bool = False,
     indeterminate_retries: int = 0,
 ) -> tuple[VerifyOutcome, int]:
-    """`verify` with this file's defaults, and ONE default that is a decision rather than
-    convenience: `indeterminate_retries=0`.
-
-    `verify` in production asks again before reporting a defect, which is exactly what makes an
-    unanswerable verdict cheap. In a unit test that patience would mean every INDETERMINATE case
-    ran the whole pass three times to assert something the first pass already established. Zero
-    lets a test observe ONE honest verdict; the retry itself has its own test below.
-
-    `had_prior_building_turns=False` for the same reason: the content check is off unless a test
-    says the app has been built."""
+    """`verify` with this file's defaults, plus two DELIBERATE overrides, not mere convenience:
+    `indeterminate_retries=0` (production retries before reporting a defect; zero surfaces ONE
+    honest verdict instead of a patient test re-confirming it three times — the retry path has
+    its own test below) and `had_prior_building_turns=False` (the content check stays off unless
+    a test opts in)."""
     return await verify(
         fake,
         fake.handle(),
@@ -168,9 +163,7 @@ async def test_verify_bounds_the_dev_log_tail() -> None:
     fake.push_dev_logs(*[f"filler {i}" for i in range(constants.LOG_TAIL_MAX_LINES + 50)])
     fake.push_dev_logs("⨯ unhandledRejection Error: boom at the tail")  # crash at the very end
     outcome, _ = await _verify(fake, log_cursor=0, max_polls=3)
-    # The crash at the tail is still detected …
     assert outcome.error is not None and outcome.error.source == ErrorSource.SERVER
-    # … but only the last LOG_TAIL_MAX_LINES lines are scanned — the oldest line is dropped.
     assert "EARLY_SENTINEL_LINE" not in outcome.error.cleaned_stack
 
 
@@ -469,11 +462,10 @@ async def test_verify_sandbox_gone_escalates_immediately_without_retry(
 
 
 async def test_a_next_only_compile_error_is_invisible_until_someone_asks_for_the_page() -> None:
-    """★ A Server Component calling a client-only hook
-    typechecks CLEANLY, leaves `/dev/logs` empty, and keeps `/dev/status` reporting ready — so
-    the build ended GREEN and shipped a blank page to the citizen. Next writes its `⨯` only when
-    the route is actually requested. Driven through the log-cursor mechanics on purpose: stubbing
-    `detect_server_crash` would assert the plumbing and prove nothing about the ordering."""
+    """★ A Server Component calling a client-only hook typechecks clean and ships a blank page —
+    `tsc`, `/dev/status`, and the log tail all stay silent until the route is actually requested.
+    Driven through the log-cursor mechanics on purpose: stubbing `detect_server_crash` would
+    assert the plumbing and prove nothing about the ordering."""
     fake = FakeSandbox()
     fake.dev_ready = True  # tsc default exit 0, readiness holds — green by every old measure
     fake.compile_error_appears_on_first_request(
@@ -504,13 +496,8 @@ async def test_a_clean_workspace_stays_green_and_costs_no_extra_iteration() -> N
 
 
 async def test_a_serving_probe_that_never_answers_is_indeterminate_not_broken() -> None:
-    """The probe swallows its own failures and answers `None`, and `None` means WE
-    could not ask — never that the app could not answer.
-
-    This test replaces one that asserted the opposite conclusion from the same input: previously an
-    unanswered probe left the verdict green, because the status was logged and discarded. Green
-    was the wrong answer for the same reason red would have been. The app is very likely serving;
-    we simply do not know, so the honest verdict is the one that asks again.
+    """The probe swallows its own failures and answers `None`, meaning WE could not ask — never
+    that the app could not answer.
 
     Mutation check: map `served is None` to UNHEALTHY and this goes red on the state; map it to
     HEALTHY and it goes red on the `green` assertion."""
@@ -529,14 +516,11 @@ async def test_a_serving_probe_that_never_answers_is_indeterminate_not_broken() 
 async def test_a_root_route_that_500s_without_a_marker_is_now_red() -> None:
     """★ THE SILENT GREEN, CLOSED. The status code came back from the app's own root and every
     call site discarded it — including this one, the only place in the codebase that decides
-    whether a build is green. That verdict was `detect_server_crash` matching five hard-coded text
-    markers, so a root route answering 500 while printing none of them shipped green over a broken
-    app.
+    whether a build is green: a root route answering 500 while printing none of
+    `detect_server_crash`'s five hard-coded text markers shipped green over a broken app.
 
-    The test that stood here asserted `green is True` and said in as many words that promoting a
-    non-2xx "belongs to the owner, not to this test". This test is that decision, taken. The
-    supervisor's readiness probe fail-opens on 5xx by explicit design, so if this verdict does not
-    call it broken, nothing does.
+    The supervisor's readiness probe fail-opens on 5xx by explicit design, so if this verdict
+    does not call it broken, nothing does.
 
     Mutation check: widen the accepted range to include 5xx and this goes red on the state."""
     from structlog.testing import capture_logs
@@ -615,14 +599,10 @@ async def test_a_readiness_budget_that_ran_out_is_asked_again_not_reported() -> 
 
 
 async def test_a_readiness_budget_that_never_answers_becomes_an_honest_defect() -> None:
-    """★ THE BOUND ON THE TEST ABOVE.
-
-    The three unanswerable checks are not the same kind of silence. A serving probe that never
-    came back, or a baseline with no root commit to compare against, describes an app that is up
-    and answering. A READINESS budget that ran out describes an app that is not serving at all —
-    and once patience is spent, a full budget several times over has stopped being our impatience
-    and become a fact about the app. Telling that citizen their app "looks like it's running"
-    would be a new false claim.
+    """★ THE BOUND ON THE TEST ABOVE: this silence is not the same kind as the others. A serving
+    probe that never answers, or a baseline with no root commit, describes an app that IS up. A
+    READINESS budget that ran out describes an app that is not serving at all — once patience is
+    spent that is a fact about the app, not our impatience.
 
     Mutation check: drop the `Unanswered.READINESS` conversion and this goes red on the state."""
     fake = FakeSandbox()
@@ -821,9 +801,8 @@ async def test_may_never_be_green_is_true_for_exactly_one_state() -> None:
 class _AnswersOnTheSecondLook(FakeSandbox):
     """A container whose root route is unreachable on the first ask and answers on the second.
 
-    A SUBCLASS rather than a reassigned bound method, which is what this file's own
-    `_WarmOrderSandbox` note explains: assigning over a bound method is a type error under `ty`,
-    and the fakes here are subclassed anyway."""
+    A SUBCLASS rather than a reassigned bound method — assigning over one is a type error under
+    `ty` (see `_WarmOrderSandbox` in test_harness.py), so the fakes here are subclassed anyway."""
 
     async def what_is_it_serving(self, handle: SandboxHandle) -> ServedPage | None:
         if self.serving_calls >= 1:
@@ -1088,13 +1067,11 @@ async def test_an_unanswerable_verdict_does_not_wear_the_failure_label(
 
 
 async def test_a_re_check_that_comes_back_unanswerable_is_retried_not_charged() -> None:
-    """★ The plan's "the authoritative re-check itself returns INDETERMINATE → retry, do not spend
-    a repair" scenario.
-
-    The two mechanisms compose rather than colliding: the re-check runs because the evidence could
-    be stale, and when the fresh pass cannot answer either, patience takes over. What must NOT
-    happen is the pair resolving into a defect the citizen is charged for — the crash marker is
-    behind the cursor by then, so calling it red would be reporting evidence nobody re-read.
+    """★ The re-check and the patience budget compose rather than colliding: the re-check runs
+    because evidence could be stale, and when the fresh pass cannot answer either, patience takes
+    over. What must NOT happen is that pair resolving into a defect the citizen is charged for —
+    the crash marker is behind the cursor by then, so calling it red would report evidence nobody
+    re-read.
 
     Mutation check: return on the first INDETERMINATE and the pass count goes red."""
     fake = FakeSandbox()
@@ -1112,18 +1089,11 @@ async def test_a_re_check_that_comes_back_unanswerable_is_retried_not_charged() 
 
 
 async def test_the_re_check_does_not_carry_a_browser_crash_out_of_the_verdict() -> None:
-    """★ A FALSE GREEN THE RE-CHECK WOULD OTHERWISE HAVE CREATED.
-
-    `drain_client_errors` is destructive: it takes the parked reports and forgets them. The
-    ordered chain ranks a dev-log crash marker ABOVE the browser reports, so a pass can come back
-    UNHEALTHY-on-log-evidence having already consumed a real browser crash — and then the
-    re-check throws that whole pass away and looks again. Pass two drains an empty queue, sees a
-    clean log window, and calls the app healthy. A crash the browser positively observed
-    disappears between two looks at the same app, which is exactly the class of lie this check
-    exists to remove.
-
-    "A report counts against exactly one verdict" is a statement about `verify`'s ANSWER, never
-    about each attempt at it.
+    """★ A FALSE GREEN THE RE-CHECK WOULD OTHERWISE CREATE: `drain_client_errors` is destructive,
+    so a pass that goes UNHEALTHY on a dev-log crash can still have consumed a real browser crash
+    from the queue — if the re-check drains again it finds nothing and calls the app healthy, and
+    the crash disappears between two looks at the same app. "A report counts against exactly one
+    verdict" must hold for `verify`'s ANSWER, never for each attempt at it.
 
     Mutation check: drop `carried_reports` from the drain and this goes green — verified."""
     fake = FakeSandbox()

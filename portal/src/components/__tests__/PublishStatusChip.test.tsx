@@ -1,28 +1,16 @@
 /**
- * The publish chip: one label per state, one sentence, at most one action.
+ * The publish chip: one label per state, one sentence, at most one action. This file
+ * also carries the PARITY CHECKLIST inherited from the three retired publish controls
+ * it replaced — walked here rather than deleted with their suites.
  *
- * TWO KINDS OF TEST LIVE HERE, and the second kind is the point. The first is this
- * component's own contract. The second is the PARITY CHECKLIST — the guarantees the three
- * retired controls (the Publish card, the review card and the toolbar button; named
- * descriptively because a retirement guard walks this tree for their symbols) pinned
- * across 48 cases, walked and re-established here rather than deleted with their suites.
- * A swap drops guarantees in both directions, and the old suites were the checklist
- * someone would otherwise have had to write from scratch.
+ * Two of those guarantees are deliberately NOT carried: a 503 on the status read now
+ * becomes the ordinary read-failure chip with a re-read (not a blank state), and the
+ * saved-version rows moved to the rail's `AppStatusPanel.test.tsx`, which owns them
+ * now.
  *
- * Two of those 48 are deliberately NOT carried, each with a verdict rather than a shrug:
- *   · "a 503 on the status read renders nothing at all". A chip that renders nothing is
- *     indistinguishable from a broken page, and this is now the only publishing surface
- *     the citizen has. It becomes the ordinary read-failure chip with a re-read.
- *   · the canvas's "YOUR LATEST" / saved-version rows. NO LONGER TRUE, and no longer this
- *     component's job either: the server now returns the head it already read, and the
- *     boards give those three provenance rows to the rail's APP STATUS PANEL — the fuller
- *     of the two surfaces — where `AppStatusPanel.test.tsx` pins them. What this file still
- *     owns is the chip: its label, its colour, its sentence and its one action.
- *
- * The hook is mocked at the module boundary; its own behaviour is covered by
- * `usePublishState.reconciliation.test.tsx`. The questionnaire is stubbed for the same
- * reason — `DataClassificationModal.test.tsx` owns it, and these tests are about what the
- * chip hands it and what it does with the answer.
+ * The hook is mocked at the module boundary (see
+ * `usePublishState.reconciliation.test.tsx`); the questionnaire is stubbed too
+ * (`DataClassificationModal.test.tsx` owns it).
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
@@ -123,17 +111,15 @@ const openChip = async (): Promise<HTMLElement> => {
 }
 
 /**
- * A TABLE THAT HAS TO ANSWER FOR EVERY STATE. Written as a record keyed by the union and turned
- * into rows here, so a value added to `PublishState` and not to the table is a type error on the
- * literal — an array annotated `readonly PublishState[]` is satisfied by any subset, which would
- * let a new state drop silently out of every walk below with the suite still green.
+ * Keyed by the union and turned into rows here, so a value added to `PublishState` and not
+ * to this table is a type error — an array annotated `readonly PublishState[]` would be
+ * satisfied by any subset, letting a new state drop silently out of every walk below.
  */
 const rowsFor = <T,>(table: Record<PublishState, T>): ReadonlyArray<readonly [PublishState, T]> =>
   Object.entries(table) as ReadonlyArray<readonly [PublishState, T]>
 
 /** Every value the server can send, and the words this chip answers with. Written out
- *  rather than derived, so a label that changes has to change HERE too — a table that
- *  computed itself from the component would pin nothing. */
+ *  rather than derived, so a label that changes has to change HERE too. */
 const LABELS = rowsFor({
   nothing_built: 'Nothing built yet',
   draft: 'Draft',
@@ -157,16 +143,8 @@ beforeEach(() => {
 afterEach(cleanup)
 
 /**
- * THE COLOUR IS THE SIGNAL, AND IT WAS ENTIRELY MISSING.
- *
- * Every one of the thirteen states rendered the same neutral grey `rounded-md` chip: the word
- * changed and nothing else did, so "Draft" was chromatically indistinguishable from "Changes
- * requested" and from "Didn't start". `StatusCardStates` is a whole board devoted to this, with
- * nine `color:`/`background:`/dot triples on it.
- *
- * ASSERTED ON THE CLASS NAMES, because jsdom computes no Tailwind styles — a `getComputedStyle`
- * assertion cannot tell amber from grey here, which is the same reason `tailwind-tokens.test.js`
- * exists at all. What can be checked is which token each state resolves to.
+ * Colour carries the state signal, so it is asserted on class names — jsdom computes no
+ * Tailwind styles, so a `getComputedStyle` check could not tell amber from grey here.
  */
 const EXPECTED_LOOK = rowsFor({
   nothing_built: 'faint',
@@ -198,14 +176,12 @@ describe('the chip is coloured by its state, with a leading dot', () => {
   })
 
   it('★ no two states that mean different things share a colour AND a word', () => {
-    // The defect in one assertion. Thirteen states, one grey — so the only thing telling a
-    // citizen apart "Changes requested" from "Live" was reading.
+    // Reads the state off `lookFor`, the module under test — not off `EXPECTED_LOOK`/`LABELS`
+    // above, which would compare the fixtures with themselves and stay green through a real
+    // regression.
     //
-    // READ OFF THE MODULE THAT DECIDES IT, not off the tables above. This walked `EXPECTED_LOOK`
-    // and `LABELS`, both literals declared in this file, so it compared the fixtures with
-    // themselves: collapsing every state to one colour in production left it green, and the
-    // receipt it printed in this comment was false. Mutation receipt, now true: return one shared
-    // look from `lookFor` and the family count below goes red.
+    // Mutation receipt: return one shared look from `lookFor` and the family count below
+    // goes red.
     const seen = new Map<string, string>()
     const families = new Set<string>()
     for (const [state] of LABELS) {
@@ -219,8 +195,6 @@ describe('the chip is coloured by its state, with a leading dot', () => {
       if (clash) expect([clash, state].sort()).toEqual(['approved_needs_review_again', 'approved_ready_to_publish'])
       seen.set(key, state)
     }
-    // Thirteen states, twelve distinct colour-and-word pairs: the one collapse is the Approved
-    // pair the branch above allows.
     expect(seen.size).toBe(LABELS.length - 1)
     expect(families.size).toBeGreaterThan(4)
   })
@@ -232,8 +206,6 @@ describe('the chip is coloured by its state, with a leading dot', () => {
     expect(screen.getByTestId('publish-chip').className).not.toContain('rounded-md')
   })
 })
-
-// ── the chip's own words ───────────────────────────────────────────────────────────
 
 describe('the chip names the state, and the closed chip is a complete answer', () => {
   it('gives every value its own words, and the two approved values share one on purpose', () => {
@@ -265,8 +237,6 @@ describe('the chip names the state, and the closed chip is a complete answer', (
   })
 
   it('says a live app is up to date only when the server said so', () => {
-    // The ordinary state of a published app with nothing newer saved — reachable because
-    // the server's read makes the comparison against the saved snapshot's head.
     wire(view('live_current'))
     mount()
 
@@ -308,11 +278,9 @@ describe('the chip names the state, and the closed chip is a complete answer', (
   })
 
   it('announces a state that arrives on its own, not only one the citizen pressed for', () => {
-    // THE PARITY CASE. Both retired controls derived their live region from the loaded
-    // state, so a version approved overnight, a publish routed from another tab, or an
-    // administrator switching the app off announced itself to a screen-reader user. A
-    // region filled only by this mount's own presses is silent for every mount that did
-    // not press anything — which is most of them.
+    // Both retired controls announced state changes that arrived without a press (an
+    // approval overnight, a publish from another tab) — a region filled only on press is
+    // silent for those.
     //
     // Mutation receipt: make the region's text `answer ?? ''` again and this goes red on
     // the very first assertion.
@@ -347,8 +315,6 @@ describe('the chip names the state, and the closed chip is a complete answer', (
   })
 })
 
-// ── one sentence, the version row, at most one action ────────────────────────────────
-
 describe('the popover explains the state and offers at most one thing to do', () => {
   it('switched off says an administrator did it, and offers nothing', async () => {
     wire(view('switched_off'))
@@ -369,9 +335,8 @@ describe('the popover explains the state and offers at most one thing to do', ()
     // Conditional on purpose — a zero-score declaration publishes unattended under ladder
     // rule 7, so promising a review outright would be untrue for the common case.
     expect(pop.textContent).toContain('If it handles anything sensitive')
-    // AND THE PRIVACY CLAIM IS GONE. The sentence opened "Nobody else can see
-    // this yet", which describes who can REACH the app — the same claim the board's own notes
-    // record retiring one word earlier, as "a claim nobody asked the chip to make".
+    // Must not claim "nobody else can see this yet" — that describes who can REACH the
+    // app, not whether it will be reviewed, and is not a claim this chip makes.
     expect(pop.textContent).not.toMatch(/nobody else can see/i)
     expect(pop.textContent).not.toMatch(/only you can see/i)
     expect(within(pop).getAllByRole('button')).toHaveLength(1)
@@ -431,9 +396,8 @@ describe('the popover explains the state and offers at most one thing to do', ()
     const pop = await openChip()
 
     expect(pop.textContent).toContain('one exact build')
-    // Routing pins a submission and publishes nothing, so the reassurance is true — and it
-    // says "that build" rather than "the approved version", because an app published
-    // unattended under ladder rule 7 has no approval to serve.
+    // Says "that build", not "the approved version" — an app published unattended under
+    // ladder rule 7 may have no approval to serve, so routing is the only true claim.
     expect(pop.textContent).toContain('keeps serving that build')
     expect(within(pop).getAllByRole('button')).toHaveLength(1)
     expect(screen.getByTestId('publish-action').textContent).toBe('Send update for review')
@@ -537,13 +501,10 @@ describe('the popover explains the state and offers at most one thing to do', ()
   })
 
   it('claims no administrator in any state an app can reach without one', async () => {
-    // THE FEATURE'S OWN DEFECT CLASS, pointed at the reassuring direction. Ladder rule 7
-    // publishes unattended when nothing on the declaration is weighted, and
-    // `AppStatus.APPROVED` is written in exactly one place — the admin approve route — so
-    // every state below is reachable with NO administrator ever involved and
-    // `approved_commit_sha` NULL. A sentence that says one approved this app, or that a
-    // review always happens, is as untrue as the "this can publish automatically" promise
-    // that started all of this; it just runs the comforting way.
+    // Ladder rule 7 can publish unattended, and `AppStatus.APPROVED` is set in exactly one
+    // place (the admin approve route) — so every state below is reachable with no
+    // administrator involved and `approved_commit_sha` NULL. A sentence claiming approval
+    // or review here would be untrue.
     //
     // Mutation receipt: restore the canvas's "It was approved but would not start", or
     // "Every app is checked by an administrator before it goes live", or "keeps serving
@@ -609,10 +570,8 @@ describe('the popover explains the state and offers at most one thing to do', ()
   })
 
   it('gives every state the version row it is ABOUT, and no other', async () => {
-    // The whole table, not the five states the cases above happen to cover. A version row
-    // is the one place this component reads a field other than the publish state, so a
-    // wrong mapping shows a citizen the wrong version's date and commit — or, worse, a
-    // "Live now" heading on an app that is not live.
+    // Covers the whole table, not just the states used above — a wrong mapping would show
+    // a citizen the wrong version's date/commit, or a "Live now" heading on a dead app.
     //
     // Mutation receipt: change any `version:` in `presentationFor` and this goes red on
     // the state whose row moved.
@@ -693,8 +652,6 @@ describe('the popover explains the state and offers at most one thing to do', ()
     }
   })
 })
-
-// ── what a press attempts, and what happened ─────────────────────────────────────────
 
 describe('one press, one request, and the server says which success it was', () => {
   it('opens the questionnaire and hands it the note when there is one', async () => {
@@ -798,7 +755,6 @@ describe('one press, one request, and the server says which success it was', () 
 
     expect(saveAndPublish).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('data-classification-modal')).toBeNull()
-    // While the question stands, the ordinary action is not also on offer.
     expect(screen.queryByTestId('publish-action')).toBeNull()
   })
 
@@ -821,8 +777,6 @@ describe('one press, one request, and the server says which success it was', () 
   })
 })
 
-// ── The read itself failing, and the one failure that is NOT a read failure ─────────
-
 describe('a failed read has one honest presentation, and a storage blip is not one', () => {
   it('says the status is unavailable and offers a re-read, never a blank space', async () => {
     const refresh = vi.fn(async () => {})
@@ -843,8 +797,8 @@ describe('a failed read has one honest presentation, and a storage blip is not o
 
   it('renders a server-side storage failure as an ordinary state with its own action', async () => {
     // The server degrades a storage error on the drift read to `live_drift_unknown` and
-    // answers 200, deliberately, because this is the only publishing surface there is.
-    // So it must NOT reach the unavailable presentation.
+    // answers 200, deliberately, since this is the only publishing surface there is — so
+    // it must NOT reach the unavailable presentation.
     wire(view('live_drift_unknown', { url: 'https://x.example/' }))
     mount()
 
@@ -856,8 +810,6 @@ describe('a failed read has one honest presentation, and a storage blip is not o
     expect(screen.getByTestId('publish-action')).toBeTruthy()
   })
 })
-
-// ── Taking a submission back — the four cases the retired control pinned ────────────
 
 describe('taking a version back out of the queue', () => {
   const IN_REVIEW = view('in_review', {
@@ -901,9 +853,8 @@ describe('taking a version back out of the queue', () => {
   })
 
   it('marks the confirm unavailable while the withdrawal is in flight', async () => {
-    // The same focus-safe disabling applies to the one button the chip itself fires a
-    // request from. Driven in the order it actually happens — confirm first, THEN in
-    // flight — because the request cannot start before the confirm exists.
+    // Driven in the order it actually happens — confirm first, THEN in flight — the
+    // request cannot start before the confirm exists.
     wire(IN_REVIEW, { withdrawing: false })
     const { rerender } = render(<PublishStatusChip projectId="p1" />)
     await openChip()
@@ -944,9 +895,8 @@ describe('taking a version back out of the queue', () => {
   })
 
   it('announces the new state once the version is back with the citizen', async () => {
-    // The withdrawal's own success has no sentence of its own — what the citizen needs to
-    // know is that their app is a draft again, and the state IS the announcement now that
-    // the region speaks from the loaded state rather than only from a press.
+    // The withdrawal has no success sentence of its own — the region announces the
+    // resulting state instead, same as any other state change.
     wire(IN_REVIEW)
     const { rerender } = render(<PublishStatusChip projectId="p1" />)
     expect(screen.getByTestId('publish-announce').textContent).toContain('In review')
@@ -967,8 +917,6 @@ describe('taking a version back out of the queue', () => {
     expect(screen.getByTestId('publish-version-sha').textContent).toBe(SHA.slice(0, 7))
   })
 })
-
-// ── Parity guards carried from the three retired suites ────────────────────────────
 
 describe('guarantees carried over from the controls this chip replaces', () => {
   it('claims nowhere, in any state, that the platform team deploys an approved app', async () => {
@@ -997,9 +945,8 @@ describe('guarantees carried over from the controls this chip replaces', () => {
   })
 
   it('renders ONE chip, never two badges that could disagree', () => {
-    // The bug the old surface had structurally: a running deploy carrying a takedown
-    // stamp rendered two contradictory pills. There is one node now, and `getByTestId`
-    // throws on a duplicate, which IS the assertion.
+    // `getByTestId` throwing on a duplicate node IS the assertion here — there is no
+    // separate "exactly one" check.
     wire(view('taken_offline', { status: 'running', unpublishedAt: '2026-08-21T09:14:00Z' }))
     mount()
 

@@ -1,14 +1,11 @@
 /**
- * THE PROJECT SURFACE, RENDERED THROUGH THE REAL SHELL.
+ * WHY THIS EXISTS: the pane host is the shell's sibling, not the Outlet's child, so a suite that
+ * mounts the project page alone has no pane in its tree and stays green against a screen that
+ * frames nothing (`AppPaneHost`'s mechanism).
  *
- * Everything below is invisible to a suite that mounts the project page alone: the pane host is
- * the shell's sibling, not the Outlet's child, so a tree holding only the page has no pane in it
- * and stays green against a project screen that frames nothing. The mechanism is `AppPaneHost`'s.
- *
- * The project surface is the SECOND publisher on the workspace channel, and that is what
- * introduces the second failure mode: two surfaces publishing to one channel can retire each
- * other's work on the hop between them. Every continuity assertion here is paired with the round
- * trip that would break it.
+ * The project surface is the SECOND publisher on the workspace channel — two surfaces publishing
+ * to one channel can retire each other's work on the hop between them. Every continuity assertion
+ * here is paired with the round trip that would break it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
@@ -75,10 +72,8 @@ const EMPTY_PANE: PaneView = {
 }
 
 /**
- * A chat, publishing its own address — the OTHER publisher on this channel.
- *
- * `pane` is the one thing the two KINDS differ on here: a build chat asks for the
- * app to be seen, a plan chat does not. Everything else about a conversation is the same on both.
+ * A chat, publishing its own address — the OTHER publisher on this channel. `pane` is the one
+ * thing the two kinds differ on: a build chat asks for the app to be seen, a plan chat does not.
  */
 function ChatSurface({ projectId = 'pA', pane = true }: { projectId?: string; pane?: boolean }) {
   useWorkspaceProject(projectId)
@@ -141,11 +136,9 @@ function Workspace({ entry = '/projects/pA', project = PROJECT }: { entry?: stri
 }
 
 const frame = () => document.querySelector('iframe')
-// TWO DIFFERENT ELEMENTS, and the distinction is load-bearing. `app-pane-region` is `AppPane`'s
-// own named region — always rendered, whether or not there is anything to frame, and where the
-// skip control and the rail's collapse toggle live. `app-pane` is `AppPaneHost`'s frame wrapper,
-// which exists only once an address resolved. A test that queries the second when it means the
-// first reads "the pane is missing" for a project that simply has nothing built yet.
+// Two different elements, and mixing them up misreads "nothing built" as "the pane is missing":
+// `app-pane-region` is `AppPane`'s own named region (always rendered); `app-pane` is
+// `AppPaneHost`'s frame wrapper, which exists only once an address resolved.
 const paneRegion = () => screen.queryByTestId('app-pane-region')
 const frameWrapper = () => screen.queryByTestId('app-pane')
 const grid = () => screen.getByTestId('workspace-grid')
@@ -171,30 +164,23 @@ describe('loading a project address frames the running app, with no chat in the 
   })
 
   it('★ publishes a pane even for a project with NOTHING built, so the pane says so', async () => {
-    // The never-published early return must be unreachable from a project address, built or not.
-    // Two columns are the REST STATE of the project screen — a project with nothing built shows
-    // the empty-state sentence IN the pane, not a hidden pane the citizen has to interpret.
+    // Two columns are the REST STATE of the project screen — nothing built shows the empty-state
+    // sentence IN the pane, not a hidden pane the citizen has to interpret.
     api.fetchPreviewState.mockResolvedValue(preview({ state: 'never_built', restorable: false }))
     render(<Workspace project={{ ...PROJECT, appId: null, hasRelaunchableSnapshot: false }} />)
 
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
-    // No frame, because there is nothing to frame. There is a sentence.
     expect(paneRegion()).toBeTruthy()
     expect(screen.getByTestId('app-pane-empty').textContent).toMatch(/describe what you want to build/i)
-    // ★ ONE AUTHOR FOR THE WORKSPACE SENTENCE. `getAllByText` would tolerate a second
-    // renderer; counting is what forbids one.
+    // Counting forbids a second renderer — `getAllByText` alone would tolerate one.
     expect(screen.queryAllByText(/describe what you want to build/i)).toHaveLength(1)
     expect(frame()).toBeNull()
     expect(frameWrapper()).toBeNull()
   })
 
   it('★ a saved, not-running project offers the ONE start control, on the project screen', () => {
-    // Asserted where a citizen would meet it: through the real shell, at a project address,
-    // with no conversation in the story.
-    //
-    // It cannot live in `ProjectPage.test.tsx`. That suite renders the page WITHOUT the shell, so
-    // there is no pane in its tree at all and no assertion it can make would go red if the control
-    // disappeared.
+    // Cannot live in `ProjectPage.test.tsx`: that suite renders the page WITHOUT the shell, so
+    // there is no pane in its tree and no assertion there would go red if the control disappeared.
     //
     // Mutation receipt: stop rendering `state.action` in `AppPane`'s no-frame arm and this goes red,
     // along with eight scenarios in `AppPane.test.tsx`.
@@ -203,15 +189,14 @@ describe('loading a project address frames the running app, with no chat in the 
 
     return waitFor(() => {
       expect(screen.getByRole('button', { name: /launch application/i })).toBeTruthy()
-      // …and exactly one of them. The rail shows the same SENTENCE, deliberately, and no second
-      // control: one control starts the app, and two would race the same endpoint.
+      // Exactly one: two controls would race the same endpoint.
       expect(screen.getAllByRole('button', { name: /launch application/i })).toHaveLength(1)
     })
   })
 
   it('frames NOTHING when the read says the workspace is asleep', async () => {
-    // The address resolver is fed only the `alive` case, which is the one state whose `previewUrl`
-    // the wire calls framable. A pane framing the wrong thing is worse than a pane framing nothing.
+    // Only the `alive` state's `previewUrl` is framable — a pane framing the wrong thing is worse
+    // than a pane framing nothing.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'asleep', restorable: true, previewUrl: APP_URL }),
     )
@@ -224,9 +209,8 @@ describe('loading a project address frames the running app, with no chat in the 
 
 describe('the app survives the round trip, in BOTH directions', () => {
   it('project → chat → project keeps the SAME iframe node', async () => {
-    // The direction the existing shell suite does not exercise: it starts from a chat. A second
-    // publisher introduces the return trip, and the return trip is where a cold first commit can
-    // retire an address the departing surface left standing.
+    // The direction the existing shell suite doesn't exercise: it starts from a chat. The return
+    // trip is where a cold first commit can retire an address the departing surface left standing.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -244,10 +228,8 @@ describe('the app survives the round trip, in BOTH directions', () => {
   })
 
   it('★ does not blank the pane while its own read is still in flight', async () => {
-    // The realistic way a second publisher breaks the return leg: this surface remounts cold, its
-    // read has not landed, and a naive publish of `{url: null}` retires the very address the chat
-    // left standing. `usePublishAddress`'s abstain rule is what prevents it — reimplementing the
-    // publish with a raw channel set is how that protection is lost.
+    // A naive publish of `{url: null}` on a cold remount would retire the address the chat left
+    // standing; `usePublishAddress`'s abstain rule is what prevents it.
     let resolveRead: (value: unknown) => void = () => {}
     api.fetchPreviewState.mockImplementation(
       () => new Promise((resolve) => { resolveRead = resolve }),
@@ -282,9 +264,8 @@ describe('the app survives the round trip, in BOTH directions', () => {
 
 describe('the stacked crossing is a class, not a remount', () => {
   it('expresses both layouts on ONE grid element, with no measurement anywhere', async () => {
-    // This crossing costs no `matchMedia` and no `ResizeObserver`: the container carries both
-    // directions as responsive classes, so the two-column ↔ stacked crossing cannot remount the
-    // frame — there is only ever one tree.
+    // No `matchMedia`, no `ResizeObserver`: the container carries both directions as responsive
+    // classes, so the crossing cannot remount the frame — there is only ever one tree.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -306,12 +287,10 @@ describe('the stacked crossing is a class, not a remount', () => {
 
 describe('the collapse control — hidden, not unmounted, and never a one-way door', () => {
   it('★ lives in the TOOLBAR ROW, so it is still reachable once the rail is hidden', async () => {
-    // The failure this is written against: a toggle inside the rail. A collapsed rail is `w-0` and
-    // `invisible` — out of the tab order and out of the accessibility tree — so the control that
-    // would restore it would be unreachable, and nothing short of a reload could undo the press.
-    //
-    // The row is the one surface that survives a collapse AND the pane going away, so the
-    // control has one home in every state rather than appearing and disappearing with the frame.
+    // A toggle placed inside the rail itself would vanish when collapsed (`w-0` and `invisible`
+    // take it out of the tab order and the accessibility tree) — nothing short of a reload could
+    // undo the press. The row survives both a collapse and the pane going away, so the control
+    // has one home in every state.
     api.fetchPreviewState.mockResolvedValue(
       preview({ state: 'alive', alive: true, previewUrl: APP_URL, restorable: true }),
     )
@@ -328,7 +307,6 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
     // be whitespace, not a word boundary.
     expect(rail().className).toMatch(/(^|\s)w-0(\s|$)/)
     expect(rail().className).toMatch(/invisible/)
-    // Still there, still pressable, now offering the other direction.
     const back = screen.getByRole('button', { name: /show details/i })
     expect(back.getAttribute('aria-expanded')).toBe('false')
     expect(back.getAttribute('aria-controls')).toBe(rail().id)
@@ -349,11 +327,9 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
   })
 
   it('★ is reachable on a project with NOTHING BUILT, where there is no frame to hang it on', async () => {
-    // The toggle does not belong in the pane's toolbar slot — the same place the conversation
-    // surface puts its chat-panel toggle. That toolbar is rendered by `LivePreview`, which only
-    // mounts once there is something to frame, so a project with nothing built would have NO
-    // toggle at all; and a rail collapsed while an app was running would lose its way back the
-    // moment the container stopped. Its home has to be a surface that always renders.
+    // The toggle can't live in the pane's toolbar slot: that toolbar is rendered by `LivePreview`,
+    // which only mounts once there is something to frame, so a project with nothing built would
+    // have NO toggle at all. Its home has to be a surface that always renders.
     api.fetchPreviewState.mockResolvedValue(preview({ state: 'never_built', restorable: false }))
     render(<Workspace project={{ ...PROJECT, appId: null, hasRelaunchableSnapshot: false }} />)
     await waitFor(() => expect(api.fetchPreviewState).toHaveBeenCalled())
@@ -361,7 +337,6 @@ describe('the collapse control — hidden, not unmounted, and never a one-way do
 
     fireEvent.click(screen.getByRole('button', { name: /hide details/i }))
     expect(rail().className).toMatch(/(^|\s)w-0(\s|$)/)
-    // …and back again, with no frame in the story at any point.
     fireEvent.click(screen.getByRole('button', { name: /show details/i }))
     expect(rail().className).not.toMatch(/(^|\s)w-0(\s|$)/)
   })

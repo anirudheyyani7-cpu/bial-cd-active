@@ -1,16 +1,13 @@
 /**
  * LivePreview — four states, not one boolean.
  *
- * The pane used to take `previewReclaimed: boolean`, fed from `!alive`, which meant a Redis
- * blip, a sleeping workspace, a sibling project holding the one-per-user slot and a project
- * nobody ever built all arrived here identically and were all rendered as "Preview
- * unavailable" — a sentence that describes a platform fault for three situations that are not
- * one, and for a fourth that was only ever a failed question.
+ * The pane used to take `previewReclaimed: boolean`, fed from `!alive` — a Redis blip, a sleeping
+ * workspace, a sibling project holding the slot, and a project never built all rendered as the
+ * same "Preview unavailable", a platform-fault sentence wrong for three of the four.
  *
- * These tests drive the component through the SAME parser the browser uses
- * (`fetchPreviewState`), so a backend that stops sending `state`, or a parser that starts
- * coercing it, fails here rather than in production. That is the round trip this file can
- * honestly assert; the wire values themselves are pinned in
+ * These tests drive the component through the SAME parser the browser uses (`fetchPreviewState`),
+ * so a backend that stops sending `state`, or a parser that starts coercing it, fails here rather
+ * than in production. The wire values themselves are pinned in
  * `backend/tests/api/v1/build_sessions/test_preview_state.py`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'

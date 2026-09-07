@@ -1,13 +1,6 @@
 /**
  * ProjectsPage (`/projects`) — the landing screen: three numbers, then list or grid.
  *
- * The card grid gave way to two views, numbered pagination and a summary strip, so
- * this file was rewritten rather than patched. What it used to assert — a "Load more"
- * button, the first-run CTA that named creating a project, the card grid as the ONLY
- * layout — describes a page
- * that no longer exists, so that block was deleted as dead code rather
- * than left failing beside the new work.
- *
  * The data layer is mocked at the module boundary; the page's own paging state runs for
  * real, because that is what is being exercised. A LocationProbe outside the Routes reports
  * the current path so navigation is observable without a real project-home page, and it
@@ -94,8 +87,6 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-// --- the three numbers ---------------------------------------------------------
-
 describe('the dashboard strip', () => {
   it('shows the three numbers', async () => {
     renderPage()
@@ -122,8 +113,6 @@ describe('the dashboard strip', () => {
     await waitFor(() => expect(screen.getAllByText('0').length).toBeGreaterThan(0))
   })
 })
-
-// --- the two views -------------------------------------------------------------
 
 describe('list and grid', () => {
   it('defaults to LIST, with the column header the grid does not have', async () => {
@@ -162,8 +151,6 @@ describe('list and grid', () => {
     await waitFor(() => expect(screen.getByLabelText('M cards')).toBeTruthy())
   })
 })
-
-// --- the row -------------------------------------------------------------------
 
 describe('a row', () => {
   it('shows the status the DEPLOYMENT supports, not the lifecycle', async () => {
@@ -213,8 +200,6 @@ describe('a row', () => {
   })
 })
 
-// --- pagination ----------------------------------------------------------------
-
 describe('numbered pagination', () => {
   it('reports the window and the total, and asks the server for page 2', async () => {
     h.listProjects.mockResolvedValue(
@@ -256,8 +241,6 @@ describe('numbered pagination', () => {
     )
   })
 })
-
-// --- every state ---------------------------------------------------------------
 
 describe('the states', () => {
   it('first run offers exactly ONE way to make a project', async () => {
@@ -321,7 +304,6 @@ describe('the states', () => {
     fireEvent.click(screen.getByRole('button', { name: '2' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Couldn’t load more/))
 
-    // The recovery the old version had no way to reach.
     h.listProjects.mockResolvedValue(page([mkProject('p2', 'Beta')], { total: 12, totalPages: 2, page: 2 }))
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
 
@@ -365,8 +347,6 @@ describe('the states', () => {
     expect(screen.queryByText(/Couldn’t load your counts/)).toBeNull()
   })
 })
-
-// --- create and delete ---------------------------------------------------------
 
 describe('create and delete', () => {
   it('has exactly ONE New project button', async () => {
@@ -509,8 +489,6 @@ describe('create and delete', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Last page' }))
 
     await waitFor(() => expect(screen.getByRole('button', { name: '10' })).toBeTruthy())
-    // Exactly the last five, nothing past the end, and 10 — not any of the others — is
-    // the one marked current.
     for (const n of ['6', '7', '8', '9']) {
       expect(screen.getByRole('button', { name: n }).getAttribute('aria-current')).toBeNull()
     }
@@ -608,7 +586,7 @@ describe('create and delete', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /delete project/i }))
 
-    await waitFor(() => expect(h.listProjects).toHaveBeenCalled()) // totals refetched
-    expect(screen.queryByRole('alert')).toBeNull() // and still no scary toast
+    await waitFor(() => expect(h.listProjects).toHaveBeenCalled())
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })

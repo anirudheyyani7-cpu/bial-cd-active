@@ -41,9 +41,8 @@ async def _citizen(db: AsyncSession) -> dict[str, str]:
 
 
 def test_admin_users_routes_document_error_codes_in_openapi() -> None:
-    # The `/admin` users/limits/feedback sub-router: each route lists the inherited
-    # dependency 401/403 (DetailBody) + the v1-router 500 default; the limits PATCH also
-    # documents its explicit 400/404.
+    # Inherited dependency 401/403 (DetailBody) + the v1-router 500 default; the limits
+    # PATCH also documents its explicit 400/404.
     paths = create_app().openapi()["paths"]
     patch = set(paths["/v1/admin/users/{user_id}/limits"]["patch"]["responses"])
     assert {"400", "401", "403", "404", "500"} <= patch
@@ -148,12 +147,10 @@ async def test_limit_validation(client, db_session) -> None:
 async def test_a_chat_length_below_the_floor_is_refused_and_the_floor_is_named(
     client, db_session
 ) -> None:
-    """An administrator cannot store a number that locks a citizen out of the product.
-
-    Below the floor the context gate refuses EVERY conversation that person opens — the gate
-    charges the system-prompt reserve before it counts a word — and the sentence they read
-    tells them to start a new chat, which also fails. The refusal names the lowest usable
-    number because an administrator who is stopped without one has no way to pick a good value.
+    """An administrator cannot store a number that locks a citizen out of the product: below
+    the floor the context gate refuses EVERY conversation (it charges the reserve before
+    counting a word), and starting a new chat also fails. The refusal names the lowest usable
+    number, or an administrator stopped without one has no way to pick a good value.
 
     Mutation check: drop the `hard < CONTEXT_HARD_FLOOR` arm from the PATCH validator and this
     goes red on the status code."""
@@ -183,12 +180,10 @@ async def test_a_chat_length_below_the_floor_is_refused_and_the_floor_is_named(
 
 
 async def test_a_limit_already_stored_below_the_floor_still_opens_a_chat(db_session) -> None:
-    """The other half of the floor, for the people the defect already reached.
-
-    A row written before the validator existed still holds its number, and validation cannot
-    reach back. Without the read-time clamp those citizens stay locked out until an
-    administrator notices and edits them by hand — and nothing in the product tells anyone that
-    is what happened.
+    """The other half of the floor, for the people the defect already reached: a row written
+    before the validator existed still holds its bad number, and validation cannot reach back.
+    Without the read-time clamp those citizens stay locked out until an administrator notices
+    and edits them by hand.
 
     Mutation check: drop `CONTEXT_HARD_FLOOR` from the `max(...)` in `effective_context` and
     this goes red.
@@ -196,9 +191,8 @@ async def test_a_limit_already_stored_below_the_floor_still_opens_a_chat(db_sess
     stored = UserLimit(user_id=uuid.uuid7(), context_hard_limit=1)
     _soft, hard = effective_context(stored)
     assert hard == CONTEXT_HARD_FLOOR
-    # AND THE GATE THEN LETS AN EMPTY CONVERSATION THROUGH, which is the thing the citizen
-    # actually cares about — the clamp is only worth anything if it clears the reserve the gate
-    # charges before it has counted a word.
+    # AND THE GATE THEN LETS AN EMPTY CONVERSATION THROUGH — the clamp is only worth anything
+    # if it clears the reserve the gate charges before it has counted a word.
     assert occupied_window([], "hello") < hard
     # The advisory warn threshold stays strictly under the ceiling it warns about, so a clamped
     # user is not warned at the same instant they are refused.

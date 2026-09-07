@@ -188,9 +188,9 @@ async def test_missing_attachment_row_is_422_with_no_sandbox(
 
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "build_attachment_unusable"
-    assert wire.sbx.provisioned == []  # no sandbox
-    assert wire.sbx.torn_down == []  # and none to tear down
-    assert not await lock_is_held(fake_redis, user.id)  # no lock left behind
+    assert wire.sbx.provisioned == []
+    assert wire.sbx.torn_down == []
+    assert not await lock_is_held(fake_redis, user.id)
     assert wire.manager.active_session_for(user.id) is None
 
 

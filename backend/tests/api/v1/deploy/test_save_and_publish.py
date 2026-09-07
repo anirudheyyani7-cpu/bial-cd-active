@@ -400,14 +400,9 @@ async def test_a_new_yes_on_the_saved_version_queues_it_instead_of_publishing(
     assert status.json()["failureCode"] == "routed_for_review"
     assert status.json()["url"] is None
 
-    # WHAT THE CITIZEN ACTUALLY READS. On this path the POST already returned 202, so the
-    # publish banner has no routed response to render and falls through to `failureDetail`
-    # — which means whatever is stored here IS the citizen-facing copy. It used to be the
-    # operator string (`submitted for review as <uuid> at <40-hex>; routed on: ...`), so
-    # the amber banner showed raw identifiers and internal field names where
-    # purpose-written sentences belong. Asserted on the STORED value, because a test that
-    # supplies its own readable string proves only that the surface renders what it is
-    # handed — which is exactly how this shipped.
+    # Citizen-facing copy: the POST already returned 202, so the publish banner falls
+    # through to `failureDetail`, and whatever is stored here IS what the citizen reads.
+    # The three checks below guard against a raw operator string leaking through instead.
     detail = status.json()["failureDetail"]
     assert detail is not None
     assert "You saved changes" in detail
@@ -447,17 +442,14 @@ async def test_a_queued_re_check_publishes_nothing(
 async def test_a_declared_yes_cannot_publish_by_saving_first(
     wire, app, client, db_session, monkeypatch
 ) -> None:
-    """THE BYPASS THIS UNIT WAS SHIPPED WITH, AND THE TEST THAT WOULD HAVE CAUGHT IT.
+    """THE BYPASS THIS SHIPPED WITH, AND THE TEST THAT WOULD HAVE CAUGHT IT.
 
-    A draft app, a citizen who honestly declares a weighted category, unsaved work, and a
-    stored review stamped an older commit — press the button (whose label reads "Send for
-    review") and rule 3a defers. The re-check then finds nothing the citizen had not
-    already said, and an earlier revision of the pipeline read "nothing NEW" as "nothing",
-    and published. Rule 6 was evaluated by nobody: the request skipped it by deferring, and
-    the pipeline skipped it by only ever comparing against the submitted set.
+    A draft app declares a weighted category with unsaved work and a stale review. Rule 3a
+    defers, the re-check finds nothing NEW, and an earlier pipeline revision read that as
+    "nothing" and published — Rule 6 evaluated by nobody, skipped at the request by
+    deferring and at the pipeline by comparing only the submitted set.
 
-    So the assertion that matters here is the negative one: a weighted Yes never reaches a
-    live URL without an administrator, by any door, including this one."""
+    So the assertion is negative: a weighted Yes never reaches a live URL without an admin."""
     user, app_row = await _owner_with_saved_app(db_session, wire.store)
     assert app_row.status is AppStatus.DRAFT
     await _stale_review(db_session, app_id=app_row.id, user_id=user.id)

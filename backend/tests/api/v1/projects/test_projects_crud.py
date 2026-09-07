@@ -204,7 +204,6 @@ async def test_get_patch_delete_cross_user_404(client, db_session) -> None:
             json=DELETE_BODY,
         )
     ).status_code == 404
-    # The victim row is untouched.
     still = await db_session.get(Project, victim.id)
     assert still is not None and still.name == "Secret"
 

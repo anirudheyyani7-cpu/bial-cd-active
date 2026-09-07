@@ -41,9 +41,7 @@ async def test_happy_refresh_rotates_and_sets_cookies(client, db_session) -> Non
     assert resp.json() == {"status": "refreshed"}
     cookies = _set_cookies(resp)
     assert {"session", "refresh", "csrf"} <= set(cookies)
-    # The new refresh token differs from the one presented.
     assert _cookie_value(cookies["refresh"]) != raw
-    # The old token is consumed.
     old = await db_session.scalar(
         select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(raw))
     )
@@ -53,11 +51,9 @@ async def test_happy_refresh_rotates_and_sets_cookies(client, db_session) -> Non
 
 async def test_reuse_returns_401_and_revokes_family(client, db_session) -> None:
     user, raw, csrf = await _setup(db_session)
-    # First refresh succeeds and yields a successor.
     first = await client.post("/v1/auth/refresh", headers=_headers(refresh=raw, csrf=csrf))
     successor = _cookie_value(_set_cookies(first)["refresh"])
 
-    # Replaying the ORIGINAL token -> reuse -> 401 + whole family revoked.
     replay = await client.post("/v1/auth/refresh", headers=_headers(refresh=raw, csrf=csrf))
     assert replay.status_code == 401
 
@@ -66,9 +62,8 @@ async def test_reuse_returns_401_and_revokes_family(client, db_session) -> None:
         .select_from(RefreshToken)
         .where(RefreshToken.user_id == user.id, RefreshToken.revoked.is_(False))
     )
-    assert revoked == 0  # no active tokens remain
+    assert revoked == 0
 
-    # The formerly-valid successor is now dead too.
     after = await client.post("/v1/auth/refresh", headers=_headers(refresh=successor, csrf=csrf))
     assert after.status_code == 401
 

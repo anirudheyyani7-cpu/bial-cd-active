@@ -59,7 +59,6 @@ async def test_attachments_come_before_the_instruction() -> None:
     assert isinstance(spec.prompt, list)
     # The instruction is LAST — the assertion that fails if the order is ever flipped back.
     assert spec.prompt[-1] == "build me a dashboard"
-    # ...and every attachment precedes it, in the order they were materialized.
     assert isinstance(spec.prompt[0], BinaryContent)
     assert spec.prompt[0].data == PNG
     assert spec.prompt[1] == FENCED_XLSX

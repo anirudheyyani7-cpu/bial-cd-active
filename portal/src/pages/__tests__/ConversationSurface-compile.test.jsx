@@ -1,23 +1,13 @@
 /**
- * The compile signal's last mile, portal side.
+ * The compile signal's last mile, portal side: a `compile` frame on the turn stream reaches
+ * the preview pane as a prop, a catch-up `snapshot` carries it for a reload mid-build, and a
+ * new turn never starts by claiming the app is fine. This file covers only the wiring between
+ * the supervisor (derives the state) and the turn engine (emits it) — where a frame could get
+ * dropped silently.
  *
- * The supervisor derives the state and the turn engine emits it; this file covers the only part
- * neither of those can: that a `compile` frame arriving on the turn stream actually reaches the
- * preview pane as a prop, that a catch-up `snapshot` carries it for a tab that reloaded
- * mid-build, and that a new turn does not start by claiming the app is fine.
- *
- * LivePreview is stubbed to RECORD ITS PROPS rather than render. The pane's own behaviour on each
- * value is pinned in `components/__tests__/LivePreview.test.jsx`; what is unproven without this
- * file is the wiring between the two, which is exactly where a frame gets dropped silently.
- *
- * CHAT-KIND MIGRATION. `ConversationMode`/`ConversationKind` collapsed into one
- * two-valued `ChatKind` fixed at creation, and this page now renders ONLY a `build` chat — every
- * composer send holds the write toolset and runs directly against the sandbox (BuilderPage.tsx's
- * own routing-rule docblock). There is no more "send → plan card → Build it" detour to drive a
- * build through on this page: `handleBuildIt`'s whole mechanism now creates a SECOND, different
- * chat and navigates there, so a card press can prove nothing about the compile signal this file
- * exists to test. `runBuild` below drives the honest new path instead — an ordinary composer send
- * IS a build turn, full stop — which is also simpler than the card dance it replaces.
+ * LivePreview is stubbed to RECORD ITS PROPS rather than render (behaviour per value is pinned
+ * in `components/__tests__/LivePreview.test.jsx`). `ChatKind` collapsed to one build-only kind
+ * fixed at creation, so `runBuild` below drives an ordinary composer send as the build turn.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
@@ -51,8 +41,7 @@ vi.mock('../../components/layout/Navbar', () => ({ default: () => null }))
 vi.mock('../../components/LivePreview', () => ({
   default: (props) => {
     seen.push(props.compileState)
-    // the retraction reaches the pane as its own prop, so a test can watch it arrive without
-    // rendering the real component's whole cover machinery.
+    // the retraction reaches the pane as its own prop, watched here without rendering LivePreview itself.
     lostSeen.push(props.workspaceLost)
     return null
   },
@@ -69,11 +58,9 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
   fetchSaveState: (...a) => h.fetchSaveState(...a),
   checkWorkspace: (...a) => h.checkWorkspace(...a),
 }))
-// `switchMode` is GONE — a chat's kind is fixed at creation, so there is no per-thread setting
-// left to switch. A mock factory that still listed it would be mocking an export the real module
-// no longer has; `resolvePlanOptions` is real but unused here (this suite never renders a
-// plan offer), kept only because the surface reaches for it when an offer is answered, so a stray
-// render must not hit the network.
+// `switchMode` is GONE — a chat's kind is fixed at creation, so nothing switches it per-thread;
+// a mock factory that still listed it would mock an export the real module no longer has.
+// `resolvePlanOptions` is real but unused here — kept so a stray render never hits the network.
 vi.mock('../../utils/turnStreamApi', async (orig) => ({
   ...(await orig()),
   startTurn: (...a) => h.startTurn(...a),
@@ -116,14 +103,10 @@ const T_SNAPSHOT = (turnId = 't1', seq = 1) => ({
 })
 
 /**
- * Script an ordinary send's own turn stream as an OPEN socket a test can push frames into by
- * hand. Not `_builderSession.jsx`'s `scriptBuildTurn` — that helper still branches on whether
- * `readTurnStream` was called WITH a `turnId`, which was how the old Build-it watch (subscribing
- * to a turn already known to be a build) told itself apart from an ordinary send (subscribing
- * with none, and getting back a streamed plan). That distinction is gone: `fireRelayTurn` never
- * passes a `turnId` at all any more, or asks whether this chat's kind happens to be Write —
- * every send on this BUILD-chat page opens the SAME plain subscription, and it is that turn
- * which narrates the whole build. One shape, not two.
+ * Script an ordinary send's own turn stream as an OPEN socket a test can push frames into.
+ * Not `_builderSession.jsx`'s `scriptBuildTurn`, which still branches on a `turnId` from the
+ * retired Build-it watch — every send on this page now opens the same plain subscription, and
+ * that turn narrates the whole build. One shape, not two.
  */
 function scriptTurn(opening = [T_SNAPSHOT(), T_WORKSPACE(undefined, 2)]) {
   const live = { emit: null, close: null }
@@ -201,9 +184,8 @@ describe('BuilderPage — the compile signal reaches the preview pane', () => {
     await turn.end('completed')
     h.fetchCompileState.mockClear()
 
-    // Tabbing back — a deliberate human act the probe listens for, and the realistic moment a
-    // citizen returns to a preview whose turn ended while they were elsewhere. On a genuine
-    // reload the same probe runs at mount instead; both reach this branch the same way.
+    // Tabbing back — the realistic moment a citizen returns to a preview whose turn ended while
+    // they were elsewhere. A genuine reload runs the same probe at mount; both reach this branch.
     await act(async () => {
       window.dispatchEvent(new Event('focus'))
       await Promise.resolve()
@@ -314,8 +296,6 @@ describe('BuilderPage — the compile signal reaches the preview pane', () => {
   })
 })
 
-
-// The reversion that happens while nobody is sending messages.
 describe('BuilderPage — a workspace lost while the tab sat idle', () => {
   /** A framed preview, no live turn, and a standing completion claim in the transcript.
    *

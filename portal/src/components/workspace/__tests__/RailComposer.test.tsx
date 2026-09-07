@@ -1,17 +1,14 @@
 /**
- * THE RAIL'S COMPOSER — the mint-and-navigate protocol and the kind picker.
+ * THE RAIL'S COMPOSER — the mint-and-navigate protocol and the kind picker. Two things are under
+ * test, and they fail differently.
  *
- * Two things are under test and they fail differently.
+ * THE PROTOCOL is inherited from a now-deleted component, and the deletion is exactly how it gets
+ * lost: the id's version, the query/state split, and the `freshlyMinted` flag are all invisible in
+ * a render and only wrong later — a v4 id becomes a badly-ordered primary key, a kind carried in
+ * router state dies on reload, a missing flag costs four guaranteed-404 requests per new chat.
  *
- * THE PROTOCOL is inherited from a now-deleted component, and the deletion is exactly how it
- * gets lost: the id's version, the query/state split, and the `freshlyMinted` flag are all invisible
- * in a render and only wrong later — a v4 id becomes a badly-ordered primary key, a kind carried in
- * router state dies on reload, and a missing flag costs four guaranteed-404 requests per new chat.
- * Nothing about the screen looks different in any of those cases.
- *
- * THE PICKER is new, and it is what makes half the product reachable: a chat's kind is fixed at
- * creation, and the retired composer hardcoded the build kind. Without it this rail can only mint
- * Build chats.
+ * THE PICKER is new: a chat's kind is fixed at creation, and the retired composer hardcoded the
+ * build kind, so without this control the rail could only ever mint Build chats.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'

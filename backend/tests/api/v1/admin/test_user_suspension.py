@@ -86,10 +86,9 @@ async def test_current_user_seam_403s_even_a_valid_jwt(client, db_session) -> No
 
 
 async def test_current_user_401s_a_stale_token_not_suspended(client, db_session) -> None:
-    # The flip side of checking suspension before token_version: that reordering must NOT weaken
-    # revocation for the ordinary case. A token whose version is stale (logout, a reactivated
-    # user's old session — token_version bumped, suspended_at null) still 401s; it must never fall
-    # through the suspension check to a 200.
+    # The flip side of checking suspension before token_version: that reordering must not weaken
+    # revocation for the ordinary case — a stale-version token (logout, a reactivated user's old
+    # session) must still 401, never fall through the suspension check to a 200.
     citizen = await UserFactory.create(db_session, email="stale@rvaiglobal.com")
     stale_cookie = _cookie(citizen)  # signed with the CURRENT version...
     citizen.token_version += 1  # ...which a logout/revocation then bumps past

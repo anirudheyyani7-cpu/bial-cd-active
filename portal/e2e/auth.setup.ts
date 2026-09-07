@@ -10,37 +10,26 @@ const AUTH_FILE = path.join(dirname, '../playwright/.auth/user.json')
 type Cookies = Parameters<BrowserContext['addCookies']>[0]
 
 /**
- * Seed the storageState every spec runs under.
+ * WHY THIS EXISTS: seeds the storageState every e2e spec runs under, in one of two modes.
  *
- * Two modes, and which one you get is not a coin toss — it is whether you handed us a REAL
- * session to use.
+ * REAL SESSION (preferred — the only mode that exercises the backend): point `E2E_STORAGE_STATE`
+ * at a Playwright storage-state JSON (`{ "cookies": [ … ] }`) holding cookies minted directly for
+ * an existing user row via the control-plane's own `mint_session_jwt` / `issue_csrf_token` /
+ * `issue_new_family` — no product code touched, only the Microsoft round-trip skipped. It is an
+ * env var rather than a baked-in path because the file is a credential and belongs outside this
+ * repo. The minting script itself lives in the local-only governance tree, not this repo, so it
+ * is deliberately not named here — a path only one machine can resolve would read as an
+ * instruction and fail as one.
  *
- * ── Real session (preferred; the only mode that exercises the backend) ──────────────────
- * Auth is a cookie session the FastAPI control-plane mints for ITSELF once the Entra round-trip
- * is done. A browser cannot obtain one without a live tenant — but the cookies are only cookies,
- * so a session can be issued directly for an existing user row through the control-plane's own
- * `mint_session_jwt` / `issue_csrf_token` / `issue_new_family`. No product code is touched; only
- * the Microsoft round-trip is skipped.
+ * MOCKED SESSION (fallback — CI has neither a tenant nor a database): with no
+ * `E2E_STORAGE_STATE`, `GET /api/v1/auth/me` is fulfilled with a QA profile so `RequireAuth`
+ * admits and the SPA renders. The browser holds NO session cookie in this mode, so every other
+ * API call is unauthenticated — specs that drive real data (projects, chats, provisioning)
+ * exercise a shell only; only render-level assertions mean anything.
  *
- * WHAT THIS SETUP NEEDS IS A FILE, NOT A COMMAND. Point `E2E_STORAGE_STATE` at a Playwright
- * storage-state JSON — `{ "cookies": [ … ] }` — holding that session's cookies, and every spec
- * drives a real one. It is an env var rather than a path baked in here precisely because the file
- * is a credential and belongs outside this repo.
- *
- * The script that mints one lives in the local-only governance tree and is NOT distributed with
- * this repo, so it is deliberately not named here: naming a path only one machine can resolve
- * reads as an instruction and fails as one.
- *
- * ── Mocked session (fallback; CI has neither a tenant nor a database) ───────────────────
- * With no `E2E_STORAGE_STATE` we fulfil `GET /api/v1/auth/me` with a QA profile so `RequireAuth`
- * admits and the SPA renders. Be honest about what that buys: **the browser holds no session
- * cookie, so every other API call is unauthenticated.** Specs that drive real data — projects,
- * chats, provisioning — cannot pass in this mode; they exercise a shell. Only render-level
- * assertions mean anything here.
- *
- * `E2E_REQUIRE_REAL_SESSION=1` turns the fallback into a hard failure rather than a silent
- * downgrade. Use it locally, so a stale storageState never quietly demotes a real run to a
- * mocked one.
+ * `E2E_REQUIRE_REAL_SESSION=1` turns the fallback into a hard failure instead of a silent
+ * downgrade — use it locally so a stale storageState never quietly demotes a real run to a mocked
+ * one.
  */
 setup('seed an authenticated session', async ({ page }) => {
   const statePath = process.env.E2E_STORAGE_STATE

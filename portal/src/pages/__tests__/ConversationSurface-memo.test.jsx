@@ -1,15 +1,7 @@
 /**
- * Pins the memo contract: `ChatMessageRow` (React.memo,
- * BuilderPage.tsx) must actually bail out for a historical bubble when something UNRELATED to
- * that message changes. Before the fix, `handleBuildIt`'s `useCallback` depended on
- * `buildBlockedMessage`/`watchBuildTurn` — two plain in-body functions recreated every render —
- * so `handleBuildIt` (and therefore every `ChatMessageRow`'s `onBuildIt` prop) got a new identity
- * on every BuilderPage render, defeating the memo for every row, always. Nothing in the portal
- * suite asserted this before — a future revert of either `useCallback` would be silent.
- *
- * Typing in the composer is the trigger: it's a plain `useState` write local to BuilderPage,
- * touching nothing about any historical message, session, or plan card — the exact "unrelated
- * render" a working memo should absorb entirely before it reaches a historical row.
+ * Pins one property: typing in the composer must never re-render an unrelated historical
+ * message. Nothing in the portal suite asserted this before this file — a regression here would
+ * be silent. See the describe block below for how the property is defended today.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
@@ -116,8 +108,8 @@ describe('typing never re-renders history', () => {
     await waitFor(() => expect(rendersFor('first reply, unrelated to anything typed next')).toBeGreaterThan(0))
     const before = rendersFor('first reply, unrelated to anything typed next')
 
-    // Composer text is local `useState` INSIDE THE COMPOSER — it touches no message, session or
-    // offer state, and the surface above it does not re-render at all. Nothing has to bail out.
+    // Composer text is local `useState` inside the composer; nothing has to bail out because the
+    // surface above it does not re-render at all.
     fireEvent.change(composer(), { target: { value: 'typing should not disturb history' } })
 
     const after = rendersFor('first reply, unrelated to anything typed next')

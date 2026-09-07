@@ -1,17 +1,14 @@
 """U12 / R10 — the wall-clock liveness lease the turn engine publishes (C5 family 4).
 
-WHAT THIS FILE IS FOR. Until this lease existed, a build that had been running for more than
-90 seconds was indistinguishable from an abandoned container to anything except the process
-running it: the heartbeat is seeded once per turn against a 90 s TTL, and the only other shield
-is `sweep_all`'s IN-PROCESS `live_users` set, which is empty everywhere else. So these tests
-care about one property above all the others — that the signal is legible to a reader holding
-nothing in common with the turn but the store. `test_a_sweep_sharing_only_the_store_*` is that
-assertion, and it is the unit's verification criterion.
+Until this lease existed, a build running past 90 seconds was indistinguishable from an
+abandoned container to anything except the process running it — the only other shield is
+`sweep_all`'s IN-PROCESS `live_users` set, empty everywhere else. So the property these tests
+care about above all others is that the signal is legible to a reader holding nothing in common
+with the turn but the store: `test_a_sweep_sharing_only_the_store_*` is that verification.
 
-The rest pin the five properties `azure-is-the-fleet-of-record-tiered-sandbox-reclamation`
-extracted the hard way from the preview lease: fail closed on absent AND absurd, log loudly when
-the write does not land, disown when the record it belonged to goes, grant while the lock is
-held then release, and make sure something scheduled actually READS it.
+The rest pin five properties extracted the hard way from the preview lease: fail closed on
+absent AND absurd, log loudly when the write does not land, disown when the record it belonged
+to goes, grant while the lock is held then release, and confirm something scheduled READS it.
 """
 
 from __future__ import annotations
@@ -143,8 +140,8 @@ async def test_a_renewal_writes_a_wall_clock_deadline_under_a_mandatory_ttl(
     assert 0 < ttl <= LIVENESS_LEASE_TTL_SECONDS
 
     deadline = await _stored_deadline(fake_redis, USER)
-    # A wall-clock instant, comparable in ANY process — not a monotonic reading, which is
-    # meaningless outside the process that took it and would fail this bound wildly.
+    # A wall-clock instant, comparable in ANY process — a monotonic reading would be meaningless
+    # outside the process that took it and would fail this bound wildly.
     assert before <= deadline - LIVENESS_LEASE_TTL_SECONDS <= time.time()
     assert await locks.liveness_lease_is_held(fake_redis, USER) is True
 
@@ -152,9 +149,8 @@ async def test_a_renewal_writes_a_wall_clock_deadline_under_a_mandatory_ttl(
 async def test_each_renewal_pushes_the_deadline_forward(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A ten-minute build renews many times over; the deadline has to MOVE each time or the
-    # lease lapses under a build that is still running. Driven off a scripted clock because
-    # two real renewals inside one microsecond are indistinguishable.
+    # The deadline has to MOVE on every renewal. Driven off a scripted clock because two real
+    # renewals inside one microsecond are indistinguishable.
     await _register(fake_redis, USER)
     clock = iter([1_000.0, 1_030.0, 1_060.0])
     monkeypatch.setattr(locks, "_wall_clock_now", lambda: next(clock))
@@ -173,16 +169,15 @@ async def test_an_absent_lease_is_not_held(fake_redis: aioredis.Redis) -> None:
 
 @pytest.mark.parametrize("value", ["", "   ", "soon", "not-a-number", "NaN"])
 async def test_an_unreadable_lease_is_not_held(fake_redis: aioredis.Redis, value: str) -> None:
-    # A value this module could not have written is evidence of nothing. Reaping is the safe
-    # direction: the cost is a container the next prompt rebuilds, against an unbounded bill.
+    # A value this module could not have written is evidence of nothing; reaping is the safe
+    # direction.
     await fake_redis.set(lease_key(USER), value, ex=LIVENESS_LEASE_TTL_SECONDS)
     assert await locks.liveness_lease_is_held(fake_redis, USER) is False
 
 
 async def test_a_lapsed_deadline_is_not_held(fake_redis: aioredis.Redis) -> None:
-    # Readable, well-formed, and already in the past — the ordinary end of a lease whose
-    # writer stopped renewing. The key's own TTL normally removes it; the comparison is what
-    # makes the answer right in the window before Redis gets around to it.
+    # Readable, well-formed, and already past — the key's own TTL normally removes it, but the
+    # comparison is what makes the answer right in the window before Redis gets around to it.
     await fake_redis.set(lease_key(USER), str(time.time() - 1), ex=LIVENESS_LEASE_TTL_SECONDS)
     assert await locks.liveness_lease_is_held(fake_redis, USER) is False
 
@@ -190,10 +185,9 @@ async def test_a_lapsed_deadline_is_not_held(fake_redis: aioredis.Redis) -> None
 async def test_a_deadline_beyond_the_grantable_ceiling_is_not_held(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # THE ABSURD-VALUE EDGE, and it is not decoration. "Unexpired" alone would let a bad clock,
-    # a hand-edited key or a future writer using milliseconds buy a container a reprieve
-    # measured in millennia — the unbounded hold the TTL exists to prevent, reached through the
-    # parse instead of around it. Nothing may outlive what a FRESH renewal could have granted.
+    # THE ABSURD-VALUE EDGE: "unexpired" alone would let a bad clock, a hand-edited key, or a
+    # future writer using milliseconds buy a reprieve measured in millennia. Nothing may outlive
+    # what a FRESH renewal could have granted.
     far_future = time.time() + LIVENESS_LEASE_TTL_SECONDS * 100
     await fake_redis.set(lease_key(USER), str(far_future), ex=LIVENESS_LEASE_TTL_SECONDS)
     assert await locks.liveness_lease_is_held(fake_redis, USER) is False
@@ -203,12 +197,11 @@ async def test_a_reader_whose_clock_lags_the_writer_still_reads_the_lease_as_hel
     fake_redis: aioredis.Redis,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # THE SKEW EDGE, and it is the reason the ceiling carries a grace at all. This family
-    # exists SO THAT a process which is not running the build can read it — which means the
-    # writer's clock and the reader's clock are never the same clock. The writer stores
-    # `its_now + TTL`; a reader running even fractionally behind computes a lower ceiling and,
-    # without grace, calls a lease renewed moments ago "absurd" and hands a live build to the
-    # reaper. Mutation-check: drop LIVENESS_LEASE_CLOCK_SKEW_GRACE_SECONDS from the comparison
+    # THE SKEW EDGE, and it is the reason the ceiling carries a grace at all: this family exists
+    # so a process not running the build can read it, and the writer's clock is never the
+    # reader's clock. Without grace, a reader running fractionally behind would call a lease
+    # renewed moments ago "absurd" and hand a live build to the reaper.
+    # Mutation-check: drop LIVENESS_LEASE_CLOCK_SKEW_GRACE_SECONDS from the comparison
     # in `liveness_lease_is_held` and this goes red while every other lease test stays green.
     await _register(fake_redis, USER)
     writer_now = 1_000_000.0
@@ -232,11 +225,9 @@ async def test_a_reader_whose_clock_lags_the_writer_still_reads_the_lease_as_hel
 async def test_a_renewal_without_a_registry_does_not_land_and_says_so(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # DISOWN ON REGISTRY REWRITE. A lease belongs to a sandbox record; with no record there is
-    # nothing for it to protect, and a lease left behind would spare whatever container the
-    # next builder gets. The caller is TOLD (False + a warning) rather than left believing a
-    # write landed — a turn that thinks it is protected while nothing is written is exactly
-    # the failure this family exists to remove.
+    # DISOWN ON REGISTRY REWRITE: with no record there is nothing for the lease to protect, and
+    # a lease left behind would spare whatever container the next builder gets. The caller is
+    # TOLD (False + a warning) rather than left believing a write landed.
     with capture_logs() as logs:
         assert await locks.renew_liveness_lease(fake_redis, USER) is False
     assert await fake_redis.exists(lease_key(USER)) == 0
@@ -252,8 +243,8 @@ async def test_releasing_the_lease_is_idempotent(fake_redis: aioredis.Redis) -> 
 
 
 async def test_one_users_lease_never_answers_for_another(fake_redis: aioredis.Redis) -> None:
-    # Single-tenant does not mean single-user: the lease is keyed by the OWNING user, and a
-    # lease read that ignored the user id would spare the whole fleet on one live build.
+    # Single-tenant does not mean single-user: a lease read that ignored the user id would
+    # spare the whole fleet on one live build.
     await _register(fake_redis, USER)
     await locks.renew_liveness_lease(fake_redis, USER)
     assert await locks.liveness_lease_is_held(fake_redis, USER) is True
@@ -267,8 +258,7 @@ async def test_one_users_lease_never_answers_for_another(fake_redis: aioredis.Re
 async def test_the_turn_holds_the_lease_for_as_long_as_it_runs(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The happy path a ten-minute build walks: the task keeps the lease held throughout, and
-    # a reader that knows nothing about the turn sees it held.
+    # A reader that knows nothing about the turn must still see the lease held throughout.
     await _register(fake_redis, USER)
     state = _turn_state(USER, FakeSandboxClient())
     engine = TurnEngine()
@@ -285,9 +275,9 @@ async def test_the_turn_holds_the_lease_for_as_long_as_it_runs(
 async def test_stopping_the_turn_releases_the_lease_and_it_cannot_outlive_one_ttl(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # GRANT WHILE THE LOCK IS HELD, THEN RELEASE. The turn's `finally` hands the container
-    # back, so the lease goes with it — no indefinite hold. And even if the process died
-    # before it could, the key's own expiry bounds the hold to one TTL.
+    # GRANT WHILE THE LOCK IS HELD, THEN RELEASE: the turn's `finally` hands the container back
+    # so the lease goes with it, and even a process that dies first is bounded by the key's own
+    # expiry.
     await _register(fake_redis, USER)
     state = _turn_state(USER, FakeSandboxClient())
     engine = TurnEngine()
@@ -310,15 +300,14 @@ async def test_stopping_the_turn_releases_the_lease_and_it_cannot_outlive_one_tt
 async def test_a_turn_that_never_attached_a_container_publishes_nothing(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # A turn holding no container has nothing to vouch for. The lease is keyed by USER, so
+    # A turn holding no container has nothing to vouch for; the lease is keyed by USER, so
     # renewing one anyway would let a chat turn in one conversation buy a reprieve for
-    # whatever the same user's slot is actually holding somewhere else.
+    # whatever the same user's slot is actually holding elsewhere.
     #
     # Asserted DURING the loop, not after it: `_stop_liveness_lease` deletes the key, so an
-    # assertion at the end passes whether or not the guard exists. (It did, before this
-    # comment was written — the mutation that proves the point is removing the
-    # `state.sandbox is None` return and watching this test stay green with the assertion
-    # at the bottom.)
+    # assertion at the end passes whether or not the guard exists.
+    # Mutation check: remove the `state.sandbox is None` return and this stays green if the
+    # assertion is moved to the bottom instead.
     await _register(fake_redis, USER)
     state = _TurnState(
         turn_id=uuid.uuid4(),
@@ -339,9 +328,9 @@ async def test_a_turn_that_never_attached_a_container_publishes_nothing(
 async def test_a_turn_that_published_nothing_revokes_nothing(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The other half of the same hazard: the stop path must not DELETE a lease it never
-    # wrote. A turn whose task was never started (no container) reaching the shared `finally`
-    # would otherwise strip the protection off a build running in another conversation.
+    # The other half of the same hazard: the stop path must not DELETE a lease it never wrote,
+    # or a turn with no container reaching the shared `finally` strips protection off a build
+    # running in another conversation.
     await _register(fake_redis, USER)
     await locks.renew_liveness_lease(fake_redis, USER)  # somebody else's live build
     state = _TurnState(
@@ -369,10 +358,9 @@ class _RefusingRedis:
 async def test_a_failed_lease_write_is_loud_and_the_turn_carries_on(
     fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A turn must not silently proceed BELIEVING ITSELF PROTECTED. The renewal is best-effort
-    # by design — a Redis blip may not take a ten-minute build down — so "loud" is the whole
-    # mitigation, and a swallowed failure would leave a live build reapable with nothing in
-    # the log to explain the teardown afterwards.
+    # A turn must not silently proceed BELIEVING ITSELF PROTECTED. Renewal is best-effort by
+    # design, so "loud" is the whole mitigation — a swallowed failure leaves a live build
+    # reapable with nothing in the log to explain the teardown afterwards.
     monkeypatch.setattr(engine_mod, "get_redis", lambda: _RefusingRedis())
     state = _turn_state(USER, FakeSandboxClient())
     with capture_logs() as logs:
@@ -389,10 +377,9 @@ async def test_a_failed_lease_write_is_loud_and_the_turn_carries_on(
 async def test_a_renewal_with_nothing_to_protect_is_loud_in_its_own_words(
     fake_redis: aioredis.Redis,
 ) -> None:
-    # The OTHER failure shape, and it must not be reported as the first: a reachable store
-    # that had no sandbox record to attach the lease to. Same greppable event so one alert
-    # covers "is anything protecting live builds right now", different `reason` so the
-    # on-call reads the right runbook. Deliberately no registry seeded.
+    # The OTHER failure shape: a reachable store with no sandbox record to attach the lease to.
+    # Same greppable event, different `reason`, so the on-call reads the right runbook.
+    # Deliberately no registry seeded.
     state = _turn_state(USER, FakeSandboxClient())
     with capture_logs() as logs:
         await _renew_a_while(state, ticks=6)
@@ -407,12 +394,11 @@ async def test_a_renewal_with_nothing_to_protect_is_loud_in_its_own_words(
 
 # --- the assertion the in-process set could never make ------------------------
 #
-# Two Redis CLIENTS over one store, sharing no Python object with the turn. That is the
-# structural content of "another process": `sweep_all` reaches the lease through the store
-# alone, holding none of the turn's in-memory state, and `live_users` is forced empty so the
-# in-process shield cannot be what spares anything. (A genuine second OS process is not
-# available in this lane — the suite runs on fakeredis and `.env.test` configures no Redis
-# server — so this is the strongest available form of the claim.)
+# Two Redis CLIENTS over one store, sharing no Python object with the turn: `sweep_all` reaches
+# the lease through the store alone, and `live_users` is forced empty so the in-process shield
+# cannot be what spares anything. A genuine second OS process isn't available in this lane (the
+# suite runs on fakeredis with no real Redis server), so this is the strongest available form
+# of the claim.
 
 
 @pytest.fixture
@@ -458,9 +444,8 @@ async def test_a_sweep_sharing_only_the_store_spares_a_held_lease(
 async def test_a_sweep_sharing_only_the_store_reaps_a_lapsed_lease(
     two_clients_one_store: tuple[aioredis.Redis, aioredis.Redis],
 ) -> None:
-    # The other half of the claim, and the one that keeps the first honest: with the lease
-    # lapsed the very same sweep DOES reap. Without this, a sweep that spared everything
-    # unconditionally would pass the test above.
+    # Keeps the test above honest: with the lease lapsed the very same sweep DOES reap. Without
+    # this, a sweep that spared everything unconditionally would pass it too.
     turn_side, sweep_side = two_clients_one_store
     await _register(turn_side, USER)
     await turn_side.set(lease_key(USER), str(time.time() - 1), ex=LIVENESS_LEASE_TTL_SECONDS)
@@ -475,9 +460,9 @@ async def test_a_sweep_sharing_only_the_store_reaps_a_lapsed_lease(
 
 
 def test_the_renewal_cadence_leaves_head_room_inside_the_ttl() -> None:
-    # A cadence at or above the TTL means the lease lapses between renewals under a perfectly
-    # healthy build — the sweep then reaps mid-build and the log says the container was idle.
-    # Same head-room reasoning as LOCK_RENEW_CADENCE_SECONDS vs LOCK_TTL_SECONDS (C3).
+    # A cadence at or above the TTL lapses the lease between renewals under a healthy build —
+    # the sweep then reaps mid-build. Same head-room reasoning as LOCK_RENEW_CADENCE_SECONDS
+    # vs LOCK_TTL_SECONDS (C3).
     assert LIVENESS_LEASE_RENEW_CADENCE_SECONDS * 2 <= LIVENESS_LEASE_TTL_SECONDS
 
 

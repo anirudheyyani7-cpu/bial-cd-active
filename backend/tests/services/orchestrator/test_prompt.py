@@ -60,11 +60,9 @@ _TEMPLATE_ROOT = Path(__file__).resolve().parents[4] / "sandbox" / "template"
 def test_system_prompt_reflects_the_open_sandbox_model() -> None:
     prompt = BUILD_SYSTEM_PROMPT
     lowered = prompt.lower()
-    # Retired constrained-model language is gone.
     assert "no shell or command access" not in lowered
     assert "never run `npm install`" not in lowered
     assert "single swappable module" not in lowered
-    # The open model is documented: a real shell + on-demand install + the new tool.
     assert "run_command" in prompt
     assert "npm install" in prompt  # now a capability, not a prohibition
     # The injected app ENV the model writes its own data/storage code against. The old
@@ -80,7 +78,6 @@ def test_system_prompt_reflects_the_open_sandbox_model() -> None:
         assert name in prompt
     # The dev server must still NOT be restarted (load-bearing for the harness verify).
     assert "already running" in lowered and "restart" in lowered
-    # The write-capable SAS is flagged server-side-only.
     assert "server-side" in lowered
     assert "declare_done" in prompt
 
@@ -91,11 +88,9 @@ def test_system_prompt_forbids_seeded_dummy_data() -> None:
     promise."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
     assert "data integrity" in lowered
-    # The prohibition names the whole family of invented-record words the model reaches for.
     for banned in ("dummy", "sample", "fake", "mock", "placeholder"):
         assert banned in lowered, f"the rule should name {banned!r} records explicitly"
     assert "never hardcode, seed, or generate" in lowered
-    # The prescribed alternative: honest states, real data by upload or entry.
     assert "empty state" in lowered
     assert "loading state" in lowered
     assert "error state" in lowered
@@ -111,9 +106,7 @@ def test_data_integrity_is_truthful_and_carries_the_never_mutate_rule() -> None:
     from src.services.orchestrator.prompt import DATA_INTEGRITY_RULES
 
     lowered = BUILD_SYSTEM_PROMPT.lower()
-    # The false claim is gone.
     assert "ships with no data" not in lowered
-    # The truthful claim + the never-mutate rule + the sanctioned-drop condition are present.
     assert "may already hold" in lowered
     assert "truncate" in lowered
     assert "type-checking and rendering" in lowered
@@ -131,15 +124,11 @@ def test_system_prompt_carries_the_generated_app_quality_rules() -> None:
     (no horizontal overflow at 390px). Coarse marker check — the copy is a probabilistic nudge,
     not a behavioral contract, so assert the load-bearing phrases only."""
     lowered = BUILD_SYSTEM_PROMPT.lower()
-    # AFTER A WRITE: the unconditional own-mutation refetch, hoisted out of HONEST UI.
     assert "after a write" in lowered
-    # HONEST UI: names the no-realtime reality and the required refetch remedy.
     assert "honest ui" in lowered
     assert "no realtime channel" in lowered
     assert "refetch" in lowered
-    # REMOVE SCAFFOLDING: the model must ship only what the user asked for.
     assert "remove scaffolding" in lowered
-    # RESPONSIVE: the concrete phone-width target, not a vague "make it responsive".
     assert "responsive" in lowered
     assert "390px" in lowered
 
@@ -434,8 +423,7 @@ def test_honest_ui_keeps_its_claim_matching_argument() -> None:
 def test_every_golden_template_manifest_file_exists() -> None:
     """Durable guard: every path the manifest advertises as an editable starting point must
     exist under `sandbox/template/`, so a template change that drops or renames a file cannot
-    leave the prompt pointing at a phantom. Walks the manifest text and stats each path, glob
-    and comma-list entries included.
+    leave the prompt pointing at a phantom.
 
     `sql` is in the extension set on purpose: the generated migrations under `drizzle/` are
     BUILT rather than hand-written, so they are most likely to go missing (an over-eager
@@ -490,12 +478,6 @@ def test_repair_prompt_embeds_the_redacted_diagnostic() -> None:
     assert "run any commands" not in repair.lower()
 
 
-# TWO MODEL-FACING SOURCES TELL THE MODEL HOW TO CHANGE THE SCHEMA, and they must agree.
-# The re-test patched the build prompt and missed the SQL sentinel's refusal, so the model was
-# corrected by one voice and mis-taught by the other. That is the half-landed-fix failure mode
-# this file's assertion exists to make impossible.
-
-
 def _database_block(prompt: str) -> str:
     """The DATABASE paragraph, sliced out of the composed prompt — the one place the migration
     loop is taught. Sliced for the same reason `_completion_block` is: `--name`, `generate` and
@@ -532,8 +514,7 @@ def test_the_prompt_prescribes_no_generate_command_for_the_model_to_run() -> Non
     """★ ONE SPELLING, EVERYWHERE THE MODEL LOOKS — it is now the tool rather than the command.
     The prompt used to carry a `run_command` example with the bare
     `["npx","drizzle-kit","generate"]`, forbidden two blocks earlier in the same prompt; that
-    example is gone, and the prescription is removed altogether: `apply_schema_change` runs the
-    command now, so the prompt has no reason to spell it.
+    example is gone, and the prescription is removed altogether: `apply_schema_change` runs it.
 
     The rule survives as an INERTNESS guard — any bare generate spelling that comes back must
     carry the flag — plus a liveness assertion, since inertness alone is green against a prompt
@@ -620,10 +601,9 @@ def test_the_two_step_sequence_is_no_longer_the_taught_path_but_the_tty_defences
     `run_command([...])` invocations — the inert half.
 
     The liveness half lives in a different file and is what this unit could break by accident:
-    the rename resolver stays FAST only because of three defences in
-    `sandbox/supervisor/app.py` (`CI=1`, `stdin=DEVNULL`, and `_refuse_a_manufactured_tty`).
-    Remove any one and the crispest detection becomes a wedged command running to its timeout —
-    the one assertion elsewhere in this file that would catch it."""
+    the rename resolver stays FAST only because of three defences in `sandbox/supervisor/app.py`
+    (`CI=1`, `stdin=DEVNULL`, `_refuse_a_manufactured_tty`) — remove any one and the crispest
+    detection becomes a wedged command running to its timeout."""
     database = _database_block(BUILD_SYSTEM_PROMPT)
     # INERTNESS — the sequence is not the prescribed path any more.
     assert "run_command([" not in database
@@ -704,26 +684,13 @@ quietly."""
 
 async def test_the_harness_arm_is_told_about_four_tools_it_does_not_register() -> None:
     """★ A DIVERGENCE GUARD, not a passing property — it pins a defect so it cannot get worse.
+    `build_agent` registers only `sandbox_toolset` (eight tools) but ships the harness prompt's
+    full twelve-tool TOOL SURFACE block, so it names four tools it will reject if called.
 
-    `BUILD_WORKING_RULES_TAIL` carries one `TOOL SURFACE` snapshot into TWO prompts, and only one
-    of them is what the snapshot was generated from:
-
-    * the chat Build arm registers `toolsets_for_kind(BUILD)` — all twelve. The drift check above
-      is about that arm and is correct about it.
-    * `build_agent` is constructed `toolsets=[sandbox_toolset(_sandbox_of)]` and nothing else
-      (`orchestrator/agent.py`), so a `/v1/build-sessions` run is handed eight — and told about
-      twelve on every request. The four extra get the runtime's unknown-tool rejection if called.
-
-    WHY THIS IS A TEST AND NOT A FIX. Both fixes are behaviour changes to a live agent, and the
-    harness plus its route are already scheduled for deletion. So the
-    divergence is recorded where it will be tripped over: this goes RED when the harness is
-    deleted, when it gains the missing toolsets, or when the prompt learns to render a
-    harness-specific surface — each of which is someone deliberately settling it.
-
-    Derived on both sides rather than hard-coded: the prompt side is parsed out of the shipped
-    block, the agent side is read off `build_agent.toolsets`. A tool added to either moves the
-    difference and fails here.
-    """
+    Not fixed here: both fixes are behaviour changes to a live agent whose route is already
+    scheduled for deletion, so this goes RED instead when the harness is deleted, gains the
+    missing toolsets, or gets its own rendered surface. Both sides are derived — the prompt
+    parsed, the agent read off `build_agent.toolsets` — so a tool added to either fails here."""
     named_in_the_prompt = set(re.findall(r"^- `(\w+)`", WRITE_TOOL_SURFACE, re.M))
     assert named_in_the_prompt, "the shipped TOOL SURFACE block names no tools"
 
@@ -855,21 +822,12 @@ async def test_run_commands_dev_server_rule_is_registered_copy_as_well_as_prompt
 def test_the_harness_never_grants_edit_permission_over_the_platform_config() -> None:
     """★ THE MUTANT THAT MUST FAIL, and it must fail for ALL THREE statements.
 
-    `next.config.ts` carries the path the app is served under. An app whose config loses it
-    answers at `/` while the router asks for `/a/<key>/`: the preview loads a blank page, and
-    every automated check — the readiness probe, the warm request, an HTTP status check —
+    `next.config.ts` carries the path the app is served under: lose it and the preview answers
+    at `/` while the router asks for `/a/<key>/` and loads blank, while every automated check
     still reports healthy. The file stays technically writable by decision, so this prompt text
-    IS the control.
-
-    Three separate statements grant edit permission, they all ship in the SAME composed prompt,
-    and correcting fewer than three leaves a contradiction the model can resolve either way:
-
-      1. the manifest header's categorical "no file is frozen"
-      2. the manifest's own line for the file
-      3. the WRITE SURFACE paragraph's categorical "the WHOLE workspace is editable"
-
-    A test that only checked one would go green against a half-fix.
-    """
+    IS the control — three separate statements grant edit permission in the same composed
+    prompt (see the numbered checks below); fixing fewer than three leaves a contradiction the
+    model can resolve either way."""
     prompt = BUILD_SYSTEM_PROMPT
 
     # 1 — the categorical grant in the manifest header is gone.

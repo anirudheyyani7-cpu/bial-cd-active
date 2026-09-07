@@ -1,21 +1,15 @@
 """`token_usage.kind` against the REAL migrated schema.
 
-The test DB carries the column from `alembic upgrade head` (revision
-0031_token_usage_kind), so the shape assertions exercise the actual DDL — a native
-two-label enum, NOT NULL with a `build` default, and the widened `(user_id,
-usage_date, kind)` uniqueness — inside the rolled-back per-test transaction.
-`test_suspended_at_migration.py` pins the chain's exact head at 0031 and
-`tests/test_alembic_single_head.py` guards the head count.
+The test DB carries the column from `alembic upgrade head` (0031_token_usage_kind), so shape
+assertions exercise the actual DDL — a native two-label enum, NOT NULL with a `build` default,
+and the widened `(user_id, usage_date, kind)` uniqueness. `test_suspended_at_migration.py` pins
+the chain's head at 0031; `tests/test_alembic_single_head.py` guards the head count.
 
-The backfill and the reverse CANNOT be exercised the 0030 way (importing the
-migration's statement and running it over ORM-seeded rows): the fresh-upgrade
-schema already pins `kind` NOT NULL, so a pre-dimension NULL-kind row is
-unseedable in-suite and `BACKFILL_KIND_BUILD` would be a no-op over anything the
-suite can create. The round-trip test below therefore walks the chain for real —
-head → 0030 → head over raw-SQL-seeded rows — and lives in the destructive lane
-(`uv run pytest -m destructive_migration`), because every up/down round-trip
-permanently burns pg_attribute slots on the shared test DB.
-"""
+The backfill and its reverse can't be seeded in-suite (the fresh schema already pins `kind` NOT
+NULL, so a pre-dimension NULL-kind row is unseedable and the backfill would be a no-op). The
+round-trip test below instead walks the chain for real — head → 0030 → head over raw-SQL-seeded
+rows — and lives in the destructive lane (`-m destructive_migration`): every up/down round-trip
+permanently burns pg_attribute slots on the shared test DB."""
 
 from __future__ import annotations
 
@@ -159,7 +153,6 @@ def test_downgrade_deletes_review_rows_and_upgrade_backfills_build() -> None:
     command.upgrade(config, "head")  # normalize the start state (a no-op when at head)
     user_id = uuid.uuid4()
     try:
-        # Seed one build row and one same-day review row for a throwaway user.
         _sql(
             [
                 (
@@ -196,7 +189,6 @@ def test_downgrade_deletes_review_rows_and_upgrade_backfills_build() -> None:
                 ("SELECT typname FROM pg_type WHERE typname = 'token_usage_kind'", {}),
             ]
         )
-        # The kind column and its enum are gone; the old two-column uniqueness is back.
         assert "kind" not in {row.column_name for row in columns}
         constraint_names = {row.conname for row in constraints}
         assert "uq_token_usage_user_date" in constraint_names
@@ -218,8 +210,6 @@ def test_downgrade_deletes_review_rows_and_upgrade_backfills_build() -> None:
                 ),
             ]
         )
-        # Every surviving row is backfilled to `build` — that is what it has always
-        # been — and the widened uniqueness is back in force.
         constraint_names = {row.conname for row in constraints}
         assert "uq_token_usage_user_date_kind" in constraint_names
         assert "uq_token_usage_user_date" not in constraint_names

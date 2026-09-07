@@ -1,25 +1,14 @@
 /**
  * THE TOOLBAR ROW — one row, drawn once, above both columns.
  *
- * ═══ WHAT THIS SUITE IS FOR ═══
+ * It replaces three headers (the rail's, the conversation panel's, the framed preview's) that
+ * could each be collapsed, unmounted, or never mounted, so scenarios here are about POSITION AND
+ * LIFETIME rather than markup, and render through the REAL shell since the row sits above the
+ * Outlet.
  *
- * The row replaces THREE headers: the rail's (back, project name, status chip, rename), the
- * conversation panel's (a bordered breadcrumb), and the framed preview's (device widths, Reload,
- * Save). Each of those lived inside something that could be collapsed, unmounted, or never mounted
- * at all — which is why the project name truncated at 400px and vanished on a collapse, and why a
- * project with nothing built had no device switcher, no Save and no way out to a tab.
- *
- * So the scenarios here are mostly about POSITION AND LIFETIME rather than about markup: what the
- * row shows on each address, what survives a collapse, and what a cold open renders before any
- * fetch has landed. They render through the REAL shell, because a row that is drawn above the
- * Outlet is invisible to a test that mounts only the Outlet's child.
- *
- * ═══ COVERAGE THAT MOVED HERE WITH ITS CONTROL ═══
- *
- * The device switcher's `aria-pressed` scenarios (from `LivePreview.test.jsx`), the Save control's
- * six states including the one that matters most — `null` is UNKNOWN and must never read as saved
- * — and the status chip's three (from `ProjectPage.test.tsx`). Named here so that "the test went
- * with the markup" cannot be how any of them stops being checked.
+ * Coverage moved here with its control: the device switcher's `aria-pressed` scenarios (from
+ * `LivePreview.test.jsx`), the Save control's states including `null` = UNKNOWN, and the status
+ * chip's states (from `ProjectPage.test.tsx`).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useState } from 'react'
@@ -42,13 +31,9 @@ import {
 
 vi.mock('../../layout/Navbar', () => ({ default: () => <div data-testid="navbar" /> }))
 /**
- * THE ROW'S RENDER COUNTER, and it has to be inside the row rather than around it.
- *
- * The chip is an ordinary child of the row's own JSX with no memo between them, so React renders
- * it exactly once per render of the row — which makes this stub a count of the row's renders that
- * a wrapper around `WorkspaceToolbar` could not produce (a wrapper only sees the renders its own
- * parent causes, and misses the ones the row's own cell subscriptions cause, which are precisely
- * the ones "the row does not wake with the composer" is about).
+ * The stub lives INSIDE the row (an ordinary child, no memo between them) so its count is the
+ * row's own renders — a wrapper around `WorkspaceToolbar` would only see renders its parent
+ * causes, missing the ones the row's own cell subscriptions cause.
  */
 const h = vi.hoisted(() => ({ rowRenders: 0 }))
 vi.mock('../../PublishStatusChip', () => ({
@@ -173,19 +158,17 @@ describe('what the row names on each address', () => {
     expect(screen.getByRole('button', { name: 'Back to projects' })).toBeTruthy()
     expect(title().textContent).toBe('Visitor Log — Airport Office')
     expect(title().tagName).toBe('H1')
-    // `PreviewOff`, `Main`, `NewProject` and `NothingBuilt` all draw this cluster as chevron +
-    // title and nothing else: the rail's APP STATUS section is right there carrying the pill, and
-    // a chip beside the title stated the same word twice inside 300px.
+    // The rail's APP STATUS section already carries this state; a chip beside the title would
+    // repeat it.
     expect(screen.queryByTestId('publish-chip-stub')).toBeNull()
-    // The chat half is absent, and that is what a heading with no kind means.
     expect(screen.queryByTestId('toolbar-chat-kind')).toBeNull()
   })
 
   it('a chat: the project, the kind pill, and the chat title', () => {
     render(<Workspace entry="/chat/c1" />)
 
-    // The project drops to a muted breadcrumb and the CHAT becomes the heading — same row, same
-    // slots, only which of the two names is the <h1>.
+    // On a chat, the project name drops to a breadcrumb inside the row and the chat title
+    // becomes the <h1> — same row, same slots.
     expect(row().textContent).toContain('Visitor Log — Airport Office')
     expect(screen.getByTestId('toolbar-chat-kind').textContent).toContain('Build')
     expect(title().textContent).toBe('Add an out-time column')
@@ -193,10 +176,8 @@ describe('what the row names on each address', () => {
   })
 
   it('★ draws the BUILD pill as the word alone, and the PLAN pill with the glyph its board has', () => {
-    // The row shipped a Lucide wrench inside the BUILD pill that no BuildChat-family board draws.
-    // The two kinds genuinely differ here — PLAN carries an 11px message-square, BUILD is the word
-    // — so the assertion is a pair: the absence on one kind, the presence on the other, in the
-    // same row. An absence alone would pass against a pill that stopped rendering at all.
+    // Liveness: asserts the absence on BUILD AND the presence on PLAN in the same test, so a pill
+    // that stopped rendering entirely could not pass this by accident.
     render(<Workspace entry="/chat/c1" />)
     const build = screen.getByTestId('toolbar-chat-kind')
     expect(build.textContent).toContain('Build')
@@ -210,8 +191,8 @@ describe('what the row names on each address', () => {
   })
 
   it('a freshly created chat, whose title is not yet known, names its kind rather than nothing', () => {
-    // The ordinary case, not an error: the row is created by the first send and its title is
-    // derived from that message. A blank <h1> or a spinner would both be worse than the kind.
+    // Ordinary, not an error: the title is derived from the first message. A blank <h1> or a
+    // spinner would both be worse than the kind.
     render(<Workspace entry="/chat/c1" chat={{ heading: { ...CHAT_HEADING, chatTitle: null } }} />)
 
     expect(title().textContent).toBe('New build')
@@ -219,9 +200,8 @@ describe('what the row names on each address', () => {
   })
 
   it('★ a cold open, before the project name has resolved, keeps a stable name slot', () => {
-    // THE FAILURE THIS IS WRITTEN AGAINST. On a chat address the project name arrives from a
-    // second fetch, so the row spends its first frames with `projectName: null`. An empty slot
-    // there means the row's contents shift under the citizen the moment the fetch lands.
+    // On a chat, the project name arrives from a SECOND fetch — before it lands the slot must
+    // stay stable rather than empty, or the row's contents shift the moment the fetch lands.
     render(
       <Workspace
         entry="/chat/c1"
@@ -236,15 +216,9 @@ describe('what the row names on each address', () => {
   })
 
   it('★ a chat still inside its load window is drawn as a CHAT, not as the project screen', () => {
-    // THE FAILURE THIS IS WRITTEN AGAINST, and it is a whole `GET /conversations/{id}` long: open
-    // a bare `/chat/{id}` — a reload, a bookmark, the hand-over out of a plan chat — and neither
-    // the kind nor the project has arrived. The row used to take that to mean "project screen": a
-    // lone <h1> reading "Your project", no breadcrumb, and a back control labelled and aimed at
-    // the projects list. A citizen who reloaded a build chat and pressed back was thrown out of
-    // the project entirely, and the row re-shaped under them when the fetch landed.
-    //
-    // The scenario above this one keeps `chatKind: 'build'`, so it asserts a state the product
-    // never actually passes through; this is the state it does.
+    // The scenario above keeps `chatKind: 'build'`, a state the product never actually passes
+    // through; this is the state a reload or bookmark actually produces — neither project nor
+    // kind resolved — and it must still read as a CHAT, not fall back to the project screen.
     render(
       <Workspace
         entry="/chat/c1"
@@ -252,14 +226,12 @@ describe('what the row names on each address', () => {
       />,
     )
 
-    // The discriminator between the two shapes: on the project screen "Your project" IS the <h1>;
-    // on a chat it is the breadcrumb beside it and the <h1> is the chat's own slot.
+    // On the project screen "Your project" IS the <h1>; on a chat it is the breadcrumb, and the
+    // <h1> is the chat's own (empty) slot.
     expect(row().textContent).toContain('Your project')
     expect(title().textContent).toBe('')
-    // Rename belongs to the project screen; nothing on a chat address may offer it.
     expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
-    // And the way out says where it actually goes: with no project resolved there is none to
-    // return to, so it is the list, and it says the list.
+    // With no project resolved there is none to return to, so back goes to the list.
     expect(screen.getByRole('button', { name: 'Back to projects' })).toBeTruthy()
     // LIVENESS: the row is drawn at full height throughout, which is the property that stops the
     // layout shifting when the fetch lands.
@@ -300,8 +272,6 @@ describe('what the row names on each address', () => {
 
 describe('the row is one element across a route change', () => {
   it('★ changes its contents and never its position, and does not remount', () => {
-    // The whole reason the row is drawn by the shell. Three headers meant three elements
-    // appearing and disappearing; one row means the same DOM node throughout.
     render(<Workspace />)
     const before = row()
     expect(title().textContent).toBe('Visitor Log — Airport Office')
@@ -336,7 +306,6 @@ describe('collapsing the rail', () => {
     const rail = screen.getByTestId('workspace-outlet')
     expect(rail.className).toMatch(/(^|\s)w-0(\s|$)/)
     expect(rail.className).toMatch(/invisible/)
-    // …and the row is untouched: title, chip and every control still there and still pressable.
     expect(title().textContent).toBe('Visitor Log — Airport Office')
     expect(screen.getByTestId('publish-chip-stub')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Show details' })).toBeTruthy()
@@ -344,16 +313,9 @@ describe('collapsing the rail', () => {
   })
 
   it('★ collapses in BOTH directions, because below the threshold the columns stack', () => {
-    // THE BROKEN SCREEN THIS IS WRITTEN AGAINST, found in a browser at 1024px and invisible to
-    // every suite because jsdom lays nothing out. The rail is a child of a flex ROW above the
-    // stacking threshold and a flex COLUMN below it. `w-0 flex-shrink-0` collapses it in the row
-    // and does nothing at all in the column: the rail kept its full 1,586px CONTENT height, so
-    // pressing "Hide details" on a narrow window left an invisible band exactly where the rail had
-    // been and pushed the app pane to y=1697 with a height of zero. The citizen presses the control
-    // whose whole promise is "give the app the screen" and the entire workspace goes blank.
-    //
-    // A class assertion is all jsdom can carry — which is precisely why the class has to be pinned
-    // here rather than trusted to a layout nobody in this suite computes.
+    // Below the stacking threshold the rail is a flex COLUMN, not a ROW: `w-0 flex-shrink-0`
+    // collapses width but leaves height alone, so "Hide details" left a visible empty band and
+    // pushed the app pane off screen. jsdom lays nothing out, so the class is what gets pinned.
     render(<Workspace />)
     fireEvent.click(screen.getByRole('button', { name: 'Hide details' }))
 
@@ -400,8 +362,8 @@ describe('the app-scoped controls appear only when there is an app to point at',
   })
 
   it('marks exactly one device pressed, and switches', () => {
-    // Moved from `LivePreview.test.jsx` with the control. The WIDTH half — that Tablet reaches the
-    // card's inline style as 834px — stays there, since the card is the pane's.
+    // Moved from `LivePreview.test.jsx` with the control; the WIDTH half (that Tablet reaches
+    // 834px) stays there, since the card is the pane's.
     render(<Workspace />)
     const at = (name: string) => screen.getByRole('button', { name }).getAttribute('aria-pressed')
 
@@ -507,12 +469,9 @@ describe('the Save control', () => {
 })
 
 describe('the status chip — where the state is said, and where it would be said twice', () => {
-  // THE RULE THE BOARDS DRAW, and it is about duplication rather than about the chip. Every state
-  // the chip names is also named by the rail's APP STATUS section. So the chip appears exactly
-  // where that section is NOT: on a chat, which has no rail section at all, and over a collapsed
-  // rail, where the section has just gone off screen. On the open project screen it is a second
-  // rendering of one fact standing 300px from the first — which is how two renderings begin to
-  // disagree, and it is the one thing this row is supposed to prevent.
+  // The chip duplicates the rail's APP STATUS section, so it appears only where that section is
+  // NOT: on a chat (no rail section) or over a collapsed rail. On the open project screen it
+  // would be a second rendering of the same fact, which is what this row exists to prevent.
 
   it('★ names the project on a chat, where nothing else says the state', () => {
     render(<Workspace entry="/chat/c1" />)
@@ -623,8 +582,6 @@ describe('the row does not wake with the composer', () => {
     }
 
     expect(h.rowRenders).toBe(before)
-    // …and the row is still the same element with the same contents, which is the half the
-    // earlier version of this test could see.
     expect(row()).toBe(node)
     expect(title().textContent).toBe('Add an out-time column')
 

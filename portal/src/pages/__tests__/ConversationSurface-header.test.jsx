@@ -33,11 +33,9 @@ vi.mock('../../utils/builderHistory', () => ({
   loadBuilds: h.loadBuilds, newBuild: h.newBuild, createBuild: h.createBuild,
   getBuild: h.getBuild, deleteBuild: h.deleteBuild, deriveTitle: (t) => (t || '').slice(0, 40),
 }))
-// SPREAD THE ORIGINAL — `uuidv7` is the shared mint `handleBuildIt` uses for the new build chat's
-// id, and a factory that lists only `listProjectConversations` leaves every OTHER
-// export undefined. That used to be silent breakage; Vitest now warns loudly ("No 'uuidv7' export
-// is defined on the mock") the moment a real caller reaches for it — which `handleBuildIt` does on
-// every Build-it press, so the case had to be fixed here rather than merely noted.
+// SPREAD THE ORIGINAL: `uuidv7` is the shared mint `handleBuildIt` uses for the new build
+// chat's id, and a factory listing only `listProjectConversations` would leave it undefined —
+// Vitest now warns loudly the moment a real caller reaches for a missing export.
 vi.mock('../../utils/conversationApi', async (importOriginal) => ({
   ...(await importOriginal()),
   listProjectConversations: h.listProjectConversations,
@@ -161,23 +159,18 @@ describe('regression guard — builds/refreshBuilds survive the dropdown removal
         : { id, kind: 'build', messages: [] },
     )
 
-    // Tab A starts a build → Build-it navigates it to the new chat, which holds the advisory
-    // cross-tab claim and shows the live narrative.
     const a = renderBuilder({ chatId: 'build-A' })
     await buildFrom(a.container)
     await within(a.container).findByTestId('stop-turn')
 
-    // Tab B (same project) learns of the claim over the channel, then tries to build.
     const b = renderBuilder({ chatId: 'build-B' })
     await within(b.container).findByPlaceholderText(/ask for another change/i)
     await flushChannel()
     await buildFrom(b.container, 'add a table')
 
     // buildBlockedMessage READ `builds` to name the holder — proving builds/refreshBuilds were kept.
-    // RE-POINTED: the refusal used to render inside the plan card, one per card id.
-    // There is one offer on the composer now, so the sentence goes to the surface's assertive
-    // slot instead — which is also where every other interrupting refusal lands, so a citizen has
-    // one place to look rather than one per control.
+    // The refusal renders in the surface's assertive slot — where every other interrupting
+    // refusal lands, so a citizen has one place to look rather than one per control.
     const alert = await within(b.container).findByTestId('urgent-banner')
     expect(alert.textContent).toMatch(/already building this project/i)
     expect(alert.textContent).toMatch(/First build/) // named the holder, not "another build chat"

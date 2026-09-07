@@ -17,8 +17,8 @@ from src.services.redis import (
 
 def test_unconfigured_redis_proceeds_without_raising() -> None:
     """Tier 1 — a CERTAIN answer. With no Redis there is no build-session subsystem, so no
-    lock can be held and the caller carries on. Folding this into the 503 tier is the exact
-    anti-pattern that once 503'd every build start on storage-off deployments."""
+    lock can be held and the caller carries on; folding this into the 503 tier would 503
+    every build start on storage-off deployments for no reason."""
     reached_the_body = False
     with build_coordination_or_503():
         reached_the_body = True

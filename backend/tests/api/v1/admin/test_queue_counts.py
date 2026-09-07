@@ -202,8 +202,6 @@ async def test_approving_a_withdrawn_submission_names_the_withdrawal(
     # about the missing-bundle branch.
     store.objects[submission_key(row.id, reviewed)] = b"# v2 git bundle\nfake"
 
-    # The owner withdraws while the administrator has the modal open (the withdrawal's exact
-    # shape: DRAFT, pin and lineage and declaration cleared).
     withdrawn = await client.post(f"/v1/apps/{row.id}/withdraw", headers=owner)
     assert withdrawn.status_code == 200
 

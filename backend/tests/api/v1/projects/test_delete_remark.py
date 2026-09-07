@@ -1,25 +1,14 @@
 """What a deletion has to say for itself, and the tombstone that keeps it (#158 §13).
 
-The body of `DELETE /v1/projects/{id}` carries exactly ONE field, the reason, 5 to 50 words.
-The deletion also records WHO, but the route stamps that from the session rather than
-accepting it — so the tests for it are not validation tests at all, they are tests that the
-client CANNOT influence it. Both live here because they are one request.
+`DELETE /v1/projects/{id}` takes one body field, `remark` (5-50 words); who deleted it is
+stamped from the session, never accepted from the client, so those tests are isolation
+tests, not validation ones. Two claims are pinned: the server refuses a bad remark on its
+own (§13.2 names the rename path — no server-side check — as the shape not to repeat), and
+the tombstone survives what it describes, written in the same transaction that drops the
+project, holding values rather than references to rows already gone.
 
-Two things are being pinned, and they are separate claims:
-
-1.  **The server refuses independently of the client.** §13.2 asks for validation on both
-    sides, and names the rename path as the shape NOT to repeat — there, the client had no
-    check at all and the server's raw validator string reached the screen. So these tests
-    drive the API directly, with no browser in the picture, and assert both the refusal and
-    that its wording is written for a person.
-
-2.  **The record survives what it describes.** `delete_project` force-drops the project's
-    database and deletes every child row; the tombstone is written in the same transaction
-    and has to still be readable afterwards, holding values rather than references to rows
-    that no longer exist.
-
-The word rule is the shared one (`src/core/words.py`), so the boundaries tested here are the
-same boundaries `portal/src/utils/words.ts` enforces in the browser.
+The word rule is shared (`src/core/words.py`), so these boundaries match what
+`portal/src/utils/words.ts` enforces in the browser.
 """
 
 from __future__ import annotations
@@ -216,7 +205,6 @@ async def test_the_tombstone_records_what_went_with_it(client, db_session) -> No
 
 
 async def test_the_deleter_is_stamped_from_the_session(client, db_session) -> None:
-    """The readable name on the tombstone is the ACCOUNT's, not anything sent."""
     headers, user = await _auth(db_session)
     user.display_name = "Asha Rao"
     await db_session.commit()
@@ -234,14 +222,10 @@ async def test_the_deleter_is_stamped_from_the_session(client, db_session) -> No
 
 
 async def test_the_body_cannot_choose_who_deleted_it(client, db_session) -> None:
-    """THE TEST THIS FIELD EXISTS FOR.
-
-    `deletedByName` was briefly a required body field, and a browser session signed in as
-    one person could record a deletion under another person's name — which is exactly the
-    question an administrator reads this row to answer. The route now stamps it from the
-    session and Pydantic drops the unknown key, so sending one changes nothing.
-
-    If someone ever reintroduces the field, this fails.
+    """THE TEST THIS FIELD EXISTS FOR: `deletedByName` was briefly a client-supplied field,
+    letting one session record a deletion under another person's name. The route stamps it
+    from the session now and drops the unknown key — if someone ever reintroduces the field
+    as writable, this fails.
     """
     headers, user = await _auth(db_session)
     user.display_name = "Asha Rao"
@@ -292,20 +276,12 @@ async def test_the_email_stands_in_when_entra_gave_no_display_name(client, db_se
 
 
 async def test_a_second_tombstone_for_the_same_project_is_refused(client, db_session) -> None:
-    """THE DATABASE IS THE GUARD, because nothing above it is.
-
-    `owned_project_or_404` takes no row lock, and `delete_project_cascade` deletes through
-    Core `sa.delete()` so no ORM staleness check fires. A double-click or a proxy retry
-    therefore ran the whole delete twice: two tombstones and duplicated audit rows for ONE
-    physical deletion, both requests answering 200 and the second having deleted nothing. On
-    an audit record for an irreversible action, an administrator who cannot tell one deletion
-    from two is the failure.
-
-    TWO OVERLAPPING REQUESTS ARE NOT EXPRESSIBLE HERE: the app fixture binds one
-    `db_session` to the whole test, so concurrent calls serialise on it and the race cannot
-    be staged. What IS testable is the thing that actually stops it — the unique constraint
-    the loser fails closed on — so this drives that directly. `tests/db/
-    test_migration_0036_deleted_projects.py` pins the index's existence; this pins its effect.
+    """THE DATABASE IS THE GUARD: `owned_project_or_404` takes no row lock and the cascade
+    deletes through Core `sa.delete()`, so a double-click or a proxy retry can run the whole
+    delete twice — two tombstones for one physical deletion. Truly overlapping requests are
+    NOT stageable here (this fixture serialises everything on one `db_session`), so this
+    drives the unique constraint directly instead. `test_migration_0036_deleted_projects.py`
+    pins the index's existence; this pins its effect.
     """
     headers, user = await _auth(db_session)
     project = await _project(db_session, user.id)
@@ -333,24 +309,13 @@ async def test_a_second_tombstone_for_the_same_project_is_refused(client, db_ses
 
 
 async def test_the_loser_gets_a_404_through_the_route_not_a_500(client, db_session) -> None:
-    """THE ROUTE'S OWN HANDLING, exercised through HTTP rather than asserted at the ORM
-    layer — the companion to `test_a_second_tombstone_for_the_same_project_is_refused` above.
-
-    Two truly overlapping requests are not stageable against this fixture's single
-    `db_session`, but the STATE they would produce is: an existing tombstone for the project
-    about to be deleted (the winner's row, as if it had already committed). The client's own
-    DELETE then runs the whole cascade for real and hits the unique constraint mid-cascade,
-    at the autoflush `delete_project_cascade` triggers — not at the final `db.commit()` —
-    which is exactly where the loser of a real race would hit it. Before this fix that
-    IntegrityError reached `unhandled_exception_handler` uncaught: a 500 with a production
-    traceback, for a request whose target had already been deleted by the winner.
-
-    NOT ASSERTING ROW STATE AFTERWARD, deliberately: this fixture binds one session to one
-    Postgres transaction with no savepoints, so the route's own `db.rollback()` — correct
-    and necessary, since a real constraint violation aborts the whole transaction — would
-    also erase this test's own seed data. The response is the only thing worth checking here;
-    `test_a_second_tombstone_for_the_same_project_is_refused` above already pins the row-level
-    guarantee via a `SAVEPOINT`.
+    """THE ROUTE'S OWN HANDLING through HTTP — companion to the test above. Seeds the
+    winner's tombstone directly, then a real DELETE hits the same unique constraint
+    mid-cascade (at the autoflush, not the final commit), where a real race's loser would
+    land; before this fix that IntegrityError reached the unhandled-exception handler
+    uncaught as a 500. Row state is NOT asserted after, deliberately: the route's own
+    rollback on a real constraint violation would erase this test's seed data too — the
+    companion above already pins that guarantee.
     """
     headers, user = await _auth(db_session)
     project = await _project(db_session, user.id)

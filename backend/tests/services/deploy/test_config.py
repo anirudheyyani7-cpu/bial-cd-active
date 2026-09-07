@@ -52,12 +52,10 @@ def test_a_complete_block_validates() -> None:
 
 def test_the_periodic_reconcile_ships_on() -> None:
     """A PORT MUST NOT CHANGE BEHAVIOUR. `_reconcile_deploys_periodically` was an unflagged
-    `while True` in the API lifespan; its scheduled replacement shipped behind a flag defaulting
-    to off, which was correct exactly while the loop was still running. The loop is now deleted
-    (U15), so an off default leaves NOBODY reconciling a deploy that straddled a restart — a
-    pipeline runs for minutes and every platform deploy kills it, so that is the expected case
-    during a rollout, not an edge case. It is the leak U6 was written to close, reopened by a
-    default.
+    `while True`; its replacement shipped behind a flag defaulting to off, correct only while
+    that loop still ran. The loop is now deleted (U15), so an off default leaves nobody
+    reconciling a deploy that straddled a restart — the expected case during a rollout, not an
+    edge case. It is the leak U6 closed, reopened by a default.
 
     Mutation-check: set the default back to `False` and this goes red."""
     assert _cfg().reconcile_enabled is True

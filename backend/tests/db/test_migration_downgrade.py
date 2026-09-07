@@ -1,16 +1,13 @@
 """Alembic downgrade round-trip: head → pre-projects (0014) → head, in-suite (U3).
 
-`tests/db/test_projects_migration.py` proves the shape 0015 PRODUCED; this proves the
-chain actually walks back and forward again against the real test DB: downgrading below
-0015/0016 removes everything they added (projects, the project_id wiring, current_code,
-users.suspended_at) and restores `uq_app_registry_owner_conversation`; re-upgrading
-restores head. Uses the programmatic `alembic.command` API off the same `alembic.ini`
-config `tests/test_alembic_single_head.py` reads. The DB is returned to head in a
-`finally` so a failed assertion can't poison the rest of the suite.
+`tests/db/test_projects_migration.py` proves the shape 0015 PRODUCED; this proves the chain
+actually walks back and forward again against the real test DB, using the same `alembic.ini`
+config `tests/test_alembic_single_head.py` reads. The DB is restored to head in a `finally`
+so a failed assertion can't poison the rest of the suite.
 
-NOTE: the 0015 downgrade is a schema-shape rollback that is safe only pre-divergence
-(see its docstring); the suite's per-test transactions roll back, so the tables are
-empty here and the constraint recreation cannot collide.
+NOTE: the 0015 downgrade is a schema-shape rollback that is safe only pre-divergence (see
+its docstring); the suite's per-test transactions roll back, so the tables are empty here
+and the constraint recreation cannot collide.
 """
 
 from __future__ import annotations
@@ -81,18 +78,13 @@ def test_downgrade_to_pre_projects_and_back() -> None:
     try:
         command.downgrade(config, _PRE_PROJECTS_REVISION)
         state = _snapshot()
-        # Everything 0015 added is gone…
         assert state["projects_table"] is None
         assert "project_id" not in state["app_registry_columns"]
         assert "current_code" not in state["app_registry_columns"]
         assert "uq_app_registry_project" not in state["app_registry_constraints"]
-        # …the pre-projects uniqueness is back…
         assert "uq_app_registry_owner_conversation" in state["app_registry_constraints"]
-        # …and 0016's suspension marker is gone too.
         assert "suspended_at" not in state["users_columns"]
     finally:
-        # ALWAYS restore head — even on assertion failure — so the rest of the suite
-        # runs against the schema it expects.
         command.upgrade(config, "head")
 
     state = _snapshot()

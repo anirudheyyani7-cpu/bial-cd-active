@@ -2,9 +2,7 @@
  * ChatRoute — the flat `/chat/:chatId` kind dispatcher.
  *
  * The SLOT is stubbed so this file tests exactly one thing: what the route resolves — which
- * conversation, of which kind, in which project — and when it bails to /projects instead. It used
- * to stub two pages and assert which one mounted; there is one surface now, so the
- * resolution IS the contract.
+ * conversation, of which kind, in which project — and when it bails to /projects instead.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -18,8 +16,8 @@ const h = vi.hoisted(() => ({
 
 // The REAL `observe` module runs here — its deep-link guard IS what these tests are about, and a
 // mocked module would prove only that a function was called. Only the transport is replaced.
-// Each test uses its OWN project id: module state is per page load, so a shared id would let one
-// test's mark silence the next one's.
+// Each test uses its OWN project id — module state is per page load, so a shared id would let
+// one test's mark silence the next one's.
 vi.mock('../../utils/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/api')>()),
   authFetch: h.authFetch,
@@ -29,17 +27,13 @@ vi.mock('../../utils/conversationApi.js', () => ({ getConversation: h.getConvers
 vi.mock('../../utils/projectApi', () => ({ getProject: h.getProject }))
 
 /**
- * ONE STUB, AND IT IS THE SLOT.
- *
- * This file used to stub two PAGES, because the route chose between them and "which one mounts"
- * was the contract. There is one surface now, so the route's contract is the VALUE it hands the
- * slot — a resolved conversation, kind included — rather than a component it selects. Stubbing
- * the slot is what lets that value be asserted directly; stubbing the surface underneath it would
- * leave the kind invisible, since the slot deliberately does not pass it down.
+ * ONE STUB, AND IT IS THE SLOT: the route's contract is the VALUE it hands the slot — a
+ * resolved conversation, kind included — so stubbing the slot lets that value be asserted
+ * directly; stubbing the surface underneath would leave the kind invisible.
  *
  * Named, not an anonymous arrow: this stub calls `useNavigate`, and a hook is only legal inside
- * something lint can SEE is a component. As `default: () => …` the rule reads the function's name
- * as "default" — lowercase, so "not a component" — and errors.
+ * something lint can SEE is a component — `default: () => …` reads as "default", lowercase, so
+ * "not a component", and errors.
  */
 vi.mock('../../components/workspace/ConversationSlot', () => ({
   default: function ConversationSlotStub({
@@ -75,12 +69,9 @@ import { beaconsFrom } from './_observeBeacons'
 import { markProjectOpened } from '../../utils/observe'
 
 /**
- * WHAT THE TOOLBAR ROW WOULD NAME, read straight off the channel.
- *
- * The row itself is the shell's and has its own suite; what is only observable HERE is the value
- * this route PUBLISHES, which every one of those scenarios takes as a given. Rendered as one
- * string so a single assertion covers all four fields and a wrong one cannot hide behind a right
- * one.
+ * What the toolbar row would name, read straight off the channel — the row itself has its own
+ * suite; what's only observable HERE is the value this route PUBLISHES. Rendered as one string
+ * so a single assertion covers all four fields and a wrong one cannot hide behind a right one.
  */
 function HeadingProbe() {
   const { projectId, projectName, chatKind, chatTitle } = useWorkspaceHeading()
@@ -136,18 +127,14 @@ afterEach(() => cleanup())
 const beacons = () => beaconsFrom(h.authFetch)
 
 describe('ChatRoute — kind RESOLUTION (it no longer dispatches)', () => {
-  // THE NAME CHANGED BECAUSE THE JOB DID. These two used to assert which PAGE
-  // mounted; there is one surface now, so what is left to be right about is the kind the route
-  // RESOLVES and hands on. That is the whole of the route's remaining contract, and it is still
-  // worth pinning — the value decides which toolset the server gives the model.
+  // These two used to assert which PAGE mounted; now the kind the route RESOLVES is the whole
+  // remaining contract, and it is still worth pinning — the value decides the server's toolset.
   it('resolves a plan conversation as plan', async () => {
     h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
     renderRoute('/chat/c1')
     expect((await screen.findByTestId('conversation-slot')).getAttribute('data-kind')).toBe('plan')
   })
 
-  // Was "renders BuilderPage for a builder conversation": `builder` was the OLD three-valued
-  // ConversationKind's word. It collapsed into the two-valued ChatKind's `build`.
   it('resolves a build conversation as build', async () => {
     h.getConversation.mockResolvedValue(conversation({ kind: 'build' }))
     renderRoute('/chat/c1')
@@ -177,7 +164,7 @@ describe('ChatRoute — a conversation whose row does not exist yet', () => {
     h.getConversation.mockResolvedValue(null)
     renderRoute('/chat/new-uuid?projectId=p1&kind=build')
     // The row is written inside the first TURN's transaction; until then only the query knows
-    // the project. (`appendMessage` was the old separate round trip and no longer exists.)
+    // the project.
     const slot = await screen.findByTestId('conversation-slot')
     expect(slot.getAttribute('data-kind')).toBe('build')
     expect(slot.textContent).toContain('|new-uuid|p1|')
@@ -196,8 +183,6 @@ describe('ChatRoute — a conversation whose row does not exist yet', () => {
   })
 
   it('redirects to /projects when the literal word "new" is routed as a chat id', async () => {
-    // A bare word like "new" landing at /chat/new is not a real conversation and carries
-    // no project query, so it resolves to "gone" and bounces to the projects index.
     h.getConversation.mockResolvedValue(null)
     renderRoute('/chat/new')
     expect(await screen.findByTestId('projects-index')).toBeTruthy()
@@ -206,8 +191,7 @@ describe('ChatRoute — a conversation whose row does not exist yet', () => {
 
 describe('ChatRoute — the GET that cannot succeed', () => {
   // A chat this session just minted has no row until the send path creates it, so its
-  // `getConversation` is a guaranteed 404 on every cold new-chat open — and it is not the only
-  // one: both pages keep their own hydration fetch, and StrictMode doubles the pair again in dev.
+  // `getConversation` is a guaranteed 404 on every cold new-chat open.
   it('a freshly-minted open issues NO getConversation and renders from the query', async () => {
     renderRoute('/chat/fresh-id?projectId=p1&kind=build', { freshlyMinted: true })
 
@@ -217,11 +201,10 @@ describe('ChatRoute — the GET that cannot succeed', () => {
   })
 
   // THE IMPORTANT ONE. Keying the skip on "the URL has query params" would be a security
-  // regression, not just a wrong optimisation: `?kind=` is user-controllable, and a saved chat's
-  // URL only loses its query after the FIRST append — so a shared or bookmarked
-  // `/chat/{id}?kind=build` for an already-saved plan chat is an ordinary URL that MUST
-  // still be resolved by the server. Router state does not survive a reload and does not travel
-  // in a link, which is exactly what makes the marker safe to trust.
+  // regression: `?kind=` is user-controllable, and a saved chat's URL only loses its query
+  // after the FIRST append — so a shared `/chat/{id}?kind=build` for an already-saved plan
+  // chat is ordinary and MUST still be resolved by the server. Router state, unlike the query,
+  // does not survive a reload or travel in a link, which is what makes the marker safe to trust.
   it('an open WITHOUT the marker still fetches, and the server beats a conflicting ?kind=', async () => {
     h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
     renderRoute('/chat/c1?projectId=p1&kind=build')
@@ -266,12 +249,10 @@ describe('ChatRoute — the project breadcrumb', () => {
 })
 
 /**
- * WHAT THE ROW IS TOLD TO NAME, and the merge that fills in its title.
- *
- * The row's own rendering is covered in `WorkspaceToolbar.test.tsx`, but every scenario there
- * publishes a SYNTHETIC heading. This is the component that publishes the real one in production,
- * and nothing was asserting it — so the loading branch, the stale-project guard and the title merge
- * could all regress with the whole suite green and the row quietly naming the wrong project.
+ * What the row is told to name, and the merge that fills in its title. `WorkspaceToolbar.test.tsx`
+ * covers the row's own rendering, but every scenario there publishes a SYNTHETIC heading — this is
+ * the component that publishes the real one, so the loading branch, the stale-project guard and
+ * the title merge could all regress with the suite green and the row naming the wrong project.
  */
 describe('ChatRoute — what it publishes for the toolbar row', () => {
   it('names the project, the kind and the title once the conversation resolves', async () => {
@@ -298,14 +279,12 @@ describe('ChatRoute — what it publishes for the toolbar row', () => {
   })
 
   it('★ names the project this tab already learned, on a reload that carries no query', async () => {
-    // THE ORDINARY CASE, and the one the URL fallback above cannot reach. A chat's address is
-    // rewritten to the bare `/chat/{id}` the instant its first message lands, so every reload,
-    // bookmark and shared link into an existing chat arrives with nothing in the query — and for
-    // the whole of the next `GET` the row had no project to name and a back control aimed at the
-    // projects list, out of the project the citizen was working in.
+    // THE ORDINARY CASE the URL fallback above cannot reach: a chat's address is rewritten to
+    // the bare `/chat/{id}` the instant its first message lands, so every reload, bookmark and
+    // shared link arrives with nothing in the query.
     //
-    // The memory is EARNED here rather than seeded: the first render is the visit that learns the
-    // project, and the second is the reload that reads it back. Seeding storage directly would
+    // The memory is EARNED here rather than seeded: the first render is the visit that learns
+    // the project, the second is the reload that reads it back — seeding storage directly would
     // pass even if nothing ever wrote to it.
     h.getConversation.mockResolvedValue(conversation({ kind: 'build', title: 'Add an out-time column' }))
     renderRoute('/chat/c1')
@@ -362,9 +341,8 @@ describe('ChatRoute — what it publishes for the toolbar row', () => {
   })
 
   it('★ takes the title back from the surface when the chat had none', async () => {
-    // A chat's row is created by its first send and its title is derived from that message, so a
-    // freshly minted chat legitimately has none until the surface works one out. Without the merge
-    // the row goes on naming the kind for the whole life of the chat.
+    // A freshly minted chat legitimately has no title until the surface derives one; without
+    // the merge the row goes on naming the kind for the whole life of the chat.
     h.getConversation.mockResolvedValue(conversation({ title: '' }))
     renderRoute('/chat/c1')
     await waitFor(() => expect(heading()).toBe('p1|VIP Movement|plan|null'))
@@ -490,10 +468,9 @@ describe('ChatRoute — the chat-open mark', () => {
   })
 
   it('★ marks nothing for a deep link into a project this load never opened', async () => {
-    // A bookmark, a shared link or a browser restore resolves a project whose page was never on
-    // screen. Counting it would push the visit-count ratio above 1 — a denominator smaller than its
-    // numerator is not a bias, it is a broken number. And it must not invent the denominator
-    // either: no `project_opened` appears here.
+    // A bookmark or browser restore resolves a project whose page was never on screen. Counting
+    // it would push the visit-count ratio above 1 — a broken number, not a bias — and it must
+    // not invent the denominator either: no `project_opened` appears here.
     h.getConversation.mockResolvedValue(conversation({ projectId: 'p-deep-link' }))
 
     renderRoute('/chat/c1')

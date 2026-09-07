@@ -42,8 +42,6 @@ def test_timestamp_columns_declared() -> None:
 
 
 def test_owned_by_user_is_scoped_and_indexed() -> None:
-    # Single-tenant ownership boundary: user_id present, non-nullable, indexed —
-    # and NO org_id anywhere.
     col = _OwnedThing.__table__.c.user_id
     assert col.nullable is False
     assert col.index is True
@@ -51,9 +49,6 @@ def test_owned_by_user_is_scoped_and_indexed() -> None:
 
 
 async def test_uuidv7_and_timestamps_roundtrip(db_session) -> None:
-    # Integration-in-default-lane: needs the Postgres test DB (db_session fixture).
-    # Create only the widget table inside the rolled-back test transaction (the
-    # owned-thing table's FK to users.id doesn't exist yet).
     conn = await db_session.connection()
     await conn.run_sync(_WidgetBase.metadata.create_all)
 

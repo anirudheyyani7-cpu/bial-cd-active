@@ -63,17 +63,11 @@ afterEach(() => cleanup())
 
 describe('the standing line says what this chat DOES', () => {
   it('★ speaks the board\'s line verbatim, and still never says the app is not RUNNING', () => {
-    // THE LINE WAS REWRITTEN ONCE, ON A MISREADING. An earlier pass read the
-    // board's "your app is not open here" as a claim that the container is down — which would be
-    // false, since a planning question reads the live app and starts it if it is stopped. But the
-    // board is talking about the SCREEN: a plan chat has no app pane. And its second clause is
-    // true for a different reason again — a plan chat's toolset carries no write, no schema
-    // change, no sandbox command and no finish tool, so the run cannot alter the app.
-    //
-    // So the board's words stand, and what must STILL never appear is a claim about the
-    // container's state. Both halves are asserted here, because keeping only the first would let
-    // the misreading back in and keeping only the second would let the board's line be rewritten
-    // again.
+    // The board's "your app is not open here" is about the SCREEN, not the container: a planning
+    // question still reads the live app and starts it if it is stopped. And a plan chat's toolset
+    // carries no write, no schema change, no sandbox command and no finish tool, so the run cannot
+    // alter the app either. Both halves are asserted, because keeping only one lets the other
+    // regress unnoticed.
     const { container } = line(reading({ state: 'asleep', restorable: true }))
     const text = container.textContent ?? ''
 

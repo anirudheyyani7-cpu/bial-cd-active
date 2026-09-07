@@ -21,7 +21,6 @@ from src.services.appdb.provision import control_plane_dsn
 
 
 async def scalar_on(dsn: str, sql: str, **params: Any) -> Any:
-    """Open `dsn`, run one statement, return the first column of the first row."""
     engine = create_async_engine(dsn, poolclass=NullPool)
     try:
         async with engine.connect() as conn:
@@ -31,7 +30,7 @@ async def scalar_on(dsn: str, sql: str, **params: Any) -> Any:
 
 
 async def execute_on(dsn: str, sql: str, **params: Any) -> None:
-    """Open `dsn` and run one statement for its effect (AUTOCOMMIT, so DDL sticks)."""
+    """AUTOCOMMIT, so DDL sticks."""
     engine = create_async_engine(dsn, poolclass=NullPool, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:

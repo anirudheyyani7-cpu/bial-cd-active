@@ -210,16 +210,12 @@ async def _watch_until(
 ) -> None:
     """Run the real watcher until `done()`, then stop it.
 
-    BOUNDED BY WALL CLOCK, NOT BY A COUNT OF EVENT-LOOP TURNS, and the difference is the whole
-    reason this helper exists. These states start UNFRAMED, so the first served poll really
-    runs `_emit_preview_ready` and the counter write, both of which do database I/O — and how
-    many `sleep(0)` turns that takes depends on what else is running. A counted spin passes on
-    an idle machine and stops the watcher mid-emit under a loaded suite, which is a test that
-    reports scheduling luck.
+    Bounded by WALL CLOCK, not a count of event-loop turns: these states start UNFRAMED, so the
+    first served poll does real DB I/O via `_emit_preview_ready`, and how many `sleep(0)` turns
+    that takes depends on load — a counted spin would flake under a loaded suite.
 
-    The budget is a deadlock guard, never the thing being measured: every caller asserts on the
-    poll count afterwards, so a watcher that stopped early fails loudly instead of reading as a
-    pass."""
+    The budget is a deadlock guard only, never what's measured: callers assert on the poll count
+    afterwards, so an early stop fails loudly instead of reading as a pass."""
     task = asyncio.create_task(TurnEngine()._watch_preview(state))
     deadline = time.monotonic() + budget_s
     while not done() and time.monotonic() < deadline:
@@ -299,14 +295,13 @@ async def test_a_turn_that_joins_a_container_already_serving_started_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """★ THE ARM THAT WOULD HAVE RUINED THE RATIO. `_attach_sandbox` runs on EVERY turn of EVERY
-    kind, and on most of them the container is already up — the second message in a chat, and
-    every message after it. Those turns start nothing.
+    kind, and on most of them the container is already up — the second message in a chat and
+    every one after it. Those turns start nothing.
 
-    Counting them would make the denominator "turns" rather than "starts" and hand the ratio this
-    counter feeds a value near 1 that means nothing — the failure this gate exists to prevent.
-    This is also an outcome arriving differently than expected: not a turn joining an in-flight
-    start, but one joining a start that already finished. Either way it is neither an attempt nor
-    a success, and it is excluded from both."""
+    Counting them would make the denominator "turns" rather than "starts" and pull the ratio
+    this counter feeds toward a value near 1 that means nothing. This turn also joins a start
+    that already FINISHED, not one in flight — either way it is neither an attempt nor a
+    success."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
     user = await UserFactory.create(db_session, email="u15b@rvaiglobal.com")
     project = await ProjectFactory.create(db_session, user.id)
@@ -363,10 +358,9 @@ async def test_a_crash_and_recovery_is_not_a_second_start(
     """One emit per event, on a path where the obvious placement gives several.
 
     `_emit_preview_ready` has TWO callers — this watcher and the self-heal verify — and this
-    watcher calls it again on every crash RECOVERY. Counting inside the emitter would file a
-    fresh "reached running" row every time a long build's dev server flapped. The count is on
-    `claim_preview_frame()`, the synchronous once-per-turn one-shot, so it is once by
-    construction rather than by everyone remembering.
+    watcher calls it again on every crash RECOVERY, so counting inside the emitter would file a
+    fresh "reached running" row on every flap. The count sits on `claim_preview_frame()`, the
+    synchronous once-per-turn one-shot, so it is once by construction, not by convention.
 
     Mutation check: move the count inside `_emit_preview_ready` and this goes red."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
@@ -399,15 +393,13 @@ async def test_a_broken_counter_does_not_stop_the_preview_appearing(
 ) -> None:
     """The counter must never fail the thing it is counting, asserted at the NEW call site.
 
-    `count` swallows everything by construction and there is a general test for that above; this
-    one is about the consequence at THIS seam, which is a long-lived background loop. The count
-    sits after the preview frame, so a raising counter could not cost the citizen their app on
-    screen — what it would cost is everything the watcher does AFTERWARDS: the crash detection
-    and the reconnect frame for the rest of the turn. So the assertion is that the loop is still
-    polling well past the count, not merely that the frame got out before it.
+    This seam is a long-lived background loop: a raising counter here wouldn't cost the first
+    preview frame (the count fires after it) but everything AFTERWARDS — crash detection and
+    the reconnect frame for the rest of the turn. The assertion is that polling continues well
+    past the count, not merely that the frame got out before it.
 
-    Mutation check: `raise` instead of swallowing inside `count` and the poll count stops dead
-    at the first served poll."""
+    Mutation check: `raise` instead of swallowing inside `count` stops the poll count dead at
+    the first served poll."""
     monkeypatch.setattr(engine_mod, "READINESS_POLL_S", 0)
 
     def _explode(*_args: object, **_kwargs: object) -> object:

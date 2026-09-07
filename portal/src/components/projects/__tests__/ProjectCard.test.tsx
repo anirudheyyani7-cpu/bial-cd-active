@@ -72,12 +72,10 @@ describe('ProjectCard', () => {
       <ProjectCard project={mkProject('Roster')} onOpen={vi.fn()} onDelete={vi.fn()} />,
     )
     const del = screen.getByRole('button', { name: /delete roster/i })
-    // The old `div role="button"` wrapper is gone — nothing in the card claims the button role
-    // beyond the two real <button>s themselves.
+    // Nothing in the card claims the button role beyond the two real <button>s themselves.
     expect(container.querySelector('[role="button"]')).toBeNull()
-    // And Delete's only <button> ancestor is itself: no interactive element wraps it, so its
-    // accessible name can never be absorbed by an outer role="button" (the strict-mode double
-    // match that forced the e2e workaround).
+    // Delete's only <button> ancestor is itself: no interactive element wraps it, so its
+    // accessible name can never be absorbed by an outer role="button".
     expect(del.parentElement?.closest('button')).toBeNull()
   })
 

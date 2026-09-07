@@ -8,8 +8,6 @@ THE LOAD-BEARING TEST IN THIS FILE is `test_a_container_matching_no_app_row_gets
 its mutation-check sibling `test_a_guessed_owner_would_wrongly_become_destroy_eligible`. An owner
 is recovered by matching names FORWARD against the app table; failing to match stamps no owner at
 all, and filling in a plausible one turns "report this to a human" into "delete unsaved work".
-
-Shaped after `test_sandbox_reconcile.py` and its siblings: gate, wire body, audit row, failures.
 """
 
 from __future__ import annotations
@@ -64,10 +62,9 @@ class _Fleet:
     exactly what a future substrate must satisfy, and inheriting the real ABC would stop
     exercising it.
 
-    `stamp_tags` MERGES into the recorded state — the contract `FleetTagger` states, which the
-    real client keeps by reading before it writes (ARM itself replaces the map) — so the tests
-    below observe the tags a container would actually end up carrying rather than the argument
-    they were called with."""
+    `stamp_tags` MERGES into the recorded state, as the real client does by reading before it
+    writes (ARM itself replaces the map) — so tests below see the tags a container would
+    actually end up carrying, not the argument they were called with."""
 
     def __init__(
         self,

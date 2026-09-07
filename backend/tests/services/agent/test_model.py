@@ -49,7 +49,6 @@ def _timeout_of(client: AsyncAnthropicFoundry) -> Timeout:
 
 
 def test_guard_rejects_public_anthropic_api() -> None:
-    # The public API endpoint is refused, fail-closed.
     with pytest.raises(FoundryOnlyError):
         _assert_foundry_only("https://api.anthropic.com/v1")
 
@@ -71,7 +70,6 @@ def test_build_client_targets_foundry() -> None:
 
 
 def test_build_model_from_api_key_config() -> None:
-    # A valid Foundry config builds an AnthropicModel (Foundry-backed).
     model = build_foundry_model(_config())
     assert isinstance(model, AnthropicModel)
 
@@ -90,7 +88,6 @@ def test_api_key_client_applies_configured_timeout_and_retries() -> None:
 
 
 def test_client_defaults_are_finite_and_retry_modest() -> None:
-    # Out of the box the socket is already finite (never an unbounded hang) and retry-modest.
     client = build_foundry_client(_config())
     assert client.max_retries == 2
     timeout = _timeout_of(client)
@@ -240,9 +237,6 @@ async def test_transient_connection_errors_are_retried_to_success(
 async def test_dead_endpoint_surfaces_a_catchable_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # An endpoint that accepts the socket but never answers must become a catchable
-    # `APITimeoutError` within the configured read-timeout budget (retries exhausted) — the
-    # wedged server→model connection the module docstring promises never hangs.
     monkeypatch.setattr("anthropic._base_client.INITIAL_RETRY_DELAY", 0.0)
     connections = 0
 

@@ -61,23 +61,13 @@ def test_the_reaper_imports_without_the_fastapi_app() -> None:
 
 def test_the_integrity_verdict_carries_nothing_heavy_of_its_own() -> None:
     """`manager.py` AND `reaper.py` both import this module at module level, so it must not
-    reach back into either of them, or into the orchestrator.
-
-    LOADED BY FILE PATH, DELIBERATELY, and this is the honest version of the claim. Importing
-    `src.services.build_sessions.integrity` by name runs the PACKAGE `__init__`, which imports
-    `manager` -> `appdata` -> `services.projects` -> `agent.agent` and therefore `pydantic_ai` —
-    that is already true of `reaper` today and is not this module's doing. What this test pins is
-    the property that IS this module's doing: its own module-level imports stay cheap, so it can
-    never become the reason a worker loads the agent stack, and it can never close the
-    `build_sessions` <-> `orchestrator` cycle that forced `selfheal` and `harness` to defer
-    theirs.
-
-    NOT ASSERTED, because it would be a false claim: `fastapi` still arrives, pulled in by
-    `src.services.sandbox` and `src.services.storage`, which every module in this area already
-    loads. The three names below are the ones this module could plausibly grow and must not.
-
-    Mutation check: add `from src.services.build_sessions.manager import SessionManager` (or any
-    `src.services.orchestrator` import) at the top of `integrity.py` and this goes red."""
+    reach back into either of them, or into the orchestrator. LOADED BY FILE PATH, DELIBERATELY:
+    importing by name runs the PACKAGE `__init__`, which already drags in `pydantic_ai` via
+    `manager` — true of `reaper` today and not this module's doing. What IS this module's doing
+    is staying cheap enough to never become the reason a worker loads the agent stack.
+    NOT ASSERTED: `fastapi` still arrives via `sandbox`/`storage`, which every module here loads.
+    Mutation check: add an `orchestrator` (or `manager`) import to `integrity.py` and this
+    goes red."""
     result = _import_in_fresh_interpreter(
         "import importlib.util, sys;"
         " spec = importlib.util.spec_from_file_location("
@@ -102,20 +92,14 @@ def test_the_integrity_verdict_carries_nothing_heavy_of_its_own() -> None:
 
 
 def test_the_environment_accessor_stays_outside_the_settings_cycle() -> None:
-    """THE CYCLE IS THE WHOLE REASON `src/core/runtime_env.py` EXISTS.
+    """THE CYCLE IS THE WHOLE REASON `src/core/runtime_env.py` EXISTS: `src.config` reaches
+    `src.settings.api`, which reaches both `src.services.redis.config` and the sandbox config, so
+    a module that needs "which environment is this" cannot ask `settings` at import time. One
+    leaf accessor replaces the per-module workarounds, and it stays safe only while it imports
+    nothing at module scope.
 
-    `src.config` reaches `src.settings.api`, which reaches both
-    `src.services.redis.config` and the sandbox config. So the modules that need "which
-    environment is this" — the Redis
-    key prefix and the `bial-control-plane` tag — cannot ask at import time, and each had written
-    its own function-scoped import with the same paragraph of explanation. One leaf accessor
-    replaces both, and it is only safe while it imports NOTHING at module scope.
-
-    Asserted on a cold interpreter for the reason this whole file exists: `conftest` imports
-    `src.main` first, so in-process every module is already resolved and a cycle proves nothing.
-
-    Mutation-check: hoist `from src.config import settings` to the top of `src/core/runtime_env.py`
-    and this goes red."""
+    Mutation-check: hoist `from src.config import settings` to the top of
+    `src/core/runtime_env.py` and this goes red."""
     result = _import_in_fresh_interpreter(
         "import importlib, sys;"
         " importlib.import_module('src.core.runtime_env');"
@@ -195,23 +179,10 @@ def test_the_app_still_builds_with_its_full_route_surface() -> None:
     paths = list(app.openapi().get("paths", {}))
     build_session_paths = [p for p in paths if "build-session" in p]
 
-    # The 18 build-session-prefixed paths include `projects/{project_id}/client-error` (the app's
-    # own in-browser error report), `projects/{project_id}/compile-state` (the compile signal for
-    # a tab with no live turn — the turn stream's producer stops at the terminal), and
-    # `projects/{project_id}/workspace-check` (the idle-tab integrity probe, for the reversion
-    # that happens while nobody is sending messages). They also include the two superadmin
-    # operator routes for the apps a reversion parks (`internal/apps/{app_id}/parked` and
-    # `.../promote`) — without a reader those objects would be write-only, and in a
-    # false-reversion they hold the only copy of somebody's work.
-    #
-    # Of the lock operations, only `lock/force-end` is reachable from the UI; `lock/acquire`,
-    # `lock/renew`, `lock/release`, and `heartbeat` are unused and retired.
-    #
-    # `projects/{project_id}/stop-state` exists because the drain's ask (`stop-active-build`)
-    # now RETURNS IMMEDIATELY and a detached task does the waiting, so the outcome needs a
-    # reader: holding a request open for the length of a stop was a dependency nobody could
-    # satisfy — the budget had to sit under the request timeout of a gateway owned by the
-    # client's network — and the outcome it was hiding is three states, not a boolean.
+    # 18 is easy to undercount: it includes the two superadmin park/promote reader routes (a
+    # false reversion would otherwise leave someone's work with no way to read it back), and
+    # the `lock/*` set — only `lock/force-end` is reachable from the UI, the rest are retired,
+    # not dead code to prune.
     assert len(build_session_paths) == 18, (
         f"the C3 build-session route surface changed: expected 18 paths, found "
         f"{len(build_session_paths)}. If a route was deliberately added or removed, amend C3 "

@@ -35,8 +35,7 @@ _FAKE_DSN = "postgresql://app:app@db.local/appdb"
 
 
 def test_the_walkthrough_delete_from_visitors_is_blocked() -> None:
-    # The exact improvisation that destroyed real data on 2026-07-22: a psql one-liner
-    # clearing a table "to clean up" during a change build.
+    # The exact 2026-07-22 production incident (see module docstring).
     refusal = you_shall_not_pass(["psql", _FAKE_DSN, "-c", "DELETE FROM visitors"])
     assert refusal is not None
     # The message is corrective, not a dead-end: it names WHY and the sanctioned channel.
@@ -240,9 +239,7 @@ async def test_destructive_sql_is_blocked_in_run_and_the_build_self_heals(
         captured,
     )
     result = await build_agent.run("tweak the app", deps=_deps(fake, sink), model=model)
-    # Only the benign verification ever executed.
     assert fake.command_calls == [["npx", "tsc", "--noEmit"]]
-    # The corrective refusal was fed back to the model in-run.
     all_incoming = "\n".join(captured.get("incoming", []))
     assert "blocked" in all_incoming.lower()
     assert result.output == "verified without touching data"

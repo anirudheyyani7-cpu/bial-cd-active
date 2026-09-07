@@ -25,8 +25,6 @@ const stepPart = (seq: number, label: string, state: StepItem['state'] = 'ok'): 
 
 const textPart = (text: string): MessagePart => ({ type: 'text', text })
 
-/** The tree under test, so a scenario can RE-RENDER it with different parts — which is the only
- *  way to observe a group SEALING, and therefore the only way to test the peek closing itself. */
 function tree(parts: MessagePart[], opts: { isRunning?: boolean; interrupted?: boolean } = {}) {
   const message: ChatMessage = { id: 'a1', role: 'assistant', parts, seq: 1 }
   return (
@@ -120,7 +118,6 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
     const rows = screen.getByTestId('activity-group-rows')
     expect(within(rows).getByText('Reading your visitor screen')).toBeTruthy()
     expect(within(rows).getByText('Adding the Out column')).toBeTruthy()
-    // No new scroll container and no side panel — it opens where it sits.
     expect(rows.querySelectorAll('.overflow-y-auto, .overflow-y-scroll')).toHaveLength(0)
   })
 
@@ -134,7 +131,6 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
     expect(container.className).toMatch(/border-bial-border/)
     expect(container.className).toMatch(/rounded-\[10px\]/)
     expect(trigger().className).toMatch(/bg-canvas-group/)
-    // It hugs its contents rather than spanning the transcript.
     expect(container.className).toMatch(/w-fit/)
   })
 
@@ -173,8 +169,7 @@ describe('a sealed group collapses to a count, and opens where it sits', () => {
       textPart('Done.'),
     ])
     const tiles = screen.getByTestId('activity-glyphs').children
-    // Three tiles, and the first two carry DIFFERENT icons — one tick for everything is exactly
-    // what this replaces. Compared by their rendered markup, since both are inline SVGs.
+    // Compared by their rendered markup, since both are inline SVGs.
     expect(tiles).toHaveLength(3)
     expect(tiles[0]!.innerHTML).not.toBe(tiles[1]!.innerHTML)
     expect(tiles[2]!.textContent).toMatch(/failed/i)
@@ -195,7 +190,6 @@ describe('a group that hit a problem opens by itself, but never mid-turn', () =>
   })
 
   it('the negative half — the same group WHILE RUNNING stays collapsed', () => {
-    // Expanding mid-turn moves what the reader is reading, so the fail-open waits for terminal.
     mount([
       stepPart(1, 'Working on your app', 'failed'),
       stepPart(2, 'Working on your app', 'pending'),
@@ -230,17 +224,13 @@ describe('a live group names what is happening NOW and grows in place', () => {
     expect(trigger().textContent).toContain('3 steps')
     expect(trigger().textContent).not.toContain('Making sure everything fits together')
     expect(screen.getByTestId('activity-group-now').textContent).toBe('Making sure everything fits together')
-    // Icons accumulate in the row itself — one per call, oldest on the left.
     expect(screen.getByTestId('activity-glyphs').childElementCount).toBe(3)
   })
 
   it('★ keeps its height as icons fill it, so the transcript never jumps', () => {
-    // The last scenario here. jsdom lays nothing out, so what is asserted is the MECHANISM that keeps
-    // the row exactly one line tall while steps accumulate into it: a strip that never shrinks,
-    // tiles of a FIXED 22px square rather than content-sized ones, and each tile after the first
-    // pulled back over its neighbour so a long run stays compact instead of wrapping onto a second
-    // line. A wrapping tile, or a dropped negative margin, would grow the group's height on every
-    // completed step and shuffle the transcript under someone reading it.
+    // jsdom lays nothing out, so this pins the MECHANISM instead: a strip that never shrinks, tiles
+    // of a fixed 22px square, and each tile after the first pulled back over its neighbour so a long
+    // run stays compact rather than wrapping and growing the group's height under the reader.
     //
     // Mutation receipt: drop `flex-shrink-0` from the strip, or the `marginLeft` from the tiles,
     // or make the tile size anything but the fixed square, and one of these goes red.
@@ -256,7 +246,6 @@ describe('a live group names what is happening NOW and grows in place', () => {
     expect(tiles()[0]!.className).toMatch(/w-\[22px\]/)
     expect(tiles()[0]!.style.marginLeft).toBe('')
 
-    // Four more steps land in the same group — the row gains tiles, not height.
     view.rerender(
       tree(
         Array.from({ length: 5 }, (_, i) =>
@@ -271,8 +260,6 @@ describe('a live group names what is happening NOW and grows in place', () => {
     for (const [i, tile] of tiles().entries()) {
       expect(tile.className).toMatch(/h-\[22px\]/)
       expect(tile.className).toMatch(/w-\[22px\]/)
-      // Overlapped rather than laid end to end: every tile but the first is pulled back over the
-      // one before it, which is what stops five icons from needing a second line.
       expect(tile.style.marginLeft).toBe(i === 0 ? '' : '-7px')
     }
   })
@@ -301,10 +288,9 @@ describe('a live group names what is happening NOW and grows in place', () => {
   })
 
   it('★ but it stays open through the pause BETWEEN two tool calls', () => {
-    // THE GAP IS NOT THE SEAL. A tool returns, and the next one starts only after the model has
+    // THE GAP IS NOT THE SEAL: a tool returns, and the next one starts only after the model has
     // thought again — seconds, with adaptive reasoning on — and in that window every step emitted
-    // so far reads as settled while the turn is still very much running. Closing on that snapped
-    // the group shut under a citizen who had just pressed it open, again on every step of a build.
+    // so far reads as settled while the turn is still very much running.
     //
     // Mutation receipt: gate the self-close on `facts.running` again instead of on the turn and
     // the first assertion below goes red — the group closes in the gap and never reopens.
@@ -419,12 +405,9 @@ describe('groupLabel — the wording, unit-tested away from the DOM', () => {
 })
 
 /**
- * THE SECOND ANNOUNCEMENT.
- *
- * The surface used to pass a hardcoded `null` for this, under a comment saying the group announced
- * it itself. The group had no live region and no announcer, so the effect could never fire outside
- * `Announcer`'s own unit test — a screen-reader user heard that the agent had started and never
- * heard what it did. These pin the WIRING; the hook's own rules stay in `Announcer.test.tsx`.
+ * THE SECOND ANNOUNCEMENT: these pin the WIRING onto ChatThread — a screen-reader user needs to
+ * hear what a group amounted to, not just that one started. The hook's own rules stay in
+ * `Announcer.test.tsx`.
  */
 describe('a group reports what it amounted to, once, as it seals', () => {
   const withReporter = (
@@ -481,10 +464,9 @@ describe('a group reports what it amounted to, once, as it seals', () => {
   })
 
   it('says nothing for a group that was ALREADY finished when the chat opened', () => {
-    // THE ONE THAT MATTERS: it announces what just happened. A finished chat with past builds in
-    // it renders sealed groups on mount, and announcing those meant a reader who opened a
-    // conversation heard a summary of work nobody had just done — once per historical group, the
-    // last of them winning the live region.
+    // THE ONE THAT MATTERS: without this, a finished chat announces every historical group on
+    // mount — a reader who opens a conversation would hear a summary of work nobody just did,
+    // once per group, last one winning the live region.
     const onGroupSealed = vi.fn()
     render(withReporter([stepPart(1, 'Reading your data'), stepPart(2, 'Writing the page')], onGroupSealed))
     expect(onGroupSealed).not.toHaveBeenCalled()
@@ -514,13 +496,9 @@ describe('a group reports what it amounted to, once, as it seals', () => {
 })
 
 describe('★ the icon map speaks the server\'s vocabulary, not a guess at it', () => {
-  // `ActivityAnatomy` never draws an empty tile: every glyph on it names a kind of call. The first
-  // cut of `stepIconFor` matched verbs the projection does not emit — `reading`, `adding`,
-  // `putting`, `creating`, `installing`, `finishing` — and had no branch for the ones it does, so a
-  // quarter of the tiles in a real 61-message transcript drew the featureless fallback circle.
-  //
-  // THESE ARE THE SERVER'S ACTUAL WORDS, copied from `backend/src/services/messages/projection.py`.
-  // If a label there is reworded, this list is what goes red.
+  // `ActivityAnatomy` never draws an empty tile: every glyph on it names a kind of call. THESE ARE
+  // THE SERVER'S ACTUAL WORDS, copied from `backend/src/services/messages/projection.py` — if a
+  // label there is reworded, this list is what goes red.
   const EMITTED: [string, string][] = [
     ["Looking at your app's main page", 'read'],
     ["Looked through the app's files", 'read'],
@@ -559,8 +537,7 @@ describe('★ the icon map speaks the server\'s vocabulary, not a guess at it', 
 
   it('★ sees through the "Still …" prefix a slow step is wrapped in', () => {
     // The projection fronts a long-running step's OWN words rather than replacing them, so the raw
-    // string starts with "Still" — and the steps a citizen stares at longest were exactly the ones
-    // being sent to the neutral dot.
+    // string starts with "Still".
     expect(stepIconFor('Still setting up the tools your app needs').displayName)
       .toBe(stepIconFor('Setting up the tools your app needs').displayName)
   })

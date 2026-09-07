@@ -88,8 +88,7 @@ async def test_a_plan_chat_gets_the_read_surface_plus_only_the_offer_tool(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
     # THE WHOLE OF "a Plan chat cannot change the app": the four read tools and the offer,
-    # and no fifth thing. The retired third value (Ask) had exactly this list minus the
-    # offer, which is the difference that stopped being worth a whole enum member.
+    # and no fifth thing.
     seen: dict[str, Any] = {}
     agent: Agent[ReadDeps, str] = Agent(deps_type=ReadDeps)
     await agent.run(
@@ -99,9 +98,8 @@ async def test_a_plan_chat_gets_the_read_surface_plus_only_the_offer_tool(
         toolsets=toolsets_for_kind(ChatKind.PLAN, workspace_from_read_deps).toolsets,
     )
     assert seen["tool_names"] == _READ_TOOLS | _SHARED_TOOLS | {"present_plan_options"}
-    # Named individually as well as by set equality: a future tool added to the read-only
-    # registry would move the set and could be waved through, but these six names are the
-    # ones whose absence IS the guarantee.
+    # Named individually too: a future tool added to the read-only registry would move the
+    # set and could be waved through, but these six names are whose absence IS the guarantee.
     assert not (_WRITE_ONLY_TOOLS | {"apply_schema_change"}) & seen["tool_names"]
 
 
@@ -125,8 +123,8 @@ async def test_the_surface_answers_may_write_rather_than_leaving_it_to_be_re_der
 async def test_a_forged_write_tool_call_in_a_plan_chat_is_structurally_rejected(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
-    # The model FORGES a write_file call in a Plan chat. The runtime must reject it as an
-    # unknown tool (it is not in the run's toolsets at all) — never execute anything.
+    # It is not in the run's toolsets at all, so the runtime must reject the forged call as
+    # an unknown tool — never execute anything.
     seen: dict[str, Any] = {}
     agent: Agent[ReadDeps, str] = Agent(deps_type=ReadDeps)
     result = await agent.run(
@@ -153,12 +151,8 @@ async def test_plan_options_call_defers_and_ends_the_run(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
     # The call DEFERS — the run ends with `DeferredToolRequests` carrying it (the user's click
-    # is the result, recorded later by `turns/plan_options.py`).
-    #
-    # THE CALL CARRIES A PLAN, and it must: `plan` is a REQUIRED argument on the offer tool now,
-    # so an argument-less call is not a deferral at all — pydantic-ai validates the missing
-    # argument, hands the model a retry prompt, and the run exhausts. That is the correct
-    # behaviour and is asserted below; this arm is the happy path.
+    # is the result, recorded later by `turns/plan_options.py`). `plan` is a REQUIRED argument
+    # on the offer tool; an argument-less call is not a deferral at all (the next test).
     from pydantic_ai.tools import DeferredToolRequests
 
     agent: Agent[ReadDeps, str] = Agent(deps_type=ReadDeps)
@@ -173,9 +167,8 @@ async def test_plan_options_call_defers_and_ends_the_run(
     )
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.tool_name for call in result.output.calls] == ["present_plan_options"]
-    # …and the plan travels ON the call, which is what makes it the single stored copy: the
-    # handoff resolves the plan from this argument rather than from anything the browser posts
-    # back, so a stale second tab cannot write stale requirements into a permanent first message.
+    # The plan travels ON the call: the handoff resolves it from this argument, never from
+    # anything the browser posts back, so a stale second tab can't write stale requirements in.
     assert "Ship the visitor log." in str(result.output.calls[0].args)
 
 
@@ -183,13 +176,10 @@ async def test_an_offer_with_no_plan_is_not_a_deferral_at_all(
     workspace: ExtractedSnapshotWorkspace,
 ) -> None:
     """The other side of the argument being REQUIRED, and worth pinning because it is the shape
-    every pre-migration row has on disk.
-
-    A model that calls the offer with nothing in it does not get a card: pydantic-ai refuses the
-    call at validation, and the run exhausts rather than deferring. The turn engine's own arm for
-    this (`plan_from_call` returning None → the offer is not recorded and the citizen is told the
-    plan was not kept) is asserted in `test_plan_options.py`; this pins the layer beneath, which
-    is that the runtime itself will not hand back a deferral for a call with no plan in it."""
+    every pre-migration row has on disk: a call with nothing in it does not get a card,
+    pydantic-ai refuses at validation, and the run exhausts rather than deferring. The turn
+    engine's own arm for this (`plan_from_call` returning None) is asserted in
+    `test_plan_options.py`; this pins the layer beneath it."""
     from pydantic_ai.tools import DeferredToolRequests
 
     agent: Agent[ReadDeps, str] = Agent(deps_type=ReadDeps)
@@ -219,9 +209,8 @@ def _build_deps() -> BuildDeps:
 
 
 async def test_build_agent_still_carries_the_whole_sandbox_set_natively() -> None:
-    # The harness path is unchanged by the registry convergence below: `build_agent` is constructed
-    # with `sandbox_toolset` and offers exactly that set. Pinned here so the registry work below
-    # cannot quietly move the harness's surface too.
+    # `build_agent` is constructed with `sandbox_toolset` directly, unchanged by the registry
+    # below — pinned so that work cannot quietly move the harness's own surface too.
     seen: dict[str, Any] = {}
     await build_agent.run(
         "build it", deps=_build_deps(), model=_tool_listing_model(seen, [text_turn("done")])
@@ -285,8 +274,6 @@ async def test_writes_run_command_is_the_sandbox_one_not_the_read_only_guest_lis
         model=FunctionModel(respond),
         toolsets=_write_toolsets(workspace),
     )
-    # The sandbox version teaches `npm install`; the read-only version publishes a closed
-    # command list. Exactly one of these can be true.
     assert "npm" in captured["run_command"]
     assert "Available commands:" not in captured["run_command"]
 
@@ -300,17 +287,14 @@ async def test_a_caller_that_cannot_run_build_is_told_so_rather_than_handed_no_t
 
 
 async def test_fetch_output_slice_reaches_the_only_kind_that_runs_commands() -> None:
-    """★ THE ALLOWLIST TRAP, asserted where it would have fired silently.
+    """★ THE ALLOWLIST TRAP, asserted where it would have fired silently. `_WRITE_STRUCTURED_READS`
+    is an ALLOWLIST of exactly `list_files`/`search_files` — register the slice tool on
+    `read_only_toolset` instead (the natural home for something that only reads) and the filter
+    drops it from Build, the ONE kind that runs commands. Nothing else in this suite would have
+    gone red: a Plan chat would list a tool it can never use, and Build would quietly lose it.
 
-    `_WRITE_STRUCTURED_READS` is an ALLOWLIST of exactly `list_files`/`search_files`. Register the
-    slice tool on `read_only_toolset` — the natural home for something that only reads — and the
-    filter drops it from Build, the ONE kind that runs commands and therefore the one kind whose
-    truncation notices hand out handles. Nothing else in this suite would have gone red: a Plan
-    chat would list a tool it can never use, and Build would quietly lose it.
-
-    Asserted against `toolsets_for_kind` (through `registered_tool_definitions`, which enumerates
-    it) rather than against a hand-kept name set, so the assertion is about the registry the model
-    is actually handed."""
+    Asserted against `toolsets_for_kind` rather than a hand-kept name set, so the assertion is
+    about the registry the model is actually handed."""
     build = set(await registered_tool_definitions(ChatKind.BUILD))
     assert "fetch_output_slice" in build
     assert "run_command" in build  # the tool whose notices name it — same kind, by construction
@@ -334,22 +318,14 @@ async def test_the_registry_is_exhaustive_over_the_enum() -> None:
 
 
 async def test_the_kinds_differ_by_which_toolsets_they_are_handed_and_by_nothing_else() -> None:
-    """★ THE WHOLE DIFFERENCE BETWEEN THE TWO KINDS, STATED AS ONE CLAIM.
+    """★ THE WHOLE DIFFERENCE BETWEEN THE TWO KINDS, STATED AS ONE CLAIM: every other test in
+    this suite rests on it — if the two surfaces overlap anywhere but the read surface, then
+    something outside the registry has to know which kind it is looking at.
 
-    Every other test in this suite rests on this: if the two surfaces overlap somewhere other
-    than the read surface, then something outside the registry has to know which kind it is
-    looking at, and "the kind decides only the toolset" stops being true.
-
-    THE INTERSECTION IS NOT EMPTY, AND THAT IS THE INTERESTING PART. `read_file` and
-    `run_command` are on BOTH lists, under one name each, doing different things — Plan reads
-    and runs through the read-only registry, Build through the sandbox. That is not a leak in
-    the rule, it is the rule working: the same ABILITY, routed by the toolset the kind
-    resolved, with no caller anywhere asking which kind it was. The two are told apart the
-    only way the model can tell them apart — by their description, which is why
-    `test_writes_run_command_is_the_sandbox_one_not_the_read_only_guest_list` exists.
-
-    Deliberately NOT a tool count. A shared toolset is expected to land on both arms later, and
-    a count assertion here would go red then, with nothing actually broken."""
+    The intersection is not empty ON PURPOSE — `read_file` and `run_command` are on BOTH
+    lists, told apart only by description (see the guest-list test below). And deliberately
+    NOT a tool count: a shared toolset is expected to land on both arms later, and a count
+    assertion here would go red then with nothing actually broken."""
     plan = await registered_tool_definitions(ChatKind.PLAN)
     build = await registered_tool_definitions(ChatKind.BUILD)
 
@@ -396,11 +372,10 @@ def test_no_second_copy_of_the_chat_kind_wording_lives_under_backend_src() -> No
     `backend/src/` allowed to hold a string describing what a chat kind does — one that could
     reach a browser — is this catalogue.
 
-    `mode_prompts.py` is excluded ON PURPOSE, not by oversight: its Plan segment is
-    MODEL-facing text owned by a different unit of this same plan, which rewrites that segment
-    to sharpen the model's OWN description of what Plan does. An unscoped grep here would put
-    this test and that unit's deliverable on opposite sides of one assertion — which is
-    precisely the mistake this scoping exists to avoid."""
+    `mode_prompts.py` is excluded ON PURPOSE: its Plan segment is MODEL-facing text owned by a
+    different unit of this same plan, which rewrites that segment to sharpen the model's OWN
+    description of what Plan does. An unscoped grep here would pit this test against that
+    unit's deliverable."""
     backend_root = Path(__file__).resolve().parents[3]
     src_root = backend_root / "src"
     excluded = {

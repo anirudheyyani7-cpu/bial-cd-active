@@ -1,20 +1,15 @@
 """The worker entrypoint's structural guarantees (U4, ADR-0011 §2).
 
-`test_the_worker_starts_the_broker_exactly_once` is the most important test in this unit. Two
-CLI-based designs for this worker were considered and BOTH were fatally recursive or unsafe:
+`test_the_worker_starts_the_broker_exactly_once` is the most important test here. Two CLI-based
+designs were considered and BOTH were fatally recursive or unsafe:
 
-1. `taskiq worker` plus a `WORKER_STARTUP` handler that starts the scheduler — `run_scheduler`
-   calls `TaskiqScheduler.startup()`, which calls `broker.startup()`, which fires
-   `WORKER_STARTUP` when `is_worker_process`. The handler re-fires the thing that spawned it,
-   without bound.
-2. `taskiq worker` for single-scheduler safety — its worker-count argument defaults to **2**, so
-   the CLI forks two children and each fires `WORKER_STARTUP`. An earlier plan draft relied on
-   `minReplicas = maxReplicas = 1` for that guarantee; a replica pin says nothing about child
-   processes inside one replica.
+1. `taskiq worker` + a `WORKER_STARTUP` handler that starts the scheduler — `run_scheduler` calls
+   `TaskiqScheduler.startup()` -> `broker.startup()` -> re-fires `WORKER_STARTUP`, unbounded.
+2. `taskiq worker` for single-scheduler safety — its worker-count defaults to **2**, so the CLI
+   forks two children and each fires `WORKER_STARTUP`, and a replica pin says nothing about
+   child processes inside one replica.
 
-Owning the entrypoint makes "one broker startup, one scheduler" true by construction. This file
-is what stops a future refactor from quietly reintroducing either shape.
-"""
+Owning the entrypoint makes "one broker startup, one scheduler" true by construction."""
 
 from __future__ import annotations
 
@@ -93,16 +88,13 @@ def test_exactly_one_scheduler_source_is_configured() -> None:
 
 
 def test_the_scheduler_loop_is_driven_with_first_run_skipped() -> None:
-    """`skip_first_run=True` is MANDATORY and `taskiq.api.run_scheduler_task` does not expose it,
-    which is why the loop is driven directly.
-
-    Cron last-run state is an in-memory dict that is never persisted, so on restart the first
-    iteration evaluates the cron against the CURRENT minute and fires if it matches — at a
-    five-minute cadence that is a 1-in-5 chance per restart, i.e. most revision rolls. For a
+    """`skip_first_run=True` is MANDATORY, and `taskiq.api.run_scheduler_task` does not expose
+    it — which is why the loop is driven directly. Cron last-run state is never persisted, so
+    on restart the first iteration evaluates against the CURRENT minute and can fire; for a
     destructive pass, a spurious extra run at deploy time is exactly the wrong failure mode.
 
-    Asserted on the source text because the flag is passed to a library call this test cannot
-    observe without running the loop; the string is short and unambiguous.
+    Asserted on source text because the flag is passed to a library call this test cannot
+    observe without running the loop.
     """
     body = _code_without_docstring(worker_main._run_scheduler_forever)
 
@@ -126,19 +118,11 @@ def test_the_receiver_never_redelivers_a_destructive_message() -> None:
 
 
 def test_the_entrypoint_builds_no_web_app_and_loads_no_model_client() -> None:
-    """The worker must not pay for the things it will NEVER use.
-
-    Scoped deliberately, and the scope was set by measurement rather than aspiration. Importing
-    the entrypoint does pull in SQLAlchemy and `azure.core`, because `src.config` reads the
-    capability configs and both `services/appdb/__init__.py` and `services/sandbox/__init__.py`
-    re-export modules that import them. That is pre-existing (the old `src/config.py` imported
-    the same two config modules) and it is not worth restructuring: the worker needs the ORM for
-    the app table and the advisory lock, and the ARM SDK to enumerate and delete — so the first
-    pass loads both within seconds regardless.
-
-    What must NEVER appear is the other kind of weight: `src.main` (the whole route tree, built
-    for a process that serves no requests) and `pydantic_ai` (the model client, in a process that
-    runs no model). Those are the ones a careless import would add silently.
+    """The worker must not pay for the things it will NEVER use: `src.main` (the whole route
+    tree, for a process that serves no requests) and `pydantic_ai` (the model client, in a
+    process that runs no model). SQLAlchemy and `azure.core` load regardless — pre-existing,
+    needed for the app table, the advisory lock, and the ARM SDK — and are not worth
+    restructuring around.
     """
     result = subprocess.run(  # noqa: S603
         [
@@ -167,8 +151,8 @@ def test_the_entrypoint_builds_no_web_app_and_loads_no_model_client() -> None:
 def test_every_registered_task_module_is_importable() -> None:
     """Taskiq imports only the broker module. A task module that is never imported is never
     registered, so its messages are enqueued and silently never consumed — the failure looks
-    exactly like a dead worker. Deploy reconciliation boarded as the first passenger in U6; this
-    walks whatever is registered, so every later passenger is covered without an edit.
+    exactly like a dead worker. This walks whatever is registered, so a newly added task module
+    is covered without editing the test.
     """
     import importlib
 

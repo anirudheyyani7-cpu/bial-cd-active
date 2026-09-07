@@ -111,9 +111,7 @@ async def test_submit_copies_the_bundle_and_moves_draft_to_pending(db_session) -
 
 
 async def test_submit_records_the_lineage_and_the_declaration(db_session) -> None:
-    # The whole point: a queue item can no longer arrive without its declaration,
-    # and the row says WHICH route it entered through (existing columns, this
-    # service's writes). The declaration is opaque — stored verbatim, never reshaped.
+    # The declaration is stored verbatim — opaque to this service, never reshaped.
     user, app_row = await _owned_app(db_session)
     store = _staged(app_row)
 
@@ -188,7 +186,6 @@ async def test_submit_over_a_pending_item_is_refused(db_session) -> None:
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 409
     assert "withdraw" in excinfo.value.message
-    # Nothing copied, nothing changed — the pending pin survives untouched.
     assert list(store.objects) == [snapshot_key(app_row.id)]
     row = await db_session.get(AppRegistry, app_row.id)
     await db_session.refresh(row)
@@ -304,7 +301,6 @@ async def test_a_live_build_on_this_app_still_refuses_the_submit(db_session, fak
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 409
     assert "build session" in excinfo.value.message
-    # No copy, no row change.
     assert list(store.objects) == [snapshot_key(app_row.id)]
     row = await db_session.get(AppRegistry, app_row.id)
     await db_session.refresh(row)
@@ -383,7 +379,7 @@ async def test_submit_on_transient_storage_error_is_503_not_409(db_session) -> N
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 503
     row = await db_session.get(AppRegistry, app_row.id)
-    assert row.status is AppStatus.DRAFT  # nothing recorded
+    assert row.status is AppStatus.DRAFT
 
 
 async def test_submit_with_no_storage_configured_is_503(db_session) -> None:
@@ -408,7 +404,6 @@ async def test_submit_corrupt_bundle_is_409_and_writes_nothing(db_session) -> No
         await _submit(db_session, store, user, app_row)
     assert excinfo.value.status_code == 409
     assert "bundle" in excinfo.value.message
-    # Only the snapshot exists — no submission copy was written.
     assert list(store.objects) == [snapshot_key(app_row.id)]
     row = await db_session.get(AppRegistry, app_row.id)
     assert row.status is AppStatus.DRAFT

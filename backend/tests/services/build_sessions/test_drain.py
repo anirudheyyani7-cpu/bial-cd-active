@@ -37,8 +37,7 @@ def _aged(hours: float) -> SandboxIdentity:
 def test_with_the_flag_off_nothing_ever_drains() -> None:
     """The default posture everywhere. ADR-0014 records that long-session behaviour was never
     validated and the longest observed live session is ~31 minutes, so this threshold targets a
-    scenario nobody has measured — and it is the only rule that touches a container its builder
-    still considers theirs."""
+    scenario nobody has measured."""
     old = _aged(100)
 
     assert draining_at(old, enabled=False, after_hours=24) is None
@@ -57,7 +56,7 @@ def test_a_builder_who_keeps_working_keeps_the_container() -> None:
     """The same property stated from the builder's side: as long as turns keep starting, the
     drain never lands."""
     old = _aged(200)
-    for _ in range(5):  # turn after turn, well past the mark
+    for _ in range(5):
         assert is_drained(old, now=NOW, enabled=True, after_hours=24, turn_in_flight=True) is False
 
 

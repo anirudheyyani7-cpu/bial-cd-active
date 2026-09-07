@@ -120,8 +120,8 @@ async def test_the_orphan_is_named_in_the_response(client, app, db_session, fake
 async def test_a_registry_entry_whose_container_is_gone(
     client, app, db_session, fake_redis
 ) -> None:
-    # The opposite gap and far less urgent — the next `reconcile_user` clears it — but it is
-    # still a true statement about drift, so it is reported rather than swallowed.
+    # The opposite gap, far less urgent (the next `reconcile_user` clears it), but still true
+    # drift, so it is reported rather than swallowed.
     admin = await _admin(db_session)
     ghost = app_name_for(uuid.uuid7())
     _wire(app, _Fleet([]))
@@ -140,9 +140,8 @@ async def test_a_clean_fleet_reports_nothing(client, app, db_session, fake_redis
     await _register(fake_redis, user_id, name)
 
     body = (await client.post(_RECONCILE, headers=admin)).json()
-    # The fleet numbers cannot say whether the WORKER is alive — every alarm the reclamation
-    # pass raises is emitted by the pass, so a dead scheduler looks like a quiet fleet.
-    # `reclamationStale` is true here because no pass has ever run in this test.
+    # A dead reclamation scheduler looks like a quiet fleet; `reclamationStale` is true here
+    # because no pass has ever run in this test.
     assert body == {
         "live": 1,
         "registered": 1,
@@ -172,7 +171,6 @@ async def test_the_audit_row_carries_counts_but_no_names(
     assert row.resource_type == "sandbox"
     assert row.detail is not None
     assert row.detail == {"live": 1, "registered": 0, "unregistered": 1, "registeredMissing": 0}
-    # Counts only — the name must appear nowhere in the row.
     assert orphan_name not in str(row.detail)
 
 

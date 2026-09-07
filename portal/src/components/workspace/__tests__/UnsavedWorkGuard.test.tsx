@@ -1,16 +1,12 @@
 /**
  * THE IN-PLACE UNSAVED-WORK GUARD.
  *
- * ═══ THE CASE THAT DECIDES WHETHER THIS FEATURE IS A NUISANCE ═══
- *
- * `null` has two causes and they are not the same claim. A check that RAN and could not answer is a
- * real "we could not tell", and the platform says so. A check that was NEVER ASKED is not:
- * `fetchSaveState` may only be called on a live workspace, so on a stopped or never-built project
- * the save state is permanently `null` because there is nothing to compare. Warning there fires "we
- * could not tell whether you have unsaved work" on every exit from every stopped project — the
- * prompt-with-nothing-behind-it that teaches people to dismiss prompts.
- *
- * Half of this file is that one distinction.
+ * THE CASE THAT DECIDES WHETHER THIS FEATURE IS A NUISANCE: `null` has two causes, not one
+ * claim. A check that RAN and could not answer is a real "we could not tell". A check that was
+ * NEVER ASKED is not — `fetchSaveState` may only run on a live workspace, so a stopped project's
+ * save state is permanently `null` with nothing to compare. Warning there fires on every exit
+ * from every stopped project, the prompt-with-nothing-behind-it that teaches people to dismiss
+ * prompts. Half of this file is that one distinction.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, renderHook, act } from '@testing-library/react'

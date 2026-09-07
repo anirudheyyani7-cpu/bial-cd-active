@@ -1,20 +1,14 @@
 """A stand-in for a generated app's container, for the Docker-backed router tests.
 
-It answers two ways and that is the whole point:
+It answers two ways: an ordinary request is echoed back as a parseable REQUEST LINE (asserting
+the host alone is how the keyless arm's missing prefix once shipped undetected — the request
+reached the right container and the framework answered 404), and a WebSocket handshake is
+COMPLETED with a real 101 rather than inferred from the `Upgrade` header alone.
 
-* an ordinary request is echoed back as a parseable line, so a test can assert the REQUEST
-  LINE the router composed rather than merely which host it dialled. Asserting the host alone
-  is how the keyless arm's missing prefix survived the first draft of this design — the
-  request reached the right container and the framework answered 404.
-* a WebSocket handshake is COMPLETED, so live reload can be proven with a real 101 rather than
-  inferred from the `Upgrade` header having been forwarded.
-
-The TLS certificate is minted in-process at start. The upstream is dialled over https because
-the real one is Azure Container Apps ingress, and `proxy_ssl_server_name` / SNI is part of what
-these tests exist to prove — a plaintext stub would skip it. Nothing here trusts the cert
-(nginx's `proxy_ssl_verify` is off by default, exactly as it is against the backend), so a
-throwaway self-signed one is the honest shape. Minting it here rather than shipping a fixture
-keeps the harness free of a checked-in key and of an expiry date that goes stale.
+TLS is real, not plaintext, because SNI (`proxy_ssl_server_name`) is part of what these tests
+exist to prove, matching the real Azure Container Apps ingress. Nothing here trusts the cert
+(`proxy_ssl_verify` is off, as it is against the real backend), so a throwaway self-signed one
+minted in-process — no checked-in key, no expiry to go stale — is the honest shape.
 """
 
 from __future__ import annotations

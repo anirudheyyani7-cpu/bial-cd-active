@@ -75,8 +75,8 @@ async def _completed_build(
 async def test_sweep_spares_a_pardoned_preview_inside_its_lease(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The heartbeat is deleted FIRST so the lease alone is what spares the container —
-    # otherwise the ≤90 s residue of the build's last renew would mask a broken stay.
+    # The heartbeat is deleted FIRST so the lease alone spares the container — otherwise its
+    # ≤90 s residue would mask a broken stay.
     client = FakeSandboxClient()
     user, manager, app_id = await _completed_build(db_session, "pardon1@rvaiglobal.com", client)
     await fake_redis.delete(heartbeat_key(user.id))
@@ -92,9 +92,8 @@ async def test_sweep_spares_a_pardoned_preview_inside_its_lease(
 async def test_sweep_reaps_a_pardoned_preview_once_its_lease_lapses(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # Idle expiry: overwrite the granted stay with a lapsed stamp (the reaper-suite
-    # technique) and the next sweep executes the pardon — teardown, registry gone. This is
-    # the server half of the portal's "placeholder + Relaunch" journey.
+    # The server half of the portal's "placeholder + Relaunch" journey: idle expiry finally
+    # tears the container down for real.
     client = FakeSandboxClient()
     user, manager, app_id = await _completed_build(db_session, "pardon2@rvaiglobal.com", client)
     await fake_redis.delete(heartbeat_key(user.id))
@@ -140,9 +139,9 @@ async def test_pardon_survives_a_stay_grant_failure(
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Best-effort per the end-sequence policy: a Redis blip on the grant must not hang the
-    # feed or strand the lock. Degraded mode is the pre-stay lifetime — the registry is
-    # still there for the sweep to find at heartbeat lapse, so nothing is orphaned.
+    # Best-effort: a Redis blip on the grant must not hang the feed or strand the lock.
+    # Degraded mode is the pre-stay lifetime — the registry stays for the sweep to find at
+    # heartbeat lapse, so nothing is orphaned.
     async def boom_grant(*_a: object, **_k: object) -> datetime:
         raise RuntimeError("redis blip on the stay grant")
 
@@ -150,7 +149,6 @@ async def test_pardon_survives_a_stay_grant_failure(
     client = FakeSandboxClient()
     user, manager, app_id = await _completed_build(db_session, "pardon4@rvaiglobal.com", client)
 
-    # The end sequence completed: terminal emitted, lock released, session popped.
     assert await lock_is_held(fake_redis, user.id) is False
     assert manager.active_session_for(user.id) is None
     # No lease landed — but the container is discoverable (registry kept), so the next

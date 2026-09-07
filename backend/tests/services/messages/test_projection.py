@@ -707,9 +707,8 @@ async def test_plan_options_states_have_no_third_member(db_session) -> None:
     is deliberately the PRE-MIGRATION shape, a prose message ahead of an empty-argument tool
     call.
 
-    Mutation-check: revert the catch-all to `"build_failed"` and this goes red on opt-2's state."""
-    # Mutation-check: revert `_plan_options_state`'s catch-all to return `"build_failed"` and this
-    # goes red on opt-2's state without any other test in this file moving.
+    Mutation-check: revert the catch-all to `"build_failed"` and this goes red on opt-2's state,
+    without any other test in this file moving."""
     user, _, conversation = await _thread(db_session)
     await append_batch(
         db_session,
@@ -853,8 +852,7 @@ async def test_a_call_with_no_plan_renders_no_text_and_still_renders_its_card(db
 
 
 def test_classify_command_maps_the_pinned_commands() -> None:
-    """The pinned command copy: install / data-setup / data-ready / checks — friendly, never
-    the raw argv. This is the SAME translator the live emitter (`tools.py`) calls."""
+    """This is the SAME translator the live emitter (`tools.py`) calls."""
     assert classify_command(["npm", "install", "zod"]) == (
         "Setting up the tools your app needs",
         False,
@@ -876,14 +874,8 @@ def test_classify_command_maps_the_pinned_commands() -> None:
 
 
 def test_classify_command_shows_reads_and_hides_only_housekeeping() -> None:
-    """The hidden-flag rule, at the shell half of the classifier. This asserted `hidden is True`
-    for BOTH groups until the flag stopped meaning "a read" and started meaning "plumbing".
-
-    Housekeeping keeps the flag, which is why the flag is kept at all — `mkdir`, `mv` and
-    `touch` draw a generic line that says nothing about the app.
-
-    The LABEL is asserted beside the flag on both groups so a classifier that returned an empty
-    string could not satisfy the flags alone."""
+    """The LABEL is asserted beside the hidden flag on both groups, so a classifier that
+    returned an empty string could not satisfy the flags alone."""
     for read_only in (["ls", "-la"], ["grep", "-rn", "x", "app/"], ["cat", "app/page.tsx"]):
         label, hidden = classify_command(read_only)
         assert hidden is False
@@ -925,9 +917,8 @@ def test_a_read_binary_asked_to_write_is_never_drawn_as_an_inspection() -> None:
     THE FALLBACK IS THE ANSWER, not a new write label: anything the classifier cannot name
     confidently fails closed to "Working on your app". THE SPELLINGS ARE THE TEST — `-i.bak`
     carries its suffix on the flag and `-ni` bundles it with another short option. Mutation
-    check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` and this goes red."""
-    # Mutation check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` again and
-    # every writing case below goes red while the reading cases stay green.
+    check: return the read label for any `argv[0] in _READ_ONLY_BINARIES` and every writing case
+    below goes red while the reading cases stay green."""
     for writing in (
         ["sed", "-i", "s/a/b/", "app/page.tsx"],
         ["sed", "-i.bak", "s/a/b/", "app/page.tsx"],
@@ -970,7 +961,6 @@ def test_classify_command_fails_closed_on_the_long_tail() -> None:
 
 
 def test_friendly_area_maps_paths_to_areas_never_the_raw_path() -> None:
-    """The friendly-area file map: an app AREA, never the filename. Config is hidden noise."""
     assert _friendly_area("app/page.tsx") == ("your app's main page", False)
     assert _friendly_area("app/layout.tsx") == ("your app's overall look", False)
     assert _friendly_area("app/dashboard/page.tsx") == ("the dashboard page", False)
@@ -984,11 +974,9 @@ def test_friendly_area_maps_paths_to_areas_never_the_raw_path() -> None:
     )
     assert _friendly_area("app/globals.css") == ("your app's styling", False)
     assert _friendly_area("db/schema.ts") == ("where your app stores information", False)
-    # Config / settings are hidden noise.
     assert _friendly_area("package.json")[1] is True
     assert _friendly_area("drizzle.config.ts")[1] is True
     assert _friendly_area("tsconfig.json")[1] is True
-    # Anything unrecognized → the generic area, NEVER the raw path.
     area, hidden = _friendly_area("lib/weird/thing.ts")
     assert area == "a part of your app"
     assert hidden is False
@@ -996,7 +984,6 @@ def test_friendly_area_maps_paths_to_areas_never_the_raw_path() -> None:
 
 
 def test_classify_file_step_carries_the_verb_and_area() -> None:
-    """write_file reads as *Building*, the edits as *Updating* — friendly area, never a path."""
     assert classify_file_step("write_file", "app/page.tsx") == (
         "Building your app's main page",
         False,
@@ -1005,7 +992,6 @@ def test_classify_file_step_carries_the_verb_and_area() -> None:
         "Updating how your app saves and loads information",
         False,
     )
-    # A config write is hidden regardless of the verb.
     assert classify_file_step("write_file", "package.json")[1] is True
 
 
@@ -1792,8 +1778,6 @@ async def test_a_first_slice_far_past_the_old_ceiling_renders_whole(db_session) 
     nine the agent said it had picked up, because a proposal that narrows without listing
     everything back reads as a refusal. Mutation-check: put a `len(first) > N` arm back into
     `_slice_argument` and this goes red on an empty projection."""
-    # Mutation-check: put a `len(first) > N` arm back into `_slice_argument` and this goes red on
-    # an empty projection.
     user, _, conversation = await _thread(db_session)
     found = [
         "a visitor sign-in form",

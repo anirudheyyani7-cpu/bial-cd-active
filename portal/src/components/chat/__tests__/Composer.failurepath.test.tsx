@@ -1,25 +1,18 @@
 /**
- * THE COMPOSER'S FOUR PRE-EXISTING DEFECTS, AS PROPERTIES RATHER THAN PATCHES.
+ * FOUR PRE-EXISTING DEFECTS, AS PROPERTIES RATHER THAN PATCHES.
  *
- * All four reproduced on `main`. They are defects in code this work replaces, so they land as
- * requirements of the new composer rather than as fixes to a file about to be deleted — which is
- * why the earlier fix's open pull request was closed rather than merged.
+ * All four reproduced on `main`. They are defects in code this composer replaces, so they land as
+ * requirements of the new one rather than fixes to a file about to be deleted.
  *
- * ══ WHY MOST OF THEM CANNOT BE RE-INTRODUCED HERE ══
+ * Three share one root: `ChatPage` emptied the composer optimistically, then tried to restore it —
+ * a blind `setText` overwrote newer typing (undo could not recover it, being a controlled input),
+ * an in-flight `fileToBase64` could resolve into an already-cleared composer, and a restore could
+ * merge past the per-message cap.
  *
- * Three of the four came from the same root: `ChatPage` EMPTIED the composer optimistically and
- * then tried to put things back: a blind `setText(rawText)` overwrote whatever the citizen had
- * typed since (and, because the input was fully controlled, the browser's undo stack could not
- * recover it); an in-flight `fileToBase64` could resolve into a composer that had already been
- * cleared; and a restore could merge past the per-message cap.
+ * This composer clears NOTHING until the server confirms — no restore path, nothing to race with —
+ * so the tests below assert "the failure changed nothing" rather than "the restore put it back".
  *
- * This composer clears NOTHING until the server confirms. So there is no restore path, nothing to
- * race with, and the tests below are shaped as "the failure changed nothing" rather than as "the
- * restore put the right things back". That difference is the fix.
- *
- * The per-message clamp lives in the attachment adapter now and is tested where it runs — in
- * `ComposerBox.test.tsx`, against a drop and a multi-file gesture. The hook that used to carry it
- * had no caller left once this composer became the library's box, and went with it.
+ * The per-message clamp now lives in the attachment adapter and is tested in `ComposerBox.test.tsx`.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'

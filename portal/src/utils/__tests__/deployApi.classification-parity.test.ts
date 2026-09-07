@@ -1,21 +1,14 @@
 /**
- * The classification policy is declared TWICE — once in Python, once here — and nothing
- * used to fail when the two drifted.
+ * The classification policy is declared TWICE — once in Python
+ * (`backend/src/services/deploy/classification.py`), once in `deployApi.ts` — with no codegen
+ * between them, so nothing used to fail when the two drifted.
  *
- * `backend/src/services/deploy/classification.py` calls its table "ONE POLICY UNIT" that
- * changes "together, in review, in this file"; `deployApi.ts` re-declares the same six
- * rows plus the threshold by hand, and says so ("there is no codegen across the two
- * languages"). They matched by careful editing and by nothing else, so a reweight or a
- * rewording on one side shipped a UI that contradicted the server.
+ * The server stays authoritative — a stale table here cannot mis-publish anything — so what
+ * drift costs is the citizen's trust in the screen: the modal's total, its "Send for review" vs
+ * "Publish" label, and its score line would say one thing while the server did another.
  *
- * The server stays authoritative — a stale table here cannot mis-publish anything — so
- * what drift costs is the citizen's trust in the screen: the modal's running total, its
- * "Send for review" vs "Publish" label, and its score line would all say one thing while
- * the server did another.
- *
- * The fixture is written by the Python table's own test, so it cannot lag it; this test
- * pins the TypeScript mirror against the fixture. No codegen, no build-time dependency
- * between the two languages, and drift is a red test in whichever PR causes it.
+ * The fixture is written by the Python table's own test, so it cannot lag it; this test pins
+ * the TypeScript mirror against that fixture — drift is a red test in whichever PR causes it.
  */
 import { describe, expect, it } from 'vitest'
 

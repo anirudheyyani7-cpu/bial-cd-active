@@ -62,16 +62,12 @@ def test_engine():
 def _salt_every_provisioned_app_database():
     """Destroy every per-project database/role this SESSION provisioned, at session end.
 
-    `.env.test` configures a real `APP_DB__*` substrate, so any test that creates a project
-    through the endpoint or starts a build session now creates a REAL database and role on
-    the shared cluster. The `db_session` rollback cannot undo that — it happens on
-    a separate AUTOCOMMIT engine — so without this the cluster accumulates orphans every run.
-
-    The hook is `provision._claim`, the one statement every ensure runs before it touches the
-    cluster, patched on the MODULE so it covers every call site (both callers bind
-    `ensure_project_database` by name at import, so patching that would miss them). Scoped to
-    ids this session actually claimed, never a `LIKE 'bialapp_%'` sweep — dev and test share
-    one cluster, and a broad sweep would drop a developer's live app database.
+    `.env.test` configures a real `APP_DB__*` substrate, so a test that provisions a project
+    creates a REAL database/role on the shared cluster — the `db_session` rollback runs on a
+    different engine and cannot undo that. Patched onto the `provision` MODULE (both callers
+    bind `ensure_project_database` by name at import, so patching the name would miss them),
+    and scoped to ids this session actually claimed — never a `LIKE` sweep, which on a cluster
+    dev and test share would drop a developer's live database.
     """
     import asyncio
     import uuid as _uuid
@@ -110,20 +106,15 @@ async def db_session(test_engine, request):
     # never see each other's writes.
     #
     # `join_transaction_mode="create_savepoint"` is what makes a ROUTE's own `db.rollback()`
-    # testable at all. Without it the session joins the outer transaction directly, so a route
-    # that rolls back — the concurrent-insert collision arms in `turns.py` and `transition.py`
-    # are the two — unwinds the whole test transaction and everything the fixtures set up goes
-    # with it. The arm is otherwise unreachable by the unit suite, which is how both of them
-    # shipped with no coverage for exactly the branch that only runs when something broke.
+    # testable at all: without it, the session joins the outer transaction directly, so a
+    # route that rolls back (the concurrent-insert collision arms in `turns.py` and
+    # `transition.py`) unwinds the whole test transaction and takes the fixtures with it.
     #
-    # OPT-IN, PER TEST, AND THAT IS THE POINT. Making it the shape of EVERY test looks free and
-    # is not: a savepoint-joined session provisions its connection lazily, so any test whose
-    # DETACHED task touches the session while the test itself is mid-statement stops being a
-    # benign interleave and becomes `InvalidRequestError: this session is provisioning a new
-    # connection`. Eight deploy tests went red that way — tests about save-and-publish, which
-    # have no opinion about transaction shape and should not have to. Two tests need the
-    # savepoint — both of them on `turns.py`'s collision arm — and they ask for it with
-    # `@pytest.mark.route_rollback`; the other ~3,700 keep the shape they were written against.
+    # OPT-IN, PER TEST — NOT the default. A savepoint-joined session provisions its connection
+    # lazily, so a DETACHED task touching the session mid-statement raises
+    # `InvalidRequestError: this session is provisioning a new connection` on tests that have
+    # no opinion about transaction shape. Only the two collision-arm tests opt in, with
+    # `@pytest.mark.route_rollback`; everything else keeps SQLAlchemy's own default.
     join_mode: JoinTransactionMode = (
         "create_savepoint"
         if request.node.get_closest_marker("route_rollback") is not None

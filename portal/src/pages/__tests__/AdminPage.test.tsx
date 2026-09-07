@@ -1,17 +1,12 @@
 /**
- * THE ADMIN CONSOLE'S TOAST CHANNEL. `showToast` carries a `severity` ('ok' | 'problem') that
- * drives the icon, the colour, and whether the dismiss timer runs at all: a problem WAITS to be
- * dismissed, a confirmation may fade. Without that an administrator cannot tell a confirmation
- * from a raw failure without reading the words, on the surface where being wrong costs the most.
- * `AppRegistryPanel.act()`'s catch branch is the one call site in the whole admin console that
- * ever sends 'problem'.
+ * THE ADMIN CONSOLE'S TOAST CHANNEL. `showToast`'s `severity` ('ok' | 'problem') drives the icon,
+ * the colour, and whether the dismiss timer runs — without that, an administrator can't tell a
+ * confirmation from a raw failure without reading the words, on the surface where being wrong
+ * costs the most.
  *
- * `AppRegistryPanel` (the 'apps' tab, active by default) is rendered for REAL here, with only its
- * API module mocked — what is under test is what AdminPage does with a callback a real panel
- * really invokes, not a synthetic one. The other three tabs' panels never report a failure through
- * this channel (their own catch blocks call `setActionError` / `setApplyError` instead — see
- * UsersLimitsPanel/GlobalLimitsPanel), so they are stubbed out to keep this file's mock surface to
- * what the channel actually touches.
+ * `AppRegistryPanel` (the 'apps' tab, default) renders for REAL here, only its API module mocked —
+ * this tests what AdminPage does with a callback a real panel actually invokes, not a synthetic
+ * one. The other three tabs are stubbed (see below for why).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'

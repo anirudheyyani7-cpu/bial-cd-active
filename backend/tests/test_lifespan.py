@@ -214,17 +214,14 @@ async def test_startup_probe_is_bounded_by_the_ceiling(
 async def test_startup_probe_runs_against_the_shared_singleton(
     monkeypatch: pytest.MonkeyPatch, redis_configured
 ) -> None:
-    """Pins that the probe validates the pool REAL CALLERS use, rather than a private
-    client of its own — a throwaway probe client would prove a connection nothing else
-    ever opens, and `aclose_redis()` tracks only the singleton, so it would also leak
-    teardown surface.
+    """Pins that the probe validates the pool REAL CALLERS use, not a private client of its
+    own — a throwaway probe client would prove a connection nothing else opens, and
+    `aclose_redis()` tracks only the singleton, so it would also leak teardown surface.
 
-    Deliberately NOT asserted here: retry behaviour by counting `.ping()` calls. In
-    pinned redis 8.0.1 the retry loop lives at the CONNECTION layer
-    (`conn.retry.call_with_retry`), below the public command API, so a stub whose
-    `ping()` raises is called exactly once under any `Retry` and such a count would pass
-    vacuously. Retry policy is pinned on `client.get_retry()` in the client tests.
-    """
+    Deliberately NOT asserted here: retry behaviour by counting `.ping()` calls. In pinned
+    redis 8.0.1 the retry loop lives below the public command API, so a stub's `ping()` is
+    called exactly once under any `Retry` and such a count would pass vacuously — retry
+    policy is pinned on `client.get_retry()` in the client tests instead."""
     calls: list[str] = []
     ok = _PingRaises(RedisConnectionError("refused"))
 

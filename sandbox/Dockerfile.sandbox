@@ -154,8 +154,12 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /etc/caddy/Caddyfile \
 # The runtime npm cache is created here too: a deterministic, appuser-owned path so an on-demand
 # `npm install` at runtime (run as appuser via /exec) — and the restore reconcile install — never
 # falls back to a root-owned one. It stays EMPTY in the image; the build below uses its own.
-RUN mkdir -p /workspace/app /home/appuser/.npm \
-    && chown appuser:appuser /workspace/app /home/appuser/.npm
+# `/workspace/attachments` is a SIBLING of the app tree, not a child (#214 R19): it shares the
+# volume, because the sandbox is already there and can already run code, but no snapshot, restore
+# or deploy walks it — so nothing a citizen attaches can reach a saved version or a published app
+# as a side effect of having been attached.
+RUN mkdir -p /workspace/app /workspace/attachments /home/appuser/.npm \
+    && chown appuser:appuser /workspace/app /workspace/attachments /home/appuser/.npm
 WORKDIR /workspace/app
 USER appuser
 COPY --chown=appuser:appuser template/package.json template/package-lock.json ./

@@ -29,11 +29,14 @@ os.environ.setdefault("SUPERVISOR_TOKEN", "test-token-not-a-real-secret")
 os.environ.setdefault("APP_USER", pwd.getpwuid(os.getuid()).pw_name)
 _WS = tempfile.mkdtemp(prefix="bial-sup-ws-")
 os.environ["WORKSPACE"] = _WS
+_ATT = tempfile.mkdtemp(prefix="bial-sup-att-")
+os.environ["ATTACHMENTS_DIR"] = _ATT
+atexit.register(shutil.rmtree, _ATT, ignore_errors=True)
 atexit.register(shutil.rmtree, _WS, ignore_errors=True)  # don't leak the temp workspace per run
 
 from urllib.parse import unquote  # noqa: E402
 
-from app import APP_HOME, WORKSPACE, _child_env, _redact, app  # noqa: E402
+from app import APP_HOME, ATTACHMENTS, WORKSPACE, _child_env, _redact, app  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402  (must follow the env seeding above)
 
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
@@ -276,6 +279,65 @@ def test_files_create_lf_normalizes_and_makes_parents() -> None:
 def test_files_create_missing_file_text_is_400() -> None:
     r = client.post("/files", json={"action": "create", "path": "x.txt"}, headers=AUTH)
     assert r.status_code == 400
+
+
+# --- the attachments root (#214 R19) ----------------------------------------------------------
+def test_a_file_can_be_written_outside_the_app_tree() -> None:
+    """★ WHY THERE ARE TWO ROOTS. `WORKSPACE` is the tree that BECOMES the citizen's app — it is
+    snapshotted, restored, saved and deployed. A file someone attached to a chat must not travel
+    with any of that as a side effect of having been attached. Excluding it from each of those
+    paths in turn means getting every exclusion right forever; keeping it out of the tree means
+    there is nothing to exclude.
+
+    Mutation receipt: drop ATTACHMENTS from `_resolve`'s root list and this 400s.
+    """
+    target = ATTACHMENTS / "roster.xlsx"
+    r = client.post(
+        "/files",
+        json={
+            "action": "create_bytes",
+            "path": str(target),
+            "file_b64": base64.b64encode(b"PK payload").decode(),
+        },
+        headers=AUTH,
+    )
+
+    assert r.status_code == 200, r.text
+    assert target.read_bytes() == b"PK payload"
+    # The point of the whole arrangement: it is NOT in the tree that becomes the app.
+    assert WORKSPACE.resolve() not in target.resolve().parents
+
+
+def test_a_relative_path_still_means_the_app_tree() -> None:
+    """The second root is reachable only by naming it absolutely, so no existing caller changes
+    meaning because /workspace/attachments came into existence — an app that happens to contain
+    its own `attachments/` directory still resolves there."""
+    r = client.post(
+        "/files",
+        json={"action": "create", "path": "attachments/note.txt", "file_text": "in the app"},
+        headers=AUTH,
+    )
+
+    assert r.status_code == 200
+    assert (WORKSPACE / "attachments/note.txt").read_text(encoding="utf-8") == "in the app"
+    assert not (ATTACHMENTS / "note.txt").exists()
+
+
+def test_neither_root_is_a_doorway_to_the_other_or_to_anywhere_else() -> None:
+    """The guard is applied twice, not relaxed. `..` is resolved BEFORE the check, so a path that
+    starts inside one root and climbs out of it is refused even though its prefix looked legal."""
+    for path in (
+        str(ATTACHMENTS / ".." / "escaped.bin"),
+        str(WORKSPACE / ".." / "escaped.bin"),
+        "/etc/passwd",
+        str(ATTACHMENTS / ".." / ".." / "etc" / "passwd"),
+    ):
+        r = client.post(
+            "/files",
+            json={"action": "create_bytes", "path": path, "file_b64": "AAEC"},
+            headers=AUTH,
+        )
+        assert r.status_code == 400, f"{path} was not refused"
 
 
 # --- /files: create_bytes (#214 — the binary lane) --------------------------------------------

@@ -43,6 +43,16 @@ from pydantic import BaseModel
 # --- config (fail-fast: required settings have no defaults) --------------------------------
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace/app"))
+# WHERE ATTACHMENTS LIVE, AND WHY IT IS NOT UNDER `WORKSPACE` (#214 R19). `WORKSPACE` is the tree
+# that BECOMES the citizen's app: it is snapshotted, restored, saved and deployed. A file someone
+# attached to a chat must not travel with any of that as a side effect of having been attached, and
+# excluding it from each of those paths in turn means getting every exclusion right forever.
+# Keeping it out of the tree means there is nothing to exclude.
+#
+# A SIBLING, NOT A CHILD. `/workspace/attachments` shares the volume — the sandbox is already there
+# and can already run code, which is the whole reason attachments are here at all — but no snapshot,
+# restore or deploy walks it.
+ATTACHMENTS = Path(os.environ.get("ATTACHMENTS_DIR", "/workspace/attachments"))
 APP_USER = os.environ.get("APP_USER", "appuser")
 # The dev server's self-announcement. It no longer decides ANYTHING: "✓ Ready in <ms>" is printed
 # once the server is listening, which is BEFORE the first route has compiled, so it announced a
@@ -229,11 +239,23 @@ _DEMOTE: dict[str, object] = {"user": APP_UID, "group": APP_GID, "extra_groups":
 
 
 def _resolve(path: str) -> Path:
-    """Resolve a request path under WORKSPACE and refuse escapes."""
+    """Resolve a request path under one of the two roots, and refuse everything else.
+
+    A RELATIVE PATH IS STILL APP-RELATIVE, unchanged: that is what every existing caller sends and
+    what the agent's own tools produce. The second root is reachable only by naming it absolutely,
+    so no relative path can change meaning because `/workspace/attachments` came into existence —
+    an app that happens to contain its own `attachments/` directory still resolves there.
+
+    STILL FAIL-CLOSED, and this is the part worth being careful about: the guard is not relaxed,
+    it is applied twice. A path must resolve INSIDE one of the two roots or it is refused, and
+    `..` is resolved before the check, so neither root can be used as a doorway to the other or to
+    anything outside both.
+    """
     p = (WORKSPACE / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
-    if WORKSPACE.resolve() not in p.parents and p != WORKSPACE.resolve():
-        raise HTTPException(400, f"path escapes workspace: {path}")
-    return p
+    for root in (WORKSPACE.resolve(), ATTACHMENTS.resolve()):
+        if p == root or root in p.parents:
+            return p
+    raise HTTPException(400, f"path escapes workspace: {path}")
 
 
 def _auth(authorization: str = Header(default="")) -> None:

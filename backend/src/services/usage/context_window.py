@@ -59,27 +59,34 @@ async def enforce_context_limit(
     user_id: uuid.UUID,
     *,
     history: Sequence[ModelMessage],
-    prompt: object = None,
-) -> None:
-    """Raise `ContextWindowExceededError` when this conversation is past its owner's hard limit.
+) -> int:
+    """Raise `ContextWindowExceededError` when this conversation is past its owner's hard limit,
+    and hand back the occupancy it measured.
 
-    THE ONE PREFLIGHT, called from BOTH routes that start a conversation turn — `turns.start_turn`
-    and `transition.build_from_plan`. The daily cap next door is hand-copied at three call sites,
-    and the cost of that is on record: a gate wired to one of two send paths is not a gate, it is
-    a detour sign. This is a single function precisely so the second entry point cannot drift
-    away from the first.
+    ONE CALLER NOW — `turns.start_turn`, the route that starts a turn on a conversation that
+    already exists. This used to be a shared preflight with `transition.build_from_plan`, and
+    the deletion of that second call is a decision, not an oversight (D16). A build chat is
+    created EMPTY: the route measured a fresh conversation against a ceiling and could only ever
+    admit, so it was a guard that had already gone inert. The bound that does hold on that door
+    is the plan's own — `engine.plan_from_call` refuses an offer whose plan is past
+    `MAX_MESSAGE_TEXT_CHARS`, with copy that asks for a shorter plan, which is the remedy that
+    works there.
 
-    IT IS NOT "EVERY ROUTE THAT REACHES A MODEL", and this docstring used to say so. `POST
-    /v1/build-sessions` starts a model-driven build without consulting this (its per-step spend
-    is capped inside `orchestrator/harness.py`, but its context is not bounded here). That route
-    sends a caller-supplied prompt rather than a conversation history, so it is not a turn on a
-    conversation — but a reader who took the wider claim at face value would go looking for a
-    gate that is not there.
+    AND DO NOT "FIX" IT BY POINTING IT AT THE SOURCE PLAN CHAT. That substitution is the obvious
+    repair and it is the harmful one: the build chat inherits none of the plan chat's history, so
+    measuring the plan chat would refuse "Build this plan" for exactly the citizens who planned
+    longest — and send them to start a new chat, which is where the plan they are trying to build
+    lives.
 
-    `prompt` IS ACCEPTED AND NOT MEASURED, and saying so is better than a silent shrug. The
-    message about to be sent has no token count yet — only the provider can give it one, and it
-    gives it when the turn completes. Both callers still pass it; the argument is removed with
-    the unit that gives the browser the same measurement.
+    NOTHING SIZES THE MESSAGE ABOUT TO BE SENT, and there is no argument here for one. Only the
+    provider can count a prompt, and it counts it when the turn completes; an argument this
+    function accepted and did not measure is exactly the shape a later reader mistakes for a
+    check. The reading is RETROSPECTIVE by construction and the module docstring says why.
+
+    IT RETURNS WHAT IT MEASURED, which is what makes the browser's meter and this wall the same
+    number rather than two readings of one scale. `turns.start_turn` puts it on the 202 the send
+    already gets, so the meter is fed by the very computation that admitted the turn — no second
+    request, and nothing sized before a send.
 
     THE OCCUPANCY IS THE LARGEST REPORTED PROMPT, NOT THE LAST ONE, and the difference is not
     cosmetic. Not every message in the history is a served turn: the platform writes responses
@@ -104,3 +111,4 @@ async def enforce_context_limit(
     )
     if occupied >= hard:
         raise ContextWindowExceededError(occupied=occupied, hard_limit=hard)
+    return occupied

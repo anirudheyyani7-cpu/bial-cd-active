@@ -69,8 +69,6 @@ from src.services.messages.store import load_rows
 from src.services.redis import build_coordination_or_503
 from src.services.turns.copy import (
     ALREADY_BUILDING_HERE_CODE,
-    CHAT_TOO_LONG_CODE,
-    CHAT_TOO_LONG_TEXT,
     WORKSPACE_UNAVAILABLE_CODE,
     WORKSPACE_UNAVAILABLE_TEXT,
 )
@@ -81,10 +79,6 @@ from src.services.turns.plan_options import (
     record_build_started,
     resolution_of,
     stored_call,
-)
-from src.services.usage.context_window import (
-    ContextWindowExceededError,
-    enforce_context_limit,
 )
 from src.services.usage.gate import DailyTokenLimitExceededError, enforce_daily_limit
 
@@ -158,8 +152,11 @@ class BuildHandoffResponse(CamelModel):
         AUTH_401,
         (403, ErrorEnvelope, "CSRF check failed"),
         (404, ErrorEnvelope, "Conversation not found"),
+        # NO 413 HERE, deliberately. It documented the per-conversation context preflight, which
+        # is deleted (see the body): the status was undeliverable, and an advertised refusal a
+        # route cannot produce teaches a client to handle a case that never arrives. The plan's
+        # own ceiling refuses through the 400 above, which is where its remedy lives.
         (409, ErrorEnvelope, "The card is superseded, the id is taken, or a workspace is busy"),
-        (413, ErrorEnvelope, "The plan is past the per-conversation limit"),
         (429, ErrorEnvelope, "Daily token limit reached"),
         (503, ErrorEnvelope, "Build engine or workspace unavailable"),
     ),
@@ -229,24 +226,25 @@ async def build_it(
     except DailyTokenLimitExceededError as exc:
         return exc.as_response()
 
-    # THE SAME PER-CONVERSATION GUARDRAIL THE SEND ROUTE ENFORCES, on the second door into a
-    # conversation turn. A build chat starts EMPTY and its whole prompt is the plan, so in
-    # practice it passes — the plan is length-capped well below the window. It is here anyway,
-    # and through the one shared preflight rather than a second copy, because the failure this
-    # unit is fixing is precisely a bound that existed on one path: wire only the send route
-    # and "Build this plan" is a way around the administrator's number rather than a route that
-    # happens to fit under it. If the plan cap ever moves, this is already correct.
-    try:
-        await enforce_context_limit(db, user.id, history=[], prompt=plan)
-    except ContextWindowExceededError as exc:
-        # Same shape as the send route's refusal — one boundary, one body.
-        raise AppApiError(
-            status.HTTP_413_CONTENT_TOO_LARGE,
-            CHAT_TOO_LONG_TEXT,
-            code=CHAT_TOO_LONG_CODE,
-            detail={"occupied": exc.occupied, "hardLimit": exc.hard_limit},
-        ) from None
-
+    # THERE IS NO PER-CONVERSATION CONTEXT PREFLIGHT ON THIS DOOR, AND ITS ABSENCE IS THE
+    # DECISION (D16) — said here rather than left as a silence, because "the send route has one
+    # and this one does not" is exactly the gap somebody closes by hand next year.
+    #
+    # IT WAS DELETED FOR BEING INERT, NOT FOR BEING INCONVENIENT. It measured `history=[]`: a
+    # build chat is created EMPTY, the provider has never served it, so there was no count to
+    # compare and the call admitted every press it ever saw. Even fed the plan it could not
+    # fire — `MAX_MESSAGE_TEXT_CHARS` caps a plan at 64,000 characters, roughly 16,000 tokens,
+    # against a ceiling of 500,000.
+    #
+    # THE BOUND THAT ACTUALLY HOLDS HERE IS THE PLAN'S OWN, and it ran above: `plan_from_call`
+    # refuses an offer whose plan is past that ceiling, with copy that asks for a shorter plan
+    # — the remedy that works, where "start a new chat" is not.
+    #
+    # DO NOT REPAIR IT BY MEASURING THE SOURCE PLAN CHAT. It is right there on this route, which
+    # is what makes it the tempting fix and the harmful one: the build chat inherits none of that
+    # history, so the substitution would refuse "Build this plan" for exactly the citizens who
+    # planned longest — and send them to start a new chat, which is where the plan they are
+    # trying to build lives.
     if model is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, "Claude client not configured.")
     # R98, identically to the send route: no workspace service means nothing for the build to

@@ -262,7 +262,14 @@ class BannerItem(CamelModel):
 
 class BuildInProgressItem(CamelModel):
     """A build began here and no outcome closed it — mid-build (live) or lost to a crash.
-    U10's `active_turn` disambiguates; this item only states the durable truth."""
+    U10's `active_turn` disambiguates; this item only states the durable truth.
+
+    HISTORICAL ROWS ONLY. Its source, the hidden `build_started` marker, had exactly one writer
+    (`outcome.write_build_started`, called from `SessionManager.start`), and that writer is deleted
+    with the standalone build stack. No NEW `build_started` row can be created, so this item can
+    only ever be derived from rows already in the database — which is precisely why it, and the
+    three `{session_id}` routes the portal reattaches through, were kept. A build that runs as an
+    ordinary Write chat turn records its ending as a `turn_terminal` row instead."""
 
     type: Literal["build_in_progress"] = "build_in_progress"
     seq: int
@@ -590,7 +597,13 @@ def _index_tool_results(rows: Sequence[Message]) -> dict[str, tuple[str, bool, i
 
 
 def _closed_sessions(rows: Sequence[Message]) -> set[str]:
-    """Session ids that have a recorded `build_outcome` row."""
+    """Session ids that have a recorded `build_outcome` row.
+
+    Both halves of the pair it answers about are legacy now: `write_build_started` is deleted and
+    `write_build_outcome` only still runs on the `stop` path of a session nothing can create. The
+    two writers had to go or stay TOGETHER — deleting the start marker's writer alone would have
+    left every legacy build rendering as permanently in progress, and deleting the outcome
+    writer alone would have done the same to any build that did start."""
     closed: set[str] = set()
     for row in rows:
         if (
@@ -1037,6 +1050,52 @@ def _project_response_parts(
         # thinking / builtin-tool / file / compaction parts render nothing (reasoning and
         # provider internals are not chat content); unknown kinds are skipped, not raised —
         # a NEWER writer's part must degrade to invisible, never break every reload.
+
+
+def measured_context_tokens(rows: Sequence[Message]) -> int | None:
+    """How full this conversation is, off the stored rows — or None when nobody has measured it.
+
+    ★ THE TWIN OF `usage.context_window.enforce_context_limit`'s occupancy, and they must stay
+    twins: this is the number the browser's meter shows and that one is the number the server
+    refuses on. Same rule, two inputs — the check reads a validated `list[ModelMessage]` the
+    route already loaded, and this reads the RAW JSONB, because that is what this module is
+    allowed to touch (validating here would coerce a stored attachment marker into a
+    `CachePoint` and demand a rehydration a read must never pay for — see the module docstring).
+    `tests/services/messages/test_context_measure.py` pins the two against each other.
+
+    ★ RAW `input_tokens`, AND NEVER `billable_spend` / `weighted_spend`. Under pydantic-ai
+    `input_tokens` is ALREADY INCLUSIVE of both cache classes, which is exactly the occupancy
+    wanted; the weighted helpers are COST figures that discount a cache read to a tenth because
+    that is what it costs. A cached token still occupies the window, byte for byte. Real
+    conversations here run 97-99% cache-read, so a spend-shaped number reads a 190,000-token
+    chat as a 23,500-token one. This codebase has shipped that confusion three times, twice past
+    review; verify any change by RUNNING `RequestUsage.extract` on a cache-heavy payload, never
+    by reading a docstring — reading is what reinforced the wrong belief twice.
+
+    ★ THE LARGEST, NOT THE LAST. Rows the PLATFORM wrote carry a `RequestUsage` whose every
+    field is zero, because no provider ever served them; so does the hidden per-turn terminal
+    row, which carries no payload at all. "The last response" reads one of those zeros and
+    hands a full conversation back as an empty one — the under-count that lets an over-long
+    chat past the meter. A maximum cannot be fooled that way, and a prompt only grows, so the
+    largest measurement is also the most recent real one. A zero is therefore NOT a
+    measurement, and a conversation with none answers None: unmeasured, not empty."""
+    measured: list[int] = []
+    for row in rows:
+        payload = row.payload
+        if not isinstance(payload, list):
+            continue  # system-event rows carry no messages (the turn terminal is one)
+        for message in payload:
+            if not isinstance(message, dict) or message.get("kind") != "response":
+                continue
+            usage = message.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            reported = usage.get("input_tokens")
+            # `bool` is an `int` in Python and `True` would sort as 1; narrowed, not cast,
+            # because `payload` is untyped JSON and a non-number there is no measurement.
+            if isinstance(reported, int) and not isinstance(reported, bool) and reported > 0:
+                measured.append(reported)
+    return max(measured, default=None)
 
 
 def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:

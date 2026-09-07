@@ -27,6 +27,13 @@
  * readings of one scale. `contextState` therefore takes that measurement as an argument rather
  * than deriving it, and answers `null` for a conversation nobody has measured yet.
  *
+ * WHERE THAT ARGUMENT COMES FROM, so nobody looks for a computation that is not here: two
+ * server replies the browser was already waiting for. The cold read carries `contextTokens` for
+ * the chat as stored, and every `startTurn` 202 carries what the admission just measured — the
+ * wiring is `ConversationSurface`'s. Both are raw `input_tokens`, cache-inclusive, never a
+ * cost-weighted spend. NOTHING asks the server to size a message before it is sent, and nothing
+ * may: the only honest count is one the provider has already taken.
+ *
  * The window numbers below are still twins of `backend/src/services/usage/limits.py`; change one
  * and change the other.
  */

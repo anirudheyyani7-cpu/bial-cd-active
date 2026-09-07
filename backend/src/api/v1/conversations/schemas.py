@@ -96,6 +96,20 @@ class ConversationDetailResponse(CamelModel):
     conversation: HeaderOut
     projection: list[DisplayItem]
     active_turn: ActiveTurnOut | None = None
+    # HOW FULL THIS CHAT IS, ON THE COLD READ — the provider's raw prompt count for the largest
+    # turn it has served here (`projection.measured_context_tokens`), which is the very number
+    # `enforce_context_limit` refuses on. It rides the read a reopened chat already makes, so
+    # the meter is right from first paint instead of waiting for the next send.
+    #
+    # `null` MEANS UNMEASURED, NOT EMPTY, and the browser is silent on it rather than assuming
+    # either. A chat with no served turn — brand new, or one where only the platform has
+    # spoken — has no measurement, and guessing one is what this whole change deleted.
+    #
+    # RAW `input_tokens`, NEVER A SPEND FIGURE. It is already inclusive of both cache classes,
+    # which is exactly the occupancy wanted; the weighted helpers next door are COST, and real
+    # conversations here run 97-99% cache-read, so a spend-shaped number reads a full chat as a
+    # tenth-full one. This platform has shipped that confusion three times.
+    context_tokens: int | None = None
 
 
 # ---------------------------------------------------------------------------------------
@@ -443,9 +457,16 @@ TURN_STREAM_FRAME_ADAPTER: TypeAdapter[TurnStreamFrame] = TypeAdapter(TurnStream
 
 
 class TurnStartResponse(CamelModel):
-    """`POST /conversations/{id}/turns` → 202: the turn now runs detached."""
+    """`POST /conversations/{id}/turns` → 202: the turn now runs detached.
+
+    `contextTokens` IS THE NUMBER THE ADMISSION JUST ADMITTED ON — the same expression, on the
+    same request, that would have raised the 413 one token higher. It rides the 202 rather than
+    being fetched, which is what keeps the browser's meter and the server's wall the same number
+    while nothing is ever sized before a send. `null` means unmeasured (see the detail read's
+    field). It is raw `input_tokens`, never a cost-weighted spend."""
 
     turn_id: str
+    context_tokens: int | None = None
 
 
 class TurnStopResponse(CamelModel):

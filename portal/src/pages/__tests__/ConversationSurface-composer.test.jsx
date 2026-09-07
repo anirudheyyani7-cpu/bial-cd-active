@@ -927,7 +927,10 @@ describe('a refused send leaves the citizen holding their message', () => {
     expect(composer().value).toBe('do not lose this')
     expect(screen.queryByText(/did not send/i)).toBeNull()
 
-    releaseStart()
+    // Resolved with the real 202 SHAPE, not with nothing: a 202 body now carries the chat's
+    // occupancy beside the turn id (#194), and a mock that resolves `undefined` stands in for
+    // a contract this endpoint no longer has.
+    releaseStart({ turnId: 't1', contextTokens: null })
     await waitFor(() => expect(composer().value).toBe(''))
   })
 
@@ -956,7 +959,7 @@ describe('a refused send leaves the citizen holding their message', () => {
     )
     await waitForGateOpen()
 
-    h.startTurn.mockResolvedValue(undefined)
+    h.startTurn.mockResolvedValue({ turnId: 't1', contextTokens: null }) // the real 202 shape
     type('second attempt')
     fireEvent.keyDown(composer(), { key: 'Enter' })
 

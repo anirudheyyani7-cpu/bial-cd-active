@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import (
@@ -42,16 +43,19 @@ from pydantic_ai.models.function import (
 from pydantic_ai.usage import RequestUsage
 from sqlalchemy import func, select
 
+from src.api.v1.conversations._shared import MAX_MESSAGE_TEXT_CHARS
 from src.api.v1.conversations._shared import chat_model as chat_model_dep
-from src.db.models.conversation import ChatKind
+from src.api.v1.conversations.transition import PLAN_TOO_LONG_CODE
+from src.db.models.conversation import ChatKind, Conversation
 from src.db.models.message import Message, MessageEntryKind
 from src.db.models.token_usage import TokenUsage
 from src.db.models.user_limit import UserLimit
 from src.main import create_app
 from src.services.messages.store import append_batch
 from src.services.turns.copy import CHAT_TOO_LONG_CODE, CHAT_TOO_LONG_TEXT
+from src.services.turns.engine import PENDING_META_KIND
 from src.services.turns.plan_options import find_pending
-from src.services.usage.limits import DEFAULT_CONTEXT_HARD
+from src.services.usage.limits import DEFAULT_CONTEXT_HARD, MODEL_CONTEXT_WINDOW
 from tests.api.v1.conversations.conftest import _headers
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 from tests.pdfs import pdf_with_pages
@@ -169,6 +173,57 @@ async def test_a_short_conversation_starts_a_turn_normally(
     await _settle(_fresh_engine, conversation.id)
 
 
+async def test_the_accept_hands_back_the_very_number_it_admitted_on(
+    client, db_session, _fresh_engine
+) -> None:
+    """★ COVERS AE3b. THE METER AND THE WALL ARE ONE NUMBER, and this is the seam that makes it
+    true: the 202 carries `contextTokens`, which is what `enforce_context_limit` measured to
+    decide this exact request.
+
+    Asserted as a BOUNDARY rather than as an equality alone, because equality to a figure the
+    test itself seeded proves only that a number came back. The second send is one token past
+    the ceiling and is refused with `occupied` equal to the figure the first send reported — so
+    the number a citizen watches really is the number they will be stopped at, not a second
+    reading of one scale (#194).
+
+    AND NOTHING WAS ASKED TO SIZE ANYTHING. The figure rides the send the citizen was making
+    anyway; there is no endpoint that counts a message before it is sent, and this platform has
+    settled that there will not be one."""
+    user, _project, conversation = await _a_conversation(db_session)
+    await _stuff_the_conversation(db_session, user, conversation, tokens=DEFAULT_CONTEXT_HARD - 1)
+
+    accepted = await _send(client, user, conversation.id)
+
+    assert accepted.status_code == 202, accepted.text
+    shown = accepted.json()["contextTokens"]
+    assert shown == DEFAULT_CONTEXT_HARD - 1
+    await _settle(_fresh_engine, conversation.id)
+
+    # One token more of the same conversation, and the wall is at the number the meter showed.
+    await _stuff_the_conversation(db_session, user, conversation, tokens=DEFAULT_CONTEXT_HARD)
+    refused = await _send(client, user, conversation.id)
+    assert refused.status_code == 413
+    assert refused.json()["error"]["detail"]["hardLimit"] == shown + 1
+
+
+async def test_a_chat_nobody_has_measured_reports_no_figure_rather_than_zero(
+    client, db_session, _fresh_engine
+) -> None:
+    """★ EDGE CASE: unmeasured is not empty. A brand-new chat has no served turn, so there is no
+    count — and `0` would be a claim (this chat is empty) where `null` is the absence of one.
+
+    It matters because the browser acts on the difference: `null` keeps the meter silent, and a
+    number invites it to draw. Seeding the meter with a zero it was never given is how a guess
+    creeps back in."""
+    user, _project, conversation = await _a_conversation(db_session)
+
+    resp = await _send(client, user, conversation.id)
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["contextTokens"] is None
+    await _settle(_fresh_engine, conversation.id)
+
+
 # =============================================================================
 # Past the limit: refused, and nothing written
 # =============================================================================
@@ -266,9 +321,14 @@ async def test_an_override_above_the_model_window_is_clamped_not_honoured(
 ) -> None:
     """`effective_context` caps a hard limit at the model's real window. An administrator cannot
     raise a chat past what the model can actually read, which is what the admin field's own
-    "Max 200,000 (model window)" hint promises."""
+    "Between 16,000 and 1,000,000 (model window)" hint promises.
+
+    THE CONVERSATION IS MEASURED AT THE WINDOW ITSELF, not at the default ceiling. Ten million
+    would be honoured by a gate with no clamp, so the refusal here is the clamp and nothing
+    else; and once the ceiling rose to 500,000, a conversation stuffed to the default would be
+    admitted under the clamped limit and prove nothing."""
     user, _project, conversation = await _a_conversation(db_session)
-    await _stuff_the_conversation(db_session, user, conversation, tokens=DEFAULT_CONTEXT_HARD)
+    await _stuff_the_conversation(db_session, user, conversation, tokens=MODEL_CONTEXT_WINDOW)
     db_session.add(UserLimit(user_id=user.id, context_hard_limit=10_000_000))
     await db_session.commit()
 
@@ -297,22 +357,23 @@ async def test_a_user_with_no_override_is_governed_by_the_default(client, db_ses
 async def test_pressing_build_from_a_long_plan_chat_is_not_refused(
     client, app, db_session, _fresh_engine
 ) -> None:
-    """★ THE SECOND DOOR, AND THE TRAP THE MEASUREMENT OPENS UNDER IT.
+    """★ THE SECOND DOOR, AND THE TRAP THAT WOULD HAVE BEEN BUILT UNDER IT.
 
-    `build_it` runs the same shared preflight the send route runs — one function, so the two
-    doors cannot drift apart. What the preflight can SEE changed with the measurement, and the
-    honest statement is this: a build chat is created EMPTY, the provider has never served it,
-    so there is no count to compare and the press is admitted. This test used to assert a 413
-    from that preflight; keeping it would be asserting a refusal that can no longer happen.
+    `build_it` HAS NO PER-CONVERSATION CONTEXT PREFLIGHT ANY MORE, and its deletion is what this
+    test now guards. The call it used to make measured `history=[]` — a build chat is created
+    empty, so it admitted every press it ever saw — and it could not have fired even fed the
+    plan, which is capped at 64,000 characters against a ceiling of 500,000. It was an inert
+    guard, and an inert guard reads to the next maintainer as a live one.
 
-    WHAT IT ASSERTS INSTEAD IS THE MISTAKE THE OBVIOUS FIX MAKES. Faced with a preflight that
-    can no longer refuse here, the tempting repair is to measure the SOURCE plan chat, which is
-    right there on the route. That would refuse "Build this plan" for exactly the citizens who
-    planned longest — and send them to start a new chat, which is where the plan they are
-    trying to build lives. The plan chat below is measured past the ceiling and the press still
-    goes through, because a build chat is judged on its own history and it has none.
+    WHAT THIS ASSERTS IS THE MISTAKE THE OBVIOUS REPAIR MAKES. Faced with a preflight that can
+    never refuse here, the tempting fix is to measure the SOURCE plan chat, which is right there
+    on the route. That would refuse "Build this plan" for exactly the citizens who planned
+    longest — and send them to start a new chat, which is where the plan they are trying to build
+    lives. The plan chat below is measured past the ceiling and the press still goes through,
+    because a build chat is judged on its own history and it has none.
 
-    Mutation check: hand the preflight `rows`' history instead of `[]` and this goes red."""
+    Mutation check: reinstate the preflight over `rows`' history and this goes red. The bound
+    that does hold on this door is asserted directly, below."""
     user, _project, plan_chat = await _a_conversation(db_session)
     app.dependency_overrides[chat_model_dep] = lambda: _offering_model()
     assert (await _send(client, user, plan_chat.id, "plan the visitors app")).status_code == 202
@@ -331,19 +392,80 @@ async def test_pressing_build_from_a_long_plan_chat_is_not_refused(
     assert resp.status_code == 200, resp.text
 
 
+async def test_the_build_door_still_refuses_a_plan_that_is_too_long_to_build_from(
+    client, db_session, _fresh_engine
+) -> None:
+    """★ ERROR PATH, AND THE REASON THE DELETED PREFLIGHT WAS NOT MISSED.
+
+    The bound on this door was never the context ceiling — it is the plan's own. `plan_from_call`
+    refuses an offer whose plan is past `MAX_MESSAGE_TEXT_CHARS`, REFUSED and never trimmed,
+    with copy that asks for a SHORTER PLAN. That is the remedy that works here; "start a new
+    chat" is not, because the plan being built lives in the chat the citizen would be leaving.
+
+    This is the preflight's test, rewritten against the refusal that actually exists rather than
+    deleted with the call — so the bound on this door stays guarded (D16). The card is seeded
+    directly because the engine now refuses to RECORD an over-ceiling offer at write time; this
+    is the defence in depth behind that, for a row written before it existed.
+
+    Mutation check: drop the `len(plan) > MAX_MESSAGE_TEXT_CHARS` arm from `plan_from_call` and
+    this goes red — and nothing else on this route would notice."""
+    user, _project, plan_chat = await _a_conversation(db_session)
+    huge = "x" * (MAX_MESSAGE_TEXT_CHARS + 1)
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=plan_chat.id,
+        messages=[
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="present_plan_options",
+                        args=json.dumps({"plan": huge}),
+                        tool_call_id="opt-huge",
+                    )
+                ]
+            )
+        ],
+        entry_kind=MessageEntryKind.TURN,
+        kind=plan_chat.kind,
+        meta={"kind": PENDING_META_KIND, "toolCallId": "opt-huge"},
+    )
+    await db_session.commit()
+
+    minted = uuid.uuid7()
+    resp = await client.post(
+        f"/v1/conversations/{plan_chat.id}/plan-options/opt-huge/build",
+        headers=_headers(user),
+        json={"chatId": str(minted)},
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["error"]["code"] == PLAN_TOO_LONG_CODE
+    # REFUSED, not truncated, and nothing started: no build chat exists for the minted id.
+    assert await db_session.get(Conversation, minted) is None
+
+
 # =============================================================================
 # The contract the browser reads
 # =============================================================================
 
 
-def test_the_refusal_is_documented_on_both_routes() -> None:
-    """A refusal nothing documents is one a client is never told to expect. Both doors carry the
-    same status, because a browser that had to learn two would learn one."""
+def test_the_refusal_is_documented_where_it_can_actually_happen() -> None:
+    """A refusal nothing documents is one a client is never told to expect — and an advertised
+    refusal a route cannot produce is the opposite mistake, which is the one this now guards.
+
+    The send route keeps its 413: that door reads a real measurement and really does refuse. The
+    build door's 413 documented the preflight that is deleted, so it advertised a status no
+    request could ever get back. Both halves are asserted, because dropping the second assertion
+    rather than inverting it would leave the undeliverable status free to come back."""
     paths = create_app().openapi()["paths"]
     send = paths["/v1/conversations/{conversation_id}/turns"]["post"]
     build = paths["/v1/conversations/{conversation_id}/plan-options/{tool_call_id}/build"]["post"]
     assert "413" in send["responses"]
-    assert "413" in build["responses"]
+    assert "413" not in build["responses"]
+    # LIVENESS: the build route is really in the document, so the absence above is an absence
+    # and not a path this test failed to find. Its own refusals are still advertised.
+    assert "400" in build["responses"]
 
 
 def test_the_code_is_byte_stable() -> None:
@@ -468,13 +590,17 @@ async def test_three_documents_on_one_message_are_refused_by_count_not_by_tokens
 ) -> None:
     """★ THE REFUSAL THAT HAD TO BE ITS OWN SENTENCE.
 
-    A page of PDF measured ~2,500 tokens and the upload cap admits 30, so three documents is
-    ~225,000 against a 200,000 ceiling: that message cannot be served. Nothing counts it on the
-    way in any more, so left to itself it would be sent, fail at the provider, and come back as
-    "this chat has got too long — start a new chat". That is WRONG ADVICE here: the new chat
-    refuses the identical message, so the citizen is sent round a loop with no way out.
-    `MAX_ATTACHMENT_BLOCKS` meanwhile still advertises eight attachments, so nothing on the way
-    in warned them.
+    Documents are the one attachment big enough to end a message on their own, and nothing
+    counts them on the way in any more, so left to itself an over-long one would be sent, fail
+    at the provider, and come back as "this chat has got too long — start a new chat". That is
+    WRONG ADVICE here: the new chat refuses the identical message, so the citizen is sent round
+    a loop with no way out. `MAX_ATTACHMENT_BLOCKS` meanwhile still advertises eight
+    attachments, so nothing on the way in warned them.
+
+    THE NUMBER IS NOT DERIVED FROM A TOKEN SUM, and this test does not assert one. The
+    arithmetic that used to justify it (a per-page cost times the page cap against the ceiling)
+    is deleted from `_shared.py` rather than recomputed at the raised ceiling — #214 removes the
+    limit outright.
 
     So the third document is refused BY COUNT, before anything is sent, with a sentence that
     names the DOCUMENT limit and an action that works. Delete the count check and this goes red

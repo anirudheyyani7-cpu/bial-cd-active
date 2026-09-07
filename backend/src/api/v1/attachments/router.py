@@ -84,7 +84,8 @@ limit was 79 KB (#194) — comfortably inside every size bound the platform had.
 
 THE NUMBER IS SET FROM WHAT A PAGE COSTS, ~2,500 tokens measured, against the per-conversation
 ceiling. Thirty pages is ~75,000 tokens — the large majority of business documents, and still
-room for a document plus a real build conversation inside a 200,000 window. Nothing charges an
+room for a document plus a real build conversation inside the 500,000 per-conversation ceiling
+— with a good deal to spare, now that ceiling is the corrected one. Nothing charges an
 admitted document a nominal any more; the window check reads the count the provider returns for
 a completed turn, so THIS cap is the only bound that acts before the provider has seen the file.
 Raise it and a single upload can fill a conversation on its own, with the refusal arriving one

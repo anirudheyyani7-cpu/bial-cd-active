@@ -506,8 +506,14 @@ async def start_turn(
     # reported as past its owner's ceiling — which is why it copies the daily cap's pre-start
     # gate rather than the mid-run terminal. It reads a measurement rather than sizing `prompt`:
     # the message about to be sent has no count until the turn that carries it completes.
+    #
+    # AND WHAT IT MEASURED RIDES BACK OUT ON THE 202 (`contextTokens`). The browser's meter and
+    # this wall are then the same number taken by the same expression on the same request —
+    # never two readings of one scale, which is what the deleted estimator was. It costs no
+    # extra round trip and, crucially, nothing is sized BEFORE a send: the figure is the one
+    # this admission just computed from turns the provider has already served.
     try:
-        await enforce_context_limit(db, user.id, history=history, prompt=prompt)
+        occupied = await enforce_context_limit(db, user.id, history=history)
     except ContextWindowExceededError as exc:
         # The PROSE says neither number on purpose — a citizen does not think in tokens. The
         # `detail` does, because a non-browser caller has no other way to learn how far over it
@@ -629,7 +635,11 @@ async def start_turn(
         manager=manager,
         sandbox=sandbox,
     )
-    return TurnStartResponse(turn_id=str(turn_id))
+    # `None` rather than `0` for a conversation nobody has measured — see the field's own note.
+    # A brand-new chat is UNMEASURED, not empty, and the meter stays silent on the difference.
+    return TurnStartResponse(
+        turn_id=str(turn_id), context_tokens=occupied if occupied > 0 else None
+    )
 
 
 @router.post(

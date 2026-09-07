@@ -1,10 +1,14 @@
 """U6 — the one history→display derivation (`services/messages/projection.py`).
 
-Rows are written through the REAL producers/store (`append_batch`, `write_build_started`,
-`write_build_outcome`) in the exact shapes U5 pinned
-(`test_transcript_steps.py` / `test_producers.py`), so these tests break when the producer
-contract drifts — which is the point. The golden build test doubles as U10's parity fixture:
-the live stream must render THIS list for THIS transcript.
+Rows are written through the REAL producers/store (`append_batch`, `write_build_outcome`) in the
+exact shapes U5 pinned (`test_transcript_steps.py` / `test_producers.py`), so these tests break
+when the producer contract drifts — which is the point. The golden build test doubles as U10's
+parity fixture: the live stream must render THIS list for THIS transcript.
+
+The one exception is `build_started`: its production writer is DELETED with the build-start path,
+but rows it already wrote are permanent in production transcripts and the projection's
+`BuildInProgressItem` / `_closed_sessions` arms still read them. Those rows come from
+`tests.fakes.write_legacy_build_started`, which is byte-identical to the writer that made them.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from src.api.v1.build_sessions.schemas import BuildSessionStatus, ErrorSource
 from src.api.v1.conversations.schemas import DiagnosticFrame
 from src.db.models.conversation import ChatKind
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
-from src.services.build_sessions.outcome import write_build_outcome, write_build_started
+from src.services.build_sessions.outcome import write_build_outcome
 from src.services.messages.projection import (
     PROPOSE_SLICE_TOOL,
     TELL_THE_USER_TOOL,
@@ -56,6 +60,7 @@ from src.services.messages.store import (
     load_rows,
 )
 from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.fakes import write_legacy_build_started
 
 PREVIEW = "https://sbx-abc.westeurope.azurecontainerapps.io/"
 
@@ -95,7 +100,7 @@ async def test_finished_build_projects_the_golden_item_list(db_session) -> None:
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
 
-    await write_build_started(
+    await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,
@@ -582,11 +587,12 @@ async def test_a_plan_turn_that_only_reads_has_a_non_empty_activity_group(db_ses
 
 async def test_hidden_rows_render_nothing_but_stay_auditable(db_session) -> None:
     # The mode-switch marker used to be the third hidden row here. It is gone with the switch
-    # that wrote it (`tests/api/v1/conversations/test_mode_switch.py` is its inertness guard);
-    # the `build_started` overlay carries the same property and is still written today.
+    # that wrote it (`tests/api/v1/conversations/test_mode_switch.py` is its inertness guard).
+    # The `build_started` overlay carries the same property; nothing writes one any more either,
+    # but rows already in production transcripts must still render as nothing and audit as one.
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
-    await write_build_started(
+    await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,
@@ -623,7 +629,7 @@ async def test_unclosed_build_started_projects_an_in_progress_anchor(db_session)
     'a build was running here' item — not vanish."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
-    await write_build_started(
+    await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,
@@ -1126,7 +1132,7 @@ async def test_ae13_nothing_a_citizen_reads_across_a_whole_build_is_addressed_to
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
 
-    await write_build_started(
+    await write_legacy_build_started(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,

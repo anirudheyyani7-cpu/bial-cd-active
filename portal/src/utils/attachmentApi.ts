@@ -27,6 +27,11 @@ interface UploadAttachmentArgs {
   mediaType: string
   size: number
   base64: string
+  /** The thread this file belongs to. Sent so the row carries its conversation link, which the
+   *  server's per-conversation limits count over (#214 R7a/R7b). The server has always accepted
+   *  and owner-validated this field; no client ever sent it, so every stored row was NULL and a
+   *  conversation-scoped count would have counted nothing. */
+  conversationId?: string
 }
 
 /**
@@ -61,7 +66,7 @@ export interface AttachmentRef {
  * per-user cap is hit, else a generic Error with the server message.
  */
 export async function uploadAttachment(
-  { attachmentId, name, mediaType, size, base64 }: UploadAttachmentArgs,
+  { attachmentId, name, mediaType, size, base64, conversationId }: UploadAttachmentArgs,
   deps: AuthFetchDeps = {},
 ): Promise<AttachmentRef> {
   const res = await authFetch(
@@ -69,7 +74,7 @@ export async function uploadAttachment(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ attachmentId, name, mediaType, size, base64 }),
+      body: JSON.stringify({ attachmentId, name, mediaType, size, base64, conversationId }),
     },
     deps,
   )

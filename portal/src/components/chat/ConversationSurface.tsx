@@ -1422,7 +1422,10 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
 
     let parts
     try {
-      parts = await buildUserParts(text, attachments)
+      // `activeId` is a REQUIRED parameter of this function, so an upload can never happen
+      // without a thread to hang it on — which is what makes a conversation-scoped limit
+      // countable at all (#214 R7a/R7b).
+      parts = await buildUserParts(text, attachments, undefined, activeId)
     } catch (err) {
       // ABORT — never fall through to a turn that silently forgets the attachment. The user
       // attached a spreadsheet; answering as if they hadn't is the wrong-build bug in miniature.

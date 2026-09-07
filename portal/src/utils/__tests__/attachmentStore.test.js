@@ -185,3 +185,33 @@ describe('no conversion-dependent part can be produced', () => {
     expect(JSON.stringify(wire)).not.toMatch(/deck|pdfFileId|pageCount/)
   })
 })
+
+describe('the conversation link rides with an upload (#214 R7a/R7b)', () => {
+  it('sends the thread id, so the row can be counted per conversation', async () => {
+    // THE GAP THIS CLOSES. The server has always accepted `conversationId`, resolved it
+    // owner-scoped and stamped it on the row — and no client ever sent one, so every stored
+    // attachment had conversation_id NULL. A per-conversation count or storage budget would have
+    // counted nothing at all, which is the wrong way for a limit to appear to work.
+    //
+    // Mutation receipt: drop `conversationId` from the upload body and this goes red.
+    const upload = vi.fn(async (a) => ({
+      attachmentId: a.attachmentId, key: 'k', kind: 'image', name: a.name, mediaType: a.mediaType, size: a.size,
+    }))
+    const pending = [{ id: 'a1', name: 'gate.png', mediaType: 'image/png', size: 10, base64: 'x' }]
+
+    await buildUserParts('look', pending, upload, 'conv-42')
+
+    expect(upload.mock.calls[0][0].conversationId).toBe('conv-42')
+  })
+
+  it('omits it rather than inventing one when no thread is given', async () => {
+    const upload = vi.fn(async (a) => ({
+      attachmentId: a.attachmentId, key: 'k', kind: 'image', name: a.name, mediaType: a.mediaType, size: a.size,
+    }))
+    const pending = [{ id: 'a1', name: 'gate.png', mediaType: 'image/png', size: 10, base64: 'x' }]
+
+    await buildUserParts('look', pending, upload)
+
+    expect(upload.mock.calls[0][0].conversationId).toBeUndefined()
+  })
+})

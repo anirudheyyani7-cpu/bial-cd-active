@@ -1,4 +1,4 @@
-"""U8 — the C10 ARM identity tag schema: what is written, what is read back, and what is
+"""The ARM identity tag schema: what is written, what is read back, and what is
 refused at the boundary.
 
 These are pure-function tests with no Azure and no Redis, which is the point: the whole reason
@@ -45,7 +45,7 @@ APP = uuid.uuid7()
 
 
 def test_a_new_sandbox_carries_the_whole_identity() -> None:
-    """R1's five questions, answerable from the resource alone: what is it, who owns it, which
+    """The five questions, answerable from the resource alone: what is it, who owns it, which
     app does it serve, which control plane made it, and how old is it."""
     tags = sandbox_tags(user_id=USER, app_id=APP)
 
@@ -83,9 +83,10 @@ def test_a_fresh_sandbox_is_not_marked_backfilled() -> None:
 
 
 def test_a_new_sandbox_is_not_staged_for_reclamation() -> None:
-    """`bial-reclaim-staged-at` is reserved for U15 and nothing writes it yet. Pinned so a
-    future writer cannot quietly start stamping it at create — a container staged from birth
-    would satisfy the two-pass rule on its first pass, which is the rule's whole purpose."""
+    """ONE thing writes `bial-reclaim-staged-at` — the reclamation pass's staging step
+    (`_stage_the_candidates`) — and creation is not it. Pinned so a future writer cannot quietly
+    start stamping it here: a container staged from birth would satisfy the two-pass rule on its
+    first pass, which is the rule's whole purpose."""
     assert identity_from_tags(sandbox_tags(user_id=USER, app_id=APP)).reclaim_staged_at is None
     assert TAG_RECLAIM_STAGED_AT not in sandbox_tags(user_id=USER, app_id=APP)
 
@@ -115,8 +116,8 @@ def test_a_published_app_carries_no_creation_stamp() -> None:
 
 def test_absent_tags_parse_to_no_identity() -> None:
     """THE ORPHAN SHAPE. ARM omits `tags` entirely on an untagged app, and every container that
-    predates U8 looks exactly like this. It must parse, and it must land in the bucket that is
-    reported and never destroyed."""
+    predates the tag schema looks exactly like this. It must parse, and it must land in the
+    bucket that is reported and never destroyed."""
     identity = identity_from_tags(None)
 
     assert identity.kind is None
@@ -180,16 +181,14 @@ def test_any_missing_identity_field_makes_it_escalate_only(missing: str) -> None
 
 
 def test_a_container_stamped_by_another_control_plane_is_escalate_only() -> None:
-    """R22, and it is enforced by the predicate rather than left to the classifier.
+    """A foreign control plane's container is escalate-only, enforced by the predicate.
 
     Two control planes can see one resource group — a dev deployment pointed at a subscription
-    that also holds production-stamped sandboxes is the ordinary way this happens, and an
-    `ENVIRONMENT` rename is the other. Reading somebody else's container is fine; SENTENCING it is
-    not, and this is the only place that distinction can be made once and hold for every caller.
+    that also holds production-stamped sandboxes, or an `ENVIRONMENT` rename. Reading somebody
+    else's container is fine; SENTENCING it is not, and the predicate settles that for everyone.
 
-    Mutation-check: drop the `control_plane` clause from `escalate_only` and this goes red while a
-    fully-formed identity from THIS control plane stays judgeable — which is the shape a classifier
-    would otherwise inherit as "complete"."""
+    Mutation-check: drop the `control_plane` clause from `escalate_only` and this goes red while
+    a fully-formed identity from THIS control plane stays judgeable."""
     theirs = sandbox_tags(user_id=USER, app_id=APP)
     theirs[TAG_CONTROL_PLANE] = "some-other-control-plane"
 
@@ -204,9 +203,9 @@ def test_a_container_stamped_by_another_control_plane_is_escalate_only() -> None
 
 
 def test_a_backfilled_container_with_no_owner_is_escalate_only() -> None:
-    """The exact shape the backfill writes for a container matching no app row (C10 §3.1):
-    kind and a backfill marker, and nothing else. It is reported forever and destroyed by
-    nothing, which is what AE2 intends."""
+    """The exact shape the backfill writes for a container matching no app row: kind and a
+    backfill marker, and nothing else. It is reported forever and destroyed by nothing,
+    by design."""
     identity = identity_from_tags(
         {TAG_KIND: KIND_BUILD_SANDBOX, TAG_BACKFILLED_AT: "2026-08-11T00:00:00+00:00"}
     )

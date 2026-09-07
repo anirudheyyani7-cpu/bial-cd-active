@@ -1,4 +1,4 @@
-"""The worker entrypoint's structural guarantees (U4, ADR-0011 §2).
+"""The worker entrypoint's structural guarantees.
 
 `test_the_worker_starts_the_broker_exactly_once` is the most important test here. Two CLI-based
 designs were considered and BOTH were fatally recursive or unsafe:
@@ -57,7 +57,7 @@ def _code_without_docstring(func: Callable[..., object]) -> str:
 async def test_the_worker_starts_the_broker_exactly_once() -> None:
     """A counting worker-startup handler must fire exactly once.
 
-    MUTATION CHECK (performed by hand when U4 landed): adding `await scheduler.startup()` to
+    MUTATION CHECK (performed by hand): adding `await scheduler.startup()` to
     `worker_main.startup()` makes this count climb without bound, because that call re-enters
     `broker.startup()` and re-fires the event. Reinstating it must turn this test red.
     """

@@ -67,7 +67,7 @@ _CTX = PromptContext(user_name="Ada", project_name="Visitors", project_descripti
 
 _PLAN_TEXT = "Here is the plan:\n1. Add a table\n2. Wire the form\n3. Ship it"
 
-# --- the exact shapes that used to fire the retired prose heuristic ----------------------
+# --- the exact shapes that fired the retired prose heuristic -----------------------------
 #
 # `_looks_plan_shaped` counted list items and scanned the reply's tail for a trailing `?`;
 # two-or-more items with no trailing `?` forced a retry, and a no-call retry got a card

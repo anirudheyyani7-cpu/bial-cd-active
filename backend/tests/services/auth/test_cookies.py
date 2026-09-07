@@ -1,4 +1,4 @@
-"""Cookie name + Secure-prefix environment-awareness tests (KD-4).
+"""Cookie name + Secure-prefix environment-awareness tests.
 
 `cookie_secure()` derives Secure from `settings.auth.cookie_secure` if set, else
 `settings.is_production`. The `__Host-`/`__Secure-` prefixes require Secure, so

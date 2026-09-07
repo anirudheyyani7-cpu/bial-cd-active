@@ -1,5 +1,5 @@
-"""The KD-13 run-context provider's prompt assembly (`deps._live_session_spec`) — the ONE place
-the multimodal build prompt's shape and ORDER are decided (R3).
+"""The run-context provider's prompt assembly (`deps._live_session_spec`) — the ONE place
+the multimodal build prompt's shape and ORDER are decided.
 
 Worth its own file because the ordering is a deliberate decision with no local signal: the
 harness passes `BuildSpec.prompt` through to `agent.iter` verbatim, so a flipped order here
@@ -38,16 +38,17 @@ def _register(attachments: list[str | BinaryContent]) -> uuid.UUID:
 
 
 async def test_no_attachments_keeps_a_bare_string_prompt() -> None:
-    """The pre-R3 path stays byte-identical — not a one-element list that merely renders the
-    same. A `str` and a `[str]` are different inputs to pydantic-ai, and every build without an
-    attachment (the overwhelming majority) takes this branch."""
+    """The no-attachment path stays byte-identical to the original single-string prompt — not a
+    one-element list that merely renders the same. A `str` and a `[str]` are different inputs to
+    pydantic-ai, and every build without an attachment (the overwhelming majority) takes this
+    branch."""
     spec = await _live_session_spec(_register([]))
     assert spec.prompt == "build me a dashboard"
     assert isinstance(spec.prompt, str)
 
 
 async def test_attachments_come_before_the_instruction() -> None:
-    """R3 ordering: attachments FIRST, instruction LAST.
+    """Ordering: attachments FIRST, instruction LAST.
 
     This is Anthropic's documented vision ordering and matches the portal's own `buildContent`
     ("text after files"), so the build path and the chat relay ground the model identically. It
@@ -66,8 +67,9 @@ async def test_attachments_come_before_the_instruction() -> None:
 
 
 async def test_every_materialized_attachment_reaches_the_spec() -> None:
-    """Nothing is dropped in assembly — the silent-drop bug R3 exists to kill, re-checked at the
-    last seam before the model."""
+    """Nothing is dropped in assembly: an assembly handed three attachments that passes two on
+    says nothing about the third, and this is the last seam before the model where that loss can
+    still be caught."""
     attachments: list[str | BinaryContent] = [
         BinaryContent(data=PNG, media_type="image/png"),
         BinaryContent(data=b"%PDF-1.4 pretend", media_type="application/pdf"),

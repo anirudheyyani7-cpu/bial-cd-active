@@ -291,10 +291,9 @@ describe('showing the outcome', () => {
 
     await turn.frame(T_PREVIEW())
 
-    // LIVENESS, RE-POINTED. It used to read the pane's "preview is live" copy; the pane's cover
-    // is driven by `turnPhase` off the frames now, and this harness mounts no pane at all. What
-    // the absence below needs is proof the build is genuinely still running, and the composer's
-    // stop control is present for exactly and only that.
+    // LIVENESS: the pane's cover is driven by `turnPhase` off the frames, and this harness mounts
+    // no pane at all. What the absence below needs is proof the build is genuinely still running,
+    // and the composer's stop control is present for exactly and only that.
     await waitFor(() => expect(screen.getByTestId('stop-turn')).toBeTruthy())
     expect(outcomeCards()).toHaveLength(0)
   })

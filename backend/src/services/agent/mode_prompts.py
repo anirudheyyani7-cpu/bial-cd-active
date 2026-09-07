@@ -127,8 +127,8 @@ is nowhere in that message for a platform instruction to hide. Putting it in the
 strictly better than where it was: a plan can be built weeks after it was written, and the agent
 in a fresh Build chat has LESS context to notice a divergence with, not more.
 
-The wording is this plan's to preserve, not to perfect — the voice work owns how it is phrased,
-and may reword it. It may not drop it."""
+This wording is carried forward as-is rather than polished here — the voice work owns how it
+is phrased, and may reword it. It may not drop it."""
 
 _WRITE_SEGMENT = f"""\
 {WRITE_IDENTITY}
@@ -170,8 +170,8 @@ deletion this block has already suffered twice."""
 # and a named cache-breaking action.
 #
 # `_PRIVATE` below OUTLIVES them, and deliberately: it is composed into the workspace note's
-# tail as well, so deleting it with the reminders would break the one ephemeral note this plan
-# is protecting.
+# tail as well, so deleting it with the reminders would break the one ephemeral note that
+# still relies on it.
 
 # The note says it is private. The walkthrough caught the model quoting one of these
 # notes back at the citizen ("I want to flag that note…"), so the user watched the assistant

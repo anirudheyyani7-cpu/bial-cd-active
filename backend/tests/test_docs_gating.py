@@ -1,4 +1,4 @@
-"""Interactive API docs are disabled in production (U17): the enriched OpenAPI spec
+"""Interactive API docs are disabled in production: the enriched OpenAPI spec
 (error taxonomy, named codes, admin route enumeration) must not be served pre-auth."""
 
 from __future__ import annotations

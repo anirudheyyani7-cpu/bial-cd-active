@@ -480,8 +480,8 @@ async def test_the_closing_marker_carries_a_value_the_report_cannot_predict() ->
 
 async def test_no_user_facing_frame_carries_any_part_of_the_report() -> None:
     """THE INERTNESS GUARD. `BuildError` is dual-purpose — a portal envelope AND a model
-    prompt — a JS stack trace under a file-path title in a citizen's chat is the surface
-    this plan exists not to create.
+    prompt — and a JS stack trace under a file-path title in a citizen's chat is exactly what
+    this guard exists to prevent.
 
     DEFENCE IN DEPTH: the turn engine already skips emitting a diagnostic frame for this class,
     pinned in `test_write_turn.py::test_a_client_class_error_repairs_the_app_without_narrating_it`.

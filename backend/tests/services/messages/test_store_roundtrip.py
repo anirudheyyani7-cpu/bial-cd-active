@@ -1,4 +1,4 @@
-"""U4 — the native message store's round-trip property and its seams.
+"""The native message store's round-trip property and its seams.
 
 Contract: dump → externalize binaries → redact → JSONB → rehydrate → validate → repair; the
 only differences between what went in and what comes out are redacted values and
@@ -735,7 +735,7 @@ def _assert_anthropic_pairing(messages: list[ModelMessage]) -> None:
 
 
 def test_orphaned_tool_result_is_dropped_on_load():
-    """THE round-3 P0, as a mutation check: a stored `tool_result` whose `tool_use` was never
+    """A mutation check: a stored `tool_result` whose `tool_use` was never
     persisted (the write-cursor overshoot skipped the run's first ModelResponse) 400s every
     subsequent turn, forever — the conversation is bricked. Repair must drop the orphan at
     load. Revert the fourth repair case and this goes red."""
@@ -1220,7 +1220,7 @@ async def test_unsigned_reasoning_maps_to_a_visible_assistant_text_block():
 
 
 def test_dump_strips_run_instructions_from_the_payload():
-    """U9/D4 — pydantic-ai stamps the run's composed instructions onto every ModelRequest
+    """pydantic-ai stamps the run's composed instructions onto every ModelRequest
     it returns; the dump seam normalizes them to None so no persisted row ever fossilizes
     a prompt (history loads from the DB, each run re-injects its own composition)."""
     request = ModelRequest(

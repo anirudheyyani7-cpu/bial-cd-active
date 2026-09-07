@@ -1,4 +1,4 @@
-"""Alembic round-trip for the shared-data-plane drop (0023, U6): head → 0022 → head
+"""Alembic round-trip for the shared-data-plane drop (0023): head → 0022 → head
 against the real test DB. Proves `upgrade` actually removes BOTH tables (`data_records`,
 `clear_data_tokens`) AND the four `app_registry` counter columns, and that `downgrade`
 recreates all six structures. Mirrors `test_app_files_drop_migration.py`: programmatic

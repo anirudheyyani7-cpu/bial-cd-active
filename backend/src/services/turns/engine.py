@@ -872,8 +872,8 @@ class TurnEngine:
         not have, and returns the instant `task.cancel()` is issued — before the turn's `finally`
         bills tokens, emits its terminal frame and runs `finish_turn_sandbox`, which is what makes
         the workspace releasable. Releasing earlier tears a container out from under a running
-        task. THE VERDICT IS READ FROM THE TASK, not from having asked: this used to return True on
-        a turn still inside its `finally`. `timeout_s` bounds the wait, not the shielded unwind."""
+        task. THE VERDICT IS READ FROM THE TASK, not from having asked: `stop_requested` alone
+        reads True mid-`finally`. `timeout_s` bounds the wait, not the shielded unwind."""
         state = next(
             (
                 s

@@ -1,4 +1,4 @@
-"""Session JWT mint/decode — pinned-algorithm, fail-closed unit tests (U3)."""
+"""Session JWT mint/decode — pinned-algorithm, fail-closed unit tests."""
 
 from __future__ import annotations
 

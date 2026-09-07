@@ -610,7 +610,7 @@ class AcaSandboxClient(SandboxClient):
                         "warm_request_not_ok", app=handle.app_name, status=resp.status_code
                     )
                 return resp.status_code
-        except Exception:  # noqa: BLE001 - R6: nothing from here may ever reach the caller
+        except Exception:  # noqa: BLE001 - nothing from here may ever reach the caller
             # The blind `except` is required, not an oversight — narrowing it has bitten this
             # file before (see `_make_it_a_repo`). `CancelledError` is a `BaseException`, so a
             # cancelled turn still cancels; only the timeout's own expiry is swallowed here.

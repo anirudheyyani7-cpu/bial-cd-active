@@ -1,4 +1,4 @@
-"""U2 — the two-tier Redis error taxonomy and its single 503 mapping (KD-1)."""
+"""The two-tier Redis error taxonomy and its single 503 mapping."""
 
 from __future__ import annotations
 

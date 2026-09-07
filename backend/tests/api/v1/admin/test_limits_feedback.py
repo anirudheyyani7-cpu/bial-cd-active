@@ -1,4 +1,4 @@
-"""Admin per-user limits + feedback read (U9, R28): super-admin-only; overrides take
+"""Admin per-user limits + feedback read: super-admin-only; overrides take
 effect on the LIVE daily gate; clearing falls back to the default; feedback is capped
 with a true total; limit edits are audited."""
 

@@ -342,8 +342,8 @@ export default function LivePreview({
   //
   // WHY THE ORIGIN CHECK STOPPED BEING ENOUGH. It only ever discriminated because each app had a
   // hostname of its own. BIAL refused a wildcard certificate, so every generated app is now served
-  // from ONE name — one certificate, one label, one browser origin for all of them — and an origin
-  // comparison that used to mean "this is the app I am framing" degrades to "this is an app". The
+  // from ONE name — one certificate, one label, one browser origin for all of them — so an origin
+  // comparison alone now only proves "this is an app", not "this is the app I am framing". The
   // reachable sender is not an unrelated tab (every place the portal opens an app in a new tab
   // severs window.opener with rel="noopener"): it is a nested or sibling frame inside THIS portal
   // document, whose e.origin is now identical to the pane's own preview origin.

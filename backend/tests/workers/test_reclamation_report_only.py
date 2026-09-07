@@ -1,4 +1,4 @@
-"""U11 — the reclamation pass reports and destroys nothing (R3, R20).
+"""The reclamation pass reports and destroys nothing.
 
 THE ASSERTION THIS FILE EXISTS FOR is that no ARM delete is reachable from a pass. Everything else
 here is observability, and observability has one job: make a DEAD WORKER distinguishable from a
@@ -90,8 +90,9 @@ def _no_app_table(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_a_pass_over_orphans_destroys_nothing(fake_redis: aioredis.Redis) -> None:
-    """Two orphans, both candidates, zero ARM deletes. The destroy arm is U15 and it is behind a
-    second flag; until then this is the whole safety posture of the feature."""
+    """Two orphans, both candidates, zero ARM deletes. The destroy arm sits behind a second
+    flag, off by default, and while that flag is off this is the whole safety posture of the
+    feature."""
     fleet = _Fleet([_orphan("sbx-a"), _orphan("sbx-b")])
 
     report = await pass_mod.run_reclamation_pass(control_plane=fleet)

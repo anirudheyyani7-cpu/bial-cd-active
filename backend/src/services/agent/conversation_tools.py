@@ -132,10 +132,10 @@ def _bad_slice(found: list[str], first: list[str]) -> str | None:
     """The teaching refusal for a proposal that cannot be honoured, or None.
 
     NO PIECE COUNT IS ENFORCED, in either direction: a floor would force splitting something
-    that shouldn't split, and the ceiling that used to sit here refused proposals the agent had
-    made well — and the renderer read the same ceiling, so a refused proposal was ALSO drawn
-    nowhere. WHAT IS LEFT IS THE ONE RULE THAT ISN'T TASTE: every piece in the first round must
-    be one the citizen was told had been picked up."""
+    that shouldn't split, and a ceiling would refuse a proposal the agent had made well — and,
+    because body and renderer read the same number, that refused proposal would then be drawn
+    as nothing at all. WHAT IS LEFT IS THE ONE RULE THAT ISN'T TASTE: every piece in the first
+    round must be one the citizen was told had been picked up."""
     if not found:
         return (
             "List everything the user asked for in `found`, in your own words, one piece per "

@@ -1,4 +1,4 @@
-"""Alembic round-trip for the destructive messages reset (0024, U4): head → 0023 → head with
+"""Alembic round-trip for the destructive messages reset (0024): head → 0023 → head with
 seeded legacy data, since destroying it is 0024's whole point. Proves: every conversation row
 (and its legacy message) is gone; the attachment ROW survives with its conversation link
 severed to NULL — blob cleanup is the reclaimer's job, never a migration's; `messages` lands

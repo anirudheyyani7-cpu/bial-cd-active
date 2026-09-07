@@ -1,4 +1,5 @@
-"""U2 — the raw ACA control-plane (`AcaControlPlane`, the lower C2 seam) error triage.
+"""The raw ACA control-plane (`AcaControlPlane`, the layer beneath `AcaSandboxClient`) and its
+error triage.
 
 The sync `azure-mgmt-appcontainers` client is fully mocked (a `SimpleNamespace` whose
 `container_apps` methods return a canned poller or raise a canned Azure exception), so
@@ -341,13 +342,13 @@ async def test_delete_app_maps_terminal(monkeypatch: pytest.MonkeyPatch) -> None
     assert not isinstance(ei.value, AcaTransientError)
 
 
-# --- C10 identity tags: the envelope, the PATCH, and the listing -------------
+# --- Identity tags: the envelope, the PATCH, and the listing -------------
 
 
 def test_the_create_envelope_carries_the_identity_tags(monkeypatch: pytest.MonkeyPatch) -> None:
     """ON THE ENVELOPE, not PATCHed on afterwards. A create that succeeded followed by a stamp
-    that did not would leave an anonymous container behind — the population ADR-0029 exists to
-    collect, manufactured by the code meant to prevent it."""
+    that did not would leave an anonymous container behind — exactly the orphan the reclamation
+    system exists to collect, manufactured by the code meant to prevent it."""
     cp = _control_plane(monkeypatch, SimpleNamespace())
     tags = {"bial-kind": "build-sandbox", "bial-user-id": "u"}
     envelope = cp._envelope(_ENV, tags)  # noqa: SLF001
@@ -442,7 +443,7 @@ async def test_a_stamp_overwrites_only_the_keys_it_names(monkeypatch: pytest.Mon
 async def test_a_stamp_on_an_untagged_container_still_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`tags: None` on the resource is the C10 backfill's entire input population. Reading it as
+    """`tags: None` on the resource is the backfill's entire input population. Reading it as
     anything other than "no tags yet" would make the backfill crash on the containers it exists
     for."""
     seen: dict[str, object] = {}
@@ -592,9 +593,10 @@ async def test_the_fleet_projection_keeps_the_identity(monkeypatch: pytest.Monke
 async def test_the_projection_carries_what_a_judgement_needs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R3. Name alone was the old answer and it is why the fleet was un-judgeable: the pass has
-    to know whether a container is running, how to reach it (U14 recovers the supervisor bearer
-    through this FQDN), and what ARM thinks its age is."""
+    """Name alone was the old answer and it is why the fleet was un-judgeable: the pass has to
+    know whether a container is running, how to reach it (the supervisor answers at
+    `https://{fqdn}/_sup`, so the FQDN is what recovers its bearer), and what ARM thinks its
+    age is."""
     born = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
     apps = [_listed("sbx-x", None, running_status="Stopped", fqdn="sbx-x.uk.io", created_at=born)]
     cp = _control_plane(monkeypatch, SimpleNamespace(list_by_resource_group=lambda rg: apps))

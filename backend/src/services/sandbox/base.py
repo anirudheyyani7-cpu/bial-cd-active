@@ -347,12 +347,11 @@ class SandboxHandle:
     REQUEST TO THE APP ROOT ACTUALLY SUCCEEDED) at handle construction; refreshed by
     `wait_ready` / `dev_status`.
 
-    It used to mean "stdout marker seen AND the supervisor's own child is alive", which was
-    wrong in both directions: `next dev` prints that marker once it is LISTENING, before the
-    first route has compiled, so `ready` announced a blank page; and a dev server the agent
-    started itself was invisible to it forever. The supervisor now answers from a served
-    HTTP response and consults no child state at all — which is why `ready` True alongside
-    `running` False is a NORMAL state, not a contradiction."""
+    The supervisor answers from a served HTTP response alone and consults no child-process
+    state — so `ready` True alongside `running` False is a NORMAL state, not a contradiction.
+    A stdout-marker-plus-child-alive check would get this wrong in both directions: the marker
+    fires once `next dev` is LISTENING, before the first route has compiled, and a dev server
+    the agent started itself would be invisible to a child-state check forever."""
 
     @property
     def app_root_url(self) -> str:

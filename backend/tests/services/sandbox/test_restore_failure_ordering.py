@@ -1,9 +1,9 @@
-"""Restore must never drop the ownership record while the container may still run (U18).
+"""Restore must never drop the ownership record while the container may still run.
 
 THE GHOST FACTORY: the Redis registry hash is the only record that a container belongs to
 somebody. Drop it while the container may still be running and it becomes anonymous —
 unreachable by the product, invisible to the sweep, billing at ~$0.108/hr forever. That is
-exactly the population ADR-0029 exists to collect.
+exactly the population fleet reclamation exists to collect.
 
 The rule: the record goes only once the resource is CONFIRMED gone — see `teardown()` a few
 methods below for the same pattern, commented *"Keep the registry so the reaper retries this

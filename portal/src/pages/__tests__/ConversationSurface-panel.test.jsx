@@ -50,7 +50,7 @@ afterEach(() => cleanup())
  *  "hide chat panel" button — waiting on that here would hang forever, which is exactly the
  *  false-negative shape L8 warns about (a removed control silently making every guard here
  *  unreachable rather than failing loudly). `chat-panel` is the surface's own static container,
- *  present the instant it renders, independent of the toggle that used to live in it. Mounted
+ *  present the instant it renders, independent of whatever toggle or control sits inside it. Mounted
  *  through the REAL `WorkspaceShell`, so the surface publishes into the real channel. */
 async function renderReady(kind = 'build') {
   render(

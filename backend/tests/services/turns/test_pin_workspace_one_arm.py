@@ -37,7 +37,7 @@ def _pin_workspace_node(source: str) -> ast.AsyncFunctionDef:
 def _forks(node: ast.AST) -> list[str]:
     """Every conditional inside the body — the shape this method is asserted NOT to have.
 
-    `if`, `match` and a conditional expression all count: the branch R18 removed was an `if`, but
+    `if`, `match` and a conditional expression all count: the branch this forbids was an `if`, but
     a ternary picking between two workspace classes is the same defect written smaller. A `try`
     is not a fork — it selects on failure, not on what kind of chat this is."""
     found: list[str] = []

@@ -1,4 +1,4 @@
-"""The compile signal for a tab with NO LIVE TURN (R17/R18).
+"""The compile signal for a tab with NO LIVE TURN.
 
 THE HOLE THIS ROUTE CLOSES. The compile state reaches the portal as a frame on the turn stream,
 so its producer stops the moment the turn does. Reload the page after a turn that ended red and
@@ -42,8 +42,8 @@ async def test_a_project_with_no_live_container_is_unknown_not_clean(
 async def test_another_users_project_is_404(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage
 ) -> None:
-    """ADR-0004, same as every other route in this file: a cross-user project and a missing one
-    are the same non-leaking answer."""
+    """Same as every other route in this file: a cross-user project and a missing one are the
+    same non-leaking answer."""
     owner = await UserFactory.create(db_session, email="u11-owner@rvaiglobal.com")
     project = await ProjectFactory.create(db_session, owner.id)
     intruder = await UserFactory.create(db_session, email="u11-intruder@rvaiglobal.com")

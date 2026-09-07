@@ -1,4 +1,4 @@
-"""POST /v1/admin/apps/reclamation-report — what would the pass delete right now? (R20.)
+"""POST /v1/admin/apps/reclamation-report — what would the pass delete right now?
 
 THE QUESTION THE TWO-FLAG DESIGN ASSUMED SOMEBODY COULD ASK. `reclaim_enabled` gets you a
 report and `reclaim_destroy` lets the pass act, and the whole argument for splitting them is

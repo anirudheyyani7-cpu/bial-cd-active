@@ -1,9 +1,9 @@
-"""What a deletion has to say for itself, and the tombstone that keeps it (#158 §13).
+"""What a deletion has to say for itself, and the tombstone that keeps it.
 
 `DELETE /v1/projects/{id}` takes one body field, `remark` (5-50 words); who deleted it is
 stamped from the session, never accepted from the client, so those tests are isolation
 tests, not validation ones. Two claims are pinned: the server refuses a bad remark on its
-own (§13.2 names the rename path — no server-side check — as the shape not to repeat), and
+own (the rename path — no server-side check — is the shape not to repeat), and
 the tombstone survives what it describes, written in the same transaction that drops the
 project, holding values rather than references to rows already gone.
 
@@ -155,8 +155,8 @@ async def test_the_tombstone_outlives_the_project(client, db_session) -> None:
     assert row.remark == remark
     assert row.deleted_at is not None
 
-    # ...and the project really is gone. A tombstone beside a surviving row would be a
-    # soft delete, which is the thing §13.3 argues against.
+    # ...and the project really is gone. A tombstone beside a surviving row would be a soft
+    # delete: the record exists to say a deletion HAPPENED, not to stand in for one.
     assert (await client.get(f"{_PROJECTS}/{project.id}", headers=headers)).status_code == 404
 
 

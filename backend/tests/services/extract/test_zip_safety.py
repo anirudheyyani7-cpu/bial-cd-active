@@ -1,4 +1,4 @@
-"""Zip-bomb pre-filter (U11) — the summed-uncompressed cap + malformed/ZIP64 rejection."""
+"""Zip-bomb pre-filter — the summed-uncompressed cap + malformed/ZIP64 rejection."""
 
 from __future__ import annotations
 

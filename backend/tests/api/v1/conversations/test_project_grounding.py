@@ -102,7 +102,7 @@ async def test_a_null_description_grounds_the_turn_without_inventing_one(
 async def test_two_conversations_share_the_same_description(
     client, db_session, set_chat_model, _fresh_engine
 ) -> None:
-    """R16: the description is the PROJECT's, not one chat's — a second conversation in the
+    """The description is the PROJECT's, not one chat's — a second conversation in the
     same project is grounded identically without anyone re-stating it."""
     user = await UserFactory.create(db_session)
     project = await ProjectFactory.create(

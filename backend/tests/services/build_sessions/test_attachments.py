@@ -1,10 +1,10 @@
-"""R3 — `resolve_build_attachments` over the NATIVE store (U4): the ref-collection rule,
+"""`resolve_build_attachments` over the NATIVE store: the ref-collection rule,
 the temporal boundary, and the fail-first error paths that keep a build from silently
 ignoring a user's file.
 
 Binary attachments live in payloads as `bial-attachment-ref` markers; inline text/office
-content needs no materialization here (it is inlined into the prompt content at persist —
-U5/U7), so this suite covers what the module still owns: marker collection since the last
+content needs no materialization here (it is inlined into the prompt content at persist),
+so this suite covers what the module still owns: marker collection since the last
 build's START, owner-scoped rehydration, and the deck/mismatch/missing refusals.
 """
 
@@ -65,7 +65,7 @@ async def _store(
 
 
 def _turn_with_refs(*attachment_ids: str, text: str = "here you go") -> list[Any]:
-    """A native user turn carrying binary ref markers (the U4 externalized shape)."""
+    """A native user turn carrying binary ref markers (the externalized shape)."""
     content: list[str | BinaryContent] = [text]
     for attachment_id in attachment_ids:
         content.append(

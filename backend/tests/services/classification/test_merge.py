@@ -1,6 +1,6 @@
 """The per-question merge truth table — written FIRST, before merge.py.
 
-Every cell of the plan's merge table gets a named test. The module under test is PURE — no
+Every cell of the merge table gets a named test. The module under test is PURE — no
 database, no model, no I/O — so the table can be pinned exhaustively: the merge is the one
 genuinely new decision in the feature, and a mock-based test would prove nothing about it.
 

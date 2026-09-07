@@ -1,4 +1,4 @@
-"""The Taskiq broker's non-default arguments (U4, ADR-0011 §4).
+"""The Taskiq broker's non-default arguments.
 
 Every assertion here is a regression guard against a LIBRARY DEFAULT, not a preference. Each
 default this file pins away from causes a silent failure — a hot reconnect loop, an unbounded
@@ -48,7 +48,7 @@ def test_the_blocking_read_cannot_outlast_the_socket_timeout(
 ) -> None:
     """THE invariant that makes `RedisStreamBroker` safe on redis-py 8: it introduced a 5s
     default `socket_timeout`, and a blocking read that out-waits it raises `TimeoutError` and
-    reconnects forever (upstream taskiq-redis #127). A version pin was rejected as
+    reconnects forever (a known upstream taskiq-redis issue). A version pin was rejected as
     unimplementable and unnecessary — the stream's block sits safely under the timeout instead.
     Both values are passed explicitly so neither a library default change nor a config edit can
     silently cross them; `socket_timeout` must be read off the POOL's connection kwargs, or a
@@ -76,7 +76,7 @@ def test_the_stream_and_group_names_carry_the_environment(
     The consumer group is doubly load-bearing: the library derives an
     `autoclaim:<group>:<stream>` key whose literal prefix sits OUTSIDE the `bial:` namespace and
     cannot be moved under it, so the group name is the only thing keeping that key distinct
-    between environments (C5).
+    between environments.
     """
     assert redis_broker.queue_name.startswith("bial:"), redis_broker.queue_name
     assert redis_broker.consumer_group_name.startswith("bial:"), redis_broker.consumer_group_name
@@ -133,7 +133,7 @@ def test_the_broker_falls_back_to_in_memory_without_redis(monkeypatch: pytest.Mo
     block, and `conftest.py` imports the app at module scope — so a factory that raised without
     Redis would make the entire suite uncollectable.
 
-    A real worker cannot reach this branch: `WorkerSettings` requires Redis (U23).
+    A real worker cannot reach this branch: `WorkerSettings` requires Redis.
     """
     from src.broker import build_broker
     from src.config import settings

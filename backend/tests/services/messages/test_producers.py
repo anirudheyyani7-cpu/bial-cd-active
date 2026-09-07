@@ -1,4 +1,4 @@
-"""U5 — lifecycle producers around the native store: the hidden `build_started` marker and its
+"""Lifecycle producers around the native store: the hidden `build_started` marker and its
 non-interference with the outcome record's idempotency and status reads.
 
 The per-step BRAIN producer is tested with its own fixtures in
@@ -69,8 +69,8 @@ async def test_build_started_row_is_hidden_and_replay_inert(db_session) -> None:
 
 
 async def test_outcome_idempotency_ignores_the_started_marker(db_session) -> None:
-    """Regression pin for the U5 predicate fix: the `build_started` row carries the same
-    sessionId, and without the `kind='build_outcome'` filter it would satisfy the idempotency
+    """Regression pin for the `kind='build_outcome'` predicate fix: the `build_started` row
+    carries the same sessionId, and without that filter it would satisfy the idempotency
     probe and silently suppress the real outcome."""
     user, _, conversation = await _thread(db_session)
     session_id = uuid.uuid4()

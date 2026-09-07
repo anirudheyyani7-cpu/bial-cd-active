@@ -1,4 +1,4 @@
-"""Alembic round-trip for the deployed-URL column (0019, PILOT R5): head → 0018 →
+"""Alembic round-trip for the deployed-URL column (0019): head → 0018 →
 head against the real test DB. Proves `upgrade` adds the nullable `deployed_url`
 column, that an existing row survives the upgrade with a NULL address (every row
 predates the column — a NOT NULL here would fail the migration outright), and that
@@ -82,7 +82,8 @@ def test_deployed_url_round_trip() -> None:
 def test_an_existing_row_upgrades_to_a_null_url() -> None:
     """Seed a row at 0018 (before the column existed) and upgrade: it must survive with
     a NULL address. Every row in every environment is exactly this row — an app deployed
-    before R5 has no recorded URL, which is precisely why the column is nullable."""
+    before this column existed has no recorded URL, which is precisely why the column is
+    nullable."""
     config = _alembic_config()
     command.upgrade(config, "head")
     command.downgrade(config, _PRE_URL_REVISION)

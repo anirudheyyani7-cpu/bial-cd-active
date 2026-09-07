@@ -2214,14 +2214,13 @@ async def test_relaunch_spares_the_container_when_the_heartbeat_seed_hits_a_redi
         monkeypatch_hb.undo()
 
     assert client.restored == [app_name_for(app_id)]
-    # CHANGED, deliberately. This used to assert the container was torn down. The comment it
-    # cites feared "500ing with a live container behind a HELD LOCK" — and the lock half is
-    # still guaranteed below, because compensation releases regardless. What is no longer
-    # true is the container half: by the time the heartbeat is seeded, `wait_ready` has
+    # NOT TORN DOWN, DELIBERATELY: by the time the heartbeat is seeded, `wait_ready` has
     # returned and the container is up, registered and under a stay — the same state a
-    # successful relaunch leaves. Destroying a working preview to tidy a hash costs the user
-    # their app; leaving it means their retry ATTACHES to it in seconds instead of paying a
-    # full restore. The error still surfaces either way.
+    # successful relaunch leaves. The lock is still released regardless (compensation runs
+    # either way), so a live container is never left stranded behind a held lock. Destroying
+    # a working preview to tidy a hash costs the user their app; leaving it means their retry
+    # ATTACHES to it in seconds instead of paying a full restore. The error still surfaces
+    # either way.
     assert client.torn_down == []
     assert await lock_is_held(fake_redis, user.id) is False  # the lock IS still given back
     assert manager._active_by_user == {}

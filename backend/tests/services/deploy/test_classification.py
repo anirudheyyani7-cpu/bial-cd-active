@@ -4,12 +4,12 @@ plumbing. The decision PROCEDURE that reads them is pinned separately, in
 
 WHY THIS EXISTS
 
-Post-issue-#115: the deploy gate runs LOW score = safe = auto-deploy, HIGH score = needs a
-human. `AUTO_DEPLOY_MAX_SCORE = 0` means only a fully-clean declaration ever auto-deploys —
-any weighted category at all routes to a human, however small its weight.
+The deploy gate runs LOW score = safe = auto-deploy, HIGH score = needs a human.
+`AUTO_DEPLOY_MAX_SCORE = 0` means only a fully-clean declaration ever auto-deploys — any
+weighted category at all routes to a human, however small its weight.
 
-Post-issue-#117: `notes_required()` is TIED to `AUTO_DEPLOY_MAX_SCORE`, not a separate
-threshold — every declaration that fails the gate is also obliged to explain itself. The two
+`notes_required()` is TIED to `AUTO_DEPLOY_MAX_SCORE`, not a separate threshold — every
+declaration that fails the gate is also obliged to explain itself. The two
 used to be independent (a since-removed `NOTES_REQUIRED_AT = 25` sat inside the refused
 region), so a declaration could be refused without ever being asked to explain. That gap is
 what this file now tests against.
@@ -61,8 +61,8 @@ def test_public_data_is_a_real_answer_that_adds_nothing() -> None:
 
 
 def test_notes_required_and_needing_a_human_are_now_the_same_condition() -> None:
-    """Issue #117 follow-up: `notes_required()` is tied to `AUTO_DEPLOY_MAX_SCORE`, not a
-    separate threshold (see module docstring). Confidential Business Data alone (15) — the
+    """`notes_required()` is tied to `AUTO_DEPLOY_MAX_SCORE`, not a separate threshold (see the
+    module docstring). Confidential Business Data alone (15) — the
     lowest nonzero weight the questionnaire can produce — both fails the gate AND obliges an
     explanation. A future change that re-splits the two thresholds, or lets a declaration
     fail one without the other, breaks here."""
@@ -114,7 +114,8 @@ def test_qualifies_for_deploy_rejects_an_incomplete_mapping_instead_of_scoring_i
     otherwise silently clear the auto-deploy gate. Not reachable over HTTP today
     (`DataClassificationAnswers` requires all six booleans), but this module's own docstring
     anticipates other callers and a future seventh question; both would auto-qualify an
-    incomplete declaration were this not here — the fail-open shape of the #115 bug itself."""
+    incomplete declaration were this not here — the same fail-open shape the auto-deploy
+    gate exists to prevent."""
     with pytest.raises(ValueError, match="incomplete declaration"):
         qualifies_for_deploy({})
     with pytest.raises(ValueError, match="incomplete declaration"):
@@ -132,7 +133,7 @@ def test_declared_categories_omits_the_zero_weight_one() -> None:
 
 def test_refusal_message_is_gone_along_with_the_refusal_it_explained() -> None:
     """A GUARD, not a deletion: `refusal_message` was retired with the terminal refusal it
-    existed to explain (U9) — the publish gate now ROUTES a weighted Yes into the admin
+    existed to explain — the publish gate now ROUTES a weighted Yes into the admin
     queue instead of dead-ending, so restoring the function means restoring that dead end.
     This test fails if it ever comes back.
 

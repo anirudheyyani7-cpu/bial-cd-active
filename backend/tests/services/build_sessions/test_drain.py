@@ -1,9 +1,9 @@
-"""U16 — the twenty-four-hour drain (R21).
+"""The twenty-four-hour drain.
 
 The tiers ask "is anything claiming this container?". A container held open by a jammed signal is
 claimed by definition, so the tiers can never reach it. The drain is the only rule that does not
 ask — and therefore the only one that acts on a container a builder still considers theirs, which
-is why it ships flag-off and why AE14's shape is *do not interrupt, tell them, reclaim at the
+is why it ships flag-off and why its rule is *do not interrupt, tell them, reclaim at the
 pause*.
 """
 
@@ -35,9 +35,9 @@ def _aged(hours: float) -> SandboxIdentity:
 
 
 def test_with_the_flag_off_nothing_ever_drains() -> None:
-    """The default posture everywhere. ADR-0014 records that long-session behaviour was never
-    validated and the longest observed live session is ~31 minutes, so this threshold targets a
-    scenario nobody has measured."""
+    """The default posture everywhere. Long-session behaviour was never validated and the
+    longest observed live session is ~31 minutes, so this threshold targets a scenario nobody
+    has measured."""
     old = _aged(100)
 
     assert draining_at(old, enabled=False, after_hours=24) is None
@@ -45,8 +45,8 @@ def test_with_the_flag_off_nothing_ever_drains() -> None:
 
 
 def test_a_turn_in_flight_is_never_interrupted() -> None:
-    """*Covers AE14.* A 24-hour-old container with an agent making tool calls inside it is doing
-    precisely what the platform exists to do. The drain waits for the pause."""
+    """A 24-hour-old container with an agent making tool calls inside it is doing precisely what
+    the platform exists to do. The drain waits for the pause."""
     assert (
         is_drained(_aged(48), now=NOW, enabled=True, after_hours=24, turn_in_flight=True) is False
     )

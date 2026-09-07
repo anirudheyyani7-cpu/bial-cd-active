@@ -1,12 +1,13 @@
-"""R3 composition-root test — the materialization seam with NOTHING stubbed past.
+"""The composition-root test for attachment resolution — the materialization seam with NOTHING
+stubbed past.
 
-The `mocks-mask-composition-seams` learning (2026-07-15) in its purest form: every other R3 test
-reaches the object store through `FakeStorage`, which round-trips a dict and would happily "prove"
-a materialization path that cannot actually read a real blob. This one runs the REAL wiring —
-`get_storage()` → a real `AzureBlobStorage` → Azurite — against REAL `conversations` /`messages` /
-`attachments` rows, with NO `dependency_overrides` on the storage seam. It is the only test that
-can catch the seam itself being wrong (a key built one way and read another, a content-type that
-mangles bytes, an owner-prefix mismatch).
+The `mocks-mask-composition-seams` learning in its purest form: every other attachment-resolution
+test reaches the object store through `FakeStorage`, which round-trips a dict and would happily
+"prove" a materialization path that cannot actually read a real blob. This one runs the REAL
+wiring — `get_storage()` → a real `AzureBlobStorage` → Azurite — against REAL `conversations` /
+`messages` /`attachments` rows, with NO `dependency_overrides` on the storage seam. It is the only
+test that can catch the seam itself being wrong (a key built one way and read another, a
+content-type that mangles bytes, an owner-prefix mismatch).
 """
 
 from __future__ import annotations

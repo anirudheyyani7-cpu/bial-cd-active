@@ -125,7 +125,7 @@ def test_an_unknown_part_shape_is_still_counted() -> None:
 
 
 def test_the_window_is_not_the_bill_and_cache_is_the_reason() -> None:
-    """★ KTD-2. The BILL for a long, mostly-cached turn is tiny — `weighted_spend` correctly
+    """★ The BILL for a long, mostly-cached turn is tiny — `weighted_spend` correctly
     discounts a cache read to a tenth — but the WINDOW is full regardless: every one of those
     tokens is still in the prompt. Mutation check: route the window through `weighted_spend`
     instead and a 190,000-token conversation reports as ~30,000 — the guardrail never fires,

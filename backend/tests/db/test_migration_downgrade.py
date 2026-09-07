@@ -1,4 +1,4 @@
-"""Alembic downgrade round-trip: head → pre-projects (0014) → head, in-suite (U3).
+"""Alembic downgrade round-trip: head → pre-projects (0014) → head, in-suite.
 
 `tests/db/test_projects_migration.py` proves the shape 0015 PRODUCED; this proves the chain
 actually walks back and forward again against the real test DB, using the same `alembic.ini`

@@ -1,4 +1,4 @@
-"""Alembic round-trip for the app_registry.name drop (0020, #48/F5): head → 0019 → head
+"""Alembic round-trip for the app_registry.name drop (0020): head → 0019 → head
 against the real test DB. Proves `upgrade` removes the `name` column and `downgrade`
 recreates its STRUCTURE (`String(120) NOT NULL server_default=""`). The DATA is NOT restored
 — a schema-only round-trip. Mirrors `test_app_files_drop_migration.py`: programmatic

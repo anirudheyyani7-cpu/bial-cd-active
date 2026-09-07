@@ -1,4 +1,4 @@
-"""Offline unit tests for the C4 snapshot/restore SCRIPTS (plan U15) — no container, no Azurite.
+"""Offline unit tests for the snapshot/restore SCRIPTS — no container, no Azurite.
 
 Runs the LITERAL `snapshot.sh` / `restore.sh` on temp dirs to pin the git-bundle round-trip
 mechanics: the empty-diff guard (no lock-wedge), git-bundle-verify (raw bundle, not base64 text),
@@ -92,7 +92,7 @@ def test_snapshot_restore_round_trips_tree_and_history(tmp_path: Path) -> None:
     assert _commits(dst) == 1  # the snapshot commit's history survived the bundle round-trip
 
 
-# --- the empty-diff guard: a no-op re-snapshot must SUCCEED (else the C4 lock wedges) ----------
+# --- the empty-diff guard: a no-op re-snapshot must SUCCEED, or the lock wedges ----------
 def test_empty_diff_re_snapshot_succeeds_and_stays_restorable(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()

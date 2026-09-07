@@ -188,7 +188,7 @@ describe('LivePreview — status-driven visuals, all five statuses', () => {
   // not (`AppPane.tsx`: `address.url ? <AppPaneHost /> : <NoFrame .../>`). So the honest claim
   // left to make here is not "here is the copy" (there is none) but "this component genuinely
   // has nothing left to say for it" — proven below by checking every kind of chrome it knows how
-  // to draw, not merely the one sentence that used to live here. `workspaceState.test.ts` covers
+  // to draw, not merely a single sentence of copy. `workspaceState.test.ts` covers
   // the state map that now owns this copy.
   it('renders NOTHING for the no-previewUrl/no-status combination — the empty-state copy moved to AppPane', () => {
     const { container } = render(<LivePreview previewUrl={null} status={null} />)
@@ -309,7 +309,7 @@ describe('LivePreview — relaunch a torn-down preview', () => {
     )
     // LIVENESS: the placeholder still says what happened.
     expect(container.textContent).toMatch(/no longer running/i)
-    // INERTNESS: no button under any retired label, and the prop it used to fire is never called.
+    // INERTNESS: no button under any retired label, and the relaunch prop is never called.
     expect(screen.queryByRole('button', { name: /relaunch|bring it back/i })).toBeNull()
     expect(onRelaunch).not.toHaveBeenCalled()
   })
@@ -713,7 +713,7 @@ describe('LivePreview — the frame is revealed on load, never on a timer', () =
       // LIVENESS: still nothing painted, so still not revealed, and still labelled.
       expect(card(container).className).toMatch(/opacity-0/)
       expect(container.textContent).toMatch(/taking longer than usual/i)
-      // INERTNESS: no button, under any label, and the prop it used to fire is never called.
+      // INERTNESS: no button, under any label, and the relaunch prop is never called.
       expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
       expect(onRelaunch).not.toHaveBeenCalled()
     } finally {
@@ -870,7 +870,7 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
       // LIVENESS: the bounded terminal still fires.
       expect(container.textContent).toMatch(/preview unavailable/i)
       expect(container.textContent).not.toMatch(/reconnecting to your preview/i)
-      // INERTNESS: no button, and the prop it used to fire is never called.
+      // INERTNESS: no button, and the relaunch prop is never called.
       expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
       expect(onRelaunch).not.toHaveBeenCalled()
     } finally {
@@ -1017,7 +1017,7 @@ describe('LivePreview — the preview only claims a build that exists', () => {
 
 describe('LivePreview — the device width it is told to frame at', () => {
   // THE SWITCHER IS NOT IN THIS COMPONENT ANY MORE. It is in the shell's toolbar
-  // row, above both columns, so the three `aria-pressed` scenarios that used to live here are in
+  // row, above both columns, so the three `aria-pressed` scenarios live in
   // `WorkspaceToolbar.test.tsx` — where the control is. What stays here is the half this
   // component still owns: that the width it is TOLD reaches the card's inline style.
   //

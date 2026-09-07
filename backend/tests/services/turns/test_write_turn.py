@@ -625,7 +625,7 @@ async def test_budget_exhaustion_with_a_red_app_still_names_the_error(
     fake_storage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """★ COVERS THE HONEST ENDING. The sentence this asserts replaced one that
+    """THE HONEST ENDING. The sentence this asserts replaced one that
     named a defect ("your app still has an error") and left the citizen to work out what they
     were looking at. What they should do next depends entirely on that: the starting template,
     their own app one change behind, and nothing at all are three different situations.
@@ -1537,7 +1537,7 @@ async def test_the_workspace_note_rides_a_build_turn_too(
     fake_redis: aioredis.Redis,
     fake_storage,
 ) -> None:
-    """★ COVERS the BUILD half of the workspace note. Injected once, ABOVE the branch that
+    """The BUILD half of the workspace note. Injected once, ABOVE the branch that
     picks the run loop, so both kinds get the same message; the Plan half is proven cheaply
     by `test_reminders.py::test_the_workspace_note_still_rides_a_turn_off_any_anchor`, while
     Build needs the provisioned-container harness this file already stands up.
@@ -2288,11 +2288,10 @@ def test_write_prose_with_no_tool_call_after_it_is_still_the_citizens_answer(
 
 
 def test_a_plan_chat_streams_its_prose_exactly_as_a_build_chat_does(_fresh_engine) -> None:
-    """★ THE INVERSION, and the reason it is safe to invert. This used to assert a planning
-    chat HELD its prose exactly as a build chat did: buffered until the response ended, deleted
-    outright if a tool call followed. The hold is gone in both kinds now, so a word written is a
-    word on the wire the moment it is written — buying back the streaming a planning answer used
-    to lose while it waited for its response to end.
+    """★ NEITHER KIND HOLDS ITS PROSE, and the reason that is safe. A planning chat's text is
+    not buffered until its response ends, and not dropped when a tool call follows it: a word
+    written is a word on the wire the moment it is written, which is the streaming any hold
+    costs a planning answer.
 
     Mutation check: gate `_push_text` on `state.kind is ChatKind.BUILD` and this goes red at
     the first assertion, before one word has been drawn."""

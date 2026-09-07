@@ -73,8 +73,8 @@ def billing_factory(
 def make_provider(
     prompt: str | Sequence[str | BinaryContent], app_id: uuid.UUID
 ) -> RunContextProvider:
-    """A KD-13 run-context provider double: `session_id -> BuildSpec{prompt, app_id}`. The prompt
-    may be a bare string or the R3 multimodal sequence SESSION-API resolves for a turn carrying
+    """A run-context provider double: `session_id -> BuildSpec{prompt, app_id}`. The prompt
+    may be a bare string or the multimodal sequence SESSION-API resolves for a turn carrying
     attachments."""
 
     async def _provider(session_id: uuid.UUID) -> BuildSpec:
@@ -92,7 +92,7 @@ def make_orchestrator(
 ) -> tuple[BuildOrchestrator, uuid.UUID]:
     """Construct a BuildOrchestrator wired to test doubles. `readiness_poll_s=0` so the readiness
     poll never sleeps in the suite; a small poll budget keeps a stuck-dev test bounded.
-    `preview_watch_poll_s=0` so the F8/U5 early readiness watcher spins without sleeping."""
+    `preview_watch_poll_s=0` so the early readiness watcher spins without sleeping."""
     resolved_app_id = app_id if app_id is not None else uuid.uuid4()
     orchestrator = BuildOrchestrator(
         model=model,

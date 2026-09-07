@@ -825,8 +825,8 @@ describe('a read turn reads the live container without becoming a build (2026-07
       await turn.end()
 
       expect(await screen.findByText(/Gate Cleaning Log — T1/)).toBeTruthy()
-      // AN INERTNESS GUARD: the bubble that used to sit under the answer — an avatar wrapped
-      // around nothing — cannot appear for any turn state. Paired with the liveness assertion
+      // AN INERTNESS GUARD: `build-bubble` is the retired per-row avatar wrapped around an empty
+      // answer; it must never appear for any turn state. Paired with the liveness assertion
       // above, so this cannot pass against a transcript that rendered nothing at all.
       expect(screen.queryByTestId('build-bubble')).toBeNull()
       expect(screen.queryByTestId('activity-group')).toBeNull() // a read turn ran no tools

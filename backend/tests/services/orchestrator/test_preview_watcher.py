@@ -1,4 +1,4 @@
-"""The F8/U5 early readiness watcher — frames the preview the instant the dev server serves,
+"""The early readiness watcher — frames the preview the instant the dev server serves,
 decoupled from the between-runs verify cadence, with a distinct dev-process-crash → reconnecting
 state and a managed teardown that completes before the terminal funnel reads `last_seq`.
 
@@ -149,11 +149,12 @@ async def test_watcher_torn_down_on_normal_completion(db_session, billing_factor
 async def test_teardown_completes_before_the_funnel_reads_last_seq(
     db_session, billing_factory, sink, monkeypatch
 ) -> None:
-    """KD-12 ORDERING itself. The sibling teardown tests prove teardown HAPPENS + gap-freeness, but
-    a `last_seq == last event` assertion holds whether teardown ran before OR after the funnel (in
-    the happy path the watcher has nothing new to emit at completion). This pins the SEQUENCE by
-    recording the call order of `_stop_watcher` and `_funnel`: a reorder (funnel first — which is
-    what would let a late watcher emit collide with or gap the terminal `ended` seq) → red."""
+    """Pins the ORDERING itself. The sibling teardown tests prove teardown HAPPENS + gap-freeness,
+    but a `last_seq == last event` assertion holds whether teardown ran before OR after the
+    funnel (in the happy path the watcher has nothing new to emit at completion). This pins the
+    SEQUENCE by recording the call order of `_stop_watcher` and `_funnel`: a reorder (funnel
+    first — which is what would let a late watcher emit collide with or gap the terminal `ended`
+    seq) → red."""
     import src.services.orchestrator.harness as harness_mod
 
     user = await UserFactory.create(db_session)
@@ -378,8 +379,8 @@ async def test_a_slow_render_does_not_read_as_a_dev_process_crash(
 async def test_a_cancel_inside_the_warm_request_still_frames_the_preview(
     db_session, billing_factory
 ) -> None:
-    """★ Same defect as the turns engine's, on the legacy harness path. U3 put a cancellable,
-    up-to-8s warm request between the one-shot `claim_preview_frame()` and the emit, and
+    """★ Same defect as the turns engine's, on the legacy harness path. A cancellable,
+    up-to-8s warm request sits between the one-shot `claim_preview_frame()` and the emit, and
     `_stop_watcher` cancels this watcher at every terminal — so a cancel in that window leaves
     the frame claimed forever and never sent, and no later poll re-claims it.
 

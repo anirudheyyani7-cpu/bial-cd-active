@@ -1,4 +1,4 @@
-"""The Azure-side sandbox inventory (#83 follow-up) — the fleet view the Redis sweep cannot
+"""The Azure-side sandbox inventory — the fleet view the Redis sweep cannot
 produce. No DB: a fake lister plus the real registry namespace."""
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ async def test_a_listing_failure_propagates_rather_than_reporting_a_clean_fleet(
 
 def test_the_concrete_client_satisfies_the_protocol_by_shape() -> None:
     """The capability deliberately lives on `AcaSandboxClient`, not the frozen `SandboxClient`
-    ABC (C2). This is what keeps that decision honest — drop the method and the admin route's
+    ABC. This is what keeps that decision honest — drop the method and the admin route's
     `isinstance` check starts answering 503 on a healthy deployment."""
     from src.services.sandbox.client import AcaSandboxClient
 

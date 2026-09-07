@@ -98,13 +98,13 @@ CONTENT_SHEETS: Final[tuple[str, ...]] = (
     "Held",
 )
 
-#: NOTE: the plan's second reconciliation direction — "the residual sheets sum back to the
-#: post-remediation export's total" — is NOT implemented, and a `RESIDUAL_SHEETS` constant that
-#: named the sheets without checking anything only made it look like it was. It cannot be
-#: implemented against the current entry model: a surviving entry carries its BEFORE rows, so
-#: summing the residual sheets yields the before-count of the residual set, not the after-count.
-#: Doing it properly needs each surviving entry to carry its after-row count alongside its
-#: before-row count. Tracked as follow-up rather than faked here.
+#: NOTE: the reconciliation direction that would pair with the partition check — "the residual
+#: sheets sum back to the post-remediation export's total" — is NOT implemented, and a
+#: `RESIDUAL_SHEETS` constant that named the sheets without checking anything only made it look
+#: like it was. It cannot be implemented against the current entry model: a surviving entry
+#: carries its BEFORE rows, so summing the residual sheets yields the before-count of the
+#: residual set, not the after-count. Doing it properly needs each surviving entry to carry its
+#: after-row count alongside its before-row count. Tracked as follow-up rather than faked here.
 
 
 # ─────────────────────────────────────────────────────────────────────────────

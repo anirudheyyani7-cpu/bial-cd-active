@@ -1,4 +1,4 @@
-"""U7 — `POST /v1/admin/apps/reconcile-databases` and the advisory size column.
+"""`POST /v1/admin/apps/reconcile-databases` and the advisory size column.
 
 Superadmin-gated, audited, and REPORT-ONLY: the endpoint-level pin is that a seeded orphan
 shows up in the response AND is still on the cluster when the request is over. The

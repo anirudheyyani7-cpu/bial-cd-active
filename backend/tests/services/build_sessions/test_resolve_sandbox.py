@@ -396,7 +396,8 @@ async def test_a_poisoned_recovery_slot_is_stepped_over(
     """★ THE REFUSAL LOOP, BOUNDED. `recoverable_work` ranks the two bundles by `last_modified`,
     never by ancestry, so a recovery copy that was overwritten with a bad tree outranks a
     perfectly good saved one — and every restore afterwards hands back the poison. Two consecutive
-    refusals by U3's guard is the signal that the slot rather than the turn is the problem.
+    refusals by the integrity guard are the signal that the slot, rather than the turn, is the
+    problem.
 
     Mutation check: raise `_POISONED_SLOT_REFUSALS` and this goes red."""
     user, project_id = await _mk(db_session, "u2k@rvaiglobal.com")

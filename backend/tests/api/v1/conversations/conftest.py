@@ -35,7 +35,7 @@ def _override_storage(app, fake_storage) -> None:
 def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:
     """A sandbox client on BOTH seams, for every conversation test, by default.
 
-    R98: without this, a turn silently answers from the last SAVED copy when no sandbox is
+    Without this, a turn silently answers from the last SAVED copy when no sandbox is
     configured — exactly the state an unbound test env is in. Tests ABOUT that absence unbind
     it via `no_workspace_service`. Pulls in `fake_redis` too: binding a workspace is what makes
     the send route's reclaim preflight reachable, and that preflight reads the coordination
@@ -55,7 +55,8 @@ def _bind_a_workspace(app, fake_redis, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def no_workspace_service(app) -> None:
-    """The R98 case, opted into by name: a deployment with no sandbox service at all.
+    """The no-sandbox case the binding above guards against, opted into by name: a deployment
+    with no sandbox service at all.
 
     Overrides the autouse binding above rather than fighting it, so a test that wants the
     refusal says so in its signature and every other test keeps the live path."""

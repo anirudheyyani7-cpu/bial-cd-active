@@ -16,7 +16,8 @@ logger moves back under `handle` or `/_sup` logging is dropped:
 
   * the site has a logger at all (delete it and reclamation reads every container as idle), and
   * `/_sup/*` is excluded from it (delete `log_skip` and the platform's own probes count as user
-    traffic, so an idle container looks busy forever — the exact failure the R14 signal guards).
+    traffic, so an idle container looks busy forever — the exact manufactured-activity failure
+    reclamation guards against).
 """
 
 from __future__ import annotations

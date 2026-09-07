@@ -1,4 +1,4 @@
-"""The concrete-typing factory contract (ADR-0009), enforced two ways:
+"""The concrete-typing factory contract, enforced two ways:
 
 1. STATICALLY — the `assert_type(...)` call the three type checkers verify when
    they analyze this file (run in CI): `create_storage` on an `AzureStorageConfig`

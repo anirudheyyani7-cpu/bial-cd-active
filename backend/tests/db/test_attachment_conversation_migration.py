@@ -6,7 +6,7 @@ used by `conversations.project_id` — inside the rolled-back per-test transacti
 DDL here, so no `pg_attribute` slot burn).
 
 The upgrade/downgrade round-trip is verified out-of-band via `alembic upgrade head` /
-`downgrade` (U9 Verification) and guarded against a second head by
+`downgrade` and guarded against a second head by
 `tests/test_alembic_single_head.py`; here we prove the shape the migration produced.
 """
 

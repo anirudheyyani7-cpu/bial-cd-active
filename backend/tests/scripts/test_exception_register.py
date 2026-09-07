@@ -342,7 +342,7 @@ def _one(tmp_path: Path, image: str, r: dict[str, str], *, name: str = "x.xlsx")
 
 
 def test_a_finding_already_past_its_fix_is_a_dispute_not_an_exception(tmp_path: Path) -> None:
-    """Plan AE2. Filing this as an exception concedes a vulnerability we do not have."""
+    """Filing this as an exception concedes a vulnerability we do not have."""
     entry = _one(
         tmp_path,
         FRONTEND,
@@ -356,7 +356,7 @@ def test_a_finding_already_past_its_fix_is_a_dispute_not_an_exception(tmp_path: 
 def test_a_prerelease_only_fix_is_accepted_risk_with_the_prerelease_as_its_reason(
     tmp_path: Path,
 ) -> None:
-    """Plan AE3. There is no released version to move to, so 'deferred' would be a lie —
+    """There is no released version to move to, so 'deferred' would be a lie —
     deferred means a fix exists and we chose not to take it."""
     entry = _one(
         tmp_path,
@@ -457,7 +457,7 @@ def test_a_mixed_group_takes_the_strictest_verdict_never_the_cleared_one(tmp_pat
 def test_one_cve_across_sibling_packages_and_paths_collapses_per_package(
     tmp_path: Path,
 ) -> None:
-    """Plan AE6, with the real 9-row shape: one CVE, three sibling packages, three paths each.
+    """One CVE, three sibling packages, three paths each — the real 9-row shape.
 
     The report is per (image, CVE, package, version) and carries the ROW count, so the reviewer
     can reconcile against the row totals their console shows while reading a list of real
@@ -1224,8 +1224,9 @@ def test_the_partition_check_stays_ok_when_an_anticipated_addition_appears(
 
 
 def test_the_map_pass_writes_a_row_level_coverage_map(tmp_path: Path) -> None:
-    """U9's deliverable. Row level, not entry level, so the reviewer can check it line by line
-    against their own console — and so every row demonstrably carries exactly one disposition."""
+    """The map is written at ROW level, not entry level, so the reviewer can check it line by
+    line against their own console — and so every row demonstrably carries exactly one
+    disposition."""
     rows = [row(f"CVE-9000-035{i}", f"pkg{i}", "1.0", fixed="-") for i in range(3)]
     before = write_severity_shape(tmp_path / "b6.xlsx", asset_ref(SANDBOX), rows)
     out_dir = tmp_path / "coverage"

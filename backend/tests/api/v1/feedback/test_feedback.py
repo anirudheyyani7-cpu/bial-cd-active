@@ -1,4 +1,4 @@
-"""POST /v1/feedback — validation, author-from-token, page sanitization, rate limit (U7).
+"""POST /v1/feedback — validation, author-from-token, page sanitization, rate limit.
 Byte-stable with the Express `/api/feedback` contract.
 """
 

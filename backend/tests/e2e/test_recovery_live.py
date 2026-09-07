@@ -436,8 +436,8 @@ async def test_s13_a_save_and_a_turn_in_the_same_second_still_resumes_the_newer_
     """★ THE RESOLUTION QUESTION. Azure (and Azurite) stamp `Last-Modified` in WHOLE
     SECONDS, so a Save and a turn-boundary write landing in the same second are
     indistinguishable to `newest_restore_source` — and `_restore_or_provision` uses that
-    same comparison, so a tie restores the older SAVED tree over newer work: the exact P0
-    this branch fixed, reappearing inside a one-second window.
+    same comparison, so a tie restores the older SAVED tree over newer work — the failure this
+    test guards against, reappearing inside a one-second window.
 
     It does NOT guarantee the collision — S13B FORCES the tie instead; this one runs the
     unforced sequence and prints which way the real stamps fell."""

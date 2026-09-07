@@ -77,8 +77,8 @@ only say it could not tell."""
 THE TRIGGER IS THE AGENT'S JUDGEMENT, DELIBERATELY. "Is this new work arriving in bulk, or a
 question, a fix, or the next round?" is a categorisation, and categorisation is what a model is
 for. The platform does not read the user's message to detect an oversized request — doing so
-would be the anti-pattern this plan names everywhere else, and it would be wrong on the cases
-that matter most.
+would be the same keyword-matching anti-pattern avoided everywhere else, and it would be wrong
+on the cases that matter most.
 
 THERE IS NO CEILING ANY MORE, in this text or in the tool body. A number here decided how much
 of what the model had produced a citizen was allowed to see, and a proposal that named one

@@ -266,8 +266,8 @@ from. No second endpoint, no second wording."""
 # THE FIRST SENTENCE, NOT THE WHOLE DOCSTRING — the one decision this unit left to
 # implementation. pydantic-ai already sends every description IN FULL on the tool schema of
 # every request, so rendering the whole docstring here would put each one in front of the
-# model TWICE per turn: ~350 extra words on the request that this plan is otherwise spending
-# units trimming. The first sentence is a roll-call — "these are the tools you have, this is
+# model TWICE per turn: ~350 extra words on a request whose token budget is already tight.
+# The first sentence is a roll-call — "these are the tools you have, this is
 # what each is for" — and the registration carries the detail. Both are slices of the one
 # string, so the two can restate each other but can never contradict each other, which is
 # the property this check actually asks for.

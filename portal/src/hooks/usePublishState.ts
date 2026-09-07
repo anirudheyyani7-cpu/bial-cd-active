@@ -115,14 +115,11 @@ export function usePublishState(projectId: string): UsePublishState {
       setLoadError(null)
     } catch (err) {
       if (generation.current !== mine) return
-      // EVERY FAILED READ LANDS IN ONE PLACE, and the 503 arm that used to sit above this
-      // — blank the surface, report nothing — is deliberately gone. Three reasons, and the
-      // first two are new since it was written. This is now the ONLY publishing surface
-      // the citizen has, so a chip that renders nothing is indistinguishable from a broken
-      // page. The server no longer 503s on a storage blip either: it degrades that to the
-      // explicit unknown state and answers 200, so a 503 would not be what catches it
-      // anyway. And the arm predates the change that made this read work without a deploy
-      // pipeline at all, which is the configuration it was written for.
+      // EVERY FAILED READ LANDS IN ONE PLACE — blanking the surface and reporting nothing
+      // is not an option here. This is the ONLY publishing surface the citizen has, so a
+      // chip that renders nothing is indistinguishable from a broken page. The server no
+      // longer 503s on a storage blip either: it degrades that to the explicit unknown
+      // state and answers 200, so special-casing 503 would not even catch it.
       setLoadError(err instanceof ApiError ? err.message : 'Could not read the publish status.')
     }
   }, [projectId])

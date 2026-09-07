@@ -1,4 +1,4 @@
-"""SPA history fallback (U15): a reserved-root or traversal path 404s as JSON, a real
+"""SPA history fallback: a reserved-root or traversal path 404s as JSON, a real
 deep link returns index.html. The route's `responses={404}` is Sonar-only metadata;
 these lock the unchanged runtime behavior."""
 

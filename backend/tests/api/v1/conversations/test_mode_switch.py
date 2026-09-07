@@ -1,14 +1,12 @@
 """THE MODE SWITCH IS GONE — this file is its inertness guard.
 
-WHAT USED TO BE HERE. `POST /v1/conversations/{id}/mode` changed what a conversation WAS,
-atomically with a hidden `[mode changed: …]` marker row so the model could see where in the
-history its toolset changed.
+`POST /v1/conversations/{id}/mode` used to change what a conversation WAS, atomically with a
+hidden `[mode changed: …]` marker row so the model could see where in the history its toolset
+changed. It went because a chat is one thing or the other from the moment it is created, chosen
+once on `POST /conversations` — no second concept to switch between.
 
-WHY IT WENT. A chat is one thing or the other from the moment it is created, chosen once on
-`POST /conversations` — no second concept to switch between.
-
-WHY THIS FILE STAYS. Deleting the suite deletes the evidence: the route answers 404 (not
-405 or 500), nothing can write a marker row, and a chat's kind never moves after creation.
+This file stays as the removal trace: the route answers 404 (not 405 or 500), nothing can write
+a marker row, and a chat's kind never moves after creation.
 """
 
 from __future__ import annotations

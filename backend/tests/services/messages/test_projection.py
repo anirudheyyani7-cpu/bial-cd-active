@@ -318,18 +318,16 @@ async def test_reads_are_visible_steps_that_say_only_what_they_touched(db_sessio
     assert "app/page.tsx" not in steps[0].label
     assert steps[0].label == "Looking at your app's main page"
     assert steps[1].label == "Inspected the app's files"
-    # AND NEITHER STEP CARRIES WHAT THE READ RETURNED. This used to assert the opposite —
-    # `steps[1].detail.result == "app/db.ts:3: visitors"` — which is grep output over the
-    # citizen's own data, shipped on every reload. `grep -rn` over an app is exactly the call
-    # whose result is worth the least to a reader and the most to anyone else, and the step it
-    # rode is now one the citizen can see.
+    # AND NEITHER STEP CARRIES WHAT THE READ RETURNED. A raw result like
+    # `"app/db.ts:3: visitors"` is grep output over the citizen's own data, and this step is
+    # one the citizen can see — `grep -rn` over an app is exactly the call whose result is
+    # worth the least to a reader and the most to anyone else.
     assert "visitors" not in _rendered(steps[1])
     assert "app/db.ts" not in _rendered(steps[1])
 
 
 async def test_a_turn_that_reads_three_files_then_writes_one_shows_four_steps(db_session) -> None:
-    """Three reads and a write are four things the agent did, and the citizen sees four rows
-    where the same turn used to show one.
+    """Three reads and a write are four things the agent did, and the citizen sees four rows.
 
     THE FLAGS ARE THE CLAIM, not the item count: the projection always emitted four items, and a
     feed that draws only the visible ones is what turned that into a single row. So the flags are
@@ -692,7 +690,7 @@ async def test_retry_refusal_projects_a_failed_step(db_session) -> None:
     items = project_rows(await _rows(db_session, user, conversation))
     steps = [item for item in items if isinstance(item, StepItem)]
     assert len(steps) == 1
-    # FAILED, AND THAT IS ALL IT SAYS. The refusal text ("blocked …") used to ride the step's
+    # FAILED, AND THAT IS ALL IT SAYS. The refusal text ("blocked …") never rides the step's
     # detail block; a retry-prompt body is the harness talking to the model about why a call was
     # refused, which is neither the citizen's business nor safe to assume it is sanitised.
     assert steps[0].state == "failed"
@@ -1253,8 +1251,9 @@ async def test_build_prose_beside_a_tool_call_renders_ahead_of_that_step(db_sess
     what happened and the prose beside it says why, and a citizen reading the why UNDER the what
     is reading the turn in an order nobody wrote.
 
-    Mutation-check: skip a text part whose response also holds a tool call (the rule this file
-    used to pin) and this goes red on the missing paragraph while the step still renders."""
+    Mutation-check: skip a text part whose response also holds a tool call — the one thing this
+    projection must never do — and this goes red on the missing paragraph while the step still
+    renders."""
     user, _project, conversation = await _thread(db_session)
     session_id = uuid.uuid4()
     prose = (
@@ -1472,7 +1471,7 @@ async def test_a_tool_result_the_platform_wrote_to_itself_reaches_no_rendered_fi
 
     The marker is put in the two places a leak would come from — the tool call's ARGUMENTS and
     its RETURN — and then looked for across the ENTIRE serialised projection, every item and
-    every field, not in the one place it used to live."""
+    every field, not just one."""
     secret = "PLATFORM-ONLY-a7f3c1"
     user, _, conversation = await _thread(db_session)
     await append_batch(

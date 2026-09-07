@@ -7,7 +7,8 @@ as "no code yet"; either a writer comes back from the build pipeline or the read
 the column. What stays pinned here is that submit never touches it.
 
 The cross-user prompt-grounding test moved. It posted to the retired `POST /v1/claude` relay; the
-same ADR-0004 property is asserted in `tests/api/v1/conversations/test_project_grounding.py`.
+same cross-user isolation property is asserted in
+`tests/api/v1/conversations/test_project_grounding.py`.
 """
 
 from __future__ import annotations

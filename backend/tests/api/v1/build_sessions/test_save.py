@@ -172,7 +172,7 @@ async def test_save_of_an_unknown_project_is_404(
 async def test_save_of_another_users_project_is_404(
     client: AsyncClient, db_session: AsyncSession, wire
 ) -> None:
-    """Owner-scoped (ADR-0004): saving another user's project is a non-leaking 404, not a
+    """Owner-scoped: saving another user's project is a non-leaking 404, not a
     403 that would confirm the project exists."""
     owner, project = await _user_project(db_session, "save6-owner@rvaiglobal.com")
     intruder = await UserFactory.create(db_session, email="save6-intruder@rvaiglobal.com")

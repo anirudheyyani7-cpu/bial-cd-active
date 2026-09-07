@@ -1,4 +1,4 @@
-"""U12 / R10 — the wall-clock liveness lease the turn engine publishes (C5 family 4).
+"""The wall-clock liveness lease the turn engine publishes.
 
 Until this lease existed, a build running past 90 seconds was indistinguishable from an
 abandoned container to anything except the process running it — the only other shield is
@@ -462,7 +462,7 @@ async def test_a_sweep_sharing_only_the_store_reaps_a_lapsed_lease(
 def test_the_renewal_cadence_leaves_head_room_inside_the_ttl() -> None:
     # A cadence at or above the TTL lapses the lease between renewals under a healthy build —
     # the sweep then reaps mid-build. Same head-room reasoning as LOCK_RENEW_CADENCE_SECONDS
-    # vs LOCK_TTL_SECONDS (C3).
+    # vs LOCK_TTL_SECONDS.
     assert LIVENESS_LEASE_RENEW_CADENCE_SECONDS * 2 <= LIVENESS_LEASE_TTL_SECONDS
 
 

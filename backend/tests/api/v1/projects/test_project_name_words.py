@@ -1,4 +1,4 @@
-"""The project title's word cap, on BOTH write paths (#158 §14). No boundary tests existed
+"""The project title's word cap, on BOTH write paths. No boundary tests existed
 for an over-length name before this — the suite covered an over-length *description* and a
 blank name, but nothing pinned the title limit on `POST` or `PATCH`, and the cap lived in two
 places (the model constant and the portal's `NAME_MAX`) with nothing holding them together.

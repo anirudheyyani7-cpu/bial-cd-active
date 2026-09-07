@@ -1,4 +1,4 @@
-"""`attach_entra_token` wires managed-identity auth onto an async engine (ADR-0027).
+"""`attach_entra_token` wires managed-identity auth onto an async engine.
 
 No live Azure or Postgres: azure-identity's credential is faked and the registered
 `do_connect` listener is invoked directly, asserting it injects a fresh Entra token

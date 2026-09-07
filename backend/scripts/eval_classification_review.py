@@ -101,8 +101,8 @@ WEIGHTED_KEYS: Final[tuple[str, ...]] = tuple(
 #: a HEAD-only bundle extracts in well under this; a hang is a wedged git).
 _CLONE_TIMEOUT_S: Final = 60.0
 
-# Failure kinds. `extract_failed` is the plan's named edge (a bundle that fails to
-# extract is a report ROW); the model-phase kinds mirror the service's taxonomy in
+# Failure kinds. `extract_failed` is the pre-model edge — a bundle that never opens is still
+# a report ROW, not a dropped sample; the model-phase kinds mirror the service's taxonomy in
 # spirit, but the mapping to citizen-facing buckets stays the service's own business.
 _EXTRACT_FAILED: Final = "extract_failed"
 _NO_APP_YET: Final = "no_app_yet"
@@ -752,9 +752,9 @@ def _summarize(rows: list[EvalRow], spec: _EvalSpec, deployment: str | None) -> 
     requests, final-step output tokens) are the inputs that later re-set
     `REVIEW_WALL_CLOCK_CEILING_S`, `REVIEW_REQUEST_BUDGET` and the 8,000-token
     `MAX_TOKENS` cap in `src/services/classification/constants.py`. This script NEVER
-    modifies those ceilings itself: the plan's "Modify service.py (ceilings, once
-    measured)" happens after a real measured run against live Foundry, as its own
-    reviewed change, and the ceilings belong to the deployment recorded here."""
+    modifies those ceilings itself: bumping them in `service.py` happens after a real
+    measured run against live Foundry, as its own reviewed change, and the ceilings
+    belong to the deployment recorded here."""
     complete = [row for row in rows if row["status"] == "complete"]
     failed = [row for row in rows if row["status"] == "failed"]
 

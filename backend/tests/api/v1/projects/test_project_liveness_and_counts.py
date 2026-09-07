@@ -1,6 +1,6 @@
-"""What "live" means on the projects list, and the three numbers above it (#158 §1, §10).
+"""What "live" means on the projects list, and the three numbers above it.
 
-"Live" was settled on the #158 call as a DEPLOYMENT fact, not a lifecycle one:
+"Live" is a DEPLOYMENT fact, not a lifecycle one — in the client's own words:
 
 >   we have live = deployed / published — if the application is published and has url we
 >   will show that status
@@ -308,11 +308,11 @@ async def test_a_patch_answers_serving_from_the_deployment_not_the_default(
 async def test_generate_description_reports_serving_too(
     client, db_session, set_chat_model
 ) -> None:
-    """The THIRD of the three endpoints round 1's finding 1 named. Round 3 made
-    ‘_to_response’'s parameter required and this call site was already passing a computed
-    value — the code was correct from the start. What was missing was a test: nothing here
-    asserted it, so a mutant hard-coding ‘is_serving=False’ on THIS endpoint specifically
-    would have passed the whole suite.
+    """The third of the three endpoints beyond the list that answer `isServing` (the two above
+    are the others). This call site was already passing a computed value while `_to_response`
+    still carried its `= False` default, so the code was correct from the start. What was
+    missing was a test: nothing here asserted it, so a mutant hard-coding `is_serving=False` on
+    THIS endpoint specifically would have passed the whole suite.
     """
     set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
     headers, user = await _auth(db_session)

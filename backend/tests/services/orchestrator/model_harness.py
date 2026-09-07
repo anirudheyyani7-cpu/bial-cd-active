@@ -1,6 +1,6 @@
-"""`FunctionModel` scripting helpers (U4) — drive the build agent with a deterministic sequence
-of model turns, each carrying its own `RequestUsage` so per-model-step metering is assertable
-(KD-1). A run ends when the model returns a text turn (no tool call); a multi-run build is one
+"""`FunctionModel` scripting helpers — drive the build agent with a deterministic sequence
+of model turns, each carrying its own `RequestUsage` so per-model-step metering is assertable.
+A run ends when the model returns a text turn (no tool call); a multi-run build is one
 flat list of turns, the runs delimited by those text turns.
 """
 

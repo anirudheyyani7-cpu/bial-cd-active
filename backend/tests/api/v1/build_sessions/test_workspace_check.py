@@ -1,6 +1,6 @@
-"""U4 — the idle-tab workspace check, and the reversion nobody would otherwise catch.
+"""The idle-tab workspace check, and the reversion nobody would otherwise catch.
 
-R4/R7. Every other integrity check runs at the START of a turn; this one is for a citizen who
+Every other integrity check runs at the START of a turn; this one is for a citizen who
 just leaves a tab open — a "Build complete" claim can go stale while the page stays up.
 
 TWO PROPERTIES MATTER MOST:
@@ -53,7 +53,7 @@ async def test_a_project_with_no_live_container_never_retracts(
 async def test_a_deployment_with_no_sandbox_service_never_retracts(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage
 ) -> None:
-    """KTD-2 — nothing is configured to ask, so `UNREADABLE` is returned rather than `INTACT`:
+    """Nothing is configured to ask, so `UNREADABLE` is returned rather than `INTACT`:
     "we did not check" and "we checked and it is fine" are different facts.
 
     This is also the arm every test in this file runs on, which is why container-level
@@ -71,7 +71,7 @@ async def test_a_deployment_with_no_sandbox_service_never_retracts(
 async def test_another_users_project_is_404(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage
 ) -> None:
-    """ADR-0004: a cross-user project and a missing one are the same non-leaking answer."""
+    """A cross-user project and a missing one are the same non-leaking answer."""
     owner = await UserFactory.create(db_session, email="u4-owner@rvaiglobal.com")
     project = await ProjectFactory.create(db_session, owner.id)
     intruder = await UserFactory.create(db_session, email="u4-intruder@rvaiglobal.com")

@@ -1,5 +1,5 @@
 """The chat agent runs under TestModel with no network, and ChatDeps scopes tools to the
-caller's user_id (U12)."""
+caller's user_id."""
 
 from __future__ import annotations
 

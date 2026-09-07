@@ -1,6 +1,6 @@
-"""R3 at the HTTP boundary — `conversationId` on start over the NATIVE store (U4): the
-404/422 matrix, the back-compat text-only path, and the invariant that a rejected attachment
-costs the user NOTHING (no sandbox, no held lock)."""
+"""Attachment resolution at the HTTP boundary — `conversationId` on start over the NATIVE
+store: the 404/422 matrix, the back-compat text-only path, and the invariant that a rejected
+attachment costs the user NOTHING (no sandbox, no held lock)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ async def _owner(db: AsyncSession, email: str):
 
 
 def _ref_turn(*attachment_ids: str) -> list[Any]:
-    """A native user turn whose binaries are ref markers (the stored U4 shape)."""
+    """A native user turn whose binaries are ref markers — the shape a turn is stored in,
+    with the bytes externalized to the object store."""
     content: list[str | BinaryContent] = ["build from these"]
     for attachment_id in attachment_ids:
         content.append(
@@ -101,7 +102,8 @@ async def test_start_with_conversation_materializes_attachments(
 async def test_start_without_conversation_is_unchanged_and_text_only(
     client: AsyncClient, db_session: AsyncSession, fake_redis, fake_storage, wire
 ) -> None:
-    """Back-compat: the field is optional; omitting it must behave exactly as before R3."""
+    """Back-compat: the field is optional; omitting it must behave exactly as before this field
+    was added."""
     wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
     user, project, _ = await _owner(db_session, "sa2@rvaiglobal.com")
 

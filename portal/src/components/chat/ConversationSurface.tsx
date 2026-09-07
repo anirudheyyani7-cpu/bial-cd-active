@@ -383,8 +383,8 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   //                   (every ordinary chat), the reattach resolving, and the 404 retention lapse.
   //   'unreachable' — the question could not be ASKED. Send stays shut rather than guessing over a
   //                   possibly-live build, and a Retry renders, because a permanently shut gate
-  //                   whose only explanation was a vanishing toast is the dead end this plan exists
-  //                   to remove.
+  //                   whose only explanation was a vanishing toast is the dead end this state
+  //                   exists to remove.
   const [gateCheck, setGateCheck] = useState<'checking' | 'resolved' | 'unreachable'>('checking')
   // `Build it` was clicked and the atomic transition has not answered yet. A full server
   // round-trip (lock acquire + sandbox provision) lives in here — seconds, not a keystroke — and
@@ -2154,10 +2154,9 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   useEffect(() => {
     // IT ASKS WITH NO FRAME NOW, and that is a deliberate widening.
     //
-    // This used to read "only worth asking while a frame is actually on screen claiming to be
-    // live", which was true while the poll's only job was catching a framed app being reclaimed
-    // underneath it. Its answer now decides something else as well: whether the pane offers the
-    // one control that starts the app.
+    // Asking without a frame catches more than a reclaimed preview: the answer also decides
+    // whether the pane offers the one control that starts the app, so it has to run even when
+    // nothing is framed to reclaim.
     //
     // THE FAILURE THAT FORCED IT. Reload a chat whose build has ended. The address resolves a
     // STATUS and no URL — the transcript proves a build ran — so the pane drew "The preview is no
@@ -2535,10 +2534,8 @@ export default function ConversationSurface({ chatId: chatIdProp, kind = 'build'
   // surface be replaced without the app pane going with it. The reclaim dialog is the shell's too
   // — its open state is published above, its classification stayed here.
   //
-  // WHAT USED TO BE HERE: a hand-rolled transcript loop with its own bubble, avatar and timestamp
-  // per row, a build-progress card, a plan-options card, a pending-attachment chip row, a
-  // fixed-corner toast, an image lightbox and a composer. All of it is one `ChatThread` and one
-  // `Composer` now, and both are shared with the kind of chat that used to have its own page.
+  // Everything below is one `ChatThread` and one `Composer`, shared across both chat kinds this
+  // surface renders.
 
   /**
    * A TURN IS RUNNING IN THIS CHAT — the one signal the transcript, stop control and composer

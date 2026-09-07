@@ -74,7 +74,7 @@ funnel the turn/self-heal ceilings use (`_escalation` → `ended(failed)`).
 Checked BETWEEN loop iterations (never mid-`run_command`), so the true worst case is roughly this
 deadline plus one in-flight command. Deliberately GENEROUS so a legitimately long-but-healthy build
 (a cold-base `npm install`, several repair rounds) never trips it: sized well above one
-`RUN_COMMAND_SLOW_TIMEOUT_S` and to ~2× the documented C1 900s per-command hard cap (1800s /
+`RUN_COMMAND_SLOW_TIMEOUT_S` and to ~2× the supervisor's own 900s per-command hard cap (1800s /
 30 min).
 This is a safety net, not a tuned SLA — TUNE it against real end-to-end build telemetry."""
 
@@ -90,12 +90,12 @@ errors, so `tsc --noEmit` is what the harness reads between runs. `next build` i
 yet — the production build is a DEPLOY-track concern."""
 
 EXEC_TIMEOUT_S = 300
-"""Wall-clock cap for a harness-driven command run (well under C1's 900s hard cap)."""
+"""Wall-clock cap for a harness-driven command run (well under the supervisor's 900s hard cap)."""
 
 RUN_COMMAND_SLOW_TIMEOUT_S = 600
 """Wall-clock cap for the SLOW class of model-driven `run_command` — installs and type-check/build
-runs — well under C1's 900s hard cap, but
-DISTINCT from `EXEC_TIMEOUT_S`. An `npm install` on the pre-baked base can take far longer than a
+runs — well under the supervisor's 900s hard cap, but DISTINCT from `EXEC_TIMEOUT_S`. An
+`npm install` on the pre-baked base can take far longer than a
 `tsc --noEmit`, and widening the shared `EXEC_TIMEOUT_S` would loosen the deterministic tsc verify
 gate. Tune against a REAL `npm install` on the Windows-built sandbox image, not a guess (a value
 too low turns a legitimate large install into a false ModelRetry)."""
@@ -209,8 +209,8 @@ ATTACH_RETRY_BACKOFF_S = 7.0
 # --- read/output bounds --------------------------------------------------------
 
 VIEW_MAX_LINES = 400
-"""Cap on a single `read_file` view — C1 `view` has no size cap, so BRAIN bounds it in-module to
-protect the context window (never view a whole large file)."""
+"""Cap on a single `read_file` view — the supervisor's `view` has no size cap, so BRAIN bounds it
+in-module to protect the context window (never view a whole large file)."""
 
 LOG_TAIL_MAX_LINES = 200
 """Cap on how many `dev_logs` tail lines feed the de-noiser."""
@@ -239,9 +239,9 @@ middle, so "summarise" never means "lose the error"."""
 def output_budget_for_exit(exit_code: int) -> int:
     """The character budget a command's output is rendered under, given its exit code.
 
-    THE RULE IS THE REPO'S OWN, from `docs/solutions/best-practices/never-truncate-failure-output`:
-    summarise a success, dump a failure. It lives here rather than in the two mirrored renderers so
-    the pair cannot drift on the one number that decides how much of a failure survives."""
+    THE REPO-WIDE RULE: summarise a success, dump a failure. It lives here rather than in the two
+    mirrored renderers so the pair cannot drift on the one number that decides how much of a
+    failure survives."""
     return RUN_COMMAND_OUTPUT_MAX_CHARS if exit_code != 0 else RUN_COMMAND_SUMMARY_MAX_CHARS
 
 
@@ -361,8 +361,8 @@ def is_read_ignored(path: str) -> bool:
     safe here for the CONTEXT bound — a read cannot mutate — but the path is still normalized
     through the SAME fail-closed `_normalize_rel` as the write guard, so an absolute path
     (`/proc/self/environ`, `/workspace/.env`) or a `..` escape is denied rather than stripped to a
-    readable relative path. C1 is the real workspace-escape boundary; this stays symmetric with
-    `is_write_allowed` so the two guards can't be assumed to differ."""
+    readable relative path. The supervisor is the real workspace-escape boundary; this stays
+    symmetric with `is_write_allowed` so the two guards can't be assumed to differ."""
     rel = _normalize_rel(path)
     if rel is None:
         return True

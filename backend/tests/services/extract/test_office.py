@@ -1,4 +1,4 @@
-"""Office → Markdown extraction (U11) — docx (mammoth) + xlsx (openpyxl), structure gate, caps."""
+"""Office → Markdown extraction — docx (mammoth) + xlsx (openpyxl), structure gate, caps."""
 
 from __future__ import annotations
 

@@ -69,8 +69,28 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 # Per-file decoded cap (Express `ATTACHMENT_MAX_BYTES`) and per-user total (Express
 # `ATTACHMENT_TOTAL_CAP`), plus the request-body ceiling (Express mount `limit:'6mb'`).
 ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024
-ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
 _BODY_LIMIT_BYTES = 6 * 1024 * 1024
+
+# THE STORAGE BUDGET IS PER CONVERSATION, NOT PER CITIZEN (#214 R7a). It used to sum every
+# attachment a person had ever uploaded, across every conversation, with no conversation filter
+# — a lifetime account budget of roughly a dozen full-size files. Two or three working sessions
+# exhausted it, and the only way to reclaim any was to delete whole conversations, because
+# nothing lets a citizen remove a single attachment from an old one. The message was "Attachment
+# storage is full" with no action behind it.
+#
+# Scoped to the conversation it becomes something a citizen can act on: this chat is full, a new
+# one has room, and starting one is a real remedy rather than advice that changes nothing.
+#
+# THE TRADE, STATED: this removes the only ceiling on a citizen's TOTAL stored bytes, because
+# many conversations now means many budgets. Taken deliberately — a lifetime cap that cannot be
+# reclaimed is the worse failure — and worth watching rather than pre-solving.
+ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
+
+# How many attachments one conversation may hold, counted SERVER-SIDE (#214 R7b). The browser
+# has had this number since the beginning and it was never enforced here — the portal's
+# `validateConversationAttachmentCap` tallies attachments by walking the messages the browser has
+# loaded, so it reset to zero on every page reload. A cap a refresh clears is not a cap.
+MAX_ATTACHMENTS_PER_CONVERSATION = 20
 
 
 MAX_PDF_PAGES: Final = 30
@@ -248,10 +268,16 @@ async def _store_attachment_bytes(
     only when a link is SUPPLIED — a re-upload that carries no conversationId never clobbers an
     existing link to NULL (the link is set-once-then-refreshable, never silently dropped)."""
     size = len(data)
+    # BOTH BUDGETS ARE SCOPED TO THE CONVERSATION when there is one. An upload that carries no
+    # link (no client sends that shape today — see `_resolve_conversation_link`) falls back to
+    # the account-wide sum, so an unlinked row can still never be free.
+    scope = (
+        [Attachment.user_id == user_id, Attachment.conversation_id == conversation_id]
+        if conversation_id is not None
+        else [Attachment.user_id == user_id]
+    )
     used_raw = await db.scalar(
-        sa.select(sa.func.coalesce(sa.func.sum(Attachment.size), 0)).where(
-            Attachment.user_id == user_id
-        )
+        sa.select(sa.func.coalesce(sa.func.sum(Attachment.size), 0)).where(*scope)
     )
     used = int(used_raw or 0)
     existing = await db.scalar(
@@ -263,9 +289,21 @@ async def _store_attachment_bytes(
     if used - old_size + size > ATTACHMENT_TOTAL_CAP:
         raise AppApiError(
             413,
-            "Attachment storage is full. Remove some attachments and try again.",
+            "This conversation has no room for more attachments. Start a new chat to add more.",
             code="ATTACHMENT_STORE_FULL",
         )
+    # THE COUNT, and only for a file this conversation does not already hold — a re-upload of the
+    # same id replaces a row rather than adding one, so counting it would refuse an idempotent
+    # retry at the boundary.
+    if conversation_id is not None and existing is None:
+        held = await db.scalar(sa.select(sa.func.count()).select_from(Attachment).where(*scope))
+        if int(held or 0) + 1 > MAX_ATTACHMENTS_PER_CONVERSATION:
+            raise AppApiError(
+                413,
+                f"This conversation has reached its limit of "
+                f"{MAX_ATTACHMENTS_PER_CONVERSATION} attachments. Start a new chat to add more.",
+                code="CONVERSATION_ATTACHMENTS_FULL",
+            )
 
     if existing is not None:
         key = existing.storage_key

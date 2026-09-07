@@ -15,14 +15,18 @@ from openpyxl import Workbook
 from sqlalchemy import select
 from structlog.testing import capture_logs
 
-from src.api.v1.attachments.router import MAX_PDF_PAGES
+from src.api.v1.attachments.router import (
+    ATTACHMENT_TOTAL_CAP,
+    MAX_ATTACHMENTS_PER_CONVERSATION,
+    MAX_PDF_PAGES,
+)
 from src.config import settings
 from src.db.models.attachment import Attachment
 from src.services.attachments import reclaim_orphaned_attachments
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.extract.deck import DeckResult
 from src.services.extract.office import EXCEL_MEDIA_TYPE, PPTX_MEDIA_TYPE
-from tests.factories import ConversationFactory, UserFactory
+from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 from tests.pdfs import locked_pdf, pdf_with_pages, restricted_pdf, unreadable_pdf, xref_bomb_pdf
 
 _TTL = settings.auth.access_ttl_seconds
@@ -181,6 +185,160 @@ async def test_over_quota_rejected(client, db_session) -> None:
     assert resp.status_code == 413
     body = resp.json()
     assert body["error"]["code"] == "ATTACHMENT_STORE_FULL"
+
+
+# --- the conversation-scoped budgets (#214 R7a/R7b) ---------------------------
+
+
+async def _a_conversation(db_session, user):
+    project = await ProjectFactory.create(db_session, user.id)
+    return await ConversationFactory.create(db_session, user.id, project_id=project.id)
+
+
+async def _upload_into(client, headers, conversation_id, attachment_id, *, size=None):
+    data = _PNG if size is None else _PNG + b"\x00" * (size - len(_PNG))
+    return await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": attachment_id,
+            "mediaType": "image/png",
+            "base64": _b64(data),
+            "conversationId": str(conversation_id),
+        },
+    )
+
+
+async def test_a_full_conversation_does_not_exhaust_the_account(
+    client, db_session, fake_storage
+) -> None:
+    """AE20 — the whole point of moving the budget (#214 R7a).
+
+    It used to sum every attachment a citizen had ever uploaded, across every conversation, so
+    two or three working sessions exhausted a lifetime allowance and the only way to reclaim any
+    was to delete whole conversations. Now a full chat is a full chat: the next one has room, and
+    "start a new chat" is advice that actually works.
+
+    Mutation receipt: drop the conversation predicate from the budget query and the second
+    upload 413s on bytes the other conversation spent.
+    """
+    headers, user = await _auth(db_session)
+    first = await _a_conversation(db_session, user)
+    db_session.add(
+        Attachment(
+            user_id=user.id,
+            attachment_id="att_full",
+            media_type="image/png",
+            name="",
+            size=ATTACHMENT_TOTAL_CAP - 8,
+            storage_key=f"att/{user.id}/full",
+            conversation_id=first.id,
+        )
+    )
+    await db_session.flush()
+
+    # The conversation holding it is full...
+    refused = await _upload_into(client, headers, first.id, "att_more")
+    assert refused.status_code == 413, refused.text
+    assert refused.json()["error"]["code"] == "ATTACHMENT_STORE_FULL"
+
+    # ...and a new one has room. This is the assertion the old per-citizen budget could not pass.
+    second = await _a_conversation(db_session, user)
+    accepted = await _upload_into(client, headers, second.id, "att_fresh")
+    assert accepted.status_code == 201, accepted.text
+
+
+async def test_a_full_conversation_says_so_and_names_a_way_out(
+    client, db_session, fake_storage
+) -> None:
+    """AE21. The old copy was "Attachment storage is full. Remove some attachments and try
+    again." — advice a citizen cannot follow, because nothing lets them remove one attachment
+    from an old conversation. The refusal now names the thing that is full and the thing that
+    works."""
+    headers, user = await _auth(db_session)
+    conversation = await _a_conversation(db_session, user)
+    db_session.add(
+        Attachment(
+            user_id=user.id,
+            attachment_id="att_full",
+            media_type="image/png",
+            name="",
+            size=ATTACHMENT_TOTAL_CAP - 8,
+            storage_key=f"att/{user.id}/full",
+            conversation_id=conversation.id,
+        )
+    )
+    await db_session.flush()
+
+    resp = await _upload_into(client, headers, conversation.id, "att_more")
+
+    message = resp.json()["error"]["message"]
+    assert "new chat" in message.lower()
+    assert "remove some attachments" not in message.lower()
+
+
+async def test_the_conversation_attachment_count_is_enforced_on_the_server(
+    client, db_session, fake_storage
+) -> None:
+    """AE18 — a cap a reload cannot clear (#214 R7b).
+
+    The browser has had this number since the beginning and it was never enforced here: the
+    portal tallies attachments by walking the messages it has loaded, so the count reset to zero
+    on every refresh. Nothing on the server disagreed, because nothing on the server counted.
+
+    Mutation receipt: remove the count check and the twenty-first upload is accepted.
+    """
+    headers, user = await _auth(db_session)
+    conversation = await _a_conversation(db_session, user)
+    for index in range(MAX_ATTACHMENTS_PER_CONVERSATION):
+        db_session.add(
+            Attachment(
+                user_id=user.id,
+                attachment_id=f"att_{index}",
+                media_type="image/png",
+                name="",
+                size=len(_PNG),
+                storage_key=f"att/{user.id}/{index}",
+                conversation_id=conversation.id,
+            )
+        )
+    await db_session.flush()
+
+    resp = await _upload_into(client, headers, conversation.id, "att_one_too_many")
+
+    assert resp.status_code == 413, resp.text
+    assert resp.json()["error"]["code"] == "CONVERSATION_ATTACHMENTS_FULL"
+
+
+async def test_re_uploading_a_file_the_conversation_already_holds_is_not_a_new_one(
+    client, db_session, fake_storage
+) -> None:
+    """The count must not refuse an idempotent retry. A re-upload of the same id replaces its
+    row rather than adding one, so counting it would break the retry the upload path is
+    explicitly built to allow — a network hiccup mid-send would then wedge a full conversation
+    permanently."""
+    headers, user = await _auth(db_session)
+    conversation = await _a_conversation(db_session, user)
+    for index in range(MAX_ATTACHMENTS_PER_CONVERSATION - 1):
+        db_session.add(
+            Attachment(
+                user_id=user.id,
+                attachment_id=f"att_{index}",
+                media_type="image/png",
+                name="",
+                size=len(_PNG),
+                storage_key=f"att/{user.id}/{index}",
+                conversation_id=conversation.id,
+            )
+        )
+    await db_session.flush()
+
+    first = await _upload_into(client, headers, conversation.id, "att_last")
+    assert first.status_code == 201, first.text
+
+    again = await _upload_into(client, headers, conversation.id, "att_last")
+
+    assert again.status_code == 201, again.text
 
 
 # --- download / delete ownership ----------------------------------------------

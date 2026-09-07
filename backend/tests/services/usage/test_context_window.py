@@ -1,15 +1,25 @@
-"""The window measurement — what it counts, and what it must never be confused with.
+"""The per-conversation admission check — what it reads, and what it no longer derives.
 
-The unit under test answers ONE question: how much of the model's context window will this
-turn's prompt occupy. The failure this whole guardrail exists to fix was that nobody was
-asking it; the failure that would replace it is asking it with the billing helpers, which
-discount a cached prefix to a tenth and would report a full conversation as an empty one.
+★ THE RULE THESE TESTS PIN IS A DIFFERENT RULE FROM THE ONE THEY REPLACE, and the difference
+is the unit. The check used to re-derive an occupancy — four characters to the token over a walk
+of the message tree, a flat nominal for an image, another for a document, plus a reserve for the
+system prompt it could not see. Every one of those numbers is deleted. The check now reads the
+token count the PROVIDER returned for a turn it actually served, and derives nothing.
+
+So the arithmetic tests are not loosened here, they are GONE, and two properties take their
+place: what the provider reported is the number, and what nobody has measured is not a number
+at all. The second one is the honest cost of the change and is asserted head-on: a conversation
+carrying a 30-page document the provider has not yet been asked about occupies nothing, and is
+admitted. The refusal for that conversation arrives on its next turn, from a measurement, rather
+than immediately from a guess that was wrong by 47x in the direction that hurts (#194).
+
+The gate at the ROUTES — nothing persisted, the pending card unburnt, both doors — is
+`tests/api/v1/conversations/test_context_gate.py`'s. What is here is the rule itself.
 """
 
 from __future__ import annotations
 
-import dataclasses
-from typing import Any, cast
+import uuid
 
 import pytest
 from pydantic_ai import BinaryContent
@@ -18,250 +28,245 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
-    ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RequestUsage
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.v1.attachments.router import MAX_PDF_PAGES
+from src.db.models.user_limit import UserLimit
+from src.services.usage import context_window
 from src.services.usage.context_window import (
-    CHARS_PER_TOKEN,
-    NOMINAL_BINARY_TOKENS,
-    NOMINAL_PDF_TOKENS,
-    occupied_window,
+    ContextWindowExceededError,
+    enforce_context_limit,
 )
 from src.services.usage.gate import weighted_spend
-from src.services.usage.limits import SYSTEM_PROMPT_RESERVE
+from src.services.usage.limits import DEFAULT_CONTEXT_HARD
+from tests.factories import UserFactory
 
 
-def _user(text: str) -> ModelRequest:
+def _served(input_tokens: int, *, cache_read_tokens: int = 0) -> ModelResponse:
+    """A response the provider served, carrying the count it reported for that prompt."""
+    return ModelResponse(
+        parts=[TextPart(content="ok")],
+        usage=RequestUsage(input_tokens=input_tokens, cache_read_tokens=cache_read_tokens),
+    )
+
+
+def _written_by_the_platform() -> ModelResponse:
+    """A response the platform wrote itself — a handoff note, a build's opening message. It is a
+    real `ModelResponse` in the history and it carries a real `RequestUsage`, whose every field
+    is zero because no provider ever saw it."""
+    return ModelResponse(parts=[TextPart(content="Starting your build.")])
+
+
+def _typed(text: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=text)])
 
 
-def _assistant(text: str) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content=text)])
+async def _user_with_ceiling(db: AsyncSession, ceiling: int | None = None):
+    user = await UserFactory.create(db)
+    if ceiling is not None:
+        db.add(UserLimit(user_id=user.id, context_hard_limit=ceiling))
+        await db.flush()
+    return user
 
 
-def test_an_empty_conversation_is_the_reserve_and_nothing_else() -> None:
-    # The floor is not zero: the system prompt this cannot see is still going to be there.
-    assert occupied_window([], None) == SYSTEM_PROMPT_RESERVE
+async def _refusal(db: AsyncSession, user_id: uuid.UUID, history: list[ModelMessage]):
+    """The error the check raises, or None when it admits the conversation."""
+    try:
+        await enforce_context_limit(db, user_id, history=history)
+    except ContextWindowExceededError as exc:
+        return exc
+    return None
 
 
-def test_prose_counts_at_four_characters_to_the_token() -> None:
-    history: list[ModelMessage] = [_user("a" * 400), _assistant("b" * 800)]
-    assert occupied_window(history, None) == SYSTEM_PROMPT_RESERVE + 100 + 200
+# --- the check admits ordinary conversations ---------------------------------------------
 
 
-def test_the_message_about_to_be_sent_counts_too() -> None:
-    # Measured BEFORE it is persisted, so it is not in the history — counting only the history
-    # would let the one message that pushes a conversation over the edge through every time.
-    before = occupied_window([_user("x" * 400)], None)
-    after = occupied_window([_user("x" * 400)], "y" * 4_000)
-    assert after - before == 1_000
+async def test_a_conversation_the_provider_has_never_served_is_admitted(db_session) -> None:
+    """★ THE POSITIVE CASE, FIRST. Every other test here asserts a refusal, and a check that
+    refused everything would satisfy all of them. A brand-new chat has no measurement and must
+    open."""
+    user = await _user_with_ceiling(db_session)
+
+    assert await _refusal(db_session, user.id, []) is None
 
 
-def test_a_regenerate_counts_its_prompt_once() -> None:
-    # A regenerate replays the trailing request rather than sending a new one, so the route
-    # passes `prompt=None`. Charging a phantom second copy would refuse a retry the original
-    # turn was allowed.
-    history = [_user("q" * 4_000)]
-    assert occupied_window(history, None) == SYSTEM_PROMPT_RESERVE + 1_000
+async def test_a_measured_conversation_well_inside_the_ceiling_is_admitted(db_session) -> None:
+    user = await _user_with_ceiling(db_session)
+    history: list[ModelMessage] = [_typed("hello"), _served(12_000)]
+
+    assert await _refusal(db_session, user.id, history) is None
 
 
-def test_a_binary_is_a_flat_charge_not_its_byte_length() -> None:
-    """★ The over-count that would refuse every conversation containing a photo.
+# --- the number is the provider's, and nothing else ---------------------------------------
 
-    A 3 MB image base64s to ~4 M characters. Counted as text that is a million tokens, and no
-    conversation carrying one could ever start. Mutation check: delete the `BinaryContent` arm
-    in `_tokens_in` so the generic dataclass walk descends into `.data`, and this goes red."""
+
+async def test_the_occupancy_is_the_count_the_provider_reported(db_session) -> None:
+    """★ THE NEW RULE IN ONE ASSERTION. The refusal carries the provider's own figure, verbatim
+    — not that figure plus a reserve, not a figure derived from anything in the message tree."""
+    user = await _user_with_ceiling(db_session)
+    history: list[ModelMessage] = [_typed("carry on"), _served(DEFAULT_CONTEXT_HARD + 7)]
+
+    exc = await _refusal(db_session, user.id, history)
+
+    assert exc is not None
+    assert exc.occupied == DEFAULT_CONTEXT_HARD + 7
+    assert exc.hard_limit == DEFAULT_CONTEXT_HARD
+
+
+async def test_nothing_in_the_transcript_is_measured(db_session) -> None:
+    """★ THE DELETION, ASSERTED HEAD-ON RATHER THAN BY THE ABSENCE OF A TEST.
+
+    Six hundred thousand characters of prose and a 3 MB binary, on a turn the provider has not
+    reported. Under the estimator this was ~150,000 tokens and would have been refused against a
+    lowered ceiling; there is no estimator, so it is nothing.
+
+    MUTATION: reintroduce any character-count or per-binary charge and this goes red. It is the
+    guard that stops the estimate being quietly rebuilt inside the check that replaced it."""
+    user = await _user_with_ceiling(db_session, ceiling=20_000)
     big = BinaryContent(data=b"\x89PNG" + b"\x00" * 3_000_000, media_type="image/png")
-    history = [ModelRequest(parts=[UserPromptPart(content=["look at this", big])])]
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=["look at this", big])]),
+        _typed("a" * 600_000),
+        _written_by_the_platform(),
+    ]
 
-    measured = occupied_window(history, None)
-
-    prose = -(-len("look at this") // CHARS_PER_TOKEN)
-    assert measured == SYSTEM_PROMPT_RESERVE + NOMINAL_BINARY_TOKENS + prose
-    # And emphatically not the byte length, in either direction.
-    assert measured < 10_000
+    assert await _refusal(db_session, user.id, history) is None
 
 
-def test_tool_traffic_occupies_the_window_like_anything_else() -> None:
-    """A Build turn's window is mostly tool calls and their results. A measure that saw only
-    prose would read a 180k build conversation as a few thousand tokens — which is exactly the
-    conversation this guardrail is for."""
-    prose: list[ModelMessage] = [_user("hi"), _assistant("hello")]
-    prose_only = occupied_window(prose, None)
-    with_tools = occupied_window(
-        [
-            _user("hi"),
-            ModelResponse(parts=[ToolCallPart(tool_name="read_file", args={"path": "p" * 4_000})]),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name="read_file", content="f" * 8_000, tool_call_id="call-1"
-                    )
-                ]
-            ),
-            _assistant("hello"),
-        ],
-        None,
+async def test_a_document_occupies_nothing_until_the_provider_has_counted_it(db_session) -> None:
+    """AE3b, and the honest cost of the change stated as a test rather than left to be found.
+
+    A thirty-page document — the longest the upload route admits — sits in the history of a
+    conversation whose ceiling is 20,000 tokens. The platform computes NO token figure for it
+    and stores none, so it is admitted. It used to be charged a flat 75,000 here, and before
+    that a flat 1,600 (#194): two guesses, one of them wrong by 47x. The refusal that matters
+    now arrives on the next turn, from what the provider actually counted."""
+    user = await _user_with_ceiling(db_session, ceiling=20_000)
+    document = BinaryContent(
+        data=b"%PDF-1.4" + b"\x00" * 80_000, media_type="application/pdf", identifier="spec"
     )
-    assert with_tools - prose_only >= 3_000
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=["read this", document])])
+    ]
+
+    assert await _refusal(db_session, user.id, history) is None
+
+    # And the turn AFTER it, once the provider has said what that prompt cost, is refused.
+    history.append(_served(153_342))
+    exc = await _refusal(db_session, user.id, history)
+    assert exc is not None
+    assert exc.occupied == 153_342
 
 
-def test_an_unknown_part_shape_is_still_counted() -> None:
-    """The walk is structural, not a per-part-type table, and this is why.
+async def test_the_largest_reported_prompt_wins_not_the_last(db_session) -> None:
+    """★ THE UNDER-COUNT THIS RULE COULD STILL HAVE HAD, AND THE MUTATION THAT CATCHES IT.
 
-    pydantic-ai's part union grows. A table would stop counting whatever it did not recognise,
-    and under-counting is the direction that HURTS — it is what lets an over-long conversation
-    past the guard. A dataclass this module has never heard of is still measured."""
+    The platform writes messages of its own into a conversation and they carry a `RequestUsage`
+    whose fields are all zero, because no provider ever served them. Read "the last response"
+    and a full conversation whose newest row is one of those reads back as an empty one — a
+    guardrail that goes silent exactly when the platform speaks last.
 
-    @dataclasses.dataclass
-    class SomeFuturePart:
-        content: str
+    MUTATION: swap the `max(...)` for the trailing response and this goes red while every other
+    test in this file stays green."""
+    user = await _user_with_ceiling(db_session)
+    history: list[ModelMessage] = [
+        _typed("write the app"),
+        _served(DEFAULT_CONTEXT_HARD + 1_000),
+        _written_by_the_platform(),
+    ]
 
-    # An unknown shape sitting where a part would; the walk descends by structure, so it is
-    # measured without this module ever having heard of it.
-    parts = cast(Any, [TextPart(content="short"), SomeFuturePart(content="z" * 4_000)])
-    response = ModelResponse(parts=parts)
+    exc = await _refusal(db_session, user.id, history)
 
-    assert occupied_window([response], None) >= SYSTEM_PROMPT_RESERVE + 1_000
+    assert exc is not None
+    assert exc.occupied == DEFAULT_CONTEXT_HARD + 1_000
 
 
-def test_the_window_is_not_the_bill_and_cache_is_the_reason() -> None:
-    """★ KTD-2, and the mutation that must go red.
+async def test_the_window_is_not_the_bill_and_cache_is_the_reason(db_session) -> None:
+    """★ KTD-2, and it survives the change to a measured figure — with a new way to get it wrong.
 
-    A long conversation is served to the model with most of its prompt read from cache. The
-    BILL for that turn is tiny — `weighted_spend` discounts a cache read to a tenth, correctly,
-    because that is what it costs. The WINDOW is full regardless: every one of those tokens is
-    in the prompt.
+    A long conversation is served with almost all of its prompt read from cache. The BILL is
+    tiny: `weighted_spend` discounts a cache read to a tenth, correctly, because that is what it
+    costs. The WINDOW is full regardless — every one of those tokens is in the prompt.
 
-    So the two numbers must disagree, and by a lot. Route the window check through the spend
-    helper and a conversation at 190,000 reports as ~30,000 — the guardrail never fires, the
-    administrator's number means nothing, and this test is the only thing that notices.
-    """
-    # ~150k tokens of conversation: the shape that would be almost entirely cache-read.
-    history: list[ModelMessage] = [_user("a" * 300_000), _assistant("b" * 300_000)]
+    `input_tokens` is the provider's RAW prompt count and is already inclusive of both cache
+    classes, which is exactly the occupancy this asks for. Route the check through the spend
+    helper — or subtract `cache_read_tokens` on the belief that they are counted twice — and a
+    conversation at 190,000 reports as 23,500, comfortably inside the very ceiling it is over."""
+    user = await _user_with_ceiling(db_session, ceiling=150_000)
+    history: list[ModelMessage] = [_typed("carry on"), _served(190_000, cache_read_tokens=185_000)]
 
-    occupancy = occupied_window(history, None)
-    assert occupancy > 150_000
+    exc = await _refusal(db_session, user.id, history)
 
-    # What the same turn would be BILLED, with 90% of its prompt served from cache.
+    assert exc is not None
+    assert exc.occupied == 190_000
+
     billed = weighted_spend(
-        input_tokens=150_000,
-        output_tokens=0,
-        cache_read_tokens=135_000,
-        cache_write_tokens=0,
+        input_tokens=190_000, output_tokens=0, cache_read_tokens=185_000, cache_write_tokens=0
     )
+    # Not "different by rounding" — different by an order of magnitude, and on the OTHER SIDE of
+    # the ceiling this conversation was just refused against. A check wired to the billing
+    # weights would have admitted it.
     assert billed < 30_000
-    # Not "different by rounding" — different by an order of magnitude. A window measured with
-    # the billing weights would be under a 200k limit while the real prompt was over it.
-    assert occupancy > billed * 4
+    assert exc.occupied > billed * 4
+    assert billed < exc.hard_limit < exc.occupied
 
 
-@pytest.mark.parametrize("chars", [0, 1, 3, 4, 5])
-def test_a_partial_token_rounds_up(chars: int) -> None:
-    # Floor division would report a 3-character message as zero tokens. Harmless once;
-    # systematic across thousands of small tool returns it is a real under-count.
-    expected = -(-chars // CHARS_PER_TOKEN)
-    assert occupied_window([_user("x" * chars)], None) == SYSTEM_PROMPT_RESERVE + expected
+# --- the administrator's number is the boundary -------------------------------------------
 
 
-# --- documents cost what documents cost (U6 / D4) ------------------------------
+async def test_the_administrators_ceiling_is_what_decides(db_session) -> None:
+    """One conversation, two users. Under the default it is admitted; under a ceiling set below
+    its measured size it is refused. Nothing else differs, so the only thing that can have
+    changed the answer is the number an administrator typed."""
+    measured: list[ModelMessage] = [_typed("carry on"), _served(40_000)]
+
+    allowed = await _user_with_ceiling(db_session)
+    assert await _refusal(db_session, allowed.id, measured) is None
+
+    capped = await _user_with_ceiling(db_session, ceiling=20_000)
+    exc = await _refusal(db_session, capped.id, measured)
+    assert exc is not None
+    assert exc.hard_limit == 20_000
 
 
-def _pdf(identifier: str = "doc") -> BinaryContent:
-    return BinaryContent(data=b"%PDF-1.4 ...", media_type="application/pdf", identifier=identifier)
+@pytest.mark.parametrize(
+    ("measured", "refused"),
+    [(19_999, False), (20_000, True), (20_001, True)],
+)
+async def test_the_boundary_is_at_the_ceiling_not_past_it(
+    db_session, measured: int, refused: bool
+) -> None:
+    """`>=` against `>` is a one-character mutation. A conversation measured AT its ceiling has
+    no room for the turn that would follow, so it is refused there rather than one turn later."""
+    user = await _user_with_ceiling(db_session, ceiling=20_000)
+
+    exc = await _refusal(db_session, user.id, [_typed("hi"), _served(measured)])
+
+    assert (exc is not None) is refused
 
 
-def _image(identifier: str = "shot") -> BinaryContent:
-    return BinaryContent(
-        data=b"\x89PNG" + b"\x00" * 4_000, media_type="image/png", identifier=identifier
-    )
+# --- the estimator is gone, not merely unused ---------------------------------------------
 
 
-def test_a_pdf_and_an_image_are_charged_differently() -> None:
-    """★ THE UNDER-COUNT #194 IS ABOUT, IN ONE ASSERTION.
+def test_no_estimator_symbol_survives_in_the_module() -> None:
+    """★ ASSERT-ABSENCE, PAIRED WITH LIVENESS so it cannot false-green on a module that failed
+    to import. Each of these was a number the platform derived and no longer may."""
+    for name in (
+        "CHARS_PER_TOKEN",
+        "PDF_MEDIA_TYPE",
+        "NOMINAL_BINARY_TOKENS",
+        "NOMINAL_PDF_TOKENS",
+        "occupied_window",
+        "_tokens_in",
+        "_tokens_in_message",
+    ):
+        assert not hasattr(context_window, name), (
+            f"{name} is back — the estimator R8 deleted has been rebuilt"
+        )
 
-    A 61-page document really occupies ~153,000 tokens — 77% of the hard limit — and was
-    measured at 1,600, or 0.8%. The flat charge is honest for an IMAGE, whose cost does not
-    scale with byte length, and was the largest error in this module for a DOCUMENT, which is
-    read page by page.
-
-    MUTATION: swap the two constants in `_tokens_in` and both halves of this go red — the PDF
-    would read as 1,600 (the bug) and the image as 75,000 (which would refuse every
-    conversation containing a screenshot)."""
-    reserve_only = occupied_window([], None)
-
-    pdf_only = occupied_window([ModelRequest(parts=[UserPromptPart(content=[_pdf()])])], None)
-    image_only = occupied_window([ModelRequest(parts=[UserPromptPart(content=[_image()])])], None)
-
-    assert pdf_only - reserve_only == NOMINAL_PDF_TOKENS
-    assert image_only - reserve_only == NOMINAL_BINARY_TOKENS
-    assert NOMINAL_PDF_TOKENS > NOMINAL_BINARY_TOKENS * 40
-
-
-def test_the_document_charge_covers_the_longest_document_the_platform_admits() -> None:
-    """The two numbers are one decision, and this is the seam that holds them together.
-
-    The upload cap admits at most `MAX_PDF_PAGES` pages; a page measured ~2,514 tokens. A
-    charge below that product would leave an ADMITTED document under-counted, which is exactly
-    the hole #194 describes — so raising the page cap without raising the charge is the
-    regression this test refuses.
-
-    THE 1% IS A REAL ALLOWANCE, NOT A FUDGE FACTOR, and saying so is the point of this
-    paragraph. 30 × 2,514 = 75,420 and the charge is 75,000, so the bound below is not
-    "comfortably satisfied" — it is satisfied BY the tolerance, and a reader who assumed the
-    charge covered the product exactly would be wrong by 420 tokens. That shortfall is 0.6%
-    against an 8,000-token reserve and is accepted deliberately in favour of a round number;
-    `NOMINAL_PDF_TOKENS`' own docblock carries the reasoning. What this still refuses is the
-    regression that matters: move `MAX_PDF_PAGES` up and the product outruns the tolerance."""
-    measured_tokens_per_page = 2_514
-
-    # `* 0.99` — see the paragraph above. Tightening this to `>= product` is a deliberate
-    # decision to raise the charge, not a cleanup.
-    assert NOMINAL_PDF_TOKENS >= MAX_PDF_PAGES * measured_tokens_per_page * 0.99
-    # And not wildly above it either: an over-charge refuses conversations that would fit.
-    assert NOMINAL_PDF_TOKENS <= MAX_PDF_PAGES * measured_tokens_per_page * 1.2
-
-
-def test_one_document_leaves_room_to_work_and_two_do_not() -> None:
-    """The behaviour #194 says is missing: one ordinary document plus a real conversation sits
-    inside the soft limit, and a second document does not.
-
-    This is the shape of the whole fix — not "documents are refused" but "a document costs what
-    it costs, so the warning fires before the wall does"."""
-    from src.services.usage.limits import DEFAULT_CONTEXT_HARD, DEFAULT_CONTEXT_SOFT
-
-    prose: list[ModelMessage] = [_user("a" * 40_000), _assistant("b" * 40_000)]  # 20k tokens
-
-    one = occupied_window(
-        [*prose, ModelRequest(parts=[UserPromptPart(content=[_pdf("a")])])], None
-    )
-    two = occupied_window(
-        [
-            *prose,
-            ModelRequest(parts=[UserPromptPart(content=[_pdf("a")])]),
-            ModelRequest(parts=[UserPromptPart(content=[_pdf("b")])]),
-        ],
-        None,
-    )
-
-    assert one < DEFAULT_CONTEXT_SOFT
-    assert two > DEFAULT_CONTEXT_SOFT
-    # Two still fit under the hard wall — the citizen is warned, not stopped. Three would not.
-    assert two < DEFAULT_CONTEXT_HARD
-
-
-def test_three_documents_cannot_fit_the_hard_limit_at_all() -> None:
-    """D4's arithmetic, asserted rather than assumed: 3 x 75,000 + the 8,000 reserve is 233,000
-    against a 200,000 ceiling. It is why the send route refuses a third document by COUNT — a
-    token-limit refusal would tell the citizen to start a new chat, and the new chat would
-    refuse the identical message."""
-    from src.services.usage.limits import DEFAULT_CONTEXT_HARD
-
-    three = occupied_window(
-        [ModelRequest(parts=[UserPromptPart(content=[_pdf("a"), _pdf("b"), _pdf("c")])])], None
-    )
-
-    assert three > DEFAULT_CONTEXT_HARD
+    # Liveness: the module really imported, so the absences above are absences and not the
+    # silence of a module that never loaded.
+    assert callable(context_window.enforce_context_limit)
+    assert issubclass(context_window.ContextWindowExceededError, Exception)

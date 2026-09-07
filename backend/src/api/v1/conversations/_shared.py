@@ -90,16 +90,20 @@ PDF_MEDIA_TYPE = "application/pdf"
 # HOW MANY DOCUMENTS MAY RIDE ONE MESSAGE, and why it is a SEPARATE limit from
 # `MAX_ATTACHMENT_BLOCKS` rather than a smaller value of it.
 #
-# It falls out of arithmetic that is already fixed elsewhere (D4). `usage/context_window` charges
-# an admitted PDF `NOMINAL_PDF_TOKENS` (75,000 — what the longest document the upload cap admits
-# actually costs), and `occupied_window` adds the 8,000-token system-prompt reserve before it
-# counts a word. So three documents is 233,000 against a 200,000 ceiling and cannot be sent, even
-# if all three are two-page memos.
+# It falls out of what a document MEASURED at. A page of PDF costs ~2,500 tokens (#194) and the
+# upload route admits up to `attachments/router.MAX_PDF_PAGES` (30) pages, so a document is worth
+# up to ~75,000 tokens on the wire. Three of them is ~225,000 against a 200,000 ceiling and
+# cannot be sent, even if all three are two-page memos.
 #
-# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to the token gate, that message is refused with
-# `CHAT_TOO_LONG_TEXT` — "start a new chat" — which is wrong advice here: the new chat refuses the
-# identical message, and the citizen is sent round a loop with nothing that works. So the count is
-# checked FIRST, and answered with a sentence naming the limit they actually hit.
+# THE PLATFORM NO LONGER PRICES A DOCUMENT UP FRONT — the window check reads the count the
+# provider returns for a completed turn, and nothing charges an attachment a nominal on its way
+# in. That is why this cap is a COUNT and not a derived token figure: it is the one bound that
+# can be checked before the provider has seen anything.
+#
+# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to anything else, that message is answered with
+# "this chat has got too long — start a new chat", which is wrong advice here: the new chat
+# refuses the identical message, and the citizen is sent round a loop with nothing that works. So
+# the count is checked FIRST, and answered with a sentence naming the limit they actually hit.
 #
 # Images are deliberately not counted: eight screenshots is 12,800 tokens and has never been the
 # problem. `MAX_ATTACHMENT_BLOCKS` stays at 8 and still means what it says for them.

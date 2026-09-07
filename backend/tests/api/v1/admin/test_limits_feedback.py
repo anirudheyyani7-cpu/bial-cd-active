@@ -15,9 +15,12 @@ from src.db.models.feedback import Feedback
 from src.db.models.user_limit import UserLimit
 from src.main import create_app
 from src.services.auth.session_jwt import mint_session_jwt
-from src.services.usage.context_window import occupied_window
 from src.services.usage.gate import effective_daily_limit
-from src.services.usage.limits import CONTEXT_HARD_FLOOR, effective_context
+from src.services.usage.limits import (
+    CONTEXT_HARD_FLOOR,
+    SYSTEM_PROMPT_RESERVE,
+    effective_context,
+)
 from tests.factories import UserFactory
 
 _TTL = settings.auth.access_ttl_seconds
@@ -150,9 +153,10 @@ async def test_a_chat_length_below_the_floor_is_refused_and_the_floor_is_named(
 ) -> None:
     """An administrator cannot store a number that locks a citizen out of the product.
 
-    Below the floor the context gate refuses EVERY conversation that person opens — the gate
-    charges the system-prompt reserve before it counts a word — and the sentence they read
-    tells them to start a new chat, which also fails. The refusal names the lowest usable
+    Below the floor that person cannot get past the FIRST message in any chat they open: every
+    run spends `SYSTEM_PROMPT_RESERVE` on its system prompt and tool schemas, the provider
+    counts that in the very first turn it reports, and the next send is refused with a sentence
+    telling them to start a new chat — which also fails. The refusal names the lowest usable
     number because an administrator who is stopped without one has no way to pick a good value.
 
     Mutation check: drop the `hard < CONTEXT_HARD_FLOOR` arm from the PATCH validator and this
@@ -196,10 +200,12 @@ async def test_a_limit_already_stored_below_the_floor_still_opens_a_chat(db_sess
     stored = UserLimit(user_id=uuid.uuid7(), context_hard_limit=1)
     _soft, hard = effective_context(stored)
     assert hard == CONTEXT_HARD_FLOOR
-    # AND THE GATE THEN LETS AN EMPTY CONVERSATION THROUGH, which is the thing the citizen
-    # actually cares about — the clamp is only worth anything if it clears the reserve the gate
-    # charges before it has counted a word.
-    assert occupied_window([], "hello") < hard
+    # AND THE CLAMPED CEILING STILL LEAVES ROOM TO WORK, which is the thing the citizen
+    # actually cares about. Every run spends `SYSTEM_PROMPT_RESERVE` on its system prompt and
+    # tool schemas before a word is typed, and the provider counts that in the first turn it
+    # reports — so a ceiling at or under it would refuse this person's second message in every
+    # chat they own, whatever they wrote in the first.
+    assert hard > SYSTEM_PROMPT_RESERVE
     # The advisory warn threshold stays strictly under the ceiling it warns about, so a clamped
     # user is not warned at the same instant they are refused.
     assert _soft < hard

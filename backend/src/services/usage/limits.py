@@ -31,33 +31,33 @@ DEFAULT_CONTEXT_SOFT = 150_000
 DEFAULT_CONTEXT_HARD = 200_000
 
 SYSTEM_PROMPT_RESERVE: Final = 8_000
-"""Room the context gate holds back for what it cannot see.
+"""What a run costs before the citizen has typed anything — the per-run system prompt and the
+tool schemas that ride with it.
 
-The per-run system prompt is composed inside the turn engine, AFTER the gate has decided, so
-it is in neither the history nor the prompt the gate measures. Measured at the time of
-writing: the Plan segment composes to ~1,800 tokens and the Build segment — the larger — to
-~4,400, before the tool schemas the run also carries. 8,000 covers the larger of the two with
-room for the schemas and for both to grow.
+Measured at the time of writing: the Plan segment composes to ~1,800 tokens and the Build
+segment — the larger — to ~4,400, before the tool schemas. 8,000 covers the larger of the two
+with room for the schemas and for both to grow.
 
-Without it the gate is quietly permissive at exactly the setting that matters most: the
-DEFAULT hard limit equals the model's own window, so a conversation measured at 199,000 would
-be waved through into a prompt that is really 204,000 and fail at the model instead — which is
-the opaque failure the whole guardrail exists to replace.
+★ NOTHING HOLDS IT BACK ANY MORE, AND THAT IS AN IMPROVEMENT RATHER THAN A LOSS. This used to
+be a reserve in the literal sense: the gate estimated a conversation and then added this,
+because the system prompt was composed after the gate had decided and the estimate could not
+see it. The gate now reads the token count the PROVIDER reported for a completed turn, and that
+count is of the whole prompt — system segment, tool schemas and all. There is nothing left for
+it to be blind to, so there is nothing to reserve.
 
-IT LIVES HERE, BESIDE THE OTHER WINDOW NUMBERS, rather than in the gate that spends it. The
-floor below is derived from it, the gate imports it from here, and having the derivation and
-the number in two modules that import each other is not open — `context_window` already reads
-`effective_context` from this one."""
+IT SURVIVES AS A SIZE, NOT AS A CHARGE. The floor below is derived from it, and the admin
+panel's `contextLimits.SYSTEM_PROMPT_RESERVE` is its browser twin, so an administrator's lowest
+settable ceiling is expressed in the same unit on both sides."""
 
 CONTEXT_HARD_FLOOR: Final = SYSTEM_PROMPT_RESERVE * 2
 """The lowest per-user chat length that still leaves a usable chat.
 
-AN ADMINISTRATOR MUST NOT BE ABLE TO LOCK A CITIZEN OUT, and below this they could. The gate
-charges every conversation `SYSTEM_PROMPT_RESERVE` before it has counted a single word, so a
-hard limit at or under the reserve refuses EVERY conversation that person opens — including a
-brand-new empty one — and the refusal tells them to start a new chat, which is both untrue and
-the one thing that also fails. Only another administrator raising the number gets them working
-again, and nothing in the product says that is what happened.
+AN ADMINISTRATOR MUST NOT BE ABLE TO LOCK A CITIZEN OUT, and below this they could. Every run
+spends `SYSTEM_PROMPT_RESERVE` on its system prompt and tool schemas before the citizen has
+typed a word, and the provider counts that in the very first turn it reports — so a hard limit
+at or under the reserve refuses that person's SECOND message in every chat they open, forever,
+whatever they wrote in the first. Only another administrator raising the number gets them
+working again, and nothing in the product says that is what happened.
 
 TWICE THE RESERVE, not the reserve plus one: a floor that merely clears the reserve would leave
 a chat with room for a sentence and no reply. This leaves the reserve plus an equal amount of

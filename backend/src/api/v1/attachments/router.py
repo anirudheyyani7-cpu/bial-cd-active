@@ -82,11 +82,13 @@ A text PDF runs about 1.3 KB a page and a scanned one about 300 KB, so the same 
 roughly 13 pages to 3,200. The document that pushed a conversation to 77% of its hard context
 limit was 79 KB (#194) — comfortably inside every size bound the platform had.
 
-THE NUMBER IS PAIRED WITH `usage/context_window.NOMINAL_PDF_TOKENS`, which charges every
-admitted PDF what the LARGEST admissible one costs (~2,500 tokens a page, measured). Raising
-this cap without raising that charge re-opens exactly the hole it closes: a document admitted
-here that the window guard cannot honestly cover. Thirty pages covers the large majority of
-business documents and still leaves room for a document plus a real build conversation."""
+THE NUMBER IS SET FROM WHAT A PAGE COSTS, ~2,500 tokens measured, against the per-conversation
+ceiling. Thirty pages is ~75,000 tokens — the large majority of business documents, and still
+room for a document plus a real build conversation inside a 200,000 window. Nothing charges an
+admitted document a nominal any more; the window check reads the count the provider returns for
+a completed turn, so THIS cap is the only bound that acts before the provider has seen the file.
+Raise it and a single upload can fill a conversation on its own, with the refusal arriving one
+turn later than the citizen would have wanted it."""
 
 PDF_TOO_LONG_TEXT: Final = (
     f"That document is too long to work with. Try one under {MAX_PDF_PAGES} pages."

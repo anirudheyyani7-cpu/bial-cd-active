@@ -504,7 +504,14 @@ async def test_hard_delete_salts_the_earth_after_committing(
     store.objects[snapshot_key(row.id)] = b"bundle"
     headers = await _admin(db_session)
 
-    resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={
+            "reason": "Duplicate app created in error during onboarding, owner asked for removal"
+        },
+    )
 
     assert resp.json() == {"ok": True}
     assert await db_session.get(AppRegistry, row.id) is None
@@ -539,7 +546,12 @@ async def test_a_failing_drop_never_un_deletes_the_registry(
 
     monkeypatch.setattr(appdb_teardown, "_drop_database", explode)
     with structlog.testing.capture_logs() as captured:
-        resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=await _admin(db_session))
+        resp = await client.request(
+            "DELETE",
+            f"/v1/admin/apps/{row.id}",
+            headers=await _admin(db_session),
+            json={"reason": "Duplicate app created in error, owner asked for its removal"},
+        )
 
     assert resp.json() == {"ok": True}
     assert await db_session.get(AppRegistry, row.id) is None

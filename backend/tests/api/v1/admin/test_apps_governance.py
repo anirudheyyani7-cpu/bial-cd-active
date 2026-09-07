@@ -1185,7 +1185,14 @@ async def test_hard_delete_purges_everything(client, db_session, app) -> None:
     await db_session.flush()
     headers = await _admin(db_session)
 
-    resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={
+            "reason": "Duplicate app created in error during onboarding, owner asked for removal"
+        },
+    )
     assert resp.json() == {"ok": True}
     # Registry row gone; the snapshot blob swept.
     assert await db_session.get(AppRegistry, row.id) is None
@@ -1216,7 +1223,14 @@ async def test_hard_delete_sweeps_every_retained_submission(client, db_session, 
     await db_session.flush()
     headers = await _admin(db_session)
 
-    resp = await client.delete(f"/v1/admin/apps/{row.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={
+            "reason": "Duplicate app created in error during onboarding, owner asked for removal"
+        },
+    )
     assert resp.json() == {"ok": True}
     # Snapshot + all three submissions swept; the bystander's submission survives.
     assert set(store.objects) == {bystander_key}

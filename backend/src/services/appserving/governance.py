@@ -3,11 +3,12 @@ surface. Internal symbols use the witty naming rule (`.claude/rules/naming.md`):
 `nuke_app` (hard-delete). Public API responses stay professional.
 
 The old per-app file model (`app_files`, OPEN-SANDBOX) and the shared `data_records`
-plane (U6) are both retired, so what an app owns here is object-store blobs only:
-`nuke_app` sweeps the app's C4 snapshot bundle, its immutable submission bundles, AND
-its per-app Blob container before dropping the registry row. A residual blob is a
-bounded storage orphan, never a data loss. The project's own PostgreSQL database is a
-POST-COMMIT teardown owned by the caller, not by this module (D10).
+plane (U6) are both retired, so what an app owns here is object-store blobs plus what it
+published: `nuke_app` sweeps the app's C4 snapshot bundle, its immutable submission bundles,
+its per-app Blob container, its published container app AND its container-registry repository
+before dropping the registry row. A residual blob is a storage orphan an operator must clear
+by hand — nothing on this path is on a timer — never a data loss. The project's own PostgreSQL
+database is a POST-COMMIT teardown owned by the caller, not by this module (D10).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models.app_registry import AppRegistry
+from src.services.deploy.registry_delete import sweep_app_repositories
 from src.services.deploy.teardown import sweep_published_apps
 from src.services.storage import (
     AppContainerStore,
@@ -66,4 +68,13 @@ async def nuke_app(
     # (it sweeps the Redis registry, which a published app is deliberately never in). An
     # admin who hard-deletes an app must not leave it serving that app's data.
     await sweep_published_apps([app_id])
+    # ...and the IMAGE it was built from (U21/U23). The citizen's own delete destroys the
+    # registry repository; if this path did not, the admin lever — the one whose dialog says
+    # "destroyed permanently" — would leave behind exactly what the softer path removes, and
+    # the image still carries the app's compiled tree. Lazy import of `settings` because a
+    # module-level one is a cycle (the `local_images.py` precedent); `settings.deploy is None`
+    # means publishing is off and nothing was ever built.
+    from src.config import settings  # lazy: a module-level import is a cycle
+
+    await sweep_app_repositories([app_id], config=settings.deploy)
     await db.execute(sa.delete(AppRegistry).where(AppRegistry.id == app_id))

@@ -5,8 +5,15 @@ surface: a raised error would 500 a delete that in fact succeeded and abandon th
 remaining keys. The Azure backend wraps most failures into `StorageError`, but
 transport-level errors (e.g. `azure.core.exceptions.ServiceResponseError` — request
 sent, response lost) escape that hierarchy, so the guard here is deliberately
-broad. Every failed key is logged (never silently dropped) so a future blob-GC has
-a trail; a residual blob is a bounded orphan, not a failure.
+broad.
+
+WHAT HAPPENS TO A KEY THAT FAILS, precisely (U22, R7a): it is named on
+`TEARDOWN_ARTEFACT_SURVIVED_EVENT` and returned to the caller, and then a human deletes it or
+nobody does. This module used to say a residual blob was "a bounded orphan" for "a future
+blob-GC" — the trail exists, but no timer reads it: the only scheduled destroyer in this
+codebase is the sandbox reap, and it runs solely in production. The delete path turns the
+return into one audit row naming what survived, so the leak is countable rather than merely
+logged.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ import uuid
 
 import structlog
 
+from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
 from src.services.storage.app_containers import AppContainerStore
 from src.services.storage.base import ObjectStorage
 
@@ -27,43 +35,68 @@ _log = structlog.get_logger()
 _SWEEP_CONCURRENCY = 8
 
 
-async def sweep_blobs(storage: ObjectStorage, blob_keys: list[str]) -> None:
+async def sweep_blobs(storage: ObjectStorage, blob_keys: list[str]) -> list[str]:
     """Best-effort post-commit delete of every key, run concurrently behind a bounded
     semaphore; log-and-continue on ANY failure. Each delete swallows its own error, so one
     dropped key never cancels a sibling and nothing surfaces to 500 an already-committed
-    delete (KD-3)."""
+    delete (KD-3).
+
+    RETURNS THE KEYS THAT SURVIVED (U22). The return is additive — a caller that only wants
+    the sweep can still ignore it — and it exists because the delete path owes the record a
+    list of what is still out there, which a log line the record cannot read does not give
+    it."""
     if not blob_keys:
-        return
+        return []
     limiter = asyncio.Semaphore(_SWEEP_CONCURRENCY)
+    survived: list[str] = []
 
     async def _sweep_one(key: str) -> None:
         async with limiter:
             try:
                 await storage.delete(key)
             except Exception:  # noqa: BLE001 — post-commit best-effort: log, never surface
-                _log.warning("post_delete_blob_sweep_failed", blob_key=key)
+                survived.append(key)
+                _log.warning(
+                    TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                    artefact="blob",
+                    artefact_id=key,
+                    reason="the object store refused or could not be reached",
+                )
 
     await asyncio.gather(*(_sweep_one(key) for key in blob_keys))
+    return survived
 
 
-async def sweep_app_containers(store: AppContainerStore | None, app_ids: list[uuid.UUID]) -> None:
+async def sweep_app_containers(
+    store: AppContainerStore | None, app_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
     """Best-effort post-commit delete of every app's per-app Blob container (KTD-7), run
     concurrently behind the same bounded semaphore; log-and-continue on ANY failure so one
     orphaned container never cancels a sibling and nothing surfaces to 500 an already-committed
-    project delete (KD-3). Early-returns when the store is disabled (`None`) — even with a
-    non-empty id list — because dev/test has no object store to sweep (KTD-2); a residual
-    container is a bounded, unmetered orphan, not a failure."""
+    project delete (KD-3). Returns the app ids whose container may still exist (U22).
+
+    Early-returns NO SURVIVORS when the store is disabled (`None`) — even with a non-empty id
+    list — because dev/test has no object store to sweep (KTD-2), so there is no container to
+    have survived. That is the one skip here that is genuinely a no-op rather than a leak."""
     if store is None:
-        return
+        return []
     if not app_ids:
-        return
+        return []
     limiter = asyncio.Semaphore(_SWEEP_CONCURRENCY)
+    survived: list[uuid.UUID] = []
 
     async def _sweep_one(app_id: uuid.UUID) -> None:
         async with limiter:
             try:
                 await store.delete_container(app_id)
             except Exception:  # noqa: BLE001 — post-commit best-effort: log, never surface
-                _log.warning("post_delete_container_sweep_failed", app_id=str(app_id))
+                survived.append(app_id)
+                _log.warning(
+                    TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                    artefact="app_container",
+                    artefact_id=str(app_id),
+                    reason="the object store refused or could not be reached",
+                )
 
     await asyncio.gather(*(_sweep_one(app_id) for app_id in app_ids))
+    return survived

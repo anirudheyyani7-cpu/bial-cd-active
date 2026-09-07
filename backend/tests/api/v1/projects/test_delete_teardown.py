@@ -23,6 +23,7 @@ test or by the session-scoped hook in `tests/conftest.py`.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -34,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from src.config import settings
+from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
 from src.db.models.app_registry import AppRegistry
 from src.db.models.audit import AuditLog
 from src.db.models.deleted_project import DeletedProject
@@ -84,6 +86,38 @@ async def _registry_row(db: AsyncSession, project_id: uuid.UUID) -> uuid.UUID | 
     return await db.scalar(
         sa.select(ProjectDatabase.id).where(ProjectDatabase.project_id == project_id)
     )
+
+
+def _survived(captured: Sequence[Mapping[str, Any]], *, artefact: str) -> list[str]:
+    """The ids the pinned survival alarm named for one artefact class.
+
+    Asserts on the CONSTANT, never a string copy of it — `alarms.py`'s one rule is that the
+    name exists in exactly one place, and a test that retypes it is the second spelling that
+    rule exists to prevent."""
+    return [
+        str(entry.get("artefact_id"))
+        for entry in captured
+        if entry.get("event") == TEARDOWN_ARTEFACT_SURVIVED_EVENT
+        and entry.get("artefact") == artefact
+    ]
+
+
+async def _teardown_record(db: AsyncSession, project_id: uuid.UUID) -> list[Any] | None:
+    """What the `project:teardown-incomplete` audit row says survived, or `None` when the
+    delete left nothing behind and so wrote no row at all (D18)."""
+    row = await db.scalar(
+        sa.select(AuditLog).where(
+            AuditLog.action == "project:teardown-incomplete",
+            AuditLog.resource_id == str(project_id),
+        )
+    )
+    if row is None:
+        return None
+    assert row.detail is not None
+    survived = row.detail["survived"]
+    assert isinstance(survived, list)
+    assert row.detail["count"] == len(survived)
+    return survived
 
 
 async def _catalog(sql: str, **params: Any) -> Any:
@@ -532,8 +566,16 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
     assert await _registry_row(db_session, project.id) is None
-    assert any(e.get("event") == "app_database_salt_connect_failed" for e in captured)
-    # The salt never reached the cluster, so the database survives as a reclaimable orphan.
+    # THE ALARM, not a bespoke event name: one pinned event across every arm of this path, with
+    # the artefact class as a field (U22). Nothing collects this database automatically —
+    # `appdb/reconcile.py` is operator-invoked AND report-only — so the alarm is the notice.
+    assert _survived(captured, artefact="app_database") == [record.db_name]
+    # ...and the record an operator reads, on the audit log rather than in the citizen's own
+    # words on the tombstone (D18).
+    assert await _teardown_record(db_session, project.id) == [
+        {"artefact": "app_database", "id": record.db_name}
+    ]
+    # The salt never reached the cluster, so the database survives.
     assert await _catalog(_DATABASE_EXISTS, db=record.db_name) is True
 
 
@@ -795,8 +837,9 @@ async def test_a_racing_start_for_another_project_is_not_destroyed_by_the_reap(
     await _registry_names(fake_redis, user.id, app_a.id, "ready")
 
     async def a_start_for_project_b() -> None:
-        """What `_start_locked` does, reduced to the two steps that matter: take the per-user
-        start lock, then write the registry record for the container it just provisioned."""
+        """What `ensure_sandbox` does, reduced to the two steps that matter: take the per-user
+        start lock, then write the registry record for the container it just provisioned. (The
+        deleted `_start_locked` did the same two, under the same lock.)"""
         await teardown_reached.wait()
         async with manager._start_lock_for(user.id):
             await _registry_names(fake_redis, user.id, app_b.id, "ready")
@@ -861,7 +904,7 @@ async def test_an_unconfigured_sandbox_still_deletes_the_project(
     assert await fake_redis.exists(_registry(user.id)) == 1
 
 
-async def test_a_busy_start_lock_leaves_the_container_to_the_scheduled_sweep(
+async def test_a_busy_start_lock_leaves_the_container_standing_and_says_so(
     app: Any,
     client: AsyncClient,
     db_session: AsyncSession,
@@ -909,9 +952,15 @@ async def test_a_busy_start_lock_leaves_the_container_to_the_scheduled_sweep(
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
     assert sandbox.torn_down == []
-    assert any(e.get("event") == "project_delete_sandbox_reap_skipped_lock_busy" for e in captured)
-    # Left standing ON PURPOSE — the scheduled sweep reclaims it, the same posture
-    # `strict=False` already chooses for a failed teardown.
+    # SKIPPING IS STILL RIGHT; PRETENDING SOMETHING WILL COLLECT IT WAS NOT. The container is
+    # still up, so the arm alarms and the delete files the record. The scheduled reap only
+    # destroys in production (`may_destroy_on_this_control_plane`), which is why this stopped
+    # being "left to the scheduled sweep" (U22/R7a).
+    assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
+    assert await _teardown_record(db_session, project.id) == [
+        {"artefact": "sandbox_container", "id": _named(app_row.id)}
+    ]
+    # The registry entry is KEPT, so a production sweep (or an operator) can still find it.
     assert await fake_redis.exists(_registry(user.id)) == 1
 
 
@@ -975,7 +1024,12 @@ async def test_a_raising_redis_during_the_reap_is_logged_and_the_delete_still_su
     assert resp.status_code == 200
     assert "detail" not in resp.json()
     assert await db_session.get(Project, project.id) is None
-    assert any(e.get("event") == "project_delete_sandbox_reap_failed" for e in captured)
+    assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
+    # ...and on the record, because a container nobody will collect is exactly what the record
+    # is for (U22).
+    assert await _teardown_record(db_session, project.id) == [
+        {"artefact": "sandbox_container", "id": _named(app_row.id)}
+    ]
     # The lock is handed back even on the raising path, or the citizen's next build hangs.
     assert not manager._start_lock_for(user.id).locked()
 
@@ -1033,7 +1087,11 @@ async def test_an_empty_registry_reaps_nothing_and_raises_nothing(
     assert await db_session.get(Project, project.id) is None
     assert sandbox.torn_down == []
     assert any(e.get("event") == "project_delete_sandbox_reap_skipped_not_ours" for e in captured)
-    assert not any(e.get("event") == "project_delete_sandbox_reap_failed" for e in captured)
+    # NOTHING SURVIVED, so no alarm and no record: an empty registry means there was never a
+    # container of this project's to leave behind, and a record that cried leak on every
+    # ordinary delete is a record nobody would read.
+    assert _survived(captured, artefact="sandbox_container") == []
+    assert await _teardown_record(db_session, project.id) is None
 
 
 async def test_the_per_user_lock_and_the_liveness_lease_go_with_a_successful_teardown(
@@ -1123,3 +1181,141 @@ async def test_the_reap_displaces_nothing_that_the_delete_already_did(
     assert published == [app_row.id]
     # ...and 5, the new one.
     assert sandbox.torn_down == [_named(app_row.id)]
+
+
+# --- #184: the built IMAGE goes with the project too (U21) ---------------------------------
+#
+# The last artefact on the path, and the one that still holds the citizen's source: a published
+# app's image carries its compiled tree. The dialog promises "destroyed permanently", so a
+# repository left standing under a name no row points at any more makes that copy false.
+#
+# THE SCOPE OF THE REGISTRY CALL IS PINNED IN `tests/services/deploy/test_registry_delete.py`,
+# on the request. These are the route's own questions: is it called, with the project's app,
+# and what happens to the delete when the registry says no.
+
+
+async def test_the_delete_takes_the_apps_registry_repository_with_it(
+    app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects_router = _the_router_module()
+    headers, _user, project, app_row = await _project_with_app(db_session)
+    seen: list[tuple[list[uuid.UUID], Any]] = []
+
+    async def _record_repositories(app_ids: Any, *, config: Any) -> list[str]:
+        seen.append((list(app_ids), config))
+        return []
+
+    monkeypatch.setattr(projects_router, "sweep_app_repositories", _record_repositories)
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    # The project's OWN app, from the pre-commit id list — after the cascade there is nothing
+    # left in the database that names the repository.
+    assert seen == [([app_row.id], None)]
+    # Nothing survived, so nothing is recorded: the record has to stay empty on an ordinary
+    # delete or it is noise an operator learns to ignore.
+    assert await _teardown_record(db_session, project.id) is None
+
+
+async def test_publishing_switched_off_still_deletes_the_project_and_records_nothing(
+    app: Any, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # NO MONKEYPATCH: `.env.test` carries no `DEPLOY__*`, so `settings.deploy is None` and the
+    # real function runs its one skip arm. This is the fixture-off posture the rules require a
+    # test for — publishing is genuinely optional outside production, and a skip that reported
+    # a leak would put a note on every delete in dev and test.
+    from src.config import settings
+
+    assert settings.deploy is None
+    headers, _user, project, _app_row = await _project_with_app(db_session)
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project.id) is None
+    assert await _teardown_record(db_session, project.id) is None
+
+
+async def test_a_registry_that_refuses_the_delete_leaves_it_successful_and_on_the_record(
+    app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # THE ARM THIS SHIPS AGAINST: a credential without `content/delete`. The citizen's project
+    # is already gone — the rows committed several steps ago — so the delete stands, and the
+    # surviving image goes on the record for a developer to chase the permission with.
+    #
+    # Mutation check: have `_record_what_survived` return early unconditionally and this goes
+    # red on the record while the 200 still passes, which is exactly the failure being guarded.
+    projects_router = _the_router_module()
+    headers, _user, project, app_row = await _project_with_app(db_session)
+    survivor = f"citizen-apps/{app_row.id}"
+
+    async def _refused(app_ids: Any, *, config: Any) -> list[str]:
+        return [survivor]
+
+    monkeypatch.setattr(projects_router, "sweep_app_repositories", _refused)
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert "detail" not in resp.json()  # not the catch-all envelope
+    assert await db_session.get(Project, project.id) is None
+    assert await _teardown_record(db_session, project.id) == [
+        {"artefact": "registry_repository", "id": survivor}
+    ]
+
+
+async def test_the_citizens_own_reason_is_left_exactly_as_they_wrote_it(
+    app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # D18: the operator's note goes in the AUDIT LOG, never appended into `remark`. That column
+    # is the citizen's own words and nothing else — an administrator reads it to learn why
+    # somebody deleted something, and an appended note would need a delimiter convention and a
+    # parser to get back out.
+    projects_router = _the_router_module()
+    headers, _user, project, _app_row = await _project_with_app(db_session)
+
+    async def _refused(app_ids: Any, *, config: Any) -> list[str]:
+        return ["citizen-apps/kept"]
+
+    monkeypatch.setattr(projects_router, "sweep_app_repositories", _refused)
+
+    assert (await _delete(client, project.id, headers)).status_code == 200
+
+    tombstone = await db_session.scalar(
+        sa.select(DeletedProject).where(DeletedProject.project_id == project.id)
+    )
+    assert tombstone is not None
+    assert tombstone.remark == DELETE_BODY["remark"]
+
+
+async def test_a_record_that_cannot_be_written_still_leaves_the_delete_successful(
+    app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The record is written in its OWN transaction, long after the delete committed. A failure
+    # there must not turn a delete that genuinely succeeded into a 500 — the leak is already on
+    # the log, which is the notice; this row is only the record.
+    projects_router = _the_router_module()
+    headers, _user, project, _app_row = await _project_with_app(db_session)
+
+    async def _refused(app_ids: Any, *, config: Any) -> list[str]:
+        return ["citizen-apps/kept"]
+
+    real_append = projects_router.append_audit
+
+    async def _explode_on_the_record(*args: Any, **kwargs: Any) -> Any:
+        # ONLY the record's own write. The two pre-commit rows this path already writes must
+        # still land, or the test would be pinning a 500 from the wrong failure entirely.
+        if kwargs.get("action") == "project:teardown-incomplete":
+            raise RuntimeError("audit insert boom")
+        return await real_append(*args, **kwargs)
+
+    monkeypatch.setattr(projects_router, "sweep_app_repositories", _refused)
+    monkeypatch.setattr(projects_router, "append_audit", _explode_on_the_record)
+
+    with structlog.testing.capture_logs() as captured:
+        resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project.id) is None
+    assert any(e.get("event") == "project_teardown_record_failed" for e in captured)

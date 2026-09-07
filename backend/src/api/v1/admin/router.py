@@ -47,6 +47,7 @@ from src.api.v1.admin.schemas import (
     AdminAppOut,
     AdminAppStatusResponse,
     AppCountsResponse,
+    AppDeleteRequest,
     AppListResponse,
     ApproveRequest,
     AppStatusCounts,
@@ -1202,6 +1203,7 @@ async def mark_deployed(
 )
 async def hard_delete(
     app_id: uuid.UUID,
+    body: AppDeleteRequest,
     admin: CurrentSuperadmin,
     db: DbSession,
     storage: Storage,
@@ -1224,7 +1226,14 @@ async def hard_delete(
     The PROJECT survives an app hard-delete, so its `project_databases` row is deleted
     explicitly (the project-delete path gets that for free via `ON DELETE CASCADE`). No row
     = never provisioned, which is precisely what makes the next build re-provision a clean
-    database instead of injecting a DSN to one that is about to stop existing."""
+    database instead of injecting a DSN to one that is about to stop existing.
+
+    IT REQUIRES A REASON, in 5-50 words (R5). Destroying somebody else's work with no undo is
+    the harshest lever on this router and was the only one that asked for nothing — the browser
+    `window.confirm` behind it could not have collected an answer if it wanted to. The reason
+    rides the `app:delete` row below, which is written before destruction and has no foreign key
+    to the app, so it is still readable by app id long after the app is gone (`read_audit` says
+    so outright: no existence pre-check)."""
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     # Plain scalars, read BEFORE the commit that removes the row they come from.
@@ -1236,6 +1245,12 @@ async def hard_delete(
         action="app:delete",
         resource_type="app",
         resource_id=str(app_id),
+        # THE ADMINISTRATOR'S JUSTIFICATION, on the one row that outlives what it destroyed
+        # (R5/D17). `projectId` rides along because the project SURVIVES an app delete, so it
+        # is the only handle left connecting this row to something still readable. `audit.py`'s
+        # "no user data beyond ids" rule is amended in the same commit rather than stretched
+        # quietly: this is metadata about the ACT, not content of the deleted app.
+        detail={"reason": body.reason, "projectId": str(project_id)},
     )
     if handles is not None:
         await append_audit(

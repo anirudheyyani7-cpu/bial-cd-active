@@ -10,9 +10,14 @@ So the app id must be captured BEFORE the delete commits, which the project casc
 does for the per-app Blob containers. The published container name is a pure function of the
 app id, so the same list serves both — no extra column, no second query.
 
-Best-effort and never raising, matching `sweep_app_containers`: a container that outlives its
-app is a bounded, logged leak an operator can sweep, while an exception here would abort a
-delete that has ALREADY COMMITTED and leave the caller believing it failed.
+Best-effort and never raising, matching `sweep_app_containers`: an exception here would abort a
+delete that has ALREADY COMMITTED and leave the caller believing it failed. A container that
+outlives its app is therefore a leak AN OPERATOR must sweep by hand — this said "a bounded,
+logged leak an operator can sweep", which read as though something would eventually come for
+it. Nothing will: the sandbox reaper cannot see a published app at all (it reads the Redis
+registry, which this path never writes), and no other reconciler on the delete path runs on a
+timer outside production. So a failure raises `TEARDOWN_ARTEFACT_SURVIVED_EVENT` and the
+caller records it (U22, R7a).
 
 TWO CALLERS, TWO POSTURES, and the never-raise contract serves both. The delete paths are
 best-effort as above. `deploy/router.py`'s `unpublish` (#113) is the opposite — it is a
@@ -30,6 +35,7 @@ from collections.abc import Iterable
 
 import structlog
 
+from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
 from src.services.deploy.aca_publish import (
     DeployNotConfiguredError,
     PublishedAppRemover,
@@ -66,9 +72,16 @@ async def sweep_published_apps(
             await client.delete_app(app_id=app_id)
             swept += 1
         except Exception:
-            # A live container that outlives its app is a leak; a raise here would abort a
-            # delete that already committed. Log loudly and keep going.
-            _log.warning("published_app_sweep_failed", app_id=str(app_id), exc_info=True)
+            # A live container that outlives its app keeps serving and keeps BILLING, and
+            # nothing automatic will come for it; a raise here would abort a delete that
+            # already committed. Alarm loudly and keep going.
+            _log.warning(
+                TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                artefact="published_app",
+                artefact_id=str(app_id),
+                reason="the container app could not be deleted",
+                exc_info=True,
+            )
     if swept:
         _log.info(SWEPT_EVENT, count=swept)
     return swept

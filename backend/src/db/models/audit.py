@@ -52,6 +52,16 @@ class AuditLog(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     # (appId, conversationId). Nullable: some actions (bulk clear-data) have no
     # single target, only a `detail.count`.
     resource_id: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
-    # Optional structured context (e.g. {"count": 42}, changed field names) — NEVER
-    # the record contents (security.md: no user data in the audit blob beyond ids).
+    # Optional structured context (e.g. {"count": 42}, changed field names) — NEVER the
+    # record CONTENTS: no app code, no chat text, no credential, no DSN, nothing out of the
+    # thing that was acted on (security.md).
+    #
+    # AMENDED (U23/D17). This said "no user data in the audit blob beyond ids", and the rule
+    # was already being applied more loosely than it read — `mark-deployed` stores a URL an
+    # operator typed. What it is actually protecting is the SUBJECT's data, and the amendment
+    # says so: text the ACTOR authored ABOUT the act is metadata, and belongs here when it is
+    # the whole point of the row. Two such fields exist today, both admin-authored and both
+    # deliberate: `app:delete`'s `reason` (the justification for destroying somebody else's
+    # work, on the one row that survives it) and `mark-deployed`'s `deployedUrl`. The subject's
+    # own content stays out, and identifiers stay identifiers.
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

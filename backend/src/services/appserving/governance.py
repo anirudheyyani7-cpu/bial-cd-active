@@ -85,6 +85,14 @@ async def nuke_app(
     # nothing left that names the running container, and the sandbox reaper cannot reach it
     # (it sweeps the Redis registry, which a published app is deliberately never in). An
     # admin who hard-deletes an app must not leave it serving that app's data.
+    # DELIBERATELY NOT NARROWED, unlike the registry sweep below, and the asymmetry is the
+    # point. Both could in principle be filtered to apps with a deployment row — a container,
+    # like an image, is only ever created by a pipeline that owns one. But the two failures are
+    # not the same size: an image left in the registry costs storage, while a container left
+    # standing SERVES THE DELETED APP'S DATA and bills for it, and nothing automatic comes for
+    # it. Asking ACA about an app that was never published costs one no-op call; not asking
+    # about one that was costs a live container. Over-asking is the cheap direction here and the
+    # expensive one below.
     survivors.extend(("published_app", str(i)) for i in await sweep_published_apps([app_id]))
     # ...and the IMAGE it was built from (U21/U23). The citizen's own delete destroys the
     # registry repository; if this path did not, the admin lever — the one whose dialog says
@@ -94,10 +102,7 @@ async def nuke_app(
     # means publishing is off and nothing was ever built.
     from src.config import settings  # lazy: a module-level import is a cycle
 
-    # ONLY IF IT COULD HAVE ONE. `deployments` cascades with the app row below, so the question
-    # is asked here, while it can still be answered — and asked at all because a registry that
-    # refuses the delete credential answers 401/403 for whatever it is handed, which would name
-    # a repository that never existed as a survivor of every hard-delete.
+    # ...and the IMAGE it was built from, from the same narrowed set.
     survivors.extend(
         ("registry_repository", repo)
         for repo in await sweep_app_repositories(

@@ -20,6 +20,7 @@ from src.config import settings
 from src.db.models.app_registry import MAX_DEPLOYED_URL, AppRegistry, ApprovalRoute, AppStatus
 from src.db.models.audit import AuditLog
 from src.db.models.deployment import Deployment
+from src.db.models.project import Project
 from src.db.models.project_database import ProjectDatabase
 from src.main import create_app
 from src.services.appserving.governance import nuke_app
@@ -154,6 +155,22 @@ async def test_citizen_is_forbidden(client, db_session) -> None:
     assert (
         await client.post(f"/v1/admin/apps/{app.id}/mark-deployed", headers=headers)
     ).status_code == 403
+    # ★ THE THREE DESTRUCTIVE LEVERS, which this list was missing. The delete's body contract
+    # changed on this branch and the kill switch widened to draft and rejected apps, so both are
+    # exactly the moment to pin who may reach them. The delete is sent WITHOUT a reason on
+    # purpose: the gate has to outrank the body, or a citizen learns from a 422 that they were
+    # one valid sentence away from destroying somebody else's work.
+    assert (
+        await client.request("DELETE", f"/v1/admin/apps/{app.id}", headers=headers)
+    ).status_code == 403
+    assert (
+        await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    ).status_code == 403
+    assert (
+        await client.post(f"/v1/admin/apps/{app.id}/enable", headers=headers)
+    ).status_code == 403
+    # LIVENESS: the app is untouched by all seven refusals.
+    assert await db_session.get(AppRegistry, app.id) is not None
 
 
 async def test_unauthenticated_is_401(client, db_session) -> None:
@@ -1199,14 +1216,45 @@ async def test_hard_delete_purges_everything(client, db_session, app) -> None:
     # Registry row gone; the snapshot blob swept.
     assert await db_session.get(AppRegistry, row.id) is None
     assert store.objects == {}
+    # ★ THE ROW, AND WHAT IT SAYS. Asserting only that an `app:delete` row exists left the
+    # `detail=` kwarg deletable with the suite still green — and that kwarg IS R5: the
+    # administrator's justification, on the one row that outlives what it destroyed. Read by
+    # APP ID after the app row is gone, which is the property `audit_logs` is chosen for (no
+    # foreign key, `resource_id` a plain string, `read_audit` does no existence pre-check).
     audited = (
         await db_session.execute(
-            sa.select(AuditLog.action).where(
+            sa.select(AuditLog).where(
                 AuditLog.resource_id == str(row.id), AuditLog.action == "app:delete"
             )
         )
     ).scalar_one()
-    assert audited == "app:delete"
+    assert audited.detail == {
+        "reason": "Duplicate app created in error during onboarding, owner asked for removal",
+        "projectId": str(row.project_id),
+    }
+    # THE PROJECT SURVIVES AN APP HARD-DELETE, by design — which is what makes `projectId` the
+    # only handle left connecting this row to something still readable.
+    assert await db_session.get(Project, row.project_id) is not None
+
+
+async def test_hard_delete_without_a_reason_is_refused(client, db_session, app) -> None:
+    """★ THE SERVER IS WHAT ENFORCES THE RULE. The dialog that collects the reason is a
+    courtesy to the person typing it; a client that forgets the body — which is exactly what
+    every client did until this branch — must not be able to destroy somebody's app anyway."""
+    _wire_storage(app)
+    row = await _app(db_session, **_pending())
+    await db_session.flush()
+    headers = await _admin(db_session)
+
+    bodiless = await client.request("DELETE", f"/v1/admin/apps/{row.id}", headers=headers)
+    too_short = await client.request(
+        "DELETE", f"/v1/admin/apps/{row.id}", headers=headers, json={"reason": "because"}
+    )
+
+    assert bodiless.status_code == 422
+    assert too_short.status_code == 422
+    # LIVENESS: nothing was destroyed by either refusal.
+    assert await db_session.get(AppRegistry, row.id) is not None
 
 
 async def test_hard_delete_sweeps_every_retained_submission(client, db_session, app) -> None:
@@ -1399,7 +1447,15 @@ async def test_hard_delete_records_a_database_that_outlived_it(
     assert recorded == {
         "count": 1,
         "survived": [{"artefact": "app_database", "id": "bialdb_stubborn"}],
+        # ★ AND IT IS FINDABLE. The row's `resource_id` is the PROJECT, but `read_audit` looks
+        # up by app id — `resource_id == app_id` OR `detail["appId"]` — so without this field
+        # the record would exist and never appear in the drawer an administrator opens right
+        # after the delete, which is the only place they would think to look. Proved through
+        # the ROUTE below, not by re-reading the table.
+        "appId": str(row.id),
     }
+    events = (await client.get(f"/v1/admin/apps/{row.id}/audit", headers=headers)).json()
+    assert "project:teardown-incomplete" in {event["action"] for event in events["events"]}
 
 
 async def test_hard_delete_writes_no_teardown_row_when_nothing_survived(

@@ -30,6 +30,7 @@ async def record_what_survived(
     actor_id: uuid.UUID,
     project_id: uuid.UUID,
     survivors: list[tuple[str, str]],
+    app_id: uuid.UUID | None = None,
 ) -> None:
     """File ONE audit row naming everything a delete failed to destroy. Never raises.
 
@@ -49,6 +50,14 @@ async def record_what_survived(
     either path belongs to the project — its database, its blobs, its per-app containers, its
     published container app, its registry repository — and the project outlives an app
     hard-delete, so its id is the handle an operator still has something to look up.
+
+    …WHICH IS WHY `app_id` RIDES IN THE `detail` WHEN THERE IS ONE. `read_audit` finds a row by
+    `resource_id == app_id` OR `detail["appId"]`, and this row's `resource_id` is the PROJECT —
+    so without the field it would never appear in the audit drawer an administrator opens
+    straight after the delete, which is the only place they would look. The `db:*` levers in
+    `admin/router.py` carry `appId` for exactly this reason and say so. The citizen's own
+    project delete passes `None`: a project may own several apps, so there is no single id to
+    name, and that path's row is found by project.
 
     ITS OWN TRANSACTION, because the delete committed several sweeps ago. That is also why it
     swallows: a delete that genuinely succeeded must not answer 500 because the accountability
@@ -72,9 +81,18 @@ async def record_what_survived(
                 "survived": [
                     {"artefact": artefact, "id": identifier} for artefact, identifier in survivors
                 ],
+                **({"appId": str(app_id)} if app_id is not None else {}),
             },
         )
         await db.commit()
     except Exception:  # noqa: BLE001 — post-commit: never 500 a delete that succeeded
-        await db.rollback()
+        # THE RECOVERY IS GUARDED TOO. Whatever broke `append_audit` or the commit is most
+        # likely a connection, and a broken connection fails `rollback()` as readily as it
+        # failed the insert — so an unguarded rollback here would raise out of a function whose
+        # first docstring line promises it never does, and 500 a delete that already committed.
+        # That is the exact failure this whole arm exists to prevent, one line further down.
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001 — nothing left to try; the leak is already on the log
+            logger.warning("project_teardown_record_rollback_failed", project_id=str(project_id))
         logger.warning("project_teardown_record_failed", project_id=str(project_id), exc_info=True)

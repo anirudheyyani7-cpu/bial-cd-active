@@ -82,3 +82,35 @@ describe('markDeployed', () => {
     expect(err.status).toBe(422)
   })
 })
+
+describe('deleteApp', () => {
+  /**
+   * ★ THE REQUEST SHAPE, not a mock of it.
+   *
+   * `DELETE /v1/admin/apps/{id}` REQUIRES a 5-50 word reason. This client used to send
+   * `{ method: 'DELETE' }` with no body while the route already required one, so every admin
+   * delete through the SPA answered 422 — and the panel suite never caught it, because it
+   * mocks `deleteApp` wholesale. Both sides were green while disagreeing. This test is the
+   * one that would have failed.
+   */
+  it('sends the administrator’s reason as a JSON body', async () => {
+    let seen = null
+    const fetchImpl = vi.fn(async (url, init) => { seen = { url, init }; return ok({ ok: true }) })
+
+    await registry.deleteApp('app-7', 'Duplicate app created in error, owner asked for removal', deps(fetchImpl))
+
+    expect(seen.url).toContain('/api/admin/apps/app-7')
+    expect(seen.init.method).toBe('DELETE')
+    // A body on a DELETE, mirroring `deleteProject` — RFC 9110 leaves it undefined but nginx
+    // and the ingress both forward it, and the admin SPA is the only client.
+    expect(JSON.parse(seen.init.body)).toEqual({
+      reason: 'Duplicate app created in error, owner asked for removal',
+    })
+    expect(seen.init.headers['Content-Type']).toBe('application/json')
+  })
+
+  it('surfaces the server’s refusal rather than swallowing it', async () => {
+    const fetchImpl = vi.fn(async () => fail(422, { detail: 'Say why in 5 to 50 words.' }))
+    await expect(registry.deleteApp('app-7', 'too short', deps(fetchImpl))).rejects.toThrow()
+  })
+})

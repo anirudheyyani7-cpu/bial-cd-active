@@ -984,3 +984,60 @@ describe('AppRegistryPanel — switching an app off', () => {
     expect(screen.getByTestId('disable-app-4')).toBeTruthy()
   })
 })
+
+describe('★ the admin delete collects a reason (U23, R5)', () => {
+  // A `window.confirm` stood here and could collect nothing, while the route already REQUIRED a
+  // 5-50 word justification — so every delete through this panel answered 422. It shipped green
+  // because `deleteApp` is mocked wholesale in this file: both halves passed while disagreeing.
+  // These tests assert what the panel actually hands the client.
+  const REASON = 'Duplicate app created in error during onboarding, owner asked for removal'
+
+  it('will not delete until the reason meets the shared word rule', async () => {
+    h.listApps.mockResolvedValue([APPROVED])
+    render(<AppRegistryPanel onToast={vi.fn()} />)
+    await screen.findByText(APPROVED.name)
+
+    fireEvent.click(screen.getByTestId(`delete-${APPROVED.appId}`))
+    const confirm = screen.getByTestId('admin-delete-confirm')
+
+    // Too short — the same 5-word floor the citizen's own delete uses.
+    fireEvent.change(screen.getByTestId('admin-delete-reason'), { target: { value: 'because' } })
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(confirm)
+    expect(h.deleteApp).not.toHaveBeenCalled()
+
+    // LIVENESS, so the refusal above means the gate fired rather than the dialog never opening.
+    expect(screen.getByTestId('admin-delete-reason')).toBeTruthy()
+  })
+
+  it('sends the reason through to the client, not just a confirmation', async () => {
+    h.listApps.mockResolvedValue([APPROVED])
+    h.deleteApp.mockResolvedValue({ ok: true })
+    const onToast = vi.fn()
+    render(<AppRegistryPanel onToast={onToast} />)
+    await screen.findByText(APPROVED.name)
+
+    fireEvent.click(screen.getByTestId(`delete-${APPROVED.appId}`))
+    fireEvent.change(screen.getByTestId('admin-delete-reason'), { target: { value: REASON } })
+    fireEvent.click(screen.getByTestId('admin-delete-confirm'))
+
+    // ★ THE ASSERTION THAT WOULD HAVE CAUGHT THE BREAK: the reason is the second argument.
+    await waitFor(() => expect(h.deleteApp).toHaveBeenCalledWith(APPROVED.appId, REASON))
+  })
+
+  it('keeps the words on screen when the server refuses them', async () => {
+    h.listApps.mockResolvedValue([APPROVED])
+    h.deleteApp.mockRejectedValue(new Error('Say why in 5 to 50 words.'))
+    render(<AppRegistryPanel onToast={vi.fn()} />)
+    await screen.findByText(APPROVED.name)
+
+    fireEvent.click(screen.getByTestId(`delete-${APPROVED.appId}`))
+    fireEvent.change(screen.getByTestId('admin-delete-reason'), { target: { value: REASON } })
+    fireEvent.click(screen.getByTestId('admin-delete-confirm'))
+
+    // A refusal must not close the dialog and throw the typed words away — there is nothing to
+    // fix if the text is gone.
+    await waitFor(() => expect(h.deleteApp).toHaveBeenCalled())
+    expect(screen.getByTestId('admin-delete-reason').value).toBe(REASON)
+  })
+})

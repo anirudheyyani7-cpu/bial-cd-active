@@ -14,6 +14,7 @@ import { relativeTimeVerbose } from '../../utils/relativeTime'
 import { readDeclaration, shortSha, MIN_REJECTION_NOTE } from './declaration'
 import type { ReadDeclaration } from './declaration'
 import { auditLabel } from './auditLabels'
+import { countWords, MIN_DELETE_REASON_WORDS, MAX_DELETE_REASON_WORDS } from '../../utils/words'
 
 /** What to call an app on screen. The internal id used to stand in for a missing name, but
  *  a UUID is not a name — it identifies the row for the platform, not the app for a person,
@@ -450,6 +451,9 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [review, setReview] = useState<RegistryApp | null>(null)
+  /** The app awaiting a delete reason, or null. See `onDelete`. */
+  const [deleting, setDeleting] = useState<RegistryApp | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
   // Non-null once the developer withdraws the submission under review (P6). Cleared
   // whenever a different item is opened, so one race can never haunt the next review.
   const [withdrawn, setWithdrawn] = useState<string | null>(null)
@@ -588,13 +592,16 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
     const url = answer.trim()
     return act(app.appId, () => markDeployed(app.appId, url), `Deployment recorded for “${appLabel(app)}”`)
   }
-  const onDelete = (app: RegistryApp) => {
-    // Names the two things that do not come back. "Data and files" undersold it: the app's
-    // own PostgreSQL database is dropped outright — no export, no snapshot, no undo — and
-    // the delete is the only place an admin is told so.
-    if (!window.confirm(`Permanently delete “${appLabel(app)}”? Its database is dropped and its files are deleted. This cannot be undone.`)) return
-    act(app.appId, () => deleteApp(app.appId), `“${appLabel(app)}” deleted`)
-  }
+  // ═══ THE DELETE ASKS WHY, AND A `window.confirm` COULD NOT (U23, R5) ═══
+  //
+  // The route now REQUIRES a 5-50 word reason, so a confirm-and-send would 422 every time. The
+  // reason rides the `app:delete` audit row, which is written before destruction and has no
+  // foreign key to the app — so it outlives the thing it describes, which is the whole point.
+  //
+  // It uses the SAME word rule as the citizen's own project delete (`utils/words.ts`, mirrored
+  // at `src/core/words.py`), because the harsher act — destroying somebody else's work — should
+  // not ask for less than the gentler one.
+  const onDelete = (app: RegistryApp) => setDeleting(app)
 
   // Pending is the only tab that is a REVIEW QUEUE — the only one ordered oldest-first,
   // and the only one whose rows carry a submittedAt (it is null everywhere else). One
@@ -723,7 +730,7 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                           <button onClick={() => onEnable(app)} disabled={busy} title="Re-enable" className="p-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition disabled:opacity-50"><Power size={13} /></button>
                         )}
                         <button data-testid={`audit-${app.appId}`} onClick={() => setAuditing(app)} disabled={busy} title="View audit" className="p-1.5 rounded-lg border border-bial-border text-neutral hover:text-primary hover:bg-bial-bg transition disabled:opacity-50"><ScrollText size={13} /></button>
-                        <button onClick={() => onDelete(app)} disabled={busy} title="Delete app" className="p-1.5 rounded-lg border border-bial-border text-red-600 hover:bg-red-50 transition disabled:opacity-50"><Trash2 size={13} /></button>
+                        <button data-testid={`delete-${app.appId}`} onClick={() => onDelete(app)} disabled={busy} title="Delete app" className="p-1.5 rounded-lg border border-bial-border text-red-600 hover:bg-red-50 transition disabled:opacity-50"><Trash2 size={13} /></button>
                       </div>
                     </td>
                   </tr>
@@ -736,6 +743,95 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 
       {review && <ReviewModal app={review} withdrawn={withdrawn} onClose={() => { setReview(null); setWithdrawn(null) }} onApprove={() => onApprove(review)} onReject={(note) => onReject(review, note)} />}
       {auditing && <AuditDrawer app={auditing} onClose={() => setAuditing(null)} />}
+      {deleting && (
+        <DeleteAppDialog
+          app={deleting}
+          reason={deleteReason}
+          onReason={setDeleteReason}
+          busy={busyIds.has(deleting.appId)}
+          onClose={() => { setDeleting(null); setDeleteReason('') }}
+          onConfirm={async () => {
+            const target = deleting
+            const outcome = await act(target.appId, () => deleteApp(target.appId, deleteReason), `“${appLabel(target)}” deleted`)
+            // Close only on success — a 422 on the reason must leave the words on screen to fix,
+            // not throw them away behind a dialog that has already gone.
+            if (!(outcome instanceof Error)) { setDeleting(null); setDeleteReason('') }
+          }}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * THE ADMIN DELETE'S REASON (U23, R5).
+ *
+ * A `window.confirm` stood here. It could not collect anything, and the route now REQUIRES a
+ * 5-50 word justification — so the old control would 422 on every press. The words ride the
+ * `app:delete` audit row, which is written before destruction and carries no foreign key to
+ * the app, so it is still readable long after what it describes is gone.
+ *
+ * SAME WORD RULE AS THE CITIZEN'S OWN DELETE, from the shared `utils/words.ts` (mirrored at
+ * `src/core/words.py`): the harsher act — an administrator destroying work that is not theirs,
+ * with no undo and no export — should not ask for less than the gentler one. The client keeps
+ * the person inside the bounds; the server is what enforces them.
+ */
+function DeleteAppDialog({ app, reason, onReason, busy, onClose, onConfirm }: {
+  app: RegistryApp
+  reason: string
+  onReason: (value: string) => void
+  busy: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  const words = countWords(reason)
+  const valid = words >= MIN_DELETE_REASON_WORDS && words <= MAX_DELETE_REASON_WORDS
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="admin-delete-title">
+      <div className="absolute inset-0 bg-black/40" onClick={() => { if (!busy) onClose() }} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <h3 id="admin-delete-title" className="text-base font-bold text-tertiary">Delete “{appLabel(app)}”?</h3>
+        {/* Names the two things that do not come back. "Data and files" undersold it: the app's
+            own PostgreSQL database is dropped outright — no export, no snapshot, no undo. */}
+        <p className="mt-2 text-sm text-neutral">
+          Its database is dropped and its files are deleted. This cannot be undone.
+        </p>
+        <label className="block mt-4">
+          <span className="text-xs font-semibold text-tertiary">Why are you deleting this app?</span>
+          <textarea
+            data-testid="admin-delete-reason"
+            value={reason}
+            onChange={(e) => onReason(e.target.value)}
+            rows={3}
+            aria-describedby="admin-delete-reason-count"
+            className="mt-1.5 w-full rounded-xl border border-bial-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+          <span id="admin-delete-reason-count" className="mt-1 block text-xs text-neutral">
+            Between {MIN_DELETE_REASON_WORDS} and {MAX_DELETE_REASON_WORDS} words. Kept on the audit record.{' '}
+            {words}/{MAX_DELETE_REASON_WORDS} words
+          </span>
+        </label>
+        <div className="flex gap-3 mt-5">
+          <button
+            type="button"
+            onClick={() => { if (!busy) onClose() }}
+            aria-disabled={busy}
+            className={`rounded-xl border border-bial-border px-4 py-2 text-sm font-semibold text-neutral transition hover:bg-bial-bg ${busy ? 'cursor-not-allowed opacity-50' : ''}`}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="admin-delete-confirm"
+            disabled={!valid || busy}
+            onClick={onConfirm}
+            className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {busy ? <Loader2 size={15} className="animate-spin" /> : null} Delete app
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

@@ -8,6 +8,21 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}', './node_modules/streamdown/dist/**/*.js'],
   theme: {
     extend: {
+      /**
+       * THE STACKING THRESHOLD, AS THE BOARD NUMBERS IT (plan 002, U7).
+       *
+       * `ResizeBounds` is explicit: the handle is "ignored below 1100px of window — there is not
+       * enough room for two useful columns, so the app pane stacks under the conversation and the
+       * handle disappears rather than becoming a control that cannot help."
+       *
+       * Its own screen rather than Tailwind's `lg` (1024px), because the number is a design
+       * decision with a stated reason and borrowing a framework default would make it look like
+       * one. Named `wide` rather than `xl` so it cannot be mistaken for a position in the stock
+       * ramp — it sits between `lg` and `xl` and belongs to one layout.
+       */
+      screens: {
+        wide: '1100px',
+      },
       colors: {
         // shadcn/ui token names (U13 prep) — ADDITIVE ONLY. Every pre-existing name
         // (primary/secondary/accent/…) keeps its literal hex DEFAULT so the 70+ existing
@@ -87,13 +102,118 @@ export default {
           surface: '#FFFFFF',
           border: '#E2E8F0',
         },
-        success: '#22C55E',
         warning: '#EAB308',
         danger: '#EF4444',
+        /**
+         * THE UX CANVAS'S OWN PALETTE — the roles the brand ramp has no name for. Every value
+         * below is a hex read off `docs/ux-canvas/boards/*.dc.html`; nothing here is invented,
+         * and nothing here is a second name for a colour the brand ramp already owns (the
+         * canvas's ink #1A2B34 is `primary-900`, its hairline #E2E8F0 is `bial-border`, its
+         * muted text #6B7280 is `neutral`, its teal #0D7377 is `primary`).
+         *
+         * They live as tokens rather than as `bg-[#B45309]` literals because the status panel
+         * and the chip beside a chat title have to agree state by state, and nine hard-coded
+         * pairs in two files is exactly how they would stop agreeing.
+         */
+        canvas: {
+          label: '#9CA3AF',        // the small-caps section and row labels
+          placeholder: '#9AA5B1',  // composer placeholder text
+          sha: '#B4BCC6',          // the muted short build id beside a date
+          tile: '#F1F5F9',         // an activity tool tile's ground
+          group: '#FCFDFD',        // an activity group's ground
+          rule: '#D8E0E8',         // the app card's border, a shade darker than a hairline
+          track: '#F7F9FB',        // the resize handle's track
+          grip: '#DCE3EA',         // the resize handle's grip border
+          savedirty: '#F5FCFC',    // the pale teal ground behind an unsaved Save control
+          sendoff: '#D6DDE4',      // the send control with nothing to send — a ground, not an opacity
+          tilelive: '#E0F5F6',     // a tool tile whose step is running (= primary-50)
+          tileedge: '#B3E6E9',     // …and its border (= primary-100)
+          offer: '#F5FBFB',        // the plan-ready strip's ground, fixed to the top of the box
+          offerrule: '#D9EBEC',    // …the hairline under it
+          offeredge: '#CDE9EA',    // …and the box's own border while the offer is live
+          offerink: '#0A5C5F',     // the strip's headline — darker than the action teal, on purpose
+          offerlock: '#F8FAFC',    // …and the input row's ground while that offer waits to be answered
+        },
+        /**
+         * The nine status states of `StatusCardStates`, as text / ground / dot triples. Six
+         * colour families cover the nine states because three pairs of states share a look and
+         * differ only in their words.
+         */
+        /**
+         * A GROUP WHOSE WORK FAILED, from `ActivityAnatomy` panel 4. Its own family rather than
+         * the `status.red` pair: those are pill colours at pill weights, and this is a container
+         * that has to sit quietly in a transcript while still being unmistakable.
+         */
+        problem: {
+          edge: '#F4C7C7',
+          ground: '#FEF7F7',
+          ink: '#B4483F',
+        },
+        status: {
+          'faint-fg': '#6B7280', 'faint-bg': '#F1F4F8', 'faint-dot': '#B4BCC6',  // nothing built yet
+          'grey-fg': '#4B5563', 'grey-bg': '#F1F4F8', 'grey-dot': '#94A3B8',     // draft
+          'amber-fg': '#B45309', 'amber-bg': '#FEF3C7', 'amber-dot': '#D97706',  // in review; and the drifted date
+          'red-fg': '#B91C1C', 'red-bg': '#FEE2E2', 'red-dot': '#DC2626',        // changes requested; didn't start
+          'green-fg': '#15803D', 'green-bg': '#DCFCE7', 'green-dot': '#16A34A',  // starting up; live
+          'off-fg': '#4B5563', 'off-bg': '#E5E7EB', 'off-dot': '#9CA3AF',        // switched off
+        },
+      },
+      boxShadow: {
+        /** The canvas's selected-segment elevation — the whole of how the Plan/Build control
+         *  signals its choice, since the board gives that control no hue at all. */
+        segment: '0 1px 2px rgba(16,24,40,.08)',
+        /** The app card's lift off the `#F0F4F8` pane ground — `PreviewOff`, `NothingBuilt` and
+         *  `PreviewStarting` all give the empty pane the same white card the running app gets. */
+        'app-card': '0 4px 16px rgba(16,24,40,.07), 0 1px 3px rgba(16,24,40,.05)',
       },
       fontFamily: {
         manrope: ['Manrope', 'sans-serif'],
         worksans: ['"Work Sans"', 'sans-serif'],
+      },
+      // `--radius` has been declared in index.css since the shadcn token prep and was never
+      // wired to a Tailwind key, so every `rounded-lg` in a copied component silently fell
+      // back to Tailwind's STOCK radius. That is not a visible error — it is a component
+      // that looks almost right — which is the whole failure class the token guard exists
+      // for. These three names are the shadcn convention and are what copied sources use.
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
+      keyframes: {
+        'pane-leave': {
+          from: { opacity: '1', transform: 'translateX(0)' },
+          to: { opacity: '0', transform: 'translateX(6%)' },
+        },
+        'pane-return': {
+          from: { opacity: '0', transform: 'translateX(6%)' },
+          to: { opacity: '1', transform: 'translateX(0)' },
+        },
+      },
+      animation: {
+        /**
+         * THE APP PANE LEAVING AND RETURNING (plan 002, U6). `T2Sliding` is a whole board about
+         * this one movement — "the app card is sliding out to the right and fading as it goes" —
+         * and its annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing
+         * about the app is stopped or reloaded — it is only taken off the screen."
+         *
+         * A KEYFRAME PAIR, NOT A MOTION RUNTIME. The pane is one element whose visibility the
+         * shell already toggles, so two keyframes are the whole mechanism and nothing imperative
+         * animates it. (`tailwindcss-animate`, in `plugins` below, is present only for the Radix
+         * overlays' `animate-in` / `animate-out` enter-and-exit utilities; it does not drive this.)
+         *
+         * REDUCED MOTION — WHAT IS ACTUALLY TRUE. Both keyframe animations are suppressed by the
+         * `@media (prefers-reduced-motion: reduce)` block in `index.css`, which ALSO suppresses
+         * `.animate-spin`, `.animate-pulse` and `.animate-bounce`. That block and
+         * `usePrefersReducedMotion()` in `src/components/chat/ToolActivityLine.tsx` — three
+         * consumers: `ToolActivityLine`, `OfferStrip`, `StopTurnControl` — are the portal's only
+         * two mechanisms; there is no third. This paragraph used to say `index.css` was "where
+         * every other one in this build is suppressed too" while three dozen spinners ignored the
+         * preference entirely: that false sentence IS `#210`, which is why it is now pinned by
+         * `src/__tests__/reducedMotion.test.ts`.
+         */
+        'pane-leave': 'pane-leave 0.24s ease-in forwards',
+        'pane-return': 'pane-return 0.24s ease-out',
       },
     },
   },

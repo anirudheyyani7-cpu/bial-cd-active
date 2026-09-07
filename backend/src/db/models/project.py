@@ -3,7 +3,7 @@
 A project is the durable home a citizen developer builds a single tool inside: it
 links the user's three work surfaces — the codebase (its one `app_registry` row,
 R22/one-app-per-project), the chats, and the plan-kind chats (both the
-`conversations` table, distinguished by `ConversationKind`). Everything Phase-2
+`conversations` table, distinguished by `ChatKind`). Everything Phase-2
 attaches to (per-app DB isolation, deploy target, governance record) hangs off the
 project, so it is the keystone that lands before versioning.
 
@@ -32,6 +32,14 @@ from src.db.mixins import OwnedByUserMixin, TimestampMixin, UUIDv7PrimaryKeyMixi
 # Bounded so a name can index/display sanely. This is now the sole app/project display
 # name — the admin registry sources each app's name from its owning project (#48).
 MAX_PROJECT_NAME = 120
+# The title cap a PERSON meets (#158 §14). The column stays VARCHAR(120) and rows written
+# before this shipped keep their names — the cap applies on create and rename, never
+# retroactively, and the list clamps a long stored name visually instead of truncating it.
+# Words, not characters: a title is a name, and "about 6 to 8 words" is something a citizen
+# can act on where "60 characters" is not. `src/core/words.py` owns the splitting rule and
+# `portal/src/utils/words.ts` mirrors it exactly, because a title that passes in the browser
+# must not be refused by the API.
+MAX_PROJECT_NAME_WORDS = 8
 # The description is injected into EVERY project chat turn (R16/U8), so it is capped:
 # an unbounded description is an uncapped per-turn token cost (KD-8). Enforced at the
 # Pydantic write boundary (U4/U7); this constant is the shared source of truth.
@@ -78,7 +86,7 @@ class Project(UUIDv7PrimaryKeyMixin, TimestampMixin, OwnedByUserMixin, Base):
     #
     # `deferred=True`: this column is otherwise mapped, non-deferred, and `Project` is
     # loaded as a full entity on the chat hot path (`conversations/turns.py`,
-    # `conversations/transition.py`, `claude/router.py`, `services/projects/resolve.py`) —
+    # `conversations/transition.py`, `services/projects/resolve.py`) —
     # every one of those was pulling the tsvector along for no reason. Deferred loading
     # does NOT affect the marketplace router: it never loads `Project` as an ORM instance,
     # it references `Project.description_tsv` as a raw column expression in `.where()` /

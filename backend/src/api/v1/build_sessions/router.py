@@ -67,8 +67,10 @@ from src.services.build_sessions import (
     NoLiveSandboxError,
     NoSnapshotToRelaunchError,
     SandboxReclaimBlockedError,
+    SandboxUnreachableError,
     SessionManager,
     SnapshotUnavailableError,
+    StopOutcome,
     app_name_for,
     sweep_all,
 )
@@ -322,7 +324,12 @@ async def internal_reap(
         (403, ErrorEnvelope, "CSRF check failed"),
         AUTH_401,
         (404, ErrorEnvelope, "Project or conversation not found"),
-        (409, ConflictEnvelope, "A build session is already active"),
+        (
+            409,
+            BuildConflictEnvelope,
+            "A build session is already active, or another project holds the workspace "
+            "with unsaved work",
+        ),
         (422, ErrorEnvelope, "An attached file could not be used in the build"),
         (
             503,
@@ -384,6 +391,17 @@ async def start_build(
             # same signal, so this 409 always describes a session that genuinely holds the
             # one-per-user lock.
             return _conflict_response(exc)
+        except SandboxReclaimBlockedError as exc:
+            # #83 — a DIFFERENT 409 from the one above, and the reason this route now declares
+            # `BuildConflictEnvelope`: not "you already have a build running" but "another
+            # project holds your one workspace and taking it would destroy work". Uncaught, it
+            # was a 500 (#183) — a door into the hand-over dialog that crashed instead of
+            # asking, while `reclaim_blocked_response` was documenting that every door answers
+            # identically. NOT a subclass-ordering hazard with the arm above: both derive from
+            # `Exception` directly and describe unrelated conditions, so neither can shadow the
+            # other. Same helper as relaunch and the turn route, which is what makes the answer
+            # identical rather than merely intended to be.
+            return reclaim_blocked_response(exc)
         except SnapshotUnavailableError as exc:
             # R6 — the restore could not be completed and the snapshot is not confirmed absent,
             # so the manager refused to provision a blank template over the user's work. Their
@@ -457,12 +475,29 @@ async def relaunch_preview(
         except NoSnapshotToRelaunchError as exc:
             # Confirmed-absent (or vanished) snapshot: nothing to relaunch, and there is no
             # blank-template fallback (an empty app is not a preview of the user's work). 404.
+            #
+            # CODED, because this route answers 404 for TWO unrelated reasons and a client has to
+            # tell them apart. `owned_project_or_404` fails a deleted or someone else's project
+            # with the same status; the rail treats "nothing saved to bring back" as a normal
+            # first message and opens the chat anyway (review #1), which for the other 404 would
+            # open a chat that dies a beat later instead of reporting the failure. Only this one
+            # carries `no_saved_build`, so the rail's arm can be exact — the same reason
+            # `sandbox_reclaim_blocked` names itself rather than letting a client match prose.
             raise AppApiError(
-                status.HTTP_404_NOT_FOUND, "No saved build to relaunch. Build the app first."
+                status.HTTP_404_NOT_FOUND,
+                "No saved build to relaunch. Build the app first.",
+                code="no_saved_build",
             ) from exc
-        except (SnapshotUnavailableError, SandboxError) as exc:
+        except (SnapshotUnavailableError, SandboxUnreachableError, SandboxError) as exc:
             # Transient/unknown snapshot state, a restore that failed every attempt, or the dev
             # server not coming ready — the saved version is intact; a retry is the way forward.
+            #
+            # `SandboxUnreachableError` IS THIS ANSWER, and it is named here rather than left to
+            # fall through as a 500. The attach fork now refuses on it instead of restoring: the
+            # registry says a container is live, the attach could not confirm anything, and the
+            # honest reply is "we could not tell" — which is precisely what this arm already
+            # says. It is NOT a `SandboxError` (it is a `NoLiveSandboxError` subclass), so
+            # listing it is the only way it reaches this message rather than an unhandled 500.
             raise AppApiError(
                 status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG
             ) from exc
@@ -632,15 +667,19 @@ class PreviewStateResponse(CamelModel):
 
 
 class StopActiveBuildResponse(CamelModel):
-    """`stopped` says whether there was actually something running to stop. False is a success:
-    the project is settled, which is the state the caller needed before saving or releasing.
+    """THREE NAMED STATES, never a boolean — the shared shape of the ask and the status read.
 
-    Says nothing about whether the stop SUCCEEDED in freeing the slot, because it cannot — the
-    wait is bounded, and a wedged container can outlast it. The next step's refusal is the
-    authority on that, which is why the save and release guards stay in place rather than
-    trusting this call to have done its job."""
+    The field it replaces was a `stopped: bool` whose `false` meant "nothing was running", which
+    a caller proceeds on. Both the service and the turn engine hardcoded `true` on every path,
+    so a stop that had not finished arrived wearing the same face as one that had — and the next
+    thing the client does is take the container. See `StopOutcome` for what each state licenses:
+    `stopped` and `nothing_was_running` are both permission to continue, `still_running` is not.
 
-    stopped: bool
+    The SAME shape from both routes on purpose. The ask reports the state at the instant the stop
+    began; the status read reports it now. A client that had to decode two shapes would be one
+    refactor away from reading one of them with the other's rules."""
+
+    state: StopOutcome
 
 
 class ReleaseResponse(CamelModel):
@@ -738,7 +777,7 @@ async def stop_active_build(
     manager: SessionManagerDep,
     sandbox: OptionalSandbox,
 ) -> StopActiveBuildResponse:
-    """Stop what the agent is doing in this project, and wait for it to settle.
+    """ASK for the work in this project to stop. Returns as soon as the stop is under way.
 
     THE FIRST OF THREE, and the only new one: stop → save → release. It exists because the
     other two both refuse while a session is live, which used to make the reclaim dialog a dead
@@ -752,8 +791,15 @@ async def stop_active_build(
     each keeps its own refusal, so the ORDER is enforced by the guards rather than by a client
     remembering to call them in sequence.
 
-    `stopped: false` means nothing was running — a success the caller proceeds on, not a miss.
-    Deliberately no 409: asking a settled project to stop is already the state you wanted.
+    NOTHING IS HELD OPEN FOR THE LENGTH OF A STOP. This route used to await the whole thing,
+    which put the stop's budget under whatever request timeout the gateway in front of the
+    service enforces — a number owned by the client's network and written down nowhere here.
+    Now the wait lives in a detached task and `GET .../stop-state` reports how it went, so that
+    number stops constraining the design and a stop may honestly take as long as it takes.
+
+    `still_running` means the stop is in flight, which is what the caller polls on;
+    `nothing_was_running` means there was nothing to stop, a success the caller proceeds on, not a
+    miss. Deliberately no 409: asking a settled project to stop is already the state you wanted.
 
     NO `build_coordination_or_503` SEAM, unlike `release` and `save` beside it, and the
     asymmetry is deliberate rather than an omission. Those two ask REDIS what is live — the
@@ -768,8 +814,42 @@ async def stop_active_build(
     if sandbox is None:
         raise AppApiError(status.HTTP_503_SERVICE_UNAVAILABLE, _SANDBOX_UNAVAILABLE_MSG)
     await owned_project_or_404(db, user.id, project_id)
-    stopped = await manager.stop_active_work(db, user, project_id, sandbox_client=sandbox)
-    return StopActiveBuildResponse(stopped=stopped)
+    state = await manager.request_stop_of_active_work(db, user, project_id, sandbox_client=sandbox)
+    return StopActiveBuildResponse(state=state)
+
+
+@router.get(
+    "/projects/{project_id}/stop-state",
+    response_model=StopActiveBuildResponse,
+    responses=error_responses(AUTH_401, (404, ErrorEnvelope, "Project not found")),
+)
+async def stop_state(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: DbSession,
+    manager: SessionManagerDep,
+) -> StopActiveBuildResponse:
+    """HAS IT STOPPED YET? The other half of the ask above, and the only authority on the answer.
+
+    Read from the source of truth — whether a session still holds this project's app — and never
+    inferred from how long the caller has been waiting. That distinction is not academic here: a
+    container declared dead when it was merely slow has already destroyed a citizen's unsaved
+    work in this repo, and the shape of that bug was a timeout read as a verdict.
+
+    The browser polls this while it narrates the hand-over and proceeds only on `stopped` or
+    `nothing_was_running`. A dropped connection costs nothing — the stop is a detached task, so
+    asking again picks the answer up where it was left: no work lost, no container taken.
+
+    NO CSRF, and a GET, because it changes nothing. NO `build_coordination_or_503` either, for
+    the same reason the ask has none — the question lives in this process's session map, not in
+    Redis, and a live build during a Redis outage is exactly when the answer is still needed.
+
+    Cheap enough to poll: two user-scoped DB reads and a dict lookup. No attach, no container
+    call, no registry round trip — a status poll that touched the container would manufacture
+    the very activity signal R14 forbids, on the workspace we are asking permission to take."""
+    await owned_project_or_404(db, user.id, project_id)
+    state = await manager.stop_state_of_active_work(db, user, project_id)
+    return StopActiveBuildResponse(state=state)
 
 
 @router.post(
@@ -843,13 +923,17 @@ async def preview_state(
 
     Deliberately NOT `save-state`, which the client could otherwise have polled: that runs two
     `git` execs inside the container per call, and its `dirty=null` conflates three unrelated
-    causes. This route's budget is frozen in C3 §8.3 — one registry hash read, at most two
+    causes. This route's budget is frozen in C3 §8.3 — one round trip to the coordination store
+    (two commands, pipelined: the registry hash and the U13 starting marker), at most two
     user-scoped rows, at most two object-store HEADs, and NO container call of any kind.
 
     Answers about THIS project only. A container serving a different app is `slot_taken` here,
     named where we can name it: the one-per-user registry means somebody else's container is
     exactly when yours is asleep, and the builder deserves to be told which of their own
-    projects is standing in the way rather than that their app disappeared."""
+    projects is standing in the way rather than that their app disappeared. As of U13, a start
+    already in flight for this project — this tab's own press, another tab's, or a chat
+    message that just started one — answers `starting` rather than the stale `asleep` a second
+    press used to invite."""
     await owned_project_or_404(db, user.id, project_id)
     state = await manager.project_preview_state(db, user, project_id)
     return PreviewStateResponse(

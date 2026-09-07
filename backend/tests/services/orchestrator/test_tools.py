@@ -23,7 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from src.api.v1.conversations.schemas import StepFrame
 from src.core import prompt_blocks
-from src.db.models.conversation import ConversationMode
+from src.db.models.conversation import ChatKind
 from src.db.models.harness_counter import HarnessCounter
 from src.services.messages.projection import long_operation_line
 from src.services.orchestrator import build_agent, constants
@@ -66,7 +66,7 @@ _TOOL_NAMES = {
     "run_command",
     # U22: the slice handle is a REGISTERED TOOL, not a capability described in a prompt — and it
     # is registered here, on the sandbox toolset, because Write is the only mode that runs
-    # commands. `test_toolsets.py` asserts the mode half against `toolsets_for_mode` directly.
+    # commands. `test_toolsets.py` asserts the mode half against `toolsets_for_kind` directly.
     "fetch_output_slice",
     # U23: the composite is registered here too — one call for the generate + migrate sequence
     # the DATABASE block used to dictate step by step.
@@ -482,12 +482,82 @@ async def test_run_command_blocked_sql_emits_a_friendly_failed_label(sink: Colle
         assert leaked not in rc.label
 
 
-async def test_run_command_read_only_emits_a_hidden_step(sink: CollectingSink) -> None:
+async def test_a_read_only_command_is_a_visible_step_and_housekeeping_is_not(
+    sink: CollectingSink,
+) -> None:
+    """★ WHAT `hidden` MEANS NOW, asserted as the pair that defines the line.
+
+    Reads used to be hidden as a class, which is why a build's activity opened on a write with
+    no account of what the agent had looked at to get there. Looking at the app before changing
+    it is work the citizen recognises, so it is drawn. Housekeeping — `mkdir`, `mv`, `touch` —
+    is not: drawing it prints a generic line that says nothing about their app.
+
+    BOTH HALVES IN ONE TEST, deliberately. Asserting only that a read is visible would pass just
+    as well against a change that deleted the flag outright, which is the thing this unit
+    explicitly did not do.
+
+    Mutation check: flip either arm's `hidden` in `_classify_command` and exactly one of these
+    two assertions goes red."""
     fake = FakeSandbox()
-    fake.queue_commands(ExecResult(stdout="app/page.tsx", stderr="", exit=0))
-    await _run(fake, sink, [tool_turn("run_command", {"command": ["ls", "app"]}), text_turn()])
-    rc = next(e for e in _steps(sink) if e.name == "run_command")
-    assert rc.hidden is True
+    fake.queue_commands(
+        ExecResult(stdout="app/page.tsx", stderr="", exit=0),
+        ExecResult(stdout="", stderr="", exit=0),
+    )
+    await _run(
+        fake,
+        sink,
+        [
+            tool_turn("run_command", {"command": ["ls", "app"]}),
+            tool_turn("run_command", {"command": ["mkdir", "-p", "app/visitors"]}),
+            text_turn(),
+        ],
+    )
+    read, housekeeping = (e for e in _steps(sink) if e.name == "run_command")
+    assert read.hidden is False
+    assert housekeeping.hidden is True
+    # And neither one puts the raw command on screen, whichever side of the line it falls.
+    for step in (read, housekeeping):
+        for leaked in ("ls", "mkdir", "-p", "$ "):
+            assert leaked not in step.label
+
+
+async def test_housekeeping_that_fails_is_drawn_rather_than_hidden(
+    sink: CollectingSink,
+) -> None:
+    """★ NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, on this emitter too.
+
+    The turn engine's `_resolve_step` clears `hidden` on a failed step and the reload projection
+    does the same, and `classify_command`'s docstring states that parity for this emitter by
+    name — while this feed passed the classifier's flag straight through, so a `mkdir` that
+    failed was a problem counted in the group's total with no row anyone could open. A citizen
+    reading "1 problem" and finding nothing that says what it was is the failure the whole
+    hidden/failed rule exists to prevent.
+
+    THE PAIR IS THE TEST. The same command succeeding stays hidden — the flag is narrowed by
+    state, not deleted — which is what makes the visible arm mean something.
+
+    Mutation check: pass `hidden=hidden` through `_step` again and the failed arm goes red while
+    the succeeding one stays green."""
+    fake = FakeSandbox()
+    fake.queue_commands(
+        ExecResult(stdout="", stderr="", exit=0),
+        ExecResult(stdout="", stderr="mkdir: permission denied", exit=1),
+    )
+    await _run(
+        fake,
+        sink,
+        [
+            tool_turn("run_command", {"command": ["mkdir", "-p", "app/visitors"]}),
+            tool_turn("run_command", {"command": ["mkdir", "-p", "app/reports"]}),
+            text_turn(),
+        ],
+    )
+    worked, failed = (e for e in _steps(sink) if e.name == "run_command")
+    assert worked.state == "ok" and worked.hidden is True
+    assert failed.state == "failed" and failed.hidden is False
+    # Still no raw command on screen on the way out of hiding.
+    for leaked in ("mkdir", "-p", "permission denied", "$ "):
+        assert leaked not in failed.label
 
 
 # --- run_command (U1 / U4 / R1 / R3 / R11) -----------------------------------
@@ -1408,7 +1478,7 @@ async def test_the_composite_gets_the_long_operation_status_line(
         turn_id=uuid.uuid7(),
         conversation_id=uuid.uuid7(),
         user_id=uuid.uuid7(),
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
 
     engine._on_event(

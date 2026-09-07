@@ -1,62 +1,36 @@
 /**
- * Pure helpers for the chat attachment composer (shared by ChatPage and
- * BuilderPage). Validation + base64 reading + ref-building live here so the
- * composer logic is testable without a DOM render. The real trust boundary is
+ * Pure helpers for the chat attachment composer. Validation + base64 reading +
+ * ref-building live here so the composer logic is testable without a DOM render. The real trust boundary is
  * the server (media-type allowlist + magic-byte check); these checks are UX.
  */
-import { DECK_ATTACHMENTS_ENABLED } from '../config/features'
-
-// The two OOXML (Office) media types. Word/Excel are uploaded like image/PDF
-// binaries, but the SERVER extracts them to Markdown and the model only ever sees
-// that text (sticky) — the original bytes are stored for re-download, never sent
-// to Claude. See attachmentStore (office part) and server/office-extract.js.
-export const WORD_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-export const EXCEL_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-export const OFFICE_MEDIA_TYPES = new Set([WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE])
-
-// PowerPoint (.pptx). A deck is a VISUAL medium, so unlike Word/Excel it is NOT
-// text-extracted: the server renders it to a PDF and the model reads that with
-// vision. The original .pptx is the ONLY user-facing artifact (stored for
-// re-download); the conversion is invisible to the user. See attachmentStore
-// (deck part), server/deck-convert.js, and the plan's "invisible" user story.
-export const PPTX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-export const DECK_MEDIA_TYPES = new Set([PPTX_MEDIA_TYPE])
-
-// Native Anthropic image/document types, inline text files (CSV/plain-text), and
-// Office docs (docx/xlsx — server-extracted to text). Text files aren't native
-// documents — they travel as fenced inline text parts (see
-// attachmentStore.buildUserParts), but they share this allowlist so the validator
-// and OS file picker accept them.
-// PowerPoint (.pptx) is OFFERED only when the deck feature is on.
-// `resolveMediaType` is flag-independent (canonicalizing a type is not offering
-// it). The legacy-.ppt reject below is NOT: its advice is "save as .pptx", which
-// only leads somewhere while .pptx is in this allowlist. With the flag off the
-// file never leaves the browser, so the server's own gate is not what the user
-// meets — the client is the whole story, and PowerPoint in EVERY form is
-// simply unsupported. See the flag check on that branch (#157 review).
+/**
+ * THE LINE IS A RULE, NOT A LIST: what needs no conversion (R46).
+ *
+ * Images and PDFs upload as themselves. Plain text (CSV, TXT) rides INSIDE the message as a fenced
+ * text block, which is why it shares this allowlist even though it is not a binary attachment.
+ * Everything that required a conversion step — Word, Excel, PowerPoint — is gone from the client:
+ * the picker does not offer it, the validator refuses it, and the wire has no part shape for it.
+ *
+ * Word and Excel were never what they appeared to be. The server extracted them to Markdown and
+ * the model only ever saw that text, so a citizen who attached a spreadsheet and asked about its
+ * layout was talking about something the model could not see. PowerPoint was gated off behind a
+ * build-time flag and never reached anyone.
+ *
+ * THE SERVER'S EXTRACTION MACHINERY IS STILL THERE and is deliberately out of scope — no unit in
+ * this plan touches `backend/`. That leaves a reachable-but-unreferenced upload path, which is
+ * recorded as R46's unshipped server half rather than quietly claimed as removed.
+ */
 export const ALLOWED_MEDIA_TYPES = [
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
-  'text/csv', 'text/plain', WORD_MEDIA_TYPE, EXCEL_MEDIA_TYPE,
-  ...(DECK_ATTACHMENTS_ENABLED ? [PPTX_MEDIA_TYPE] : []),
+  'text/csv', 'text/plain',
 ]
 // Text media types are special-cased everywhere binary attachments are: inlined
 // as text blocks (sticky across turns), sized by bytes in the context estimate,
 // and previewed as a labelled icon (no thumbnail).
 export const TEXT_MEDIA_TYPES = new Set(['text/csv', 'text/plain'])
-// Extension tokens let the OS picker show .csv/.txt/.docx/.xlsx (+ .pptx when the
-// deck feature is on) even when the OS reports an inconsistent/empty MIME (see
-// resolveMediaType).
-export const ACCEPT_ATTR = [
-  ...ALLOWED_MEDIA_TYPES, '.csv', '.txt', '.docx', '.xlsx',
-  ...(DECK_ATTACHMENTS_ENABLED ? ['.pptx'] : []),
-].join(',')
-
-/** `'word' | 'excel' | null` for a media type — drives the Office chip icon. */
-export function officeFormat(mediaType: string): 'word' | 'excel' | null {
-  if (mediaType === WORD_MEDIA_TYPE) return 'word'
-  if (mediaType === EXCEL_MEDIA_TYPE) return 'excel'
-  return null
-}
+// Extension tokens let the OS picker show .csv/.txt even when the OS reports an
+// inconsistent or empty MIME (see resolveMediaType).
+export const ACCEPT_ATTR = [...ALLOWED_MEDIA_TYPES, '.csv', '.txt'].join(',')
 
 export const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4 MB on the original File.size (image/PDF)
 // Text files are inlined verbatim into the prompt, so they're capped far lower
@@ -70,15 +44,32 @@ export const MAX_FILES_PER_MESSAGE = 5
 // server-side); checked at send time where the full conversation is visible.
 export const MAX_ATTACHMENTS_PER_CONVERSATION = 20
 
-// Legacy `.doc` (binary Word 97-2003) is NOT supported — mammoth only reads the
-// OOXML `.docx`. Surface a clear, honest message rather than a confusing parse
-// failure server-side.
-export const LEGACY_DOC_REJECT_MSG = 'Legacy .doc files aren\'t supported — please save as .docx (or PDF) and re-upload.'
+/**
+ * ADVICE IS ONLY HONEST WHILE IT LEADS SOMEWHERE.
+ *
+ * The two legacy reject messages used to say "save as .docx" and "save as .pptx". Both stopped
+ * being followable the moment those formats were refused too — a citizen who did what they said
+ * would be rejected a second time and told nothing new. So there is one refusal now, and it names
+ * what IS accepted. That is the reasoning this file already recorded for the flag-off deck case,
+ * applied to the permanent one.
+ */
+export function unsupportedFileMessage(fileName: string): string {
+  return `"${fileName}" ${unsupportedFormatMessage()}`
+}
 
-// Legacy `.ppt` (binary PowerPoint 97-2003) is NOT supported — only the OOXML
-// `.pptx`. Clear message rather than a confusing server-side failure. (No "PDF"
-// hint here: the user must never learn we convert decks to PDF internally.)
-export const LEGACY_PPT_REJECT_MSG = 'Legacy .ppt files aren\'t supported — please save as .pptx and re-upload.'
+/**
+ * THE SAME ADVICE WITH NO NAME TO HANG IT ON.
+ *
+ * The composer's own validator always knows which file it refused. The LIBRARY's accept filter does
+ * not tell us: it runs before the adapter is called and its event carries a reason and its own
+ * sentence, not the file. Rather than let that path speak the library's words — "File type
+ * application/vnd… is not accepted. Accepted types: image/png,image/jpeg,…", a MIME list read out
+ * at someone who dragged in a spreadsheet — it speaks this. One author for the advice; the name is
+ * the only thing that varies.
+ */
+export function unsupportedFormatMessage(): string {
+  return "isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, or a text file (CSV, TXT)."
+}
 
 /**
  * Canonicalize a file's media type by extension first. Browsers/OSes report
@@ -92,9 +83,6 @@ export function resolveMediaType(file: File): string {
   const name = file.name || ''
   if (/\.csv$/i.test(name)) return 'text/csv'
   if (/\.txt$/i.test(name)) return 'text/plain'
-  if (/\.docx$/i.test(name)) return WORD_MEDIA_TYPE
-  if (/\.xlsx$/i.test(name)) return EXCEL_MEDIA_TYPE
-  if (/\.pptx$/i.test(name)) return PPTX_MEDIA_TYPE
   return file.type
 }
 
@@ -123,34 +111,12 @@ export function validateAttachmentFiles(
   }
   let textBytes = existingTextBytes
   for (const file of incoming) {
-    // Legacy binary Word (.doc) — not the OOXML .docx mammoth reads. Reject clearly.
-    // The extension is authoritative: a real .docx/.xlsx that the OS mislabels with
-    // the legacy `application/msword` MIME must NOT be rejected (extension wins).
-    const name = file.name || ''
-    if (/\.doc$/i.test(name) || (file.type === 'application/msword' && !/\.(docx|xlsx)$/i.test(name))) {
-      return { error: LEGACY_DOC_REJECT_MSG }
-    }
-    // Legacy binary PowerPoint (.ppt) — not the OOXML .pptx. The extension is
-    // authoritative: a real .pptx the OS mislabels as `application/vnd.ms-powerpoint`
-    // must NOT be rejected (extension wins). `\.ppt$` never matches `.pptx`.
-    //
-    // GATED ON THE FLAG, unlike the .doc reject above. This message's whole value is
-    // the way out it names ("save as .pptx"), and that way out only exists while the
-    // deck feature is on. With it off, .pptx fails the allowlist below too, so a user
-    // who followed this advice would be rejected twice and told nothing new. Falling
-    // through to the generic message instead is both true (PowerPoint is unsupported
-    // in every form here) and followable (it names what IS accepted). Same reasoning
-    // as the `ppt` fragment in that message.
-    if (
-      DECK_ATTACHMENTS_ENABLED &&
-      (/\.ppt$/i.test(name) || (file.type === 'application/vnd.ms-powerpoint' && !/\.pptx$/i.test(name)))
-    ) {
-      return { error: LEGACY_PPT_REJECT_MSG }
-    }
+    // ONE refusal, for every unsupported format. There is no longer a special case for a legacy
+    // `.doc` or `.ppt`: with the OOXML formats refused as well, "save as .docx" led nowhere, and a
+    // single message that names what IS accepted is both true and followable.
     const mediaType = resolveMediaType(file)
     if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) {
-      const ppt = DECK_ATTACHMENTS_ENABLED ? ', a PowerPoint (.pptx)' : ''
-      return { error: `"${file.name}" isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, a Word (.docx) or Excel (.xlsx)${ppt} file, or a text file (CSV, TXT).` }
+      return { error: unsupportedFileMessage(file.name) }
     }
     const isTextFile = TEXT_MEDIA_TYPES.has(mediaType)
     if (isTextFile) {
@@ -170,8 +136,8 @@ export function validateAttachmentFiles(
   return { ok: true }
 }
 
-/** The pending-composer shape (`usePendingAttachments.js`) — transient base64
- * held client-side until the message sends. */
+/** The pending-composer shape (`chat/runtime/attachmentAdapter.ts` makes them) —
+ * transient base64 held client-side until the message sends. */
 export interface PendingAttachment {
   id: string
   name: string
@@ -209,6 +175,40 @@ export function validateConversationAttachmentCap(existingCount = 0, incomingCou
   return { ok: true }
 }
 
+/**
+ * A DOCUMENT LIMIT, NOT A TOKEN LIMIT, and the distinction is the whole reason this exists (#194).
+ *
+ * A PDF is charged a flat 75,000 tokens because that is what the largest admissible one can really
+ * cost, so three of them exceed the context ceiling before a word is typed. Left to the token gate,
+ * the citizen would be told to "start a new chat" — advice that does not work, because the new chat
+ * refuses the identical message. The server already refuses the third document at `resolve_binaries`
+ * with its own sentence; this is the same refusal one step earlier, so the composer does not accept
+ * a message it knows will bounce.
+ *
+ * MIRRORS `backend/src/api/v1/conversations/_shared.py` — `MAX_PDF_BLOCKS` and
+ * `TOO_MANY_DOCUMENTS_MSG`. The server is the trust boundary and keeps its own check; if these two
+ * ever disagree the server wins and the citizen sees its sentence instead. Raising the page cap
+ * makes this stricter, not looser.
+ *
+ * Counted PER MESSAGE, not per conversation: the charge is per attached block on the send, and
+ * `MAX_ATTACHMENTS_PER_CONVERSATION` above answers the different, cumulative question.
+ */
+export const MAX_PDF_ATTACHMENTS_PER_MESSAGE = 2
+export const TOO_MANY_DOCUMENTS_MESSAGE =
+  `You can send up to ${MAX_PDF_ATTACHMENTS_PER_MESSAGE} documents in one message. Take one out and send again.`
+
+/** How many of a pending list are PDFs. Only `mediaType` is read, so a ref list works too. */
+export function countPdfAttachments(list: readonly { mediaType?: string }[] = []): number {
+  return list.filter((a) => a?.mediaType === 'application/pdf').length
+}
+
+export function validatePdfPerMessageCap(list: readonly { mediaType?: string }[] = []): AttachmentValidationResult {
+  if (countPdfAttachments(list) > MAX_PDF_ATTACHMENTS_PER_MESSAGE) {
+    return { error: TOO_MANY_DOCUMENTS_MESSAGE }
+  }
+  return { ok: true }
+}
+
 /** Read a File as raw base64 (stripping the `data:<type>;base64,` prefix). */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -226,15 +226,4 @@ export function fileToBase64(file: File): Promise<string> {
 /** A unique attachment id (namespacing of bytes is by id within the store). */
 export function newAttachmentId() {
   return `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-/** The lightweight pre-upload ref `toAttachmentRef` strips a `PendingAttachment`
- * down to. Distinct from `attachmentApi.ts`'s `AttachmentRef` (the POST-upload
- * server-returned ref) — same-sounding name, different shape/purpose, so this
- * one gets its own name rather than colliding. */
-export type PendingAttachmentRef = Pick<PendingAttachment, 'id' | 'name' | 'mediaType' | 'size'>
-
-/** Strip transient base64 to the lightweight ref persisted in the conversation. */
-export function toAttachmentRef({ id, name, mediaType, size }: PendingAttachmentRef): PendingAttachmentRef {
-  return { id, name, mediaType, size }
 }

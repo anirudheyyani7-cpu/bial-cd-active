@@ -75,8 +75,9 @@ the entire trick (`tests/api/v1/admin/test_apps_governance.py:64-72`):
 
 ```python
 async def _admin(db):
-    user = await UserFactory.create(db, email="admin@bial.com")   # → super-admin
+    user = await UserFactory.create(db, email="admin@bial.com")  # → super-admin
     return _cookie(mint_session_jwt(user.id, user.token_version, _TTL))
+
 
 async def _citizen(db):
     user = await UserFactory.create(db, email="nobody@rvaiglobal.com")  # → plain citizen
@@ -95,7 +96,10 @@ flush + refresh (server defaults like the UUIDv7 id and `token_version` are popu
 
 ```python
 from tests.factories import (
-    UserFactory, AppRegistryFactory, ConversationFactory, MessageFactory,
+    UserFactory,
+    AppRegistryFactory,
+    ConversationFactory,
+    MessageFactory,
 )
 ```
 
@@ -125,9 +129,9 @@ required. Defaults: `id=uuid4()`, `role=MessageRole.USER`, `seq=0`,
 Enums to import when overriding:
 
 ```python
-from src.db.models.app_registry import AppStatus       # DRAFT/PENDING/APPROVED/DISABLED/REJECTED
-from src.db.models.conversation import ConversationKind # PLANNING/ASSISTANT/BUILDER
-from src.db.models.message import MessageRole           # USER/ASSISTANT
+from src.db.models.app_registry import AppStatus  # DRAFT/PENDING/APPROVED/DISABLED/REJECTED
+from src.db.models.conversation import ConversationKind  # PLANNING/ASSISTANT/BUILDER
+from src.db.models.message import MessageRole  # USER/ASSISTANT
 ```
 
 ---
@@ -146,7 +150,7 @@ from src.services.build_sessions.appdata import resolve_app_for_project
 
 project = await ProjectFactory.create(db_session, user.id)
 app_id = await resolve_app_for_project(db_session, user.id, project.id)
-await db_session.commit()          # the endpoints under test read through their own session
+await db_session.commit()  # the endpoints under test read through their own session
 ```
 
 Returns just the `uuid.UUID`. The upsert still mints `app_key` on insert — read it off the row
@@ -179,12 +183,15 @@ _SHA = "ab" * 20  # 40 lowercase hex
 _BUNDLE = b"# v2 git bundle\n" + _SHA.encode() + b" HEAD\n\nPACK-fake"
 
 store = FakeStorage()
-app.dependency_overrides[storage_dependency] = lambda: store   # the `app` FIXTURE
+app.dependency_overrides[storage_dependency] = lambda: store  # the `app` FIXTURE
 store.objects[snapshot_key(uuid.UUID(app_id))] = _BUNDLE
 
 app_row = await db_session.get(AppRegistry, uuid.UUID(app_id))
 receipt = await submit_app_for_review(
-    db_session, store, user_id=owner.id, app=app_row,
+    db_session,
+    store,
+    user_id=owner.id,
+    app=app_row,
     declaration={"citizen": {}, "review": {}, "differences": [], "explanation": ""},
     route=ApprovalRoute.SELF_PUBLISH,
 )
@@ -248,13 +255,19 @@ driving mint→submit→approve:
 ```python
 _SHA = "9d" * 20
 
+
 async def _approved_app(db, **overrides):
     user = await UserFactory.create(db)
     sid = uuid.uuid4()
     app = await AppRegistryFactory.create(
-        db, user_id=user.id, status=AppStatus.APPROVED, login_required=False,
-        source_submission_id=sid, source_commit_sha=_SHA,
-        approved_submission_id=sid, approved_commit_sha=_SHA,
+        db,
+        user_id=user.id,
+        status=AppStatus.APPROVED,
+        login_required=False,
+        source_submission_id=sid,
+        source_commit_sha=_SHA,
+        approved_submission_id=sid,
+        approved_commit_sha=_SHA,
         **overrides,
     )
     return app
@@ -329,8 +342,9 @@ class _DictStorage(ObjectStorage):
             raise StorageError("put boom", provider="fake", key=key)
         self.objects[key] = data
         self.put_keys.append(key)
-        return ObjectMeta(key=key, size=len(data), content_type=content_type,
-                          etag=None, last_modified=None)
+        return ObjectMeta(
+            key=key, size=len(data), content_type=content_type, etag=None, last_modified=None
+        )
 
     async def get(self, key):
         if key not in self.objects:
@@ -339,16 +353,22 @@ class _DictStorage(ObjectStorage):
 
     async def head(self, key):
         data = self.objects.get(key)
-        return None if data is None else ObjectMeta(
-            key=key, size=len(data), content_type=None, etag=None, last_modified=None)
+        return (
+            None
+            if data is None
+            else ObjectMeta(
+                key=key, size=len(data), content_type=None, etag=None, last_modified=None
+            )
+        )
 
     async def delete(self, key):
         self.deleted.append(key)
         self.objects.pop(key, None)
 
     async def list(self, prefix, *, page_size=1000, token=None):
-        return ListPage(keys=tuple(k for k in self.objects if k.startswith(prefix)),
-                        next_token=None)
+        return ListPage(
+            keys=tuple(k for k in self.objects if k.startswith(prefix)), next_token=None
+        )
 
     async def _signed_read_url_impl(self, key, *, expires_in: timedelta):
         if not self._can_sign:
@@ -365,6 +385,7 @@ because you mutate `app.dependency_overrides`):
 ```python
 from src.api.deps import storage_dependency
 
+
 async def test_journey(client, app, db_session):
     store = _DictStorage()
     app.dependency_overrides[storage_dependency] = lambda: store
@@ -378,7 +399,7 @@ The conversations conftest already overrides the attachments store autouse
 (`tests/api/v1/conversations/conftest.py`). If you need it directly:
 
 ```python
-from tests.fakes import FakeStorage   # has .objects: dict[str, bytes]
+from tests.fakes import FakeStorage  # has .objects: dict[str, bytes]
 
 fake = FakeStorage()
 app.dependency_overrides[
@@ -390,27 +411,33 @@ app.dependency_overrides[
 
 ## 7. Injecting a `TestModel` for the chat endpoint (no network)
 
-`POST /v1/claude` streams SSE from a pydantic-ai model. In tests the Foundry model is
-replaced with a `pydantic_ai.models.test.TestModel`, and billing is bound to the
-rolled-back test session — both live in `tests/api/v1/claude/conftest.py`.
+`POST /v1/conversations/{id}/turns` starts a turn on the turn engine; the reply streams from a
+pydantic-ai model over `GET /v1/conversations/{id}/events`. In tests the Foundry model is
+replaced with a `pydantic_ai.models.test.TestModel` (or a `FunctionModel` when the test needs to
+see the prompt), and billing is bound to the rolled-back test session.
 
-**To reuse them in a journey test, place your journey module under
-`tests/api/v1/claude/` OR copy the two fixtures into a local `conftest.py`** (the
-`set_chat_model` + autouse `_override_billing` fixtures are scoped to that directory):
+> **The relay this section used to document is gone.** `POST /v1/claude` and
+> `tests/api/v1/claude/` were retired — the turn engine is the only send path
+> (guard: `tests/api/v1/claude_retired/test_relay_retired.py`). The two fixtures now live in
+> `tests/api/v1/conversations/conftest.py`, and the dependencies they override come from
+> `src/api/v1/conversations/_shared.py`, not the deleted `claude/router.py`.
+
+**To reuse them in a journey test, copy the two fixtures into a local `conftest.py`** (they are
+scoped to `tests/api/v1/conversations/`, and a journey module lives outside it):
 
 ```python
-# conftest.py next to your journey test — verbatim from tests/api/v1/claude/conftest.py
+# conftest.py next to your journey test
 import contextlib
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _override_billing(app, db_session) -> None:
-    from src.api.v1.claude.router import billing_session_factory
+    from src.api.v1.conversations._shared import billing_session_factory
 
     @contextlib.asynccontextmanager
     async def _session():
-        yield db_session   # do NOT close/rollback — the db_session fixture owns teardown
+        yield db_session  # do NOT close/rollback — the db_session fixture owns teardown
 
     app.dependency_overrides[billing_session_factory] = lambda: lambda: _session()
 
@@ -418,29 +445,31 @@ def _override_billing(app, db_session) -> None:
 @pytest.fixture
 def set_chat_model(app):
     def _set(model) -> None:
-        from src.api.v1.claude.router import chat_model
+        from src.api.v1.conversations._shared import chat_model
+
         app.dependency_overrides[chat_model] = lambda: model
+
     return _set
 ```
 
-Drive it (`test_chat_stream.py:56-64`):
+Driving a turn is TWO steps, unlike the relay's single call: the POST returns `202` and the text
+arrives on the event stream. See `tests/journeys/test_journey_multiturn_generate.py` for the
+worked version, including how to await the detached task before asserting on the DB.
 
 ```python
 from pydantic_ai.models.test import TestModel
 
-async def test_chat_turn(client, db_session, set_chat_model):
-    headers, _ = await _auth_user(db_session)
+
+async def test_chat_turn(client, db_session, app, set_chat_model):
+    user, conversation = await _auth_with_conversation(db_session)
     set_chat_model(TestModel(custom_output_text="hello world"))
-    # `conversationId` is REQUIRED (project-first). A fresh uuid4 is the legitimate
-    # first-turn case: it resolves to no stored row, so no project context is injected.
-    resp = await client.post("/v1/claude", headers=headers, json={
-        "messages": [{"role": "user", "content": "hello"}],
-        "conversationId": str(uuid.uuid4()),
-    })
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/event-stream")
-    assert 'data: {"delta":{"text":"hello world"}}\n\n' in resp.text
-    assert resp.text.endswith("data: [DONE]\n\n")
+    resp = await client.post(
+        f"/v1/conversations/{conversation.id}/turns",
+        headers=_headers(user),
+        json={"message": {"text": "hello", "attachmentTexts": [], "attachmentIds": []}},
+    )
+    assert resp.status_code == 202  # the turn is ACCEPTED, not yet answered
+    await _settle(engine, conversation.id)  # await the detached task
 ```
 
 `resp.text` fully drains the stream — **billing lands before `[DONE]`**, so read the body
@@ -459,8 +488,13 @@ The wire shape is Express-stable: message id is **`_id`**, envelope errors are
 
 ```python
 def _message(seq=0, parts=None):
-    return {"_id": str(uuid.uuid4()), "role": "user", "seq": seq,
-            "parts": parts or [{"type": "text", "text": "hi"}]}
+    return {
+        "_id": str(uuid.uuid4()),
+        "role": "user",
+        "seq": seq,
+        "parts": parts or [{"type": "text", "text": "hi"}],
+    }
+
 
 def _header(kind="planning"):
     return {"kind": kind, "title": "My chat"}
@@ -480,7 +514,7 @@ Get-with-messages, the shape a journey asserts (`test_conversations.py:82-96`):
 resp = await client.get(f"/v1/conversations/{conv.id}", headers=headers)
 body = resp.json()
 assert body["conversation"]["_id"] == str(conv.id)
-assert [m["seq"] for m in body["messages"]] == [0, 1, 2]     # seq-ordered
+assert [m["seq"] for m in body["messages"]] == [0, 1, 2]  # seq-ordered
 assert body["messages"][0]["parts"] == [{"type": "text", "text": "hi"}]
 ```
 
@@ -501,11 +535,11 @@ caller's transaction — no commit — so the row is visible on `db_session` imm
 import sqlalchemy as sa
 from src.db.models.audit import AuditLog
 
-row = (await db_session.execute(
-    sa.select(AuditLog).where(
-        AuditLog.resource_type == "app", AuditLog.resource_id == app_id
+row = (
+    await db_session.execute(
+        sa.select(AuditLog).where(AuditLog.resource_type == "app", AuditLog.resource_id == app_id)
     )
-)).scalar_one()
+).scalar_one()
 assert row.action == "submit"
 assert row.actor_id == user.id
 ```
@@ -535,8 +569,9 @@ import httpx
 
 transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
 async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-    resp = await _upload(c, app_row.id, headers, filename="a.csv",
-                         content_type="text/csv", data=b"...")
+    resp = await _upload(
+        c, app_row.id, headers, filename="a.csv", content_type="text/csv", data=b"..."
+    )
 assert resp.status_code == 500
 ```
 
@@ -556,14 +591,17 @@ from tests.factories import UserFactory
 
 _TTL = settings.auth.access_ttl_seconds
 
-def _cookie(jwt): return {"Cookie": f"session={jwt}"}
+
+def _cookie(jwt):
+    return {"Cookie": f"session={jwt}"}
+
 
 _SHA = "ab" * 20
 _BUNDLE = b"# v2 git bundle\n" + _SHA.encode() + b" HEAD\n\nPACK-journey"
 
 
 async def test_owner_builds_admin_approves(client, app, db_session):
-    store = FakeStorage()                      # §6 — submit reads the snapshot bundle
+    store = FakeStorage()  # §6 — submit reads the snapshot bundle
     app.dependency_overrides[storage_or_none_dependency] = lambda: store
 
     # 1. owner's build session mints the app row; the build finalized a snapshot bundle
@@ -578,7 +616,10 @@ async def test_owner_builds_admin_approves(client, app, db_session):
     #    publish gate does.
     app_row = await db_session.get(AppRegistry, app_id)
     receipt = await submit_app_for_review(
-        db_session, store, user_id=owner.id, app=app_row,
+        db_session,
+        store,
+        user_id=owner.id,
+        app=app_row,
         declaration={"citizen": {}, "review": {}, "differences": [], "explanation": ""},
         route=ApprovalRoute.SELF_PUBLISH,
     )
@@ -588,13 +629,20 @@ async def test_owner_builds_admin_approves(client, app, db_session):
     # 3. admin approves
     admin = await UserFactory.create(db_session, email="admin@bial.com")
     ah = _cookie(mint_session_jwt(admin.id, admin.token_version, _TTL))
-    assert (await client.post(f"/v1/admin/apps/{app_id}/approve",
-            headers=ah)).json()["status"] == "approved"
+    assert (await client.post(f"/v1/admin/apps/{app_id}/approve", headers=ah)).json()[
+        "status"
+    ] == "approved"
 
     # 4. the trail recorded submit + approve
-    actions = (await db_session.execute(
-        sa.select(AuditLog.action).where(AuditLog.resource_id == str(app_id))
-    )).scalars().all()
+    actions = (
+        (
+            await db_session.execute(
+                sa.select(AuditLog.action).where(AuditLog.resource_id == str(app_id))
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert {"submit", "approve"} <= set(actions)
 ```
 
@@ -608,8 +656,10 @@ async def test_owner_builds_admin_approves(client, app, db_session):
   not just `client`.
 - **Two `storage_dependency` symbols** — `src.api.deps` (admin/governance) vs `attachments.router`.
   Override the one your route uses.
-- **`set_chat_model` / billing override are directory-scoped** to `tests/api/v1/claude/`.
-  Put a chat journey there, or copy the conftest fixtures locally.
+- **`set_chat_model` / billing override are directory-scoped** to
+  `tests/api/v1/conversations/`. A journey lives outside it, so copy the fixtures locally
+  (§7). The four files in that directory that drive turns opt in with a module-level
+  `pytestmark = pytest.mark.usefixtures("_fresh_engine", "_override_billing")`.
 - **Superadmin = email allowlist**, not a role. `admin@bial.com` / `superadmin@bial.com`
   (`.env.test`).
 - **One auth model: the session Cookie**, for owner and admin alike. The `X-App-Key` header

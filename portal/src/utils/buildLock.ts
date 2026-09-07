@@ -9,10 +9,10 @@
  *
  * Planning chats are never blocked. Only builds write code.
  *
- * WHY A FACTORY, NOT A MODULE SINGLETON. A module-level claim map would let two BuilderPage
- * instances in one document see each other's claims WITHOUT a channel round-trip, so a
- * two-page test would prove only the same-tab path and leave the cross-tab path — the one
- * this module exists for — entirely unexercised. With a factory, every manager owns its own
+ * WHY A FACTORY, NOT A MODULE SINGLETON. A module-level claim map would let two managers in
+ * one document see each other's claims WITHOUT a channel round-trip, so a two-instance test
+ * would prove only the same-tab path and leave the cross-tab path — the one this module exists
+ * for — entirely unexercised. With a factory, every manager owns its own
  * channel and the wire is the ONLY way claims travel: the same code path in one tab or six.
  * It also lets a test construct two managers over two real BroadcastChannels and drive the
  * message path directly.
@@ -21,10 +21,15 @@
  * expires without one. A lock that never clears is worse than no lock.
  *
  * DEMOTED TO ADVISORY (Phase-2, ORIG-§3-g / KTD-7). The AUTHORITATIVE one-build-per-user
- * barrier now lives server-side: C3 `start` returns `409 build_session_already_active` (carrying
- * the existing sessionId), and the cockpit renders the block + force-end UI from that. This
- * module keeps only the FAST LOCAL UX role — `blockedBy` is the instant cross-tab "another chat
- * is building" pre-check (a toast before the network round-trip). `acquire`/`release` are advisory
+ * barrier lives server-side, and still does: the C3 routes answer `409 build_session_already_active`
+ * carrying the existing sessionId. WHAT CHANGED IS WHO RENDERS IT. This used to say "the cockpit
+ * renders the block + force-end UI from that"; there is no such UI any more — the banner and its
+ * Force-end button went with the browser's `start` client, and the 409 now reaches two live
+ * surfaces instead, each answering in its own sentence: `relaunchPreview` throws
+ * `BuildSessionAlreadyActiveError` (`buildSessionApi.ts`) and the turn stream carries the same
+ * code (`turnStreamApi.ts`). This module keeps only the FAST LOCAL UX role — `blockedBy` is the
+ * instant cross-tab "another chat is building" pre-check (`ConversationSurface.tsx` calls it
+ * before the network round-trip). `acquire`/`release` are advisory
  * mirrors: a stale or lost local claim never blocks the authoritative C3 start, and the server's
  * 409 is the real gate. This mirrors the daily-vs-context seam — the client mirror is advisory,
  * the server is the enforcement boundary ([[per-user-limits-daily-vs-context-propagation-2026-07-09]]).
@@ -140,9 +145,9 @@ export function createBuildLock({ channel = null, now = () => Date.now() }: Buil
   // that stopped beating. Runs only while we hold something (heartbeat starts on acquire).
   let heartbeat: ReturnType<typeof setInterval> | null = null
 
-  // Set by dispose(). A late async caller — BuilderPage re-acquires after an awaited
-  // start()/reattach() that may resolve post-unmount — must not restart the heartbeat on a
-  // dead manager: nothing could ever clear it again (a zombie interval for the SPA lifetime).
+  // Set by dispose(). A late async caller — the conversation surface re-acquires after an
+  // awaited start()/reattach() that may resolve post-unmount — must not restart the heartbeat
+  // on a dead manager: nothing could ever clear it again (a zombie interval for the SPA lifetime).
   let disposed = false
 
   const beat = (): void => {

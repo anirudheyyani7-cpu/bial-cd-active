@@ -16,12 +16,13 @@ import {
   resolvePlanOptions,
   startTurn,
   stopTurn,
-  switchMode,
   type TurnFrame,
 } from '../turnStreamApi'
+import * as turnStreamApi from '../turnStreamApi'
 
 const SNAPSHOT =
-  '{"type":"snapshot","seq":3,"turnId":"t1","turnStatus":"running","items":[],"textSoFar":"hi ","steps":[]}'
+  '{"type":"snapshot","seq":3,"turnId":"t1","turnStatus":"running","items":[],' +
+  '"parts":[{"type":"text","text":"hi "}],"working":false}'
 const DELTA = '{"type":"text_delta","seq":4,"text":"there"}'
 const ENDED = '{"type":"turn_ended","seq":5,"turnId":"t1","status":"completed"}'
 
@@ -80,8 +81,56 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
     expect(frame).toMatchObject({
       type: 'step',
       phase: 'finished',
-      item: { tool: 'read_file', state: 'ok', hidden: true, detail: { result: 'ok' } },
+      item: { tool: 'read_file', state: 'ok', hidden: true },
     })
+  })
+
+  it('reads `newBlock` as the wire\'s own `true`, and fails closed for everything else', () => {
+    // THE FAIL-CLOSED DEFAULT IS LOAD-BEARING, and until now nothing exercised it through the real
+    // parser: every other test that names `newBlock` mocks `readTurnStream` and hands the frame
+    // handler a JS object, which never reaches this narrowing at all. A missing flag continues the
+    // block already open — two paragraphs run together at worst. Defaulting it TRUE would split a
+    // reply at every delta boundary, one paragraph per token, which is what the citizen would read.
+    //
+    // Mutation receipt: `parsed.newBlock !== false` or `!== undefined` fails the absent case;
+    // `Boolean(parsed.newBlock)` or `!!parsed.newBlock` fails the "yes"/1 cases; a typo in the key
+    // fails the first — and none of them is a type error, because `parsed` is a bag of unknowns.
+    const newBlockOf = (json: string) => {
+      const [frame] = parseOne(json)
+      // Narrowed rather than cast, and it doubles as the liveness half: a frame that failed to
+      // parse at all would otherwise make every expectation below vacuous.
+      if (!frame || frame.type !== 'text_delta') {
+        throw new Error(`expected a text_delta frame, got ${frame ? frame.type : 'nothing'}`)
+      }
+      return frame.newBlock
+    }
+
+    expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":true}')).toBe(true)
+    // Absent — the server said nothing, so the block already open continues.
+    expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there"}')).toBe(false)
+    expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":false}')).toBe(false)
+    // Present but not the boolean: a coercion would read either of these as a paragraph break.
+    expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":"yes"}')).toBe(false)
+    expect(newBlockOf('{"type":"text_delta","seq":4,"text":"there","newBlock":1}')).toBe(false)
+  })
+
+  it('drops a tool\'s arguments and result even when a frame still carries them', () => {
+    // THE FRAME ABOVE FEEDS THIS ONE ON PURPOSE: it is the same wire text, including a
+    // `detail` object holding the tool's args and result. The server stopped sending that
+    // (U14 — a step is a label and a state, never the payload behind it), but a frame from an
+    // older server, a replayed fixture, or a hand-crafted request can still contain it, and
+    // the parse is the seam that decides whether it reaches a component. `toMatchObject`
+    // above cannot catch a field arriving; only an explicit key check can.
+    const [frame] = parseOne(
+      '{"type":"step","seq":2,"toolCallId":"t1","phase":"finished","item":' +
+        '{"type":"step","seq":2,"mode":"ask","tool":"read_file","label":"Read app/page.tsx",' +
+        '"state":"ok","hidden":true,"detail":{"args":"{}","result":"ok"}}}',
+    )
+    const item = (frame as unknown as { item: Record<string, unknown> }).item
+    // Liveness first — an empty or undefined item would satisfy every absence assertion below.
+    expect(item.tool).toBe('read_file')
+    expect(Object.keys(item).sort()).toEqual(['hidden', 'label', 'seq', 'state', 'tool', 'type'])
+    expect(JSON.stringify(frame)).not.toContain('detail')
   })
 
   it('fails SAFE on unrecognized enum values rather than passing them through', () => {
@@ -93,9 +142,21 @@ describe('the known-frame narrowing (a cast is not a parse)', () => {
     // A terminal with an unreadable status is still a terminal — never lost, read as failed.
     const [ended] = parseOne('{"type":"turn_ended","seq":9,"turnId":"t","status":"nonsense"}')
     expect(ended).toMatchObject({ type: 'turn_ended', status: 'failed' })
-    // An unreadable snapshot status reads as idle, and its bad steps are dropped, not spread.
-    const [snap] = parseOne('{"type":"snapshot","seq":1,"turnStatus":"nonsense","steps":["x"]}')
-    expect(snap).toMatchObject({ type: 'snapshot', turnStatus: 'idle', steps: [], textSoFar: '' })
+    // An unreadable snapshot status reads as idle, and its unusable PARTS are dropped one by
+    // one rather than spread through. Three shapes at once: a part that is not an object at
+    // all, a step part with no `toolCallId` (the key the live tail replaces it by — without one
+    // it is a row that can never resolve), and a good text part that must survive beside them.
+    const [snap] = parseOne(
+      '{"type":"snapshot","seq":1,"turnStatus":"nonsense","parts":' +
+        '["x",{"type":"step","item":{"type":"step","seq":1,"tool":"t","label":"l","state":"ok"}},' +
+        '{"type":"text","text":"kept"}]}',
+    )
+    expect(snap).toMatchObject({
+      type: 'snapshot',
+      turnStatus: 'idle',
+      parts: [{ type: 'text', text: 'kept' }],
+      working: false,
+    })
   })
 })
 
@@ -140,7 +201,7 @@ describe('the compile frame (R17/R18) — an absent signal is never good news', 
     // framework error screen for the whole gap. The snapshot is what closes it.
     const [frame] = parseOne(
       '{"type":"snapshot","seq":3,"turnId":"t1","turnStatus":"running","items":[],' +
-        '"textSoFar":"","steps":[],"compileState":"failed"}',
+        '"parts":[],"working":false,"compileState":"failed"}',
     )
     expect(frame).toMatchObject({ type: 'snapshot', compileState: 'failed' })
   })
@@ -150,7 +211,7 @@ describe('the compile frame (R17/R18) — an absent signal is never good news', 
     // uncover a pane on the strength of a field the server never sent.
     const [frame] = parseOne(
       '{"type":"snapshot","seq":3,"turnId":"t1","turnStatus":"running","items":[],' +
-        '"textSoFar":"","steps":[]}',
+        '"parts":[],"working":false}',
     )
     expect(frame).toMatchObject({ type: 'snapshot', compileState: null })
   })
@@ -299,6 +360,40 @@ describe('startTurn', () => {
     })
   })
 
+  it("binds a new chat's KIND into the create block on a first message", async () => {
+    // RELOCATED HERE (plan 001, unit 6) from the retired `createConversation` / `createBuild`
+    // wrappers' own tests. Those made a `POST /conversations` round trip of their own and pinned
+    // that the chat's kind reached the wire; the round trip is gone — the server writes the row
+    // inside the turn's transaction, after every side-effect-free refusal — and its arguments
+    // moved onto THIS request. So the contract is pinned where it now travels. The test above is
+    // the other half: with no parentage, the body carries no `create` key at all.
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ turnId: 't1' }), { status: 202 })
+    )
+    await startTurn(
+      'c1',
+      { text: 'build me a gate roster' },
+      { fetchImpl: fetchFn },
+      { projectId: 'p1', kind: 'build', title: 'Gate roster' }
+    )
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({
+      message: { text: 'build me a gate roster', attachmentTexts: [], attachmentIds: [] },
+      create: { projectId: 'p1', kind: 'build', title: 'Gate roster' },
+    })
+
+    // The kind is CARRIED, not defaulted: a plan chat's first message says so on the wire.
+    const planFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ turnId: 't2' }), { status: 202 })
+    )
+    await startTurn('c2', { text: 'help me scope this' }, { fetchImpl: planFetch }, {
+      projectId: 'p1',
+      kind: 'plan',
+    })
+    const [, planInit] = planFetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(planInit.body as string).create).toEqual({ projectId: 'p1', kind: 'plan' })
+  })
+
   it('maps an error envelope to a typed TurnStartError', async () => {
     const fetchFn = vi.fn(async () =>
       new Response(JSON.stringify({ error: { message: 'A turn is already running.' } }), {
@@ -309,6 +404,33 @@ describe('startTurn', () => {
       startTurn('c1', { text: 'hi' }, { fetchImpl: fetchFn })
     ).rejects.toMatchObject({ status: 409, message: 'A turn is already running.' })
     expect(new TurnStartError(409, 'x')).toBeInstanceOf(Error)
+  })
+
+  it('carries the context refusal through with the SERVER\'s sentence, not a generic one', async () => {
+    // ★ The whole client half of the restored per-conversation guardrail is this line. The
+    // hard boundary is enforced on the server and the sentence a citizen reads is WRITTEN
+    // there — `ConversationSurface` puts `TurnStartError.message` straight into `TurnBanner`.
+    // So "refused with a reason" is true only if the reason survives this hop.
+    //
+    // The catch-all in `ConversationSurface` ("The message could not be sent. Try again.")
+    // fires for anything that is NOT a `TurnStartError`, and that generic line is exactly the
+    // dead end this guardrail exists to replace. A 413 that arrived without its message would
+    // reproduce today's opaque failure while looking fixed.
+    const sentence =
+      'This chat has got too long to carry on. Start a new chat to keep going — your app and everything you have built stays exactly as it is.'
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { message: sentence, code: 'context_hard_limit_exceeded' } }),
+          { status: 413 }
+        )
+    )
+
+    await expect(startTurn('c1', { text: 'hi' }, { fetchImpl: fetchFn })).rejects.toMatchObject({
+      status: 413,
+      message: sentence,
+      code: 'context_hard_limit_exceeded',
+    })
   })
 })
 
@@ -336,16 +458,50 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
     expectUnPrefixed(urlOf(fetchFn))
   })
 
-  it('switchMode → /api/conversations/{id}/mode', async () => {
-    const fetchFn = vi.fn(async () => json({ mode: 'plan' }))
-    await switchMode('c1', 'plan', { fetchImpl: fetchFn })
-    expectUnPrefixed(urlOf(fetchFn))
+  it('this module exports NO mode-switch call at all', () => {
+    // AN INERTNESS GUARD, not a deleted test (L8). `switchMode` posted to
+    // `/api/conversations/{id}/mode` — a route that no longer exists, because what a chat is
+    // is decided when it is created and cannot be moved afterwards. A base-path assertion
+    // cannot express that; the absence of the transport itself is the whole claim.
+    expect(Object.keys(turnStreamApi)).not.toContain('switchMode')
+    expect(turnStreamApi as Record<string, unknown>).not.toHaveProperty('switchMode')
+    // And no OTHER export smuggles the route back in under a different name.
+    for (const [name, value] of Object.entries(turnStreamApi)) {
+      if (typeof value !== 'function') continue
+      expect(value.toString(), name).not.toContain('/mode')
+    }
   })
 
   it('buildFromPlan → /api/conversations/{id}/plan-options/{toolCallId}/build', async () => {
-    const fetchFn = vi.fn(async () => json({ outcome: 'started' }))
-    await buildFromPlan('c1', 'tc1', {}, { fetchImpl: fetchFn })
+    const fetchFn = vi.fn(async () => json({ outcome: 'started', chatId: 'new-1' }))
+    await buildFromPlan('c1', 'tc1', 'new-1', { fetchImpl: fetchFn })
     expectUnPrefixed(urlOf(fetchFn))
+  })
+
+  it('buildFromPlan posts the CLIENT-MINTED chat id and no force flag', async () => {
+    // The id is what makes a double-press idempotent, so it has to actually reach the wire; and
+    // `force` was the stale-plan override, which died with the pin that produced it.
+    const fetchFn = vi.fn(async () => json({ outcome: 'started', chatId: 'minted-7' }))
+    const outcome = await buildFromPlan('c1', 'tc1', 'minted-7', { fetchImpl: fetchFn })
+    const init = (fetchFn.mock.calls[0] as unknown[])[1] as RequestInit
+    expect(JSON.parse(init.body as string)).toEqual({ chatId: 'minted-7' })
+    expect(outcome.chatId).toBe('minted-7')
+  })
+
+  it('buildFromPlan surfaces the refusal CODE, not just a sentence', async () => {
+    // R98 / the one-slot rule reach the browser as four different remedies on three statuses.
+    // A bare `Error` collapses them into one string, and the string is wrong for three of them.
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { message: 'Another chat is building', code: 'already_building_here' } }),
+          { status: 409 },
+        ),
+    )
+    await expect(buildFromPlan('c1', 'tc1', 'minted-8', { fetchImpl: fetchFn })).rejects.toMatchObject({
+      status: 409,
+      code: 'already_building_here',
+    })
   })
 
   it('resolvePlanOptions → /api/conversations/{id}/plan-options/{toolCallId}/resolve', async () => {
@@ -366,10 +522,10 @@ describe('base-path contract (F2 regression guard) — every call hits /api/conv
   })
 })
 
-// F1 REGRESSION GUARD (turn transport). These five MUTATING calls ride the signed double-submit
+// F1 REGRESSION GUARD (turn transport). These four MUTATING calls ride the signed double-submit
 // X-CSRF-Token, and every one of their routes enforces RequireCsrf server-side — so a dropped header
-// would 403 every mode-switch / turn-start in prod (the P0 class) while the base-path guard above
-// stays fully green. Since U1 the header comes from `authFetch` rather than a second copy in this
+// would 403 every turn-start and every Build-it press in prod (the P0 class) while the base-path
+// guard above stays fully green. Since U1 the header comes from `authFetch` rather than a second copy in this
 // module; the assertion is unchanged because the observable contract is. The read path
 // (readTurnStream) is a safe GET and carries none.
 describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call rides X-CSRF-Token', () => {
@@ -396,15 +552,9 @@ describe('CSRF double-submit (F1 regression guard) — every MUTATING turn call 
     expect(headersOf(fetchFn)['X-CSRF-Token']).toBe('signed-turn-csrf')
   })
 
-  it('switchMode rides X-CSRF-Token', async () => {
-    const fetchFn = vi.fn(async () => json({ mode: 'plan' }))
-    await switchMode('c1', 'plan', { fetchImpl: fetchFn })
-    expect(headersOf(fetchFn)['X-CSRF-Token']).toBe('signed-turn-csrf')
-  })
-
   it('buildFromPlan rides X-CSRF-Token', async () => {
-    const fetchFn = vi.fn(async () => json({ outcome: 'started' }))
-    await buildFromPlan('c1', 'tc1', {}, { fetchImpl: fetchFn })
+    const fetchFn = vi.fn(async () => json({ outcome: 'started', chatId: 'new-1' }))
+    await buildFromPlan('c1', 'tc1', 'new-1', { fetchImpl: fetchFn })
     expect(headersOf(fetchFn)['X-CSRF-Token']).toBe('signed-turn-csrf')
   })
 
@@ -460,14 +610,9 @@ describe('session expiry recovery (N11) — every turn call refreshes once and r
       run: (deps) => stopTurn('c1', 't1', deps),
     },
     {
-      name: 'switchMode',
-      ok: () => json({ mode: 'write' }),
-      run: (deps) => switchMode('c1', 'write', deps),
-    },
-    {
       name: 'buildFromPlan',
-      ok: () => json({ outcome: 'started' }),
-      run: (deps) => buildFromPlan('c1', 'tc1', {}, deps),
+      ok: () => json({ outcome: 'started', chatId: 'new-1' }),
+      run: (deps) => buildFromPlan('c1', 'tc1', 'new-1', deps),
     },
     {
       name: 'resolvePlanOptions',
@@ -527,12 +672,14 @@ describe('session expiry recovery (N11) — every turn call refreshes once and r
     // per-attempt CSRF read would trade every 401 for a 403. Pin the pairing from this side too —
     // api.test.js owns the wrapper-level proof.
     document.cookie = 'csrf=before-refresh'
-    const fetchImpl = expiredThen(() => json({ mode: 'write' }))
+    const fetchImpl = expiredThen(() => json({ outcome: 'started', chatId: 'new-1' }))
     const refresh = vi.fn(async () => {
       document.cookie = 'csrf=after-refresh' // /auth/refresh rotates the cookie
       return true
     })
-    await switchMode('c1', 'write', { fetchImpl: fetchImpl as unknown as typeof fetch, refresh })
+    // Any mutating call proves the pairing; this one is the Build-it press, which is the most
+    // expensive thing on this transport to have 403 on a retry.
+    await buildFromPlan('c1', 'tc1', 'new-1', { fetchImpl: fetchImpl as unknown as typeof fetch, refresh })
     const headersOfCall = (i: number) =>
       ((fetchImpl.mock.calls[i] as unknown[])[1] as RequestInit).headers as Record<string, string>
     expect(headersOfCall(0)['X-CSRF-Token']).toBe('before-refresh')

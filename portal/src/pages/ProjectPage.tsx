@@ -1,87 +1,129 @@
 /**
- * `/projects/:projectId` — the home for one tool, and its builder.
+ * `/projects/:projectId` — the project screen IS the app now.
  *
- * ONE surface for every project, built or not:
- *   - the Sandbox build composer (`ProjectBuilder`) renders UNCONDITIONALLY at the top
- *     of the main column — Build/Plan toggle, sample prompts, and all —
- *     whether or not the project already has an app. It is never collapsed or pushed
- *     below an app card.
- *   - the description sits in a text-only right rail, joined by the Publish card and the
- *     review status card once the project has an app. Both take a PROJECT id and read one
- *     deploy status response, so neither can report a lifecycle the other contradicts —
- *     the review card has no submit button, because publishing is the only way into the
- *     queue (R15a). The passive "View app" preview is
- *     HIDDEN in Phase-1: a stored app is not a running sandbox, and the live preview now
- *     comes only from a per-session C3 build (`BuilderPage`). A passive stored-app view is
- *     genuinely unavailable until Track DEPLOY provides a live app URL.
- *   - the project's conversations list below the builder as a plain recents list
- *     (no BUILD/PLAN badges, no new-chat buttons). Build and chat happen inline here,
- *     so there is no separate "continue building" reroute and no app lifecycle badge.
+ * ═══ THE PHASE-1 DECISION THIS REVERSES, AND WHY THE REVERSAL IS NOT A REGRESSION ═══
+ *
+ * This page's previous docblock recorded a removal: "the passive 'View app' preview is HIDDEN in
+ * Phase-1: a stored app is not a running sandbox". That decision was RIGHT ABOUT WHAT IT REMOVED.
+ * What it took away was a passive view of stored code, plus a lifecycle badge and a reroute into a
+ * chat — three things that told a citizen about an artefact rather than showing them their app.
+ *
+ * What arrives here is not that. It is the RUNNING SANDBOX, in a pane beside the rail, behind one
+ * control the person presses deliberately. Nothing starts a container because a screen was opened
+ * (R3): the pane reads a cheap state endpoint that makes no container call, and the only thing that
+ * starts anything is a press. So the argument the removal rested on is answered rather than
+ * overruled — a stored app is still not a running sandbox, and this screen no longer shows one a
+ * stored app. The three things it removed stay removed, and the suite beside this file keeps
+ * asserting their absence.
+ *
+ * ═══ WHAT THIS FILE OWNS AFTER THE SPLIT ═══
+ *
+ * The route, the data, and the beacon. Everything visual moved down: `ProjectWorkspace` is the
+ * project-scoped publisher on the workspace channel, and `WorkspaceRail` is what the rail renders.
+ * This file starts no publish of its own and holds no layout — the two-column frame belongs to
+ * `WorkspaceShell`, above the Outlet, and building a second one here would nest one grid inside
+ * another and remount the app on every navigation.
+ *
+ * THE OBSERVATION BEACON FIRES FROM EXACTLY ONE PLACE, and that place is here — the successful-load
+ * branch below. It feeds a measurement nothing in the UI reflects, so dropping it, double-firing
+ * it, or letting a remount fire it twice makes the numbers wrong with no symptom and no failing
+ * test. `ProjectWorkspace` independently needs `project.appId` for the rail's status line, which is
+ * exactly the pull that would make somebody add a second tracker down there; `observe.ts`'s own
+ * per-project guard makes a repeated call a safe no-op, so the risk is not defeating that guard but
+ * bypassing it with a second mechanism it does not cover.
  *
  * Identity model (memory: app identity + flat URL model):
- *   - `appId`/`appStatus` are READ off the project (a LEFT JOIN on the backend); the
- *     portal never fires a mutating provision call just to learn them. `appStatus` is
- *     no longer surfaced here — app lifecycle (draft/approved/…) lives on the admin
- *     registry, not the citizen project page.
+ *   - `appId` / `hasRelaunchableSnapshot` are READ off the project (a LEFT JOIN on the backend);
+ *     the portal never fires a mutating provision call just to learn them. `appStatus` is not
+ *     surfaced here — app lifecycle lives on the admin registry, not the citizen project screen.
  *   - a new chat opens at a flat `/chat/{uuid}` carrying its project in a transient
  *     `?projectId=&kind=` query; the row does not exist until its first message.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Pencil, Check, X, MessageSquare, Wrench, MoreVertical } from 'lucide-react'
-import Navbar from '../components/layout/Navbar'
-import ProjectBuilder from '../components/projects/ProjectBuilder'
-import ProjectDescriptionEditor from '../components/projects/ProjectDescriptionEditor'
-import DeployControl from '../components/DeployControl'
-import SubmitControl from '../components/SubmitControl'
-import { getProject, patchProject } from '../utils/projectApi'
+import { ArrowLeft } from 'lucide-react'
+import ProjectWorkspace from '../components/workspace/ProjectWorkspace'
+import { usePublishHeading, useWorkspaceProject } from '../components/workspace/workspaceChannel'
+import { getProject } from '../utils/projectApi'
 import type { Project } from '../utils/projectApi'
-import { ApiError, isRecord } from '../utils/apiError'
-import { listProjectConversations, deleteConversation } from '../utils/conversationApi'
-import { relativeTime } from '../utils/chatHistory'
-
-/** The chat-row shape the home renders; narrowed at the JS-module boundary. */
-interface ChatSummary {
-  id: string
-  kind: string
-  title: string
-  updatedAt: string
-}
+import { ApiError } from '../utils/apiError'
+import { markProjectOpened } from '../utils/observe'
+import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 
 /**
- * `conversationApi` is untyped JavaScript, so its rows reach us as `unknown` in practice even
- * where the inferred type says otherwise. Parse, don't validate: guard the shape once, here.
+ * WHAT THE CARD SAYS — and the one status whose sentence is never the server's (`#207`).
+ *
+ * A 422 on this GET can only be the PATH PARAMETER: the read carries no body for Pydantic to
+ * validate, so the `detail[]` FastAPI sends back is always the parser's account of an id that is
+ * not a UUID, and `flattenValidationDetail` was joining it straight onto the screen:
+ *
+ *   "Input should be a valid UUID, invalid group length in group 4: expected 12, found 7"
+ *
+ * Nobody who reads that sentence typed the id. The realistic path here is a link that lost
+ * characters — a truncated paste, an address wrapped by a mail client — and which group came up
+ * five short is addressed to whoever produced the link, not to the citizen holding it. So the
+ * sentence is `PROJECT_GONE_NOTICE`: from where they stand a malformed address and a deleted one
+ * are the same event, an address that does not lead anywhere, and they get the same words for it.
+ *
+ * IT DOES NOT BOUNCE, and that is the whole difference from the 404 branch above (`#206`). A 404
+ * is a project that WAS an address and stopped being one, so the list is where the citizen now
+ * belongs. A 422 never addressed a project at all, and redirecting out of an address somebody
+ * deliberately opened reads as the app taking their place away. The page stays — with its back
+ * control on it, which is what makes staying a choice rather than a dead end.
+ *
+ * EVERY OTHER STATUS KEEPS `err.message`. Those are the backend's citizen-facing envelope-1
+ * messages; this is not a licence to replace them all with one line.
  */
-function narrowChat(row: unknown): ChatSummary {
-  if (!isRecord(row)) return { id: '', kind: '', title: '', updatedAt: '' }
-  return {
-    id: typeof row.id === 'string' ? row.id : '',
-    kind: typeof row.kind === 'string' ? row.kind : '',
-    title: typeof row.title === 'string' ? row.title : '',
-    updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : '',
-  }
+function loadErrorFor(err: unknown): string {
+  if (!(err instanceof ApiError)) return 'Could not load this project.'
+  return err.status === 422 ? PROJECT_GONE_NOTICE : err.message
 }
 
 export default function ProjectPage() {
   const { projectId } = useParams()
+  // WHICH PROJECT THE WORKSPACE IS SHOWING. Declared above the early returns below, because the
+  // loading and load-error branches are still this project's screen. A held preview address
+  // outlives the surface that published it, and this is the only thing that can retire a stale one
+  // — a surface that says nothing leaves the previous project's app framed, invisibly, with nothing
+  // able to notice. `ProjectWorkspace` declares it again once the project resolves; the channel's
+  // value comparison makes the second call free.
+  useWorkspaceProject(projectId ?? null)
   const navigate = useNavigate()
 
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const [chats, setChats] = useState<ChatSummary[]>([])
-  const [chatsError, setChatsError] = useState<string | null>(null)
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
-
-  const [editingName, setEditingName] = useState(false)
-  const [nameDraft, setNameDraft] = useState('')
-  const [nameError, setNameError] = useState<string | null>(null)
+  // WHAT THE TOOLBAR ROW NAMES, PUBLISHED FROM THE ROUTE (plan 002, U2) — above the early returns
+  // below, for the same reason the project declaration is above them. The loading and load-error
+  // branches are still this project's screen, and the row draws its back control and holds its own
+  // height on both, rather than appearing once the fetch lands. `chatTitle`/`chatKind` are `null`
+  // here and that IS the signal: a heading with no kind is a project screen.
+  usePublishHeading({
+    projectId: projectId ?? null,
+    projectName: project?.name ?? null,
+    chatTitle: null,
+    chatKind: null,
+  })
 
   const goToProjects = useCallback(() => navigate('/projects', { replace: true }), [navigate])
 
-  // Load the project. A 404 means it was deleted elsewhere — bounce to the index
-  // rather than strand the user on a dead page.
+  // THE SAME BOUNCE, CARRYING THE REASON IT USED TO THROW AWAY (`#206`). Two navigations rather
+  // than one flag, because they are not the same event: `goToProjects` is the back control a
+  // citizen PRESSED, and being told "that project is no longer available" after asking to leave a
+  // project that is perfectly fine would be a lie. This one is the involuntary exit.
+  //
+  // The sentence is `ProjectsPage`'s constant, never `err.message`. The server's 404 for another
+  // citizen's project is deliberately identical to its 404 for a project that never existed
+  // (ADR-0004), and piping its text through is the one change that could ever make those two
+  // print differently.
+  const bounceGone = useCallback(
+    () => navigate('/projects', { replace: true, state: { notice: PROJECT_GONE_NOTICE } }),
+    [navigate],
+  )
+
+  // Load the project. A 404 means it was deleted elsewhere — bounce to the index rather than
+  // strand the user on a dead page.
   useEffect(() => {
     if (!projectId) {
       goToProjects()
@@ -95,13 +137,19 @@ export default function ProjectPage() {
         if (!active) return
         setProject(loaded)
         setLoadError(null)
+        // R105's denominator, and the R104 clock's start. Marked HERE rather than on the raw mount
+        // because `hasApp` is only knowable once the project has loaded — a project with nothing
+        // built has no app to first-see, and starting a clock for it would make this number and the
+        // sandbox-first number answer different questions. `markProjectOpened` is idempotent per
+        // project id per page load, which is also the StrictMode guard.
+        markProjectOpened(loaded.id, { hasApp: loaded.appId !== null })
       } catch (err) {
         if (!active) return
         if (err instanceof ApiError && err.status === 404) {
-          goToProjects()
+          bounceGone()
           return
         }
-        setLoadError(err instanceof ApiError ? err.message : 'Could not load this project.')
+        setLoadError(loadErrorFor(err))
       } finally {
         if (active) setLoading(false)
       }
@@ -109,292 +157,71 @@ export default function ProjectPage() {
     return () => {
       active = false
     }
-  }, [projectId, goToProjects])
+  }, [projectId, goToProjects, bounceGone])
 
-  // Load the project's chats. Deliberately NOT keyset-paginated like `/projects`:
-  // `GET /api/conversations?projectId=` caps at 200 with no cursor. Fine at pilot
-  // scale; a documented divergence, not a bug (see conversationApi.listProjectConversations).
-  const refreshChats = useCallback(async (): Promise<void> => {
-    if (!projectId) return
-    try {
-      const rows = await listProjectConversations(projectId)
-      setChats(rows.map(narrowChat))
-      setChatsError(null)
-    } catch (err) {
-      setChatsError(err instanceof ApiError ? err.message : 'Could not load this project’s chats.')
-    }
-  }, [projectId])
+  /* THE CHATS READ, ITS ERROR AND THE DELETE HANDLER ARE GONE (plan 002, U3). They existed for
+     one renderer, the rail's "Conversations · this project" list, which the client asked not to
+     have — and the ruling of 2026-09-02 is that nothing points back to a chat, running or
+     finished. Removing the list removed the only route back to an existing chat AND the only way
+     to delete one; both are the owner's decision, taken knowingly. Chats, their plans and their
+     uploaded files stay in the database. Said here as well as in the rail because this is where
+     the reads used to be, and an absent fetch explains itself to nobody. */
 
-  useEffect(() => {
-    void refreshChats()
-  }, [refreshChats])
+  /* THE THREE BRANCHES ARE ONE RETURN, AND THE POLITE REGION IS ABOVE ALL OF THEM (`#210`, ASM5).
+     They used to be three early returns, and that shape is exactly what cannot carry a live
+     region: a region inserted together with its text is missed entirely by several reader-and-
+     browser combinations (`TurnBanner`, `LivePreview` both record it), and an early return means
+     the region is born with the sentence already inside it. So the region is rendered here on
+     every branch, EMPTY when the project is already on screen, and the skeleton box is what
+     appears inside it.
 
-  // Close the row action menu on Escape or an outside click while it is open.
-  useEffect(() => {
-    if (!menuOpenId) return undefined
-    const onDown = () => setMenuOpenId(null)
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpenId(null)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onEsc)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onEsc)
-    }
-  }, [menuOpenId])
+     THIS IS NOT A THEORETICAL CASE ON THIS PAGE. `projectId` is a route param on a route that is
+     not remounted when it changes, so moving between two projects flips a settled screen back to
+     `loading` against a region that has been in the accessibility tree the whole time.
 
-  const startRename = () => {
-    if (!project) return
-    setNameDraft(project.name)
-    setNameError(null)
-    setEditingName(true)
-  }
-
-  const submitRename = async (): Promise<void> => {
-    if (!project) return
-    const trimmed = nameDraft.trim()
-    // Blocked client-side BEFORE any request: the server 400s on name:null and
-    // 422s on "". A whitespace-only name never reaches the wire.
-    if (trimmed === '') {
-      setNameError('Name cannot be empty.')
-      return
-    }
-    if (trimmed === project.name) {
-      setEditingName(false)
-      return
-    }
-    try {
-      const updated = await patchProject(project.id, { name: trimmed })
-      setProject(updated)
-      setEditingName(false)
-      setNameError(null)
-    } catch (err) {
-      setNameError(err instanceof ApiError ? err.message : 'Could not rename. Try again.')
-    }
-  }
-
-  const handleDeleteChat = useCallback(
-    async (id: string): Promise<void> => {
-      setMenuOpenId(null)
-      setChats((prev) => prev.filter((c) => c.id !== id)) // optimistic
-      try {
-        await deleteConversation(id)
-      } catch {
-        void refreshChats() // reconcile — the row reappears if the delete didn't land
-      }
-    },
-    [refreshChats],
-  )
-
-  if (loading) {
-    return (
-      <div className="min-h-screen font-manrope flex flex-col bg-bial-bg">
-        <Navbar />
-        <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-10">
-          <div className="h-6 w-48 bg-gray-100 rounded animate-pulse mb-4" />
-          <div className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
-        </main>
-      </div>
-    )
-  }
-
-  if (loadError || !project) {
-    return (
-      <div className="min-h-screen font-manrope flex flex-col bg-bial-bg">
-        <Navbar />
-        <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-10">
-          <button
-            onClick={goToProjects}
-            className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
-          >
-            <ArrowLeft size={15} /> Back to projects
-          </button>
-          <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
-            <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
-            <p className="text-xs text-neutral mt-1">{loadError || 'It may have been deleted.'}</p>
-          </div>
-        </main>
-      </div>
-    )
-  }
-
+     The region WRAPS the sentence rather than duplicating it `sr-only` — `Announcer.tsx` records
+     that a second copy is the sentence read twice, and that writing it that way broke three
+     tests. `aria-busy` stays on the box: it is a property, not a speech. */
   return (
-    <div className="min-h-screen font-manrope flex flex-col bg-bial-bg">
-      <Navbar />
-      <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-10">
-        <button
-          onClick={goToProjects}
-          className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
-        >
-          <ArrowLeft size={15} /> Back to projects
-        </button>
-
-        {/* Header: name with inline rename */}
-        <div className="mb-6">
-          {editingName ? (
-            <div className="flex items-center gap-2">
-              <input
-                aria-label="Project name"
-                value={nameDraft}
-                autoFocus
-                onChange={(e) => setNameDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitRename()
-                  if (e.key === 'Escape') setEditingName(false)
-                }}
-                className="flex-1 min-w-0 text-2xl font-extrabold text-tertiary bg-white border border-bial-border rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-              <button
-                type="button"
-                aria-label="Save name"
-                onClick={() => void submitRename()}
-                className="p-2 rounded-lg text-primary hover:bg-primary/5 transition"
-              >
-                <Check size={18} />
-              </button>
-              <button
-                type="button"
-                aria-label="Cancel rename"
-                onClick={() => setEditingName(false)}
-                className="p-2 rounded-lg text-neutral hover:bg-surface-muted transition"
-              >
-                <X size={18} />
-              </button>
+    <>
+      {/* Laid out only while it holds something. An empty region is a zero-height flex child; the
+          wait needs the column's full height for the same reason the branch it replaced was a
+          `flex-1` `<main>`. The NODE is unchanged either way — only its class list is. */}
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid="project-wait"
+        className={loading ? 'flex-1 min-h-0 flex flex-col' : ''}
+      >
+        {loading ? (
+          <main className="flex-1 min-h-0 overflow-y-auto" aria-busy="true">
+            <div className="w-full px-5 py-6">
+              <p className="text-sm font-medium text-neutral mb-4">Loading this project…</p>
+              <div className="h-6 w-48 bg-gray-100 rounded animate-pulse mb-4" />
+              <div className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
             </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-extrabold text-tertiary">{project.name}</h1>
-              <button
-                type="button"
-                aria-label="Rename project"
-                onClick={startRename}
-                className="p-1.5 rounded-lg text-neutral hover:text-primary hover:bg-surface-muted transition"
-              >
-                <Pencil size={15} />
-              </button>
+          </main>
+        ) : null}
+      </div>
+
+      {loading ? null : loadError || !project ? (
+        <main className="flex-1 min-h-0 overflow-y-auto">
+          <div className="w-full px-5 py-6">
+            <button
+              onClick={goToProjects}
+              className="flex items-center gap-1 text-sm text-neutral hover:text-primary transition mb-4"
+            >
+              <ArrowLeft size={15} /> Back to projects
+            </button>
+            <div className="bg-white border border-danger/20 rounded-2xl py-16 px-6 text-center">
+              <p className="text-sm font-semibold text-tertiary">Couldn’t load this project</p>
+              <p className="text-xs text-neutral mt-1">{loadError || 'It may have been deleted.'}</p>
             </div>
-          )}
-          {nameError && <p className="text-xs font-medium text-danger mt-1" role="alert">{nameError}</p>}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem] gap-6">
-          {/* Main column: the always-on builder (Build/Plan toggle at the top) + conversations */}
-          <div className="space-y-6 min-w-0">
-            {/* The builder — ALWAYS present and always first, every project, built or not. */}
-            <ProjectBuilder projectId={project.id} />
-
-            {/* Conversations — a plain recents list filed under this project. */}
-            <section data-testid="conversations" className="bg-white border border-bial-border rounded-2xl p-5">
-              <h2 className="text-sm font-bold text-tertiary mb-4">Conversations · this project</h2>
-
-              {chatsError ? (
-                <p className="text-xs text-danger" role="alert">{chatsError}</p>
-              ) : chats.length === 0 ? (
-                <p className="text-sm text-neutral">No conversations yet — start a build or plan above.</p>
-              ) : (
-                <div className="space-y-2">
-                  {chats.map((chat) => {
-                    const isBuild = chat.kind === 'builder'
-                    const menuOpen = menuOpenId === chat.id
-                    return (
-                      // F-10: the row is a plain container. The title is a real <button> whose
-                      // stretched ::after covers the row, so the whole row opens the chat — but
-                      // the ⋮ menu is a SIBLING button layered above (z-10), never an interactive
-                      // descendant of the title button.
-                      <div
-                        key={chat.id}
-                        className="group relative flex items-center gap-3 bg-white border border-bial-border rounded-xl px-4 py-3 hover:border-primary/40 hover:shadow-sm transition"
-                      >
-                        <div
-                          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                            isBuild ? 'bg-secondary/10' : 'bg-primary/10'
-                          }`}
-                        >
-                          {isBuild ? (
-                            <Wrench size={15} className="text-secondary" />
-                          ) : (
-                            <MessageSquare size={15} className="text-primary" />
-                          )}
-                        </div>
-                        <h3 className="min-w-0 flex-1">
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/chat/${chat.id}`)}
-                            className="block w-full text-left text-sm font-semibold text-tertiary cursor-pointer rounded-sm after:absolute after:inset-0 after:rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                          >
-                            <span className="block truncate">{chat.title || 'Untitled'}</span>
-                          </button>
-                        </h3>
-                        <span className="text-[11px] text-neutral flex-shrink-0 tabular-nums">
-                          {relativeTime(chat.updatedAt)}
-                        </span>
-                        <div className="relative z-10 flex-shrink-0">
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={() => setMenuOpenId(menuOpen ? null : chat.id)}
-                            aria-label={`Actions for ${chat.title || 'conversation'}`}
-                            className="p-1 rounded-lg text-neutral hover:text-primary hover:bg-surface-muted transition"
-                          >
-                            <MoreVertical size={16} />
-                          </button>
-                          {menuOpen && (
-                            <div
-                              onMouseDown={(e) => e.stopPropagation()}
-                              className="absolute right-0 top-8 z-20 w-32 bg-white rounded-lg border border-bial-border shadow-xl py-1"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setMenuOpenId(null)
-                                  navigate(`/chat/${chat.id}`)
-                                }}
-                                className="w-full text-left px-3 py-2 text-sm text-tertiary hover:bg-bial-bg transition"
-                              >
-                                Open
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteChat(chat.id)}
-                                className="w-full text-left px-3 py-2 text-sm text-danger hover:bg-red-50 transition"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
           </div>
-
-          {/* Right rail: the description (text-only, Save + Generate, no attach) and — once
-              the project has an app — the submit-for-review control (APPROVAL). The passive
-              "View app" preview is HIDDEN in Phase-1 — a stored app is not a running sandbox, so
-              there is nothing live to frame here until Track DEPLOY provides a deployed app URL.
-              The live preview now comes only from a per-session C3 build in the builder. */}
-          <aside data-testid="description-rail" className="lg:sticky lg:top-20 self-start space-y-4">
-            <div className="bg-white border border-bial-border rounded-2xl p-5">
-              <ProjectDescriptionEditor
-                projectId={project.id}
-                description={project.description}
-                onProjectUpdate={setProject}
-              />
-            </div>
-            {/* Publish sits ABOVE the review status card because it is the only action:
-                there is one route into the review queue and it runs THROUGH publishing
-                (R15a), so the card below is where a routed version is watched and
-                withdrawn, never where one is sent. Both read the same project-scoped
-                deploy status, so they cannot tell the citizen two different things. */}
-            {project.appId && <DeployControl projectId={project.id} />}
-            {project.appId && <SubmitControl projectId={project.id} />}
-          </aside>
-        </div>
-      </main>
-    </div>
+        </main>
+      ) : (
+        <ProjectWorkspace project={project} onProjectUpdate={setProject} />
+      )}
+    </>
   )
 }

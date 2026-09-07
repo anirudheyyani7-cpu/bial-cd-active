@@ -19,7 +19,10 @@ surface is frozen for this track). Two guards are load-bearing security boundari
 from __future__ import annotations
 
 import posixpath
-from typing import Literal
+from typing import Final, Literal
+
+from anthropic.types.beta import BetaThinkingConfigParam
+from pydantic_ai.profiles.anthropic import AnthropicEffort
 
 # --- self-heal + model budgets (KD-7) ----------------------------------------
 
@@ -32,6 +35,38 @@ MODEL_TURN_CEILING = 50
 """`UsageLimits.request_limit` per `agent.iter` run — bounds a single run's model requests so a
 within-run tool-call loop can't run away (a breach raises `UsageLimitExceeded` → escalation).
 Distinct from the daily token quota (per-user, DB) and the self-heal budget (KD-7)."""
+
+RUN_TOKEN_BUDGET = 750_000
+"""Hard SPEND ceiling on a single build turn, the third of three bounds on one loop (R91).
+
+WHY A THIRD ONE. `MODEL_TURN_CEILING` bounds requests and `RUN_WALL_CLOCK_DEADLINE_S` bounds
+elapsed time, and a build can stay inside both while spending a fortune: fifty requests carrying
+a large context are cheap in count and in seconds and expensive in tokens. The citizen can see
+the meter and the agent cannot, so the platform is the only party that can hold this line —
+which is exactly why it is a number here and not a sentence in a prompt.
+
+MEASURED COST-WEIGHTED, THROUGH `usage/gate.py`'s `weighted_spend` — the same weighting the
+citizen's daily meter uses, so the two ceilings measure the same thing. This loop re-sends the
+same instructions and tool definitions verbatim on every step behind a cache breakpoint, and
+counting those reads at face value would make the bound a function of how many steps a build
+took rather than of how much work it did, punishing the caching that makes long builds
+affordable.
+
+NOT `RunUsage.total_tokens`, AND AN EARLIER VERSION OF THIS BOUND GOT THAT WRONG. That property
+is `input_tokens + output_tokens`, and under pydantic-ai `input_tokens` is the grand-total
+prompt size with the cache buckets already inside it — 10 fresh tokens plus a 90k cache read
+arrive as `input_tokens == 90_010`. Reading it raw is the mistake `billable_spend` records as a
+2026-07-30 production incident, where one calculator build booked 956k of a 1M daily cap on 68
+tokens of real fresh input.
+
+SIZED AGAINST A REAL TRACE, not chosen for roundness: the 2026-08-18 demo build spent ~938k
+tokens, of which about 65% was rework after an in-place container reset. 750k leaves room for a
+substantial legitimate build and stops the runaway shape that trace showed. Like the wall clock
+above, it is a safety net rather than a tuned SLA — TUNE it against real build telemetry.
+
+IT ENDS THE TURN WHERE THE APP WORKS, which is what makes it usable at all. The piece-at-a-time
+ordering (`FIRST_SLICE_RULE`) is what buys that: stopping happens at a piece boundary rather
+than mid-file, and the ending names what was agreed and not built."""
 
 RUN_WALL_CLOCK_DEADLINE_S = 1800.0
 """Hard WALL-CLOCK ceiling on a single `run_build`, independent of the count-based ceilings
@@ -83,8 +118,9 @@ WORKSPACE_NOTE_MAX_POLLS = 5
 
 MUCH SHORTER THAN `READINESS_MAX_POLLS`, because it is a different question asked at a different
 moment. The verify budget decides whether a build may claim it finished and can afford to wait 30
-seconds for a slow app; this one runs at the START of every turn in every mode — including a
-one-line Ask question — and only has to tell the model what the user is looking at.
+seconds for a slow app; this one runs at the START of every turn in BOTH chat kinds — including a
+one-line Plan question, which is the cheapest turn the platform serves and the one this budget is
+sized against — and only has to tell the model what the user is looking at.
 
 Its whole safety comes from the third answer: a budget that runs out here is `STILL_TRYING`, which
 the note reports as "could not tell", never as "the app is down". So the cost of choosing five is
@@ -237,10 +273,33 @@ runs synchronously on the control-plane event loop — this is the belt to the r
 ([[sandbox-supervisor-child-env-scrub-allowlist]]: sandbox output is untrusted)."""
 
 MAX_OUTPUT_TOKENS = 64_000
-"""Per-model-step output clamp (mirrors the chat relay's `_MAX_OUTPUT_TOKENS`)."""
+"""Per-model-step output clamp."""
 
 TEMPERATURE = 0.0
 """Deterministic generation — a build task wants the same edit for the same diagnostic."""
+
+ADAPTIVE_THINKING: Final[BetaThinkingConfigParam] = {"type": "adaptive"}
+"""How reasoning is asked for, and it is not a token budget.
+
+The deployed model REFUSES a numeric budget outright: its provider profile disallows budget
+thinking, and the library raises before the request rather than letting the provider return a
+400, directing callers to adaptive thinking plus an effort level. So the two knobs are this and
+the effort below — a shape the owner's ruling ("medium for planning, high for building") maps
+onto directly, rather than two token counts nobody could defend.
+
+Asserted against the REAL provider model in test, never a double: the refusal lives in
+`AnthropicModel.prepare_request`, which a stub never executes, so a test that trusted a fake
+would go green on a combination the live gateway rejects."""
+
+PLAN_EFFORT: Final[AnthropicEffort] = "medium"
+"""How hard the model thinks in a planning turn (owner's ruling)."""
+
+BUILD_EFFORT: Final[AnthropicEffort] = "high"
+"""How hard the model thinks in a build turn (owner's ruling).
+
+Higher than planning because a build is where the thinking is spent on something that has to
+work: the model is reading real files, choosing an edit, and answering a compiler. A plan is a
+conversation about what to build, and the person is still in it."""
 
 CACHE_TTL: Literal["1h"] = "1h"
 """TTL for every Anthropic prompt-cache breakpoint the loop sets (`anthropic_cache_instructions`,

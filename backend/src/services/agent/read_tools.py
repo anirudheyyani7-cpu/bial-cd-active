@@ -1,11 +1,13 @@
-"""The read-only tool surface for Ask/Plan (U8 / R6 / plan 2026-07-22-002).
+"""The shared read-only tool surface (U8 / R6 / plan 2026-07-22-002).
 
 Four tools — bounded `read_file`, `list_files`, `search_files`, and an allowlisted
 read-only `run_command` — built as a `FunctionToolset` factory over a `ReadOnlyWorkspace`
-Protocol. The Protocol is the routing seam: Ask/Plan read a local snapshot extraction dir
-(`ExtractedSnapshotWorkspace`), and a Write turn — which is editing the tree as it goes —
-reads the live sandbox through the supervisor (`LiveSandboxWorkspace`), so the SAME two
-structured reads answer about the tree in front of the model instead of a stale bundle.
+Protocol. The Protocol is the routing seam: a workspace resolved from a local snapshot
+extraction dir (`ExtractedSnapshotWorkspace`) answers about saved code, and one resolved
+from the live sandbox through the supervisor (`LiveSandboxWorkspace`) answers about the tree
+in front of the model instead of a stale bundle. WHICH workspace is a fact about the run, not
+about the ability: what these tools ALLOW is written down once, here, and no body below asks
+which agent or which chat kind resolved it (R71).
 
 Containment model for `run_command`, layered fail-closed:
 - exec-style argv only, no shell — pipes, redirection, and chaining are structurally
@@ -17,7 +19,7 @@ Containment model for `run_command`, layered fail-closed:
   numeric range-print form (`sed -n '40,80p' file`) is admitted;
 - every argv token is vetted against path escape (absolute, `~`, `..` segments);
 - WHERE it runs depends on the workspace, and the two differ materially. On the LIVE
-  container (every mode, normally) the command goes through the supervisor into the app's
+  container (the normal case) the command goes through the supervisor into the app's
   own environment — which holds `BIAL_DATABASE_URL` and a Blob SAS — with the supervisor's
   own timeout and secret redaction. On the snapshot fallback (only when no sandbox service
   is configured) it runs cwd-jailed on the control-plane server under `_minimal_env`, an
@@ -36,13 +38,14 @@ additionally rendered into the Write prompt's generated `TOOL SURFACE` block
 SENTENCE as the line you want in the prompt.
 
 Refusals are teaching `ModelRetry`s in the U1 sentinel's voice — they say WHY and what to
-do instead, so the model self-corrects rather than retrying blind. "No app exists yet" is
-NOT a refusal: `EmptyProjectWorkspace` makes every tool answer it as a truthful normal
-result (the inverse of the #9 lesson) — but note it is reachable ONLY when no sandbox
-service is configured (`turns/engine._workspace_for`), which is why the Ask segment stopped
-promising the model an emptiness signal (U20).
+do instead, so the model self-corrects rather than retrying blind. There is no "no app
+exists yet" answer here any more: the workspace a turn is given comes from one arm
+(`turns/engine._pin_workspace`, which always resolves the project's live container), so the
+emptiness signal never arrives and the workspace that used to produce it is gone — which is
+why no segment promises the model one (U20; pinned by
+`test_no_segment_promises_an_emptiness_signal_that_never_arrives`).
 
-`psql` is never on a read-mode allowlist (plan, locked).
+`psql` is never on this allowlist (plan, locked).
 """
 
 from __future__ import annotations
@@ -51,7 +54,6 @@ import asyncio
 import os
 import re
 import time
-import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,11 +154,6 @@ class WorkspacePathError(Exception):
     model-facing and teaching — the tool layer wraps it in `ModelRetry`."""
 
 
-class NoAppYetError(Exception):
-    """Raised by `EmptyProjectWorkspace` for every operation; the tool layer converts it
-    into the truthful 'no app exists yet' NORMAL result (not an error)."""
-
-
 @dataclass(frozen=True)
 class ReadExecResult:
     exit: int
@@ -172,11 +169,11 @@ class SearchHit:
 
 
 class ReadOnlyWorkspace(Protocol):
-    """WHERE reads happen. Three implementations — the snapshot extraction (Ask/Plan), the
-    supervisor-routed live sandbox (Write), and the truthful empty one — so the SAME toolset
-    follows the conversation's mode and attached sandbox. Implementations enforce their own
-    jail, to whatever strength their side of the boundary allows; the tool layer enforces the
-    command policy, bounds, and redaction — those hold regardless of pairing."""
+    """WHERE reads happen. Two implementations — the snapshot extraction and the
+    supervisor-routed live sandbox — so the SAME toolset follows whichever workspace the run
+    attached. Implementations enforce their own jail, to whatever
+    strength their side of the boundary allows; the tool layer enforces the command policy,
+    bounds, and redaction — those hold regardless of pairing."""
 
     @property
     def label(self) -> str:
@@ -198,31 +195,6 @@ class ReadOnlyWorkspace(Protocol):
     async def exec_readonly(self, argv: Sequence[str]) -> ReadExecResult:
         """Run an ALREADY-POLICY-CHECKED argv jailed in the workspace."""
         ...
-
-
-@dataclass(frozen=True)
-class EmptyProjectWorkspace:
-    """The no-snapshot workspace: every read answers `NoAppYetError`, which the tool layer
-    renders as the truthful typed result. Keeps 'no app yet' out of every tool's control
-    flow — the mode's toolset is identical whether or not an app exists."""
-
-    app_id: uuid.UUID
-
-    @property
-    def label(self) -> str:
-        return "this project (no app built yet)"
-
-    async def read_file(self, rel_path: str) -> str:
-        raise NoAppYetError
-
-    async def list_files(self) -> list[str]:
-        raise NoAppYetError
-
-    async def search_files(self, pattern: re.Pattern[str], subdir: str | None) -> list[SearchHit]:
-        raise NoAppYetError
-
-    async def exec_readonly(self, argv: Sequence[str]) -> ReadExecResult:
-        raise NoAppYetError
 
 
 @dataclass(frozen=True)
@@ -352,7 +324,7 @@ class ExtractedSnapshotWorkspace:
             if resolved != resolved_root and resolved_root not in resolved.parents:
                 raise WorkspacePathError(
                     f"`{candidate}` resolves outside the workspace (a symlink or path escape). "
-                    "Read-mode commands touch only the app's own files."
+                    "A read-only `run_command` touches only the app's own files."
                 )
 
     async def exec_readonly(self, argv: Sequence[str]) -> ReadExecResult:
@@ -386,15 +358,6 @@ _LIVE_READ_TIMEOUT_S = int(READ_EXEC_TIMEOUT_S)
 """The supervisor's exec bound for a live read (`SandboxClient.exec` takes whole seconds). Same
 budget as the local twin: with the heavy dirs pruned, walking or grepping an app's own source is
 metadata-cheap — longer means wedged, not working."""
-
-_LIVE_WRONG_TOOL = (
-    "The live workspace only answers `list_files` and `search_files`. To read a file or run a "
-    "command, use the sandbox's own `read_file` / `run_command` — they see this exact same tree."
-)
-"""What `read_file`/`exec_readonly` teach when something reaches them on the live workspace.
-Unreachable in Write (the toolset allowlists the two structured reads and gives Write the
-sandbox-routed `read_file`/`run_command`), so this fires only if a future composition slips —
-and then it points the model at the tool that works rather than failing it blind."""
 
 
 def _strip_the_dot_slash(path: str) -> str:
@@ -452,8 +415,9 @@ class LiveSandboxWorkspace:
 
     Only `list_files` and `search_files` ever run here: `toolsets._WRITE_STRUCTURED_READS`
     allowlists exactly those two, and Write gets the sandbox-routed `read_file`/`run_command`
-    for everything else. The other two are implemented because the Protocol is a contract, not a
-    convention — they refuse with a teaching message instead of existing as a hole.
+    for everything else. The other two are implemented anyway because the Protocol is a
+    contract, not a convention — they do the real read through the same transport rather than
+    existing as a hole.
 
     THE CONTAINMENT GUARD IS LEXICAL ONLY, and that is worth being plain about.
     `ExtractedSnapshotWorkspace`'s resolution jail cannot be reused: `Path.resolve()` answers
@@ -463,7 +427,7 @@ class LiveSandboxWorkspace:
     sandbox would be followed by the sandbox's own `grep`, and nothing here would know.
 
     That is acceptable because containment is not this class's job. The supervisor's workspace
-    jail and the demoted `appuser` are the real boundary, and in Write mode the model already
+    jail and the demoted `appuser` are the real boundary, and in a Build chat the model already
     holds an unrestricted `run_command` on the other side of it — a listing filter it can trivially
     step around is not what keeps the sandbox contained. This is a model-facing hygiene filter:
     it keeps results on the app's own source and turns a bad path into a refusal the model can
@@ -560,7 +524,7 @@ class LiveSandboxWorkspace:
         THE POLICY DID NOT MOVE, THE ENVIRONMENT DID — and that is worth being precise about
         rather than waving through. The guest list, the per-command deny flags, the `sed`
         script validator and the path vetting all still run in the tool layer above this, so
-        the set of commands Ask and Plan may issue is byte-for-byte what it was.
+        the set of commands this surface may issue is byte-for-byte what it was.
 
         What changed is where they land. They used to run on the CONTROL-PLANE server under
         `_minimal_env` — an explicit allowlist holding no DSN and no tokens, asserted by test.
@@ -630,8 +594,8 @@ def _vet_sed_script(argv: Sequence[str]) -> str | None:
     if re.fullmatch(r"\d{1,7}(,\d{1,7})?p", scripts[0]) is None:
         return (
             f"`sed` script `{scripts[0][:80]}` is not available here — only numeric "
-            "range printing (e.g. `40,80p`) is supported in read mode. Use `read_file` "
-            "for windows or `search_files` for matching."
+            "range printing (e.g. `40,80p`) is supported by a read-only `run_command`. "
+            "Use `read_file` for windows or `search_files` for matching."
         )
     if not files:
         return "`sed` here must name the file to print from (stdin is closed)."
@@ -654,11 +618,11 @@ _PATH_BEARING_FLAG_REASON = (
 )
 
 
-# The read-mode guest list: POSIX read-only classics, present on any Linux/macOS server
+# The guest list: POSIX read-only classics, present on any Linux/macOS server
 # runtime (verified against POSIX; the extraction runs SERVER-side, not in the sandbox
 # image — when U12 routes to the live workspace these same names exist in the
 # debian-based sandbox). `psql` is NEVER listed (plan, locked). `sh`/`bash`/`node`/`npm`
-# are absent by design: no shell, no runtime, no package manager in read mode.
+# are absent by design: no shell, no runtime, no package manager on a read-only surface.
 _GUEST_LIST: dict[str, CommandPolicy] = {
     "ls": CommandPolicy(),
     "cat": CommandPolicy(),
@@ -724,8 +688,14 @@ def _denied_flag_in(flag: str, policy: CommandPolicy) -> str | None:
 
 
 def check_the_guest_list(argv: Sequence[str]) -> str | None:
-    """The door policy for read-mode `run_command`: returns the teaching refusal, or None
-    when the command may run. Mirrors `sql_guard.you_shall_not_pass`'s contract."""
+    """The door policy for the read-only `run_command`: returns the teaching refusal, or
+    None when the command may run. Mirrors `sql_guard.you_shall_not_pass`'s contract.
+
+    R71 — WHAT IT ALLOWS IS A PROPERTY OF THE ABILITY, and the signature is where that is
+    provable: `argv` and nothing else. No `RunContext`, no deps, no settings, no chat kind,
+    and nothing in this module imports one. Two agents reach these bodies today — a Plan
+    chat's toolset and the classification agent's, which has no chat kind at all — and they
+    get byte-identical answers because there is nothing here that could tell them apart."""
     if not argv:
         return 'The command is empty — pass argv tokens, e.g. `["ls", "app"]`.'
     binary = argv[0]
@@ -733,9 +703,10 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
     if policy is None:
         allowed = ", ".join(sorted(_GUEST_LIST))
         return (
-            f"`{binary}` is not available in this read-only mode (available: {allowed}). "
-            "This mode inspects the app; it cannot run builds, scripts, or package "
-            "managers. Use `read_file`, `list_files`, and `search_files` for most reads."
+            f"`{binary}` is not on the guest list for this read-only `run_command` "
+            f"(available: {allowed}). It inspects the app; it cannot run builds, scripts, "
+            "or package managers. Use `read_file`, `list_files`, and `search_files` for "
+            "most reads."
         )
     for token in argv[1:]:
         if token.startswith("-"):
@@ -743,8 +714,8 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
             denied = _denied_flag_in(flag, policy)
             if denied is not None:
                 return (
-                    f"`{binary} {denied}` is not available in read mode — {policy.deny_reason}. "
-                    "Stick to the read-only form of the command."
+                    f"`{binary} {denied}` is not available to a read-only `run_command` — "
+                    f"{policy.deny_reason}. Stick to the read-only form of the command."
                 )
             # A path also rides in on `--flag=<path>`; vetting only bare tokens let
             # `grep --file=../../x .` walk straight out of the jail.
@@ -775,8 +746,8 @@ def check_the_guest_list(argv: Sequence[str]) -> str | None:
 # WHAT DIFFERS IS THE CALLERS, NOT THIS CODE. Read mode has no `fetch_output_slice` — the slice
 # tool is registered on `sandbox_toolset`, which only Write gets — so every call here passes
 # `handle=None` and the notice tells the model to narrow its command instead of naming a tool it
-# does not have. Read mode also renders under the FULL dump budget on success as well as failure:
-# in Ask/Plan the successful output IS the answer that was asked for, and with no handle to
+# does not have. This surface also renders under the FULL dump budget on success as well as
+# failure: here the successful output IS the answer that was asked for, and with no handle to
 # recover an elided middle, summarising a success here would buy back exactly the re-run this
 # unit exists to remove.
 #
@@ -982,13 +953,6 @@ def _cap_redact_cap(text: str, *, budget: int, handle: str | None = None) -> str
     return _render_output(_redacted_lines(text), budget=budget, handle=handle)
 
 
-_NO_APP_YET_RESULT = (
-    "No app exists yet for this project — nothing has been built, so there are no files "
-    "to read. Once a build has run, the app's code will be readable here. Answer the "
-    "user from that fact; do not guess at code that does not exist."
-)
-
-
 # ---------------------------------------------------------------------------------------
 # The toolset factory
 # ---------------------------------------------------------------------------------------
@@ -998,10 +962,11 @@ def read_only_toolset[DepsT](
     workspace_of: Callable[[RunContext[DepsT]], ReadOnlyWorkspace],
 ) -> FunctionToolset[DepsT]:
     """Build the four read tools over whatever workspace `workspace_of` resolves from the
-    run's deps. Generic over the deps type so the SAME surface serves the Ask/Plan agent
-    now (`ReadDeps`) and, via U12's live-workspace accessor, the build agent later —
-    note: `read_file` and `run_command` already exist on `build_agent`, so a Write-mode
-    composition must add ONLY `list_files`/`search_files` (tool names are unique per run).
+    run's deps. Generic over the deps type so the SAME surface serves every consumer over
+    its own deps — a Plan chat (`ReadDeps`), the classification review agent (`ReviewDeps`),
+    and the Build chat's borrowed structured reads. Note: `read_file` and `run_command`
+    already exist on `build_agent`, so the Build composition must add ONLY
+    `list_files`/`search_files` (tool names are unique per run).
 
     The inner tools annotate `RunContext[Any]`: pydantic-ai resolves tool annotations with
     `get_type_hints` at registration, and a PEP-695 type param of the ENCLOSING function
@@ -1015,8 +980,6 @@ def read_only_toolset[DepsT](
         workspace = workspace_of(ctx)
         try:
             text = await workspace.read_file(path)
-        except NoAppYetError:
-            return _NO_APP_YET_RESULT
         except WorkspacePathError as exc:
             raise ModelRetry(str(exc)) from exc
         lines = text.splitlines()
@@ -1039,10 +1002,7 @@ def read_only_toolset[DepsT](
         """List every file in the app (relative paths; heavy dirs like node_modules
         excluded)."""
         workspace = workspace_of(ctx)
-        try:
-            entries = await workspace.list_files()
-        except NoAppYetError:
-            return _NO_APP_YET_RESULT
+        entries = await workspace.list_files()
         if not entries:
             return f"No files found in {workspace.label}."
         shown = entries[:LIST_MAX_ENTRIES]
@@ -1064,8 +1024,6 @@ def read_only_toolset[DepsT](
             ) from exc
         try:
             hits = await workspace.search_files(compiled, path)
-        except NoAppYetError:
-            return _NO_APP_YET_RESULT
         except WorkspacePathError as exc:
             raise ModelRetry(str(exc)) from exc
         if not hits:
@@ -1086,8 +1044,6 @@ def read_only_toolset[DepsT](
             raise ModelRetry(refusal)
         try:
             result = await workspace.exec_readonly(command)
-        except NoAppYetError:
-            return _NO_APP_YET_RESULT
         except WorkspacePathError as exc:
             # A symlink or path token that resolves out of the jail (the escape lexical vetting
             # cannot see) — teach the model back toward the app's own files.

@@ -7,23 +7,32 @@ from __future__ import annotations
 import base64
 import datetime
 import io
+import re
+import time
 import uuid
 
 from openpyxl import Workbook
 from sqlalchemy import select
+from structlog.testing import capture_logs
 
+from src.api.v1.attachments.router import MAX_PDF_PAGES
 from src.config import settings
 from src.db.models.attachment import Attachment
 from src.services.attachments import reclaim_orphaned_attachments
 from src.services.auth.session_jwt import mint_session_jwt
+from src.services.extract.deck import DeckResult
 from src.services.extract.office import EXCEL_MEDIA_TYPE, PPTX_MEDIA_TYPE
 from tests.factories import ConversationFactory, UserFactory
+from tests.pdfs import encrypted_pdf, pdf_with_pages, unreadable_pdf, xref_bomb_pdf
 
 _TTL = settings.auth.access_ttl_seconds
 
 # Minimal magic-valid bytes for the allowlisted types.
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-_PDF = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+# A REAL one-page PDF, not just the magic prefix: since U6 a PDF upload is parsed for its page
+# count, so magic-valid rubbish is refused rather than stored. `unreadable_pdf()` is that case,
+# tested by name below.
+_PDF = pdf_with_pages(1)
 
 
 def _b64(data: bytes) -> str:
@@ -290,7 +299,10 @@ def test_attachments_openapi_documents_codes() -> None:
 
     paths = create_app().openapi()["paths"]
     upload = set(paths["/v1/attachments"]["post"]["responses"])
-    assert {"400", "401", "404", "413", "429", "501", "500"} <= upload
+    # "415" IS THE POINT OF THIS LINE. The subset operator makes every code here opt-in, so a
+    # status the route raises without declaring passes unnoticed — which is exactly what the
+    # locked-PDF 415 did until a review caught it. Anything raised gets named here.
+    assert {"400", "401", "404", "413", "415", "429", "501", "500"} <= upload
     dl = set(paths["/v1/attachments/{attachment_id}"]["get"]["responses"])
     assert {"400", "404", "401", "500"} <= dl
     delete = set(paths["/v1/attachments/{attachment_id}"]["delete"]["responses"])
@@ -620,3 +632,299 @@ async def test_deck_upload_disabled_returns_501(client, db_session) -> None:
 async def test_requires_auth(client) -> None:
     assert (await client.get("/v1/attachments/att_1")).status_code == 401
     assert (await client.post("/v1/attachments", json={})).status_code == 401
+
+
+# --- the PDF page cap (U6 / D4) -----------------------------------------------
+#
+# ★ WHAT THIS SECTION IS FOR. A 61-page document measured 153,342 tokens — 77% of the hard
+# context limit — while the guardrail recorded it as 1,600, or 0.8% (#194). Two halves fix it:
+# the window charge next door in `test_context_window.py`, and this one, which stops a document
+# the charge could not honestly cover from being admitted at all.
+#
+# The cap is a PAGE count, not a byte count, and that is the whole reason a parser is involved:
+# a text PDF runs ~1.3 KB a page and a scanned one ~300 KB, so the same 4 MB is anywhere from
+# 13 to 3,200 pages. The existing 4 MB size cap cannot see the difference; the document that
+# blew the limit was 79 KB.
+
+
+async def _upload_pdf(client, headers, attachment_id: str, data: bytes, name: str = "doc.pdf"):
+    return await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={
+            "attachmentId": attachment_id,
+            "mediaType": "application/pdf",
+            "base64": _b64(data),
+            "name": name,
+        },
+    )
+
+
+async def test_a_pdf_at_the_page_cap_is_accepted(client, db_session, fake_storage) -> None:
+    """★ THE POSITIVE CASE, FIRST. Every other test in this section asserts a refusal, and a
+    cap that refused every PDF would satisfy all of them. Exactly at the cap is admitted —
+    "under 30 pages" in the refusal means the 30-page document goes through."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_cap", pdf_with_pages(MAX_PDF_PAGES))
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["attachment"]["kind"] == "document"
+    assert len(fake_storage.objects) == 1
+
+
+async def test_a_pdf_one_page_over_the_cap_is_refused_in_plain_words(
+    client, db_session, fake_storage
+) -> None:
+    """One page over, and the sentence a citizen reads.
+
+    THE COPY IS THE ASSERTION, not decoration. The refusal has to name a limit the person can
+    act on ("under 30 pages") and must not hand them the platform's vocabulary — no page
+    objects, no parser, no bytes, no library name, no traceback. A body that leaks any of those
+    is the failure this pins, and it is a security property as much as a copy one
+    (`.claude/rules/security.md`: never expose internal errors to the frontend)."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_over", pdf_with_pages(MAX_PDF_PAGES + 1))
+
+    assert resp.status_code == 413, resp.text
+    message = resp.json()["error"]["message"]
+    assert message == "That document is too long to work with. Try one under 30 pages."
+    body = resp.text.lower()
+    for leak in ("pypdf", "traceback", "page object", "/type /page", "parse", "byte", "xref"):
+        assert leak not in body, leak
+    # And nothing was stored: a refused upload leaves no object and no row to reclaim later.
+    assert fake_storage.objects == {}
+    assert (
+        await db_session.scalar(select(Attachment).where(Attachment.attachment_id == "att_over"))
+    ) is None
+
+
+async def test_an_image_never_reaches_the_page_counter(client, db_session, monkeypatch) -> None:
+    """A PNG skips the check entirely — the parser is not called at all.
+
+    Not merely "an image still uploads": that would pass with the counter running on every
+    upload and quietly answering 1. Every image upload paying a subprocess spawn is a real
+    regression in the common path, so the assertion is on the CALL, not on the outcome."""
+    import src.api.v1.attachments.router as att_router
+    from src.services.parse.governor import run_parse as real_run_parse
+
+    calls: list[str] = []
+
+    async def _spy(buffer, kind, filename, sheet, **kwargs):
+        calls.append(kind)
+        return await real_run_parse(buffer, kind, filename, sheet, **kwargs)
+
+    monkeypatch.setattr(att_router, "run_parse", _spy)
+    headers, _ = await _auth(db_session)
+
+    resp = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={"attachmentId": "att_png", "mediaType": "image/png", "base64": _b64(_PNG)},
+    )
+
+    assert resp.status_code == 201
+    assert calls == []
+
+
+async def test_a_corrupt_pdf_is_refused_with_the_same_sentence_not_a_500(
+    client, db_session, fake_storage
+) -> None:
+    """Magic-valid bytes that will not parse.
+
+    The 18-byte prefix check passes — `%PDF-1.4` is all it reads — so before U6 this was
+    STORED and sent to the model as a document. It must now be refused, and refused as a
+    client error rather than as a server one: a 500 here would be the platform reporting its
+    own failure for the citizen's malformed file, and would put a stack trace one config flag
+    away from the browser.
+
+    It wears the SAME sentence as the over-cap refusal on purpose. There is nothing true and
+    useful the platform can tell someone about a PDF it could not read, and a second sentence
+    would have to reach for parser vocabulary to say anything at all. The real cause is logged
+    server-side, where an operator can act on it."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_corrupt", unreadable_pdf())
+
+    assert resp.status_code == 413, resp.text
+    assert (
+        resp.json()["error"]["message"]
+        == "That document is too long to work with. Try one under 30 pages."
+    )
+    assert fake_storage.objects == {}
+
+
+async def test_a_locked_pdf_is_told_it_is_locked_not_that_it_is_too_long(
+    client, db_session, fake_storage
+) -> None:
+    """★ THE ONE PDF REFUSAL THE CITIZEN CAN ACT ON, so it is the one that does not get the
+    collapsed sentence.
+
+    A password-protected PDF parses far enough to say it is locked and no further, so it lands
+    in the same `FileParseError` arm as a corrupt file. Under the collapse that made it "too
+    long to work with — try one under 30 pages", which is advice that cannot be followed: this
+    fixture is THREE pages. A citizen holding a locked invoice would shorten it, be refused
+    again, and learn nothing. That is the shape `attachmentInput.ts` records as advice only
+    being honest while it leads somewhere.
+
+    A 415 rather than a 413, because nothing about the file's size was the problem. The
+    sentence still names no parser, no encryption scheme and no internal state, so it keeps the
+    property the collapsed sentence exists for."""
+    headers, _ = await _auth(db_session)
+
+    resp = await _upload_pdf(client, headers, "att_locked", encrypted_pdf(pages=3))
+
+    assert resp.status_code == 415, resp.text
+    body = resp.json()["error"]
+    assert body["message"] == (
+        "That document is password-protected. Remove the password and upload it again."
+    )
+    assert body["code"] == "PDF_ENCRYPTED"
+    # It must not be told the length is the problem — the document is well under the cap.
+    assert "too long" not in body["message"]
+    assert "30 pages" not in body["message"]
+    # And it leaks nothing about how we found out.
+    assert not re.search(r"pypdf|decrypt|encrypt|cipher|/Encrypt|parser", body["message"], re.I)
+    # Refused before the store, like every other arm.
+    assert fake_storage.objects == {}
+
+
+async def test_a_pptx_is_still_governed_by_the_deck_cap_not_the_new_one(
+    client, db_session, monkeypatch
+) -> None:
+    """The deck path keeps its own 100-page limit, and the two caps disagreeing is deliberate.
+
+    A deck is rendered to a PDF by Gotenberg and counted by `extract/deck.py::count_pdf_pages`
+    — a raw-byte scan that is reliable for LibreOffice output and nothing else. U6 did not
+    reuse it and did not touch it. So a 60-page deck, which is over the new 30-page upload cap
+    and under the deck path's 100, still uploads. Wire the new cap into the pptx branch and
+    this goes red."""
+    import src.api.v1.attachments.router as att_router
+
+    async def _fake_convert(data, *, name):
+        return DeckResult(pdf=b"%PDF-1.4 rendered deck", page_count=60)
+
+    monkeypatch.setattr(att_router, "deck_attachments_enabled", lambda: True)
+    monkeypatch.setattr(att_router, "convert_deck_to_pdf", _fake_convert)
+    headers, _ = await _auth(db_session)
+
+    resp = await client.post(
+        "/v1/attachments",
+        headers=headers,
+        json={"attachmentId": "att_deck60", "mediaType": PPTX_MEDIA_TYPE, "base64": _b64(b"pptx")},
+    )
+
+    assert resp.status_code == 201, resp.text
+    att = resp.json()["attachment"]
+    assert att["kind"] == "deck"
+    assert att["pageCount"] == 60
+
+
+async def test_a_pdf_that_hangs_the_parser_is_killed_and_the_worker_keeps_serving(
+    client, db_session, monkeypatch, fake_storage
+) -> None:
+    """★ THE INVARIANT THAT MAKES THE PAGE COUNT SAFE TO TAKE AT ALL.
+
+    `xref_bomb_pdf()` is 8 KB and takes a reader seven to twelve seconds — inside the 4 MB size
+    cap, inside the memory ceiling, unbounded in the only axis neither of them watches. Read on
+    the event loop it stalls the worker serving every other citizen's request; read in the
+    governor's subprocess it is terminated at the deadline and the request answers.
+
+    The governor is the REAL one — same spawned child, same pypdf, same hostile bytes, really
+    killed. Only the deadline is shortened, so the test costs a second instead of ten.
+
+    MUTATION: replace the `run_parse` call in the router with a direct in-process `pypdf` read.
+    The patched deadline is then never consulted, the handler blocks for the full parse, and
+    this goes red twice over — on the status (the bomb resolves to one page, so it would be
+    STORED) and on the elapsed time."""
+    import src.api.v1.attachments.router as att_router
+    from src.services.parse.governor import run_parse as real_run_parse
+
+    async def _short_deadline(buffer, kind, filename, sheet, **kwargs):
+        return await real_run_parse(buffer, kind, filename, sheet, timeout=1.0)
+
+    monkeypatch.setattr(att_router, "run_parse", _short_deadline)
+    headers, _ = await _auth(db_session)
+
+    started = time.monotonic()
+    resp = await _upload_pdf(client, headers, "att_bomb", xref_bomb_pdf())
+    elapsed = time.monotonic() - started
+
+    assert resp.status_code == 413, resp.text
+    assert (
+        resp.json()["error"]["message"]
+        == "That document is too long to work with. Try one under 30 pages."
+    )
+    assert elapsed < 5.0, f"the request should return at the deadline, took {elapsed:.1f}s"
+    assert fake_storage.objects == {}
+    # And the worker is still serving: with the real deadline back, the very next upload
+    # succeeds. (The shortened one is under the cost of spawning the child at all, so it would
+    # refuse an honest document too — which is the reason the product's deadline is 10 s.)
+    monkeypatch.undo()
+    ok = await _upload_pdf(client, headers, "att_after", pdf_with_pages(1))
+    assert ok.status_code == 201, ok.text
+
+
+# --- the log that pays for the collapsed sentence ------------------------------
+#
+# ★ WHY THESE TWO TESTS EXIST. `_assert_pdf_within_page_cap` deliberately answers four distinct
+# refusals — over the cap, unreadable, killed at the deadline, contained OOM — with ONE citizen-
+# facing sentence, and both its docstring and `PDF_TOO_LONG_TEXT`'s justify that collapse by
+# promising the real cause reaches the server-side log where an operator can act on it. That
+# promise IS the compensating control the collapse was traded for, so it is asserted rather than
+# assumed. It was not free: the module logged through stdlib `logging`, which nothing in this
+# process configures — the over-cap line vanished at the root and the failure line reached
+# `lastResort`, whose bare `%(message)s` dropped `code` and `status` on the floor.
+#
+# Both assert the FIELDS, not just the event name. An event name alone tells an operator a PDF
+# was refused, which they already knew from the 413; the fields are the entire distinguishing
+# detail the citizen was not given.
+
+
+async def test_the_over_cap_refusal_logs_the_pages_and_the_cap(client, db_session) -> None:
+    """The over-cap arm names both numbers, so an operator can see a 31-page document met a
+    30-page cap without re-deriving either from the refused upload."""
+    headers, _ = await _auth(db_session)
+
+    with capture_logs() as logs:
+        resp = await _upload_pdf(
+            client, headers, "att_log_over", pdf_with_pages(MAX_PDF_PAGES + 1)
+        )
+
+    assert resp.status_code == 413, resp.text
+    over = [entry for entry in logs if entry["event"] == "pdf_over_page_cap"]
+    assert over, f"no pdf_over_page_cap event in {[e['event'] for e in logs]}"
+    assert over[0]["pages"] == MAX_PDF_PAGES + 1
+    assert over[0]["cap"] == MAX_PDF_PAGES
+
+
+async def test_the_unreadable_and_locked_refusals_log_the_cause_that_tells_them_apart(
+    client, db_session
+) -> None:
+    """★ THE DISCRIMINATION, not merely the presence of a line.
+
+    A corrupt PDF and a locked one are the same 413/415 shrug to the citizen by design, so the
+    log is the ONLY place the two are distinguishable. Two uploads, two different `code`s, and a
+    `status` that is the PARSER's (400 — the caller's file, not the platform failing), not the
+    413 the citizen was shown. A log line that hardcoded either field, or that carried the event
+    name alone, would leave an operator exactly as informed as the refused citizen."""
+    headers, _ = await _auth(db_session)
+
+    with capture_logs() as corrupt_logs:
+        corrupt = await _upload_pdf(client, headers, "att_log_corrupt", unreadable_pdf())
+    with capture_logs() as locked_logs:
+        locked = await _upload_pdf(client, headers, "att_log_locked", encrypted_pdf(pages=3))
+
+    assert corrupt.status_code == 413, corrupt.text
+    assert locked.status_code == 415, locked.text
+
+    failures = [
+        entry
+        for entries in (corrupt_logs, locked_logs)
+        for entry in entries
+        if entry["event"] == "pdf_page_check_failed"
+    ]
+    assert len(failures) == 2, f"expected both refusals logged, got {failures}"
+    assert [entry["code"] for entry in failures] == ["INVALID_PDF", "PDF_ENCRYPTED"]
+    assert [entry["status"] for entry in failures] == [400, 400]

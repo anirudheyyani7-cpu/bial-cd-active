@@ -1,9 +1,16 @@
 /**
- * The composer draft, per conversation (G3).
+ * The composer draft, per conversation (G3) — THE ONE STORE, FOR BOTH CHAT KINDS.
  *
  * Under the mode-free composer contract the user is invited to keep typing while the assistant
  * works — so the text they type has to survive the three things that used to destroy it: a
  * reload, a chat switch, and a refinement chip. Two of those are this module's job.
+ *
+ * BOTH KINDS USE IT NOW (Plan A, U5). Only the builder surface did; the planning surface kept its
+ * text in assistant-ui's in-memory composer and cleared it on every chat change including the
+ * first mount after a reload, so a planning draft died on a reload and on a round trip to a
+ * sibling chat. R72 asks for one surface whose draft survives the same way in each kind, and this
+ * is the half of that which is a store rather than a component. Plan A owns this module; Plan D
+ * CONSUMES it and specifies none of it, so there is exactly one writer per key.
  *
  * SEMANTICS, stated because they are user-visible:
  *  - `sessionStorage`, not `localStorage`: a draft is tab-scoped work-in-progress, and dying with
@@ -36,6 +43,11 @@ export function readDraft(conversationId: string | null | undefined): string {
   }
 }
 
+/**
+ * THE ONE WRITE, AND CLEARING IS A CASE OF IT. An empty string removes the key rather than storing
+ * a blank, so "the box emptied" and "the box now holds this" are the same statement — which is
+ * what keeps the stored copy and the visible box from disagreeing after a send.
+ */
 export function writeDraft(conversationId: string | null | undefined, text: string): void {
   if (!conversationId) return
   try {
@@ -44,8 +56,4 @@ export function writeDraft(conversationId: string | null | undefined, text: stri
   } catch {
     // No persistence this session. The composer still holds the text in React state.
   }
-}
-
-export function clearDraft(conversationId: string | null | undefined): void {
-  writeDraft(conversationId, '')
 }

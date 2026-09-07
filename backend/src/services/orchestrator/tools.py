@@ -47,6 +47,14 @@ They are built as a `FunctionToolset` FACTORY over a `sandbox_of` accessor — m
 `agent/read_tools.read_only_toolset` — rather than `@build_agent.tool` decorators. ONE tool body,
 two consumers: the legacy `/build-sessions` harness (`BuildDeps.sandbox`) and a Write chat turn.
 The accessor closure is the only thing that knows the run's deps type.
+
+THE TWO CONSUMERS DO NOT COMPOSE THE SAME SURFACE, and the generated prompt block does not say
+so. `build_agent` takes THIS toolset and nothing else — eight tools. A Write chat turn takes it
+plus `list_files`/`search_files` off `read_only_toolset` and the two `CONVERSATION_TOOLSET` tools
+— twelve. `WRITE_TOOL_SURFACE` is a snapshot of the twelve and ships in BOTH prompts, so the
+harness is told about four tools it cannot call. Recorded, not fixed, at
+`core/prompt_blocks.WRITE_TOOL_SURFACE`; guarded by
+`test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
 """
 
 from __future__ import annotations
@@ -695,10 +703,21 @@ async def _step(
 ) -> None:
     """The legacy C7 build feed. `emitter is None` on the chat-turn path, where the ENGINE emits a
     StepFrame per tool call from the run's own FunctionToolCall/Result events using the same
-    `classify_tool_call` label — emitting both would render every step twice."""
+    `classify_tool_call` label — emitting both would render every step twice.
+
+    NOTHING IS HIDDEN WHEN SOMETHING WENT WRONG, the same rule the turn engine's `_resolve_step`
+    and the reload projection both apply, and `classify_command`'s docstring states for this
+    emitter by name. A housekeeping command is plumbing while it works and the whole story the
+    moment it does not, and a group's problem count has to name a row the citizen can find.
+    Enforced HERE rather than at each call site: the classifier's `hidden` and the step's state
+    are decided in different places, and a caller that has to remember to combine them is a
+    caller that will eventually forget on the failing arm — which is the arm nobody looks at
+    until it matters."""
     if session.emitter is None:
         return
-    await session.emitter.step(name=name, label=label, state=state, hidden=hidden)
+    await session.emitter.step(
+        name=name, label=label, state=state, hidden=hidden and state != "failed"
+    )
 
 
 def _require_writable(path: str) -> None:

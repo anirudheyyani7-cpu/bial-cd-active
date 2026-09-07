@@ -9,8 +9,8 @@
  * their entire daily budget watching a number that never moved — or that was not on screen.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react'
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 
 const h = vi.hoisted(() => ({
   fetchUsageToday: vi.fn(),
@@ -35,6 +35,12 @@ vi.mock('../../../utils/appRegistryApi', () => ({ fetchAppStatusCounts: h.fetchA
 vi.mock('../../FeedbackModal', () => ({ default: () => null }))
 
 import Navbar from '../Navbar'
+import { WorkspaceExitProvider } from '../../workspace/UnsavedWorkGuard'
+
+/** Where a navigation actually landed. */
+function LocationProbe() {
+  return <span data-testid="where">{useLocation().pathname}</span>
+}
 
 // Deliberately NOT named "Admin": the display name is rendered in the avatar block, and a
 // `getByText('Admin')` on the nav entry would then match two nodes.
@@ -92,6 +98,83 @@ describe('the usage meter is visible on a narrow screen (N4)', () => {
     renderNavbar()
     const meter = await screen.findByTestId('usage-meter')
     expect(meter.querySelector('.text-danger')).not.toBeNull()
+  })
+})
+
+describe('the navbar the boards draw (plan 002, U1)', () => {
+  it('the meter is amber well below any 80% threshold, because the board draws it amber at 54%', async () => {
+    // The board's own worked example is `537,102 / 1,000,000 tokens` over a 54%-wide `--amb`
+    // fill. The code turned the bar amber only past 80%, so at the board's own figures it
+    // painted teal. Mutation-check: restore `pct >= 80 ? 'bg-accent' : 'bg-primary'` and the
+    // 24.7% reading below goes teal and this goes red.
+    h.fetchUsageToday.mockResolvedValue({ used: 12_345, limit: 50_000, remaining: 37_655 })
+    renderNavbar()
+    const meter = await screen.findByTestId('usage-meter')
+    expect(meter.querySelector('.bg-accent')).not.toBeNull()
+    expect(meter.querySelector('.bg-primary')).toBeNull()
+  })
+
+  it('keeps danger for a budget that is actually spent', async () => {
+    h.fetchUsageToday.mockResolvedValue({ used: 50_000, limit: 50_000, remaining: 0 })
+    renderNavbar()
+    const meter = await screen.findByTestId('usage-meter')
+    expect(meter.querySelector('.bg-danger')).not.toBeNull()
+    expect(meter.querySelector('.bg-accent')).toBeNull()
+  })
+
+  it('draws the meter as an outlined pill with a visible unspent remainder', async () => {
+    // The board: `border:1px solid var(--bd);border-radius:999px` and NO background, over a
+    // 3px `--bd` track. It was a #F8F9FA chip with a `bg-white` track, which made the unspent
+    // part of the budget invisible against the white header behind it.
+    renderNavbar()
+    const meter = await screen.findByTestId('usage-meter')
+    expect(meter.className).toMatch(/border-bial-border/)
+    expect(meter.className).not.toMatch(/bg-surface-muted/)
+    expect(meter.querySelector('.bg-bial-border')).not.toBeNull()
+  })
+
+  it('renders the wordmark in the brand teal at the board\'s size and weight', async () => {
+    renderNavbar()
+    const wordmark = await screen.findByText('BIAL Citizen Developer')
+    expect(wordmark.className).toMatch(/text-primary(?![-\w])/)
+    expect(wordmark.className).toMatch(/text-\[15px\]/)
+    expect(wordmark.className).toMatch(/font-extrabold/)
+    // What it must NOT be: the 18px/700 #00818A it shipped as — a teal that is not the brand
+    // teal and that no board draws.
+    expect(wordmark.getAttribute('style')).toBeNull()
+  })
+
+  it('gives the active nav item weight and ink, and no rule and no brand colour', async () => {
+    // The board draws the active item `color:#1A2B34;font-weight:600` at its siblings' size,
+    // against `color:#6B7280;font-weight:500`. The code added teal, bold AND a 2px underline.
+    render(
+      <MemoryRouter initialEntries={['/projects']}>
+        <Navbar />
+      </MemoryRouter>,
+    )
+    const active = await screen.findByRole('link', { name: 'Projects' })
+    expect(active.className).toMatch(/text-primary-900/)
+    expect(active.className).not.toMatch(/border-b-2/)
+    expect(active.className).not.toMatch(/text-primary(?![-\w])/)
+
+    const inactive = screen.getByRole('link', { name: 'Help' })
+    expect(inactive.className).toMatch(/text-neutral/)
+    // Same size on both — the board changes weight, never scale.
+    expect(active.className).toMatch(/text-sm/)
+    expect(inactive.className).toMatch(/text-sm/)
+  })
+
+  it('keeps every navbar feature the boards predate', async () => {
+    // The origin is explicit: do not delete a shipped feature because an older board omits it.
+    // Only the styling the boards DO specify is corrected.
+    h.getStoredUser.mockReturnValue(ADMIN)
+    h.fetchAppStatusCounts.mockResolvedValue(counts(3))
+    renderNavbar()
+    expect(await screen.findByRole('link', { name: 'Marketplace' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Feedback' })).toBeTruthy()
+    expect(await screen.findByText('3 apps waiting for review')).toBeTruthy()
+    fireEvent.click(screen.getByText('Priya'))
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
   })
 })
 
@@ -287,5 +370,115 @@ describe('the avatar menu opens and closes (#157 A)', () => {
     expect(menuIsOpen()).toBe(true)
     fireEvent.click(screen.getByTitle('Send feedback'))
     expect(menuIsOpen()).toBe(false)
+  })
+})
+
+/**
+ * U15 — THE HEADLINE. A failed sign-out used to call `showToast(...)` and then
+ * `navigate('/login')` on the very next line: the navigate unmounts ProjectsPage —
+ * unmounts the navbar — which OWNS the toast state, destroying the message in the same
+ * tick it was created. Nobody has ever seen it, on any device. The fix hands the warning
+ * forward as router state instead, so the screen the person actually LANDS ON renders it.
+ *
+ * `LoginScreenProbe` stands in for LoginPage here — it reads exactly the same
+ * `location.state.signoutWarning` LoginPage reads, so a passing test proves what reaches
+ * the destination screen, not merely what Navbar tried to render before leaving.
+ */
+function LoginScreenProbe() {
+  const location = useLocation()
+  return <div data-testid="login-screen">{location.state?.signoutWarning ?? ''}</div>
+}
+
+const renderNavbarWithLoginRoute = () =>
+  render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <Routes>
+        <Route path="/dashboard" element={<Navbar />} />
+        <Route path="/login" element={<LoginScreenProbe />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+const signOut = async () => {
+  await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
+  const trigger = screen.getByText('Asha', { selector: 'p' }).closest('button')
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+}
+
+describe('the sign-out warning outlives the navigation (U15)', () => {
+  it('THE BUG: a failed sign-out leaves the warning readable on the screen the person lands on', async () => {
+    h.logout.mockResolvedValue(false)
+    renderNavbarWithLoginRoute()
+
+    await signOut()
+
+    // The navbar (and the toast state it used to own) is gone — this asserts the
+    // destination screen, not a message that flashed before the redirect.
+    const loginScreen = await screen.findByTestId('login-screen')
+    expect(loginScreen.textContent).toBe('Sign-out may be incomplete on this device.')
+    expect(screen.queryByText('Asha')).toBeNull()
+  })
+
+  it('carries no warning across on a clean sign-out', async () => {
+    h.logout.mockResolvedValue(true)
+    renderNavbarWithLoginRoute()
+
+    await signOut()
+
+    const loginScreen = await screen.findByTestId('login-screen')
+    expect(loginScreen.textContent).toBe('')
+  })
+})
+
+/**
+ * THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD (Plan F, U8).
+ *
+ * `beforeunload` cannot cover a nav link: a single-page navigation is not an unload, so leaving the
+ * workspace this way used to discard unsaved work in silence.
+ *
+ * Two halves, and the second is the one that keeps this from being a regression for every other
+ * page: inside a workspace the link consults the guard, and OUTSIDE one it navigates exactly as it
+ * always did. A guard that made the projects list ask before every click would be worse than the
+ * bug it fixed.
+ */
+describe('Navbar — the workspace exit guard', () => {
+  it('★ routes a nav link through the guard when one is provided', () => {
+    const exits = []
+    render(
+      <MemoryRouter initialEntries={['/projects/p1']}>
+        <WorkspaceExitProvider value={(go) => exits.push(go)}>
+          <Routes>
+            <Route path="*" element={<><Navbar /><LocationProbe /></>} />
+          </Routes>
+        </WorkspaceExitProvider>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: /^projects$/i }))
+
+    // Handed to the guard, and NOT performed: the guard decides whether it happens.
+    expect(exits).toHaveLength(1)
+    expect(screen.getByTestId('where').textContent).toBe('/projects/p1')
+
+    // …and running it is what actually navigates, so nothing is lost when the guard says yes.
+    act(() => exits[0]())
+    expect(screen.getByTestId('where').textContent).toBe('/projects')
+  })
+
+  it('★ navigates straight through on a page with no workspace', () => {
+    // Every other page in the portal renders this navbar. Without the pass-through default, this
+    // unit would put a guard in front of navigation everywhere.
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route path="*" element={<><Navbar /><LocationProbe /></>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: /^projects$/i }))
+
+    expect(screen.getByTestId('where').textContent).toBe('/projects')
   })
 })

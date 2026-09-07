@@ -7,13 +7,24 @@ and externalized-then-rehydrated binaries. Equality is asserted on CANONICAL DUM
 2.5.0 validates an image `BinaryContent` back as its `BinaryImage` subclass, so dataclass
 equality is class-strict while the wire shape is identical — the dump IS the contract.
 
+REASONING BLOCKS ARE THE ONE EXEMPTION to "redact every string in the tree", and they own the
+other seam here too. A thinking part's `content` and `signature` reach the row VERBATIM,
+because the provider verifies the signature against the content when the block is replayed on
+the next turn and the masker is tuned to over-redact; nothing is lost by exempting them,
+because a reasoning block is never projected, never framed and never sent to the browser. At
+the load seam the rule inverts: a thinking part that has lost its signature is DROPPED rather
+than replayed, because the library sends an unsigned block's content back as visible
+assistant text.
+
 Also pinned here, against the installed pydantic-ai (upgrade tripwires):
   * the CachePoint hazard — an unknown dict inside user content validates SILENTLY as
     `CachePoint`, which is exactly why the loader's marker swap must be exhaustive;
   * the Anthropic wire mapping of a marker followed by a user prompt — consecutive user-role
     messages in order (marker first; the API folds same-role neighbours);
   * the no-prompt-run gotcha — `agent.run(None, history-ending-in-marker)` adopts the marker
-    as the prompt (so the turn engine must never start a run without a real user prompt).
+    as the prompt (so the turn engine must never start a run without a real user prompt);
+  * the `<thinking>`-tag fallback — an unsigned reasoning block maps to a VISIBLE assistant
+    text block, which is the failure the load-seam drop exists to prevent.
 """
 
 from __future__ import annotations
@@ -32,14 +43,17 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import FunctionModel
 
-from src.db.models.conversation import ConversationMode
+from src.core.redaction import redact_secrets
+from src.db.models.conversation import ChatKind
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
+from src.services.agent.mode_prompts import workspace_note
 from src.services.messages import store
 from src.services.messages.store import (
     ATTACHMENT_REF_KIND,
@@ -47,12 +61,10 @@ from src.services.messages.store import (
     SeqContentionError,
     UnattributedBinaryError,
     append_batch,
-    append_mode_switch_marker,
     attachment_rehydrator,
     dump_for_row,
     load_history,
     load_rows,
-    mode_switch_marker_text,
     repair_dangling_tool_calls,
 )
 from tests.factories import ConversationFactory, UserFactory
@@ -103,7 +115,7 @@ async def test_multi_turn_history_round_trips_identically(db_session, thread):
         conversation_id=conversation.id,
         messages=history,
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
     loaded = await load_history(
         db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
@@ -131,7 +143,7 @@ async def test_batches_concatenate_in_seq_order(db_session, thread):
         conversation_id=conversation.id,
         messages=first,
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.ASK,
+        kind=ChatKind.PLAN,
     )
     await append_batch(
         db_session,
@@ -139,7 +151,7 @@ async def test_batches_concatenate_in_seq_order(db_session, thread):
         conversation_id=conversation.id,
         messages=second,
         entry_kind=MessageEntryKind.STEP,
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
     loaded = await load_history(
         db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
@@ -172,7 +184,7 @@ async def test_dsn_in_tool_return_is_stored_redacted(db_session, thread):
         conversation_id=conversation.id,
         messages=history,
         entry_kind=MessageEntryKind.STEP,
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
     row = await db_session.get(Message, stored.id)
     assert row is not None
@@ -203,11 +215,216 @@ async def test_dsn_in_tool_args_is_stored_redacted(db_session, thread):
         conversation_id=conversation.id,
         messages=history,
         entry_kind=MessageEntryKind.STEP,
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
     row = await db_session.get(Message, stored.id)
     assert row is not None
     assert password not in str(row.payload)
+
+
+# --- reasoning: verbatim to the row, dropped when it cannot be replayed -------
+
+
+def test_a_reasoning_block_reaches_the_row_verbatim_while_the_prose_beside_it_is_redacted():
+    """The masker's ONE exemption, next to the thing that proves it is scoped rather than a hole.
+
+    An agent writing code narrates in credential-shaped strings as a matter of course: the
+    environment variable it must not put in the browser bundle, the token assignment it thought
+    better of, the API key it moved to the server. `redact_secrets` matches on SHAPE and is
+    deliberately tuned to over-redact — which costs nothing on a string headed for a screen and
+    costs the whole turn here, because the provider verifies a reasoning block's signature
+    against its content when the block is replayed and one rewritten character fails that check.
+    So the block goes to the row byte-for-byte, while the sentence the agent actually SAID —
+    carrying the very same token — is masked exactly as it always was.
+
+    Mutation check: drop `content` from `_THINKING_VERBATIM`, or the `part_kind` guard that
+    selects it, and the reasoning arrives as the masked string this test compares against.
+    """
+    reasoning = (
+        "The template reads BIAL_DATA_BASE_URL at boot. Setting "
+        "BIAL_APP_TOKEN=tok_9f2b1c4d7e in the env file would ship it to the browser, so I will "
+        'keep apiKey = "sk_live_51H8xQ2abcdefghijkl" on the server instead.'
+    )
+    # A signature is an opaque blob and the masker matches on shape, so a `bial_…`-shaped run
+    # inside one is a collision waiting to happen rather than a contrivance. It is written to be
+    # a string the masker demonstrably rewrites because a signature it happened to leave alone
+    # would prove nothing at all about the exemption.
+    signature = "ErUBCkYIBBgCIkAxbial_9f2b1c4d7e0a1b2c3d4e/QQ=="
+    spoken = 'I moved apiKey = "sk_live_51H8xQ2abcdefghijkl" to the server, so nothing leaks.'
+    # The premise both assertions below rest on: these are strings the masker MANGLES. Without
+    # this, "arrived intact" could hold for text the masker never had an opinion about.
+    assert redact_secrets(reasoning) != reasoning
+    assert redact_secrets(signature) != signature
+
+    [dumped] = dump_for_row(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=reasoning,
+                        signature=signature,
+                        provider_name="anthropic",
+                        provider_details={"note": "BIAL_APP_TOKEN=tok_9f2b1c4d7e"},
+                    ),
+                    TextPart(content=spoken),
+                ]
+            )
+        ]
+    )
+    thinking, text = dumped["parts"]
+    assert thinking["content"] == reasoning
+    assert thinking["signature"] == signature
+    # The exemption is by FIELD, not "any string under a thinking part": a sibling field on the
+    # SAME part is masked like anything else, so a future user-facing field cannot inherit the
+    # exemption merely by being added there.
+    assert thinking["provider_details"] == {"note": "BIAL_APP_TOKEN=***"}
+    # And the prose beside it is redacted as ever — while still reading as a sentence, which is
+    # what says the row holds a masked line rather than nothing at all.
+    assert "sk_live_51H8xQ2abcdefghijkl" not in text["content"]
+    assert text["content"] == 'I moved apiKey = "***" to the server, so nothing leaks.'
+
+
+async def test_a_provider_redacted_reasoning_block_survives_the_round_trip(db_session, thread):
+    """`redacted_thinking` is reasoning the PROVIDER itself withheld: pydantic-ai maps that block
+    to a `ThinkingPart` carrying the id `redacted_thinking`, NO content whatsoever, and the
+    opaque blob in `signature` — which is the entire block. It has to come back exactly as it
+    went in, because the next turn replays it and Anthropic refuses a tool call that is not
+    preceded by the reasoning that led to it; losing the block wedges the turn that follows.
+
+    Mutation check: key the load seam's drop on the block's content instead of its signature and
+    this one — empty content, signature intact — is thrown away as if it were broken.
+    """
+    user, conversation = thread
+    signature = "ErUBCkYIBBgCIkAxRedactedBlobPayload/9f2b1c4d=="
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="add a filter to the visitors table")]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    id="redacted_thinking",
+                    content="",
+                    signature=signature,
+                    provider_name="anthropic",
+                ),
+                ToolCallPart(
+                    tool_name="read_file", args={"path": "app/page.tsx"}, tool_call_id="r"
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="read_file", content="export default 1", tool_call_id="r")
+            ]
+        ),
+    ]
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=history,
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.BUILD,
+    )
+    loaded = await load_history(
+        db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
+    )
+    (block,) = [
+        part
+        for message in loaded
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ThinkingPart)
+    ]
+    assert block.id == "redacted_thinking"
+    assert block.content == ""
+    assert block.signature == signature  # the blob IS the block; a rewrite is a rejected turn
+    # …and the block still sits in front of the tool call it belongs to, which is the shape the
+    # provider actually checks.
+    assert _dump(loaded) == _dump(history)
+
+
+async def test_reasoning_with_no_signature_is_dropped_at_the_load_seam(db_session, thread):
+    """Fail closed: a reasoning block that has lost its signature can no longer be replayed AS
+    reasoning, and the library's fallback is not to skip it — it sends the content back as an
+    ordinary assistant TEXT block wrapped in `<thinking>` tags (pinned below). That would turn a
+    block the citizen was never meant to see into part of the model's own visible transcript for
+    the rest of the conversation, silently. Losing the reasoning and keeping the transcript is
+    the strictly better trade, so the load seam drops it.
+
+    Nothing should ever reach this — the persist seam writes what the library serialized and the
+    masker leaves signatures alone — but a row written before that exemption, or a payload edited
+    by hand, is exactly the case it exists for.
+    """
+    user, conversation = thread
+    reasoning = "The citizen never sees this. BIAL_APP_TOKEN=tok_9f2b1c4d7e is server-only."
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content="add a filter")]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=reasoning),  # no signature — unreplayable
+                    TextPart(content="I added the filter."),
+                ]
+            ),
+        ],
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.BUILD,
+    )
+    loaded = await load_history(
+        db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
+    )
+    assert not [
+        part
+        for message in loaded
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ThinkingPart)
+    ]
+    assert reasoning not in str(_dump(loaded))
+    # LIVENESS — the absence above must be the drop doing its job, not the whole history failing
+    # to load. The prompt and the words that rode beside the reasoning both survive.
+    (text,) = [
+        part
+        for message in loaded
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, TextPart)
+    ]
+    assert text.content == "I added the filter."
+    assert any(
+        isinstance(message, ModelRequest)
+        and any(isinstance(part, UserPromptPart) for part in message.parts)
+        for message in loaded
+    )
+
+
+async def test_a_response_emptied_by_the_reasoning_drop_leaves_nothing_on_the_wire():
+    """The hazard the drop introduces, closed by the mapping rather than by us.
+
+    A response whose ONLY part was an unsigned reasoning block comes out of the load seam with
+    zero parts — and this file's other rule is that an empty-parts message is poison, because
+    Anthropic rejects a message with an empty content block. The mapping omits such a message
+    entirely instead of sending an empty one, so the drop cannot wedge a turn. If an upgrade
+    changes that, the load seam has to start dropping the emptied response too.
+    """
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    model = AnthropicModel("claude-sonnet-4-5", provider=AnthropicProvider(api_key="offline"))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="add a filter")]),
+        ModelResponse(parts=[]),  # what the drop leaves behind
+        ModelRequest(parts=[UserPromptPart(content="and a date column")]),
+    ]
+    params = model.customize_request_parameters(ModelRequestParameters())
+    _, wire = await model._map_message(messages, params, {})  # noqa: SLF001 — pinned-version seam
+    # Both real prompts ride; the emptied response is simply not there (they fold as neighbours).
+    assert [message["role"] for message in wire] == ["user", "user"]
+    assert "add a filter" in str(wire[0]) and "and a date column" in str(wire[1])
 
 
 # --- attachment externalization + rehydration ---------------------------------
@@ -251,7 +468,7 @@ async def test_binary_stores_reference_not_bytes_and_rehydrates(db_session, thre
         conversation_id=conversation.id,
         messages=history,
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
     row = await db_session.get(Message, stored.id)
     assert row is not None
@@ -316,7 +533,7 @@ async def test_many_attachments_rehydrate_in_one_query_and_concurrent_reads(
         conversation_id=conversation.id,
         messages=history,
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
 
     in_flight = {"now": 0, "peak": 0}
@@ -359,7 +576,7 @@ async def test_a_row_from_a_future_schema_version_is_refused_not_guessed_at(db_s
         conversation_id=conversation.id,
         messages=[ModelResponse(parts=[TextPart(content="written by a newer server")])],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.ASK,
+        kind=ChatKind.PLAN,
     )
     await db_session.execute(
         sa.update(Message).where(Message.id == stored.id).values(schema_version=SCHEMA_VERSION + 1)
@@ -387,7 +604,7 @@ async def test_binary_without_identifier_is_a_producer_bug(db_session, thread):
                 )
             ],
             entry_kind=MessageEntryKind.TURN,
-            mode=ConversationMode.PLAN,
+            kind=ChatKind.PLAN,
         )
 
 
@@ -409,7 +626,7 @@ async def test_missing_attachment_row_fails_rehydration_loudly(db_session, threa
             )
         ],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
     with pytest.raises(AttachmentRehydrationError):
         await load_history(
@@ -531,12 +748,15 @@ def _assert_anthropic_pairing(messages: list[ModelMessage]) -> None:
             }
         elif isinstance(message, ModelRequest):
             for part in message.parts:
-                rides_as_tool_result = isinstance(part, ToolReturnPart) or (
+                # Written inline rather than through a `rides_as_tool_result` flag so the
+                # isinstance narrowing survives to the assert: both arms carry `tool_call_id`,
+                # the wider part union does not, and a bare `RetryPromptPart` (no tool name) is
+                # a user message rather than a tool answer.
+                if isinstance(part, ToolReturnPart) or (
                     isinstance(part, RetryPromptPart) and part.tool_name is not None
-                )
-                if rides_as_tool_result:
-                    assert part.tool_call_id in seen_calls, (  # type: ignore[union-attr]
-                        f"orphan tool answer {part.tool_call_id!r} would 400 on the wire"  # type: ignore[union-attr]
+                ):
+                    assert part.tool_call_id in seen_calls, (
+                        f"orphan tool answer {part.tool_call_id!r} would 400 on the wire"
                     )
 
 
@@ -686,7 +906,7 @@ async def test_orphaned_tool_result_in_stored_history_loads_unbricked(db_session
             ModelResponse(parts=[TextPart(content="I added the filter.")]),
         ],
         entry_kind=MessageEntryKind.STEP,
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
     loaded = await load_history(
         db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
@@ -724,7 +944,7 @@ async def test_read_tool_return_survives_persist_and_reload(db_session, thread):
             ModelResponse(parts=[TextPart(content="The file exports a default.")]),
         ],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.ASK,
+        kind=ChatKind.PLAN,
     )
     loaded = await load_history(
         db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
@@ -752,7 +972,7 @@ async def test_dangling_call_in_stored_history_loads_repaired(db_session, thread
             )
         ],
         entry_kind=MessageEntryKind.STEP,
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
     loaded = await load_history(
         db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
@@ -778,7 +998,7 @@ async def test_stale_seq_retries_without_silent_loss(db_session, thread, monkeyp
         conversation_id=conversation.id,
         messages=[ModelRequest(parts=[UserPromptPart(content="first")])],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
 
     real_head = store._head_seq
@@ -798,7 +1018,7 @@ async def test_stale_seq_retries_without_silent_loss(db_session, thread, monkeyp
         conversation_id=conversation.id,
         messages=[ModelRequest(parts=[UserPromptPart(content="second")])],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
     assert stored.seq == 1  # gap-free: retried onto the real head, nothing lost
     rows = await load_rows(db_session, user_id=user.id, conversation_id=conversation.id)
@@ -815,7 +1035,7 @@ async def test_seq_contention_budget_exhausted_raises_with_nothing_written(
         conversation_id=conversation.id,
         messages=[ModelRequest(parts=[UserPromptPart(content="first")])],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.PLAN,
+        kind=ChatKind.PLAN,
     )
 
     async def always_stale(db, conversation_id):
@@ -829,7 +1049,7 @@ async def test_seq_contention_budget_exhausted_raises_with_nothing_written(
             conversation_id=conversation.id,
             messages=[ModelRequest(parts=[UserPromptPart(content="doomed")])],
             entry_kind=MessageEntryKind.TURN,
-            mode=ConversationMode.PLAN,
+            kind=ChatKind.PLAN,
         )
     rows = await load_rows(db_session, user_id=user.id, conversation_id=conversation.id)
     assert [row.seq for row in rows] == [0]  # the loser wrote nothing
@@ -838,7 +1058,14 @@ async def test_seq_contention_budget_exhausted_raises_with_nothing_written(
 # --- mode-switch markers ------------------------------------------------------
 
 
-async def test_marker_round_trips_hidden_from_projection_visible_to_model(db_session, thread):
+async def test_a_hidden_row_is_hidden_by_the_row_predicate_not_by_its_payload(db_session, thread):
+    """The property the retired mode-switch marker used to demonstrate here, kept.
+
+    Hiddenness lives on the ROW (`visibility`), never in the payload — so the model sees a
+    hidden row like any other message while the projection filters it with a WHERE clause. The
+    marker is gone with the switch that wrote it (its inertness guard is
+    `tests/api/v1/conversations/test_mode_switch.py`); a hidden system row makes the same point
+    and is still written today."""
     user, conversation = thread
     await append_batch(
         db_session,
@@ -846,39 +1073,29 @@ async def test_marker_round_trips_hidden_from_projection_visible_to_model(db_ses
         conversation_id=conversation.id,
         messages=[ModelRequest(parts=[UserPromptPart(content="hello")])],
         entry_kind=MessageEntryKind.TURN,
-        mode=ConversationMode.ASK,
+        kind=ChatKind.PLAN,
     )
-    await append_mode_switch_marker(
+    await append_batch(
         db_session,
         user_id=user.id,
         conversation_id=conversation.id,
-        old_mode=ConversationMode.ASK,
-        new_mode=ConversationMode.WRITE,
+        messages=[ModelRequest(parts=[UserPromptPart(content="a private aside")])],
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.PLAN,
+        visibility=MessageVisibility.HIDDEN,
     )
-    # The MODEL sees the marker (load_history includes hidden rows)…
+    # The MODEL sees it (load_history ignores visibility)…
     history = await load_history(
         db_session, user_id=user.id, conversation_id=conversation.id, rehydrate=_no_refs
     )
-    assert "[mode changed: ask → write]" in str(_dump(history))
-    # …the UI projection does not (hiddenness is the ROW predicate, not a payload property).
+    assert "a private aside" in str(_dump(history))
+    # …the UI read does not, unless it asks for hidden rows explicitly.
     visible = await load_rows(db_session, user_id=user.id, conversation_id=conversation.id)
-    assert all(row.entry_kind is not MessageEntryKind.MODE_SWITCH for row in visible)
+    assert all(row.visibility is MessageVisibility.VISIBLE for row in visible)
     everything = await load_rows(
         db_session, user_id=user.id, conversation_id=conversation.id, include_hidden=True
     )
-    marker_rows = [row for row in everything if row.entry_kind is MessageEntryKind.MODE_SWITCH]
-    assert len(marker_rows) == 1
-    assert marker_rows[0].visibility is MessageVisibility.HIDDEN
-
-
-def test_marker_text_is_direction_aware():
-    up = mode_switch_marker_text(ConversationMode.PLAN, ConversationMode.WRITE)
-    assert up == "[mode changed: plan → write]"  # upgrades stay minimal
-    down = mode_switch_marker_text(ConversationMode.WRITE, ConversationMode.ASK)
-    # The downgrade names the capability change factually (the one sanctioned exception to
-    # "no absent-tool prose" — the contradiction exists exactly here).
-    assert "build tools" in down and "not available" in down.lower()
-    assert "switch back to Write mode" in down
+    assert len(everything) == len(visible) + 1
 
 
 # --- pinned upstream behaviors (pydantic-ai 2.5.0 tripwires) ------------------
@@ -931,40 +1148,43 @@ def test_unswapped_ref_marker_fails_loud_not_silent():
         ModelMessagesTypeAdapter.validate_python(raw)
 
 
-async def test_marker_then_prompt_maps_to_ordered_user_messages_on_the_anthropic_wire():
-    """The wire contract the marker design rests on: a marker request followed by the next
-    user request maps to consecutive user-role messages IN ORDER (marker first). The Anthropic
-    API accepts and folds consecutive same-role messages, so the model reads the marker as
-    part of the same turn, positioned exactly where the switch happened."""
+async def test_an_injected_note_then_the_prompt_maps_to_ordered_user_messages_on_the_wire():
+    """The wire contract every EPHEMERAL INJECTED NOTE rests on, re-pointed from the retired
+    mode-switch marker to the note that actually rides today.
+
+    The turn engine appends the workspace note to `message_history` as a `user`-role request and
+    then passes this turn's prompt separately, so two consecutive user-role messages reach the
+    wire. The Anthropic API accepts and folds them, IN ORDER — which is what makes the note read
+    as context for the prompt that follows rather than as a message the user sent afterwards.
+    The marker is gone; this contract is not, because the note uses it."""
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     model = AnthropicModel("claude-sonnet-4-5", provider=AnthropicProvider(api_key="offline"))
+    note = workspace_note(serving=True, still_the_template=False)
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content="build me an app")]),
         ModelResponse(parts=[TextPart(content="done")]),
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=mode_switch_marker_text(ConversationMode.PLAN, ConversationMode.WRITE)
-                )
-            ]
-        ),
+        ModelRequest(parts=[UserPromptPart(content=note)]),
         ModelRequest(parts=[UserPromptPart(content="add a dashboard")]),
     ]
     params = model.customize_request_parameters(ModelRequestParameters())
     _, wire = await model._map_message(messages, params, {})  # noqa: SLF001 — pinned-version seam
     roles = [message["role"] for message in wire]
     assert roles == ["user", "assistant", "user", "user"]
-    assert "mode changed" in str(wire[2])
+    assert "checked this app's workspace just now" in str(wire[2])
     assert "add a dashboard" in str(wire[3])
 
 
-async def test_no_prompt_run_adopts_trailing_marker_as_prompt():
-    """THE GOTCHA (pinned): running with no user prompt while a marker is the last history
-    message makes the model answer the MARKER. The turn engine must always pass a real user
-    prompt; this test is the tripwire that keeps that rule honest."""
+async def test_no_prompt_run_adopts_a_trailing_injected_note_as_the_prompt():
+    """THE GOTCHA (pinned), re-pointed from the retired marker to the note that rides today.
+
+    Running with no user prompt while an injected note is the last history message makes the
+    model answer the NOTE. The turn engine must always pass a real user prompt; this is the
+    tripwire that keeps that rule honest, and it matters more now than it did with the marker,
+    because the workspace note is appended on EVERY turn that pinned a workspace rather than
+    only at a switch."""
     seen: list[list[ModelMessage]] = []
 
     def capture(messages, info):
@@ -972,17 +1192,13 @@ async def test_no_prompt_run_adopts_trailing_marker_as_prompt():
         return ModelResponse(parts=[TextPart(content="ok")])
 
     agent = Agent(FunctionModel(capture))
-    marker = ModelRequest(
-        parts=[
-            UserPromptPart(
-                content=mode_switch_marker_text(ConversationMode.ASK, ConversationMode.WRITE)
-            )
-        ]
+    note = ModelRequest(
+        parts=[UserPromptPart(content=workspace_note(serving=False, still_the_template=None))]
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content="real question")]),
         ModelResponse(parts=[TextPart(content="answer")]),
-        marker,
+        note,
     ]
     result = await agent.run(None, message_history=history)
     assert result is not None
@@ -990,8 +1206,45 @@ async def test_no_prompt_run_adopts_trailing_marker_as_prompt():
     assert isinstance(last, ModelRequest)
     (part,) = last.parts
     assert isinstance(part, UserPromptPart)
-    # The marker IS the effective prompt — exactly what a caller must never let happen.
-    assert "mode changed" in str(part.content)
+    # The note IS the effective prompt — exactly what a caller must never let happen.
+    assert "checked this app's workspace just now" in str(part.content)
+
+
+async def test_unsigned_reasoning_maps_to_a_visible_assistant_text_block():
+    """WHY the load seam drops an unsigned reasoning block rather than keeping it, pinned against
+    the installed pydantic-ai.
+
+    A `ThinkingPart` rides the wire as a `thinking` block only while it still carries the
+    signature its provider issued. Without one the mapping takes the other branch and emits the
+    reasoning CONTENT as an ordinary assistant TEXT block wrapped in `<thinking>` tags — private
+    reasoning promoted into the model's own visible transcript, silently and permanently. If an
+    upgrade changes this branch, `_without_broken_reasoning` can be revisited; until then the
+    drop is the only safe reading.
+    """
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    reasoning = "Private: the token lives only in the server env."
+    model = AnthropicModel("claude-sonnet-4-5", provider=AnthropicProvider(api_key="offline"))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="add a filter")]),
+        ModelResponse(
+            parts=[ThinkingPart(content=reasoning), TextPart(content="I added the filter.")]
+        ),
+    ]
+    params = model.customize_request_parameters(ModelRequestParameters())
+    _, wire = await model._map_message(messages, params, {})  # noqa: SLF001 — pinned-version seam
+    assistant = wire[1]
+    assert assistant["role"] == "assistant"
+    # Stringified rather than indexed, because a mapped block is a typed union of two dozen
+    # shapes. What matters is the pair: the reasoning is on the wire, wrapped in the tags, as a
+    # TEXT block — indistinguishable from something the model said out loud — and no `thinking`
+    # block was emitted for it at all.
+    rendered = str(assistant["content"])
+    assert reasoning in rendered and "<thinking>" in rendered
+    assert "'type': 'text'" in rendered
+    assert "'type': 'thinking'" not in rendered
 
 
 def test_dump_strips_run_instructions_from_the_payload():

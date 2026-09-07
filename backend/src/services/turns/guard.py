@@ -1,8 +1,10 @@
-"""The ONE per-conversation in-flight guard (U7 → U10).
+"""The ONE per-conversation in-flight guard.
 
-One reply at a time per conversation, whoever generates it: the U7 relay and the U10 turn
-engine both claim HERE, so a conversation can never run a relay turn and an engine turn
-concurrently during the U10→U13 window where both surfaces exist. Plain in-process set —
+One reply at a time per conversation. This was built when TWO surfaces could generate one —
+the relay and the turn engine — so that a conversation could never run one of each at once.
+That window is closed: the relay is retired and `claim_conversation` has a single caller
+(`turns/engine.py`). The guard is kept because the property it defends is unchanged — two
+concurrent turns on one conversation interleave into one transcript. Plain in-process set —
 the single-replica invariant `SessionManager._active_by_user` leans on (one process is the
 sole writer; absent in-process state is authoritative). The claimer's OWN completion path
 releases; the guard never expires a claim on its own (a leak here is a bug in the caller's
@@ -33,6 +35,9 @@ def release_conversation(conversation_id: uuid.UUID) -> None:
 
 
 def conversation_is_mid_reply(conversation_id: uuid.UUID) -> bool:
-    """Is a reply being generated right now? (The mode switch is only legal BETWEEN
-    turns — never mid-stream.)"""
+    """Is a reply being generated right now?
+
+    One reply at a time per conversation: a second send while the first is still streaming
+    would interleave two runs writing the same thread. (It once also gated the mode switch,
+    which was legal only between turns; that route is gone, this invariant is not.)"""
     return conversation_id in _mid_reply

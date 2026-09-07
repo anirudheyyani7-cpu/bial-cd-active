@@ -45,17 +45,18 @@ from src.services.build_sessions.manager import PreviewState as PreviewState
 from src.services.build_sessions.manager import (
     SandboxReclaimBlockedError as SandboxReclaimBlockedError,
 )
+from src.services.build_sessions.manager import (
+    SandboxUnreachableError as SandboxUnreachableError,
+)
 from src.services.build_sessions.manager import SaveOutcome as SaveOutcome
 from src.services.build_sessions.manager import SaveState as SaveState
 from src.services.build_sessions.manager import SessionManager as SessionManager
 from src.services.build_sessions.manager import (
     SnapshotUnavailableError as SnapshotUnavailableError,
 )
+from src.services.build_sessions.manager import StopOutcome as StopOutcome
 from src.services.build_sessions.manager import app_name_for as app_name_for
 from src.services.build_sessions.manager import get_session_manager as get_session_manager
-from src.services.build_sessions.manager import (
-    reset_session_manager_for_tests as reset_session_manager_for_tests,
-)
 from src.services.build_sessions.manager import (
     set_session_manager_for_tests as set_session_manager_for_tests,
 )

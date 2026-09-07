@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm.session import JoinTransactionMode  # noqa: E402
 from sqlalchemy.pool import NullPool  # noqa: E402
 
 from src.config import settings  # noqa: E402
@@ -104,12 +105,33 @@ def _salt_every_provisioned_app_database():
 
 
 @pytest.fixture
-async def db_session(test_engine):
+async def db_session(test_engine, request):
     # Each test runs inside a transaction that is rolled back afterwards, so tests
     # never see each other's writes.
+    #
+    # `join_transaction_mode="create_savepoint"` is what makes a ROUTE's own `db.rollback()`
+    # testable at all. Without it the session joins the outer transaction directly, so a route
+    # that rolls back — the concurrent-insert collision arms in `turns.py` and `transition.py`
+    # are the two — unwinds the whole test transaction and everything the fixtures set up goes
+    # with it. The arm is otherwise unreachable by the unit suite, which is how both of them
+    # shipped with no coverage for exactly the branch that only runs when something broke.
+    #
+    # OPT-IN, PER TEST, AND THAT IS THE POINT. Making it the shape of EVERY test looks free and
+    # is not: a savepoint-joined session provisions its connection lazily, so any test whose
+    # DETACHED task touches the session while the test itself is mid-statement stops being a
+    # benign interleave and becomes `InvalidRequestError: this session is provisioning a new
+    # connection`. Eight deploy tests went red that way — tests about save-and-publish, which
+    # have no opinion about transaction shape and should not have to. Two tests need the
+    # savepoint — both of them on `turns.py`'s collision arm — and they ask for it with
+    # `@pytest.mark.route_rollback`; the other ~3,700 keep the shape they were written against.
+    join_mode: JoinTransactionMode = (
+        "create_savepoint"
+        if request.node.get_closest_marker("route_rollback") is not None
+        else "conditional_savepoint"  # SQLAlchemy's own default: the shape every other test had
+    )
     async with test_engine.connect() as conn:
         transaction = await conn.begin()
-        session = AsyncSession(bind=conn, expire_on_commit=False)
+        session = AsyncSession(bind=conn, expire_on_commit=False, join_transaction_mode=join_mode)
         yield session
         await session.close()
         await transaction.rollback()
@@ -162,3 +184,30 @@ def fake_storage():
     _storage_accessor._backend_singleton = store
     yield store
     _storage_accessor._backend_singleton = None
+
+
+async def forget_every_harness_count() -> None:
+    """Empty `harness_counts` in its OWN session, because `count(...)` writes in one too.
+
+    That is not a test smell, it is the feature under test: a count is a historical fact about
+    something that HAPPENED and must not disappear because the surrounding transaction rolled
+    back. The consequence is that these rows escape the per-test transaction entirely, so a test
+    that reads them has to start from a known-empty table rather than from a rollback that cannot
+    reach them.
+    """
+    from sqlalchemy import delete
+
+    from src.db.base import async_session_factory
+    from src.db.models.harness_counter import HarnessCount
+
+    async with async_session_factory() as db:
+        await db.execute(delete(HarnessCount))
+        await db.commit()
+
+
+@pytest.fixture
+async def empty_harness_counts():
+    """An empty `harness_counts`, before and after. See `forget_every_harness_count`."""
+    await forget_every_harness_count()
+    yield
+    await forget_every_harness_count()

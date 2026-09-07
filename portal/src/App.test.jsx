@@ -1,20 +1,37 @@
 /**
- * The route table.
+ * The route table, and the workspace shell's wiring.
  *
- * Project-first put every chat on a flat `/chat/:id`, and the standalone App Builder /
- * Sandbox scheme is now fully retired: `/workspace*`, `/sandbox`, and `/builder` have NO
- * routes and NO redirect shims. Any such stray URL falls through to the `*` catch-all
- * (→ /login) rather than being carried anywhere.
+ * Project-first put every chat on a flat `/chat/:id`, and the standalone App Builder / Sandbox
+ * scheme is now fully retired: `/workspace*`, `/sandbox`, and `/builder` have NO routes and NO
+ * redirect shims. Any such stray URL falls through to the `*` catch-all (→ /login) rather than
+ * being carried anywhere.
  *
- * Every page is stubbed: this file asserts routing, nothing else. RequireAuth is
- * stubbed to render its children so no session is needed.
+ * WHY THE SHELL'S CLAIM IS ASSERTED HERE AND NOT IN A COMPONENT TEST. The whole of R8 rests on one
+ * structural fact — that `/projects/:projectId` and `/chat/:chatId` are children of a pathless
+ * layout route, so React Router renders the same shell element at the same position across a move
+ * between them and only the outlet content is replaced. A hand-built route table inside a
+ * component test would prove the component and not the wiring, and the wiring is the part that can
+ * be got wrong. This file renders the REAL `<App/>` and drives it by URL, so the thing under test
+ * is the table the product ships.
+ *
+ * Every page is stubbed: this file asserts routing, nothing else. `RequireAuth` is NOT stubbed —
+ * where the guard sits relative to the shell is one of the claims (an unauthenticated visit must
+ * not paint the workspace frame around a redirect), so it runs for real against a mocked session.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
+
+const h = vi.hoisted(() => ({
+  /** Flipped per test. The guard reads this synchronously on every navigation. */
+  authed: true,
+  bootstrap: vi.fn(),
+  /** Every destination the workspace scenarios move between. */
+  destinations: ['/projects/p1', '/projects/p2', '/chat/abc', '/chat/in-project-a', '/chat/in-project-b'],
+}))
 
 vi.mock('./utils/auth', () => ({
-  isAuthenticated: () => true,
-  bootstrapSession: async () => ({ id: 'u1' }),
+  isAuthenticated: () => h.authed,
+  bootstrapSession: (...a) => h.bootstrap(...a),
 }))
 
 // `vi.mock` factories are hoisted above every top-level binding, so the stub helper has
@@ -23,21 +40,52 @@ const { page } = vi.hoisted(() => ({
   page: (name) => ({ default: () => <div data-testid={name} /> }),
 }))
 vi.mock('./pages/LoginPage', () => page('login'))
-vi.mock('./pages/Dashboard', () => page('dashboard'))
 vi.mock('./pages/HelpPage', () => page('help'))
 vi.mock('./pages/AdminPage', () => page('admin'))
 vi.mock('./pages/ProjectsPage', () => page('projects'))
-vi.mock('./pages/ProjectPage', () => page('project-home'))
-vi.mock('./pages/ChatRoute', () => ({
-  // Named so lint can see this stub IS a component — it calls `useParams`, and a hook inside
-  // an anonymous `default: () => …` reads as a plain function, which may not call hooks.
-  default: function ChatRouteStub() {
-    const { chatId } = useParams()
-    return <div data-testid="chat-route">{chatId}</div>
-  },
+// THE TWO WORKSPACE STUBS CARRY LINKS, so the shell's persistence claim is driven the way the
+// product drives it — a router navigation from inside the outlet. Pushing onto `window.history`
+// from outside would not reach the router at all, and a test that "navigated" that way would
+// assert that an element it never re-rendered had not changed.
+vi.mock('./pages/ProjectPage', async () => {
+  const { Link } = await import('react-router-dom')
+  return {
+    default: function ProjectPageStub() {
+      return (
+        <div data-testid="project-home">
+          {h.destinations.map((to) => (
+            <Link key={to} to={to}>{`go ${to}`}</Link>
+          ))}
+        </div>
+      )
+    },
+  }
+})
+vi.mock('./pages/ChatRoute', async () => {
+  const { Link, useParams: useRouteParams } = await import('react-router-dom')
+  return {
+    // Named so lint can see this stub IS a component — it calls `useParams`, and a hook inside
+    // an anonymous `default: () => …` reads as a plain function, which may not call hooks.
+    default: function ChatRouteStub() {
+      const { chatId } = useRouteParams()
+      return (
+        <div>
+          <div data-testid="chat-route">{chatId}</div>
+          {h.destinations.map((to) => (
+            <Link key={to} to={to}>{`go ${to}`}</Link>
+          ))}
+        </div>
+      )
+    },
+  }
+})
+// The shell itself is REAL — it is the subject. Only its navbar is stubbed, because the navbar
+// reads a session and a usage meter this file has neither of, and counting page frames does not
+// need the real one. It renders a marker so "exactly one navbar per address" stays assertable.
+vi.mock('./components/layout/Navbar', () => ({
+  default: () => <div data-testid="navbar" />,
 }))
 
-import { useParams } from 'react-router-dom'
 import App from './App'
 
 /** Drive the real <App/> (BrowserRouter) by setting the URL first. */
@@ -46,7 +94,18 @@ function renderAt(path) {
   return render(<App />)
 }
 
-beforeEach(() => vi.clearAllMocks())
+/** Navigate the SAME rendered app through the router, by clicking a link inside the outlet. */
+function goTo(path) {
+  fireEvent.click(screen.getByText(`go ${path}`))
+}
+
+const shell = () => screen.queryByTestId('workspace-grid')
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  h.authed = true
+  h.bootstrap.mockResolvedValue({ id: 'u1' })
+})
 afterEach(() => {
   cleanup()
   window.history.pushState({}, '', '/')
@@ -96,5 +155,184 @@ describe('App — the SPA must never claim /apps/*', () => {
     expect(screen.queryByTestId('chat-route')).toBeNull()
     expect(screen.queryByTestId('project-home')).toBeNull()
     expect(screen.getByTestId('login')).toBeTruthy()
+  })
+
+  it('and it is still outside the workspace layout, so no shell frames it', () => {
+    // The layout route is the natural place for somebody to "tidily" add `/apps/:appId` next to
+    // the two addresses it already holds. It must stay out of the table entirely.
+    renderAt('/apps/some-app-id')
+    expect(shell()).toBeNull()
+  })
+})
+
+describe('App — the workspace shell is one element across a move inside a project (AE4, the wiring half)', () => {
+  it('keeps the SAME shell element across project → chat → project; only the outlet content changes', () => {
+    renderAt('/projects/p1')
+    const frame = shell()
+    expect(frame).toBeTruthy()
+    expect(screen.getByTestId('project-home')).toBeTruthy()
+
+    goTo('/chat/abc')
+    expect(shell()).toBe(frame) // the same DOM node, not merely another one like it
+    expect(screen.getByTestId('chat-route').textContent).toBe('abc')
+    expect(screen.queryByTestId('project-home')).toBeNull()
+
+    goTo('/projects/p1')
+    expect(shell()).toBe(frame)
+    expect(screen.getByTestId('project-home')).toBeTruthy()
+  })
+
+  it('survives a move to a chat in a DIFFERENT project', () => {
+    // The shell is the workspace's frame, not one project's. What happens to the PANE in this
+    // case is the pane host's own scenario — a different project is a different app.
+    renderAt('/chat/in-project-a')
+    const frame = shell()
+
+    goTo('/chat/in-project-b')
+
+    expect(shell()).toBe(frame)
+    expect(screen.getByTestId('chat-route').textContent).toBe('in-project-b')
+  })
+
+  it('renders exactly one navbar and one frame at each address — no second page frame inside the outlet', () => {
+    // The regression this catches is the obvious one: a surface that kept its own root and navbar
+    // after the shell grew them, so the workspace paints two bars and two frames.
+    renderAt('/projects/p1')
+    expect(screen.getAllByTestId('navbar')).toHaveLength(1)
+    expect(screen.getAllByTestId('workspace-grid')).toHaveLength(1)
+
+    goTo('/chat/abc')
+    expect(screen.getAllByTestId('navbar')).toHaveLength(1)
+    expect(screen.getAllByTestId('workspace-grid')).toHaveLength(1)
+  })
+})
+
+describe('App — the auth guard sits ABOVE the shell', () => {
+  // WHERE THE GUARD SITS IS ONLY OBSERVABLE WHILE IT IS UNDECIDED, and that is worth stating
+  // because the obvious test does not work. A DENIED visit renders `<Navigate/>`, which changes
+  // the matched route — so the workspace disappears whichever side of the shell the guard is on,
+  // and a "no frame after a redirect" assertion passes against both arrangements. The state that
+  // discriminates is `loading`: a guard nested inside the layout paints the workspace's navbar and
+  // two-column frame around the auth spinner, so somebody who may not be signed in at all watches
+  // the frame of a workspace assemble around a spinner first. (Mutation-checked both ways.)
+  // THE WAIT IS FOUND BY ITS WORDS, not by a labelled glyph (`#210`). The spinner is
+  // `aria-hidden` now — `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, so
+  // a named-but-frozen circle was the whole of what this screen said — and the sentence carries it.
+  const wait = () => screen.queryByText(/Getting things ready/)
+
+  it.each([
+    ['/chat/abc', 'chat-route'],
+    ['/projects/p1', 'project-home'],
+  ])('while the session is still resolving at %s, no workspace frame is painted around the wait', (path, pageId) => {
+    h.authed = false
+    h.bootstrap.mockReturnValue(new Promise(() => {})) // never settles: hold the guard undecided
+
+    renderAt(path)
+
+    expect(wait()).toBeTruthy()
+    expect(shell()).toBeNull()
+    expect(screen.queryByTestId('navbar')).toBeNull()
+    expect(screen.queryByTestId(pageId)).toBeNull()
+  })
+
+  it('a denied visit lands on /login with nothing of the workspace left behind', async () => {
+    h.authed = false
+    h.bootstrap.mockResolvedValue(null)
+
+    renderAt('/chat/abc')
+    await waitFor(() => expect(screen.getByTestId('login')).toBeTruthy())
+
+    expect(shell()).toBeNull()
+    expect(screen.queryByTestId('navbar')).toBeNull()
+    expect(screen.queryByTestId('chat-route')).toBeNull()
+  })
+})
+
+describe('the welcome page is gone (#158 §7)', () => {
+  it.each(['/dashboard', '/enterprise', '/teamspace'])(
+    '%s lands on the project list instead of its own page',
+    (path) => {
+      // INERTNESS, not coverage. `/dashboard` was a welcome screen whose only job was a
+      // button to `/projects`; the list now carries the summary numbers that made the hop
+      // worth taking. The ADDRESS still resolves so links and bookmarks do not break — what
+      // went is the page, and this asserts nothing renders in its place.
+      renderAt(path)
+      expect(screen.getByTestId('projects')).toBeTruthy()
+      expect(screen.queryByTestId('dashboard')).toBeNull()
+    },
+  )
+})
+
+describe('App — addresses outside a project get no workspace frame', () => {
+  it.each([
+    ['/projects', 'projects'],
+    ['/help', 'help'],
+  ])('%s renders its page with no shell around it', (path, testId) => {
+    // The layout wraps the two addresses INSIDE a project and nothing else. A projects index or a
+    // dashboard inside the workspace frame would hold a pane for a project the user has left.
+    renderAt(path)
+    expect(screen.getByTestId(testId)).toBeTruthy()
+    expect(shell()).toBeNull()
+  })
+})
+
+describe('the boot / silent-refresh wait keeps WORDS and a busy state (#210)', () => {
+  /**
+   * Every live region in the document that is currently SAYING the given thing.
+   *
+   * Counted rather than merely looked for, because the two failure modes this arm has are
+   * opposite: none at all (the region was never mounted, or the sentence was deleted) and two
+   * (an `sr-only` copy added beside the visible sentence, which is that sentence read twice —
+   * `Announcer.tsx` records exactly that mistake). Only a COUNT catches both.
+   */
+  const regionsSaying = (re) =>
+    Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
+      (el) => re.test(el.textContent ?? ''),
+    )
+
+  it('★ says what it is doing, marks the box busy, and does it in exactly ONE region', () => {
+    // `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, so this full-bleed
+    // white screen used to be a stationary circle with no sentence anywhere on it.
+    h.authed = false
+    h.bootstrap.mockReturnValue(new Promise(() => {})) // never settles: hold the guard undecided
+
+    renderAt('/projects')
+
+    const sentence = screen.getByText('Getting things ready…')
+    expect(sentence).toBeTruthy()
+    // Said ONCE. Two nodes carrying it is one sentence rendered twice to anything reading the DOM.
+    expect(screen.getAllByText('Getting things ready…')).toHaveLength(1)
+    const regions = regionsSaying(/Getting things ready/)
+    expect(regions).toHaveLength(1)
+    expect(regions[0].contains(sentence)).toBe(true)
+    // A property, not a speech — it must not be the thing carrying the meaning.
+    expect(document.querySelector('[aria-busy="true"]')).toBeTruthy()
+  })
+
+  it('★ the region is already in the tree, EMPTY, before the text arrives — and it is the SAME node', () => {
+    // THE ARM ASM5 EXISTS FOR. A live region inserted together with its first text is missed
+    // entirely by several reader-and-browser combinations, so the region has to outlive the wait
+    // rather than arrive with it. Mount it together with its text — render it inside
+    // `AuthLoading`, or gate the whole `<div role="status">` on `status === 'loading'` — and the
+    // empty-region assertion below goes red. A leaf-component fix is precisely what breaks here.
+    renderAt('/projects/p1') // signed in: the guard is decided, no wait running
+
+    const before = screen.getByTestId('auth-wait')
+    expect(before.textContent).toBe('')
+    expect(regionsSaying(/Getting things ready/)).toHaveLength(0)
+    // Paired with a liveness assertion: a crashed render has an empty document, and "the region
+    // is empty" would pass against it.
+    expect(screen.getByTestId('project-home')).toBeTruthy()
+
+    // THE SILENT REFRESH: a later navigation finds the cached session gone. The guard is NOT
+    // remounted — both addresses are children of one pathless layout route — so this is the real
+    // product path in which a settled region flips back to waiting.
+    h.authed = false
+    h.bootstrap.mockReturnValue(new Promise(() => {}))
+    goTo('/chat/abc')
+
+    expect(screen.getByTestId('auth-wait')).toBe(before)
+    expect(before.textContent).toContain('Getting things ready…')
+    expect(regionsSaying(/Getting things ready/)).toHaveLength(1)
   })
 })

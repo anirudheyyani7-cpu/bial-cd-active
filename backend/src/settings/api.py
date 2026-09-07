@@ -122,7 +122,6 @@ class ApiSettings(CoreSettings):
     # because it feeds security surfaces. It is the one field that does not sit cleanly in one
     # tier — do not add a fifth tier to accommodate it.
     FRONTEND_URL: str = "http://localhost:5173"
-    BACKEND_URL: str = "http://localhost:8000"
 
     # Global per-user daily token cap — the effective limit when a user has no per-user override
     # row. `PositiveInt` fails a non-positive value at startup, so the daily gate can never be
@@ -231,6 +230,23 @@ class ApiSettings(CoreSettings):
                 "per-project databases must be configured in production: set "
                 "APP_DB__MAINTENANCE_DSN and APP_DB__ENCRYPTION_KEY."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_local_docker_builder_in_production(self) -> Self:
+        # `local_docker` exists only so a subscription that refuses ACR Tasks can still be
+        # tested end to end. It shells out to the host's docker daemon and needs a pushable
+        # registry credential in the control plane's own process — both of which the
+        # shipping path deliberately avoids. Reaching production with it set means a
+        # `.env` travelled further than intended, and failing at startup is a far better
+        # outcome than a BIAL host quietly building images.
+        if self.is_production and self.deploy is not None:
+            if self.deploy.image_builder != "acr_tasks":
+                raise ValueError(
+                    "DEPLOY__IMAGE_BUILDER must be 'acr_tasks' in production: "
+                    "'local_docker' is a development-only builder that shells out to the "
+                    "host docker daemon."
+                )
         return self
 
     @model_validator(mode="after")

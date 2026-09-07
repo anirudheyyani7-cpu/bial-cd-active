@@ -1,237 +1,33 @@
-"""File parsers for the app parse endpoint (R26) — spreadsheet → structured rows,
-docx → text. DISTINCT from `services/extract/office.py` (which produces Markdown for
-the chat model): this produces the `{kind:'spreadsheet', columns, rows, ...}` shape
-the deployed app's `BIALData.parseFile` consumes.
+"""Kind dispatch for untrusted-file parsing (R26), run inside the killable process governor.
+
+The live kinds are the chat office→Markdown extracts (`extract_word`/`extract_excel`) and the
+PDF page count (`count_pdf_pages`), all driven by `api/v1/attachments/router.py`. The office
+extraction itself lives in `services/extract/office.py`; this module's job is to order the
+bounds around it and map its errors.
 
 The four bounds (untrusted-file-parsing learning): (1) the decoded-size cap is enforced
 by the caller before parsing (the attachments upload limits — the old per-app parse HTTP
 endpoint was retired with the open-sandbox pivot, but this parse SERVICE stays, driven by
-`attachments/router.py`); (2) the zip-bomb guard + (structural gate) run here BEFORE any
-inflate — reusing Plan A's shared `zip_safety` + `office` structural validators;
-(3) a row/col range-clamp is applied BEFORE iterating; (4) the whole dispatch runs
-inside the killable process governor (`governor.py`). Errors are the shared
-`FileParseError` (carries status + code, e.g. 413/`FILE_TOO_LARGE`,
-415/`UNSUPPORTED_TYPE`).
+`attachments/router.py`); (2) the zip-bomb guard runs here BEFORE any inflate and the
+structural gate runs first inside the extract — Plan A's shared `zip_safety` + `office`
+validators; (3) a row/col range-clamp is applied BEFORE iterating, by `office.py`'s
+`MAX_SHEET_ROWS`/text cap; (4) the whole dispatch runs inside the killable process governor
+(`governor.py`). Errors are the shared `FileParseError` (carries status + code, e.g.
+413/`FILE_TOO_LARGE`, 415/`UNSUPPORTED_TYPE`).
 """
 
 from __future__ import annotations
 
-import csv
-import datetime
 import io
-from typing import Any
-
-import openpyxl
+from typing import Any, Final
 
 from src.services.extract.office import (
     EXCEL_MEDIA_TYPE,
     WORD_MEDIA_TYPE,
     OfficeExtractError,
-    assert_office_structure,
     extract_office,
 )
-from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb, looks_like_zip
-
-# Bound (3): the clamp box, applied before iterating (Express MAX_PARSE_ROWS/COLS).
-MAX_PARSE_ROWS = 50_000
-MAX_PARSE_COLS = 512
-
-# Content-type ↔ parse-kind (Express `parseKindFor`). Extension wins for CSV so a
-# `.csv` mislabelled as ms-excel/plain stays CSV.
-_XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_XLS_TYPE = "application/vnd.ms-excel"
-
-
-def parse_kind_for(content_type: str, filename: str) -> str | None:
-    """Resolve the parse kind, or None (→ 415). Extension wins for CSV."""
-    name = (filename or "").lower()
-    if name.endswith(".csv") or content_type == "text/csv":
-        return "csv"
-    if name.endswith(".xlsx") or content_type == _XLSX_TYPE:
-        return "xlsx"
-    if name.endswith(".xls") or content_type == _XLS_TYPE:
-        return "xls"
-    if name.endswith(".docx") or content_type == WORD_MEDIA_TYPE:
-        return "word"
-    return None
-
-
-def _coerce(value: Any) -> Any:
-    """Cell value → JSON-safe: dates to ISO strings; numbers/bools/strings preserved
-    (numbers stay numeric for charts; text-formatted identifiers stay text)."""
-    if value is None:
-        return None
-    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
-        return value.isoformat()
-    return value
-
-
-def _dedupe(name: str, seen: dict[str, int]) -> str:
-    if name in seen:
-        seen[name] += 1
-        return f"{name} ({seen[name]})"
-    seen[name] = 0
-    return name
-
-
-def _empty_sheet(sheets: list[str], sheet: str) -> dict[str, Any]:
-    return {
-        "kind": "spreadsheet",
-        "sheets": sheets,
-        "sheet": sheet,
-        "columns": [],
-        "rows": [],
-        "rowCount": 0,
-        "totalRows": 0,
-        "truncated": False,
-        "truncationNote": "",
-    }
-
-
-def _truncation_note(total_rows: int, shown: int, total_cols: int, shown_cols: int) -> str:
-    parts: list[str] = []
-    if total_rows > shown:
-        parts.append(f"Showing the first {shown} of {total_rows} rows.")
-    if total_cols > shown_cols:
-        parts.append(f"Showing the first {shown_cols} of {total_cols} columns.")
-    return " ".join(parts)[:800]
-
-
-def _sheet_to_rows(ws: Any, sheets: list[str]) -> dict[str, Any]:
-    max_row = ws.max_row or 0
-    max_col = ws.max_column or 0
-    if max_row == 0 or max_col == 0:
-        return _empty_sheet(sheets, ws.title)
-    # Bound (3): clamp columns BEFORE building the anchor map / iterating.
-    end_col = min(max_col, MAX_PARSE_COLS)
-
-    # Merged-cell anchor map (within the clamp) + full-width horizontal banner rows.
-    anchors: dict[tuple[int, int], tuple[int, int]] = {}
-    banner_rows: set[int] = set()
-    for rng in ws.merged_cells.ranges:
-        if rng.min_row == rng.max_row and rng.min_col <= 1 and rng.max_col >= end_col:
-            banner_rows.add(rng.min_row)
-        if rng.min_row > MAX_PARSE_ROWS + 1:
-            continue
-        for r in range(rng.min_row, min(rng.max_row, MAX_PARSE_ROWS + 1) + 1):
-            for c in range(rng.min_col, min(rng.max_col, end_col) + 1):
-                anchors[(r, c)] = (rng.min_row, rng.min_col)
-
-    def value_at(r: int, c: int) -> Any:
-        anchor_r, anchor_c = anchors.get((r, c), (r, c))
-        return _coerce(ws.cell(row=anchor_r, column=anchor_c).value)
-
-    # Skip leading full-width banner rows to find the real header (Express effectiveHeaderRow).
-    header_row = 1
-    while header_row in banner_rows and header_row < max_row:
-        header_row += 1
-
-    seen: dict[str, int] = {}
-    columns: list[str] = []
-    for c in range(1, end_col + 1):
-        raw = value_at(header_row, c)
-        base = str(raw).strip() if raw not in (None, "") else ""
-        columns.append(_dedupe(base or f"Column {c}", seen))
-
-    total_rows = max(0, max_row - header_row)
-    shown = min(total_rows, MAX_PARSE_ROWS)
-    rows: list[dict[str, Any]] = []
-    for r in range(header_row + 1, header_row + 1 + shown):
-        rows.append({columns[c - 1]: value_at(r, c) for c in range(1, end_col + 1)})
-
-    truncated = total_rows > shown or max_col > end_col
-    return {
-        "kind": "spreadsheet",
-        "sheets": sheets,
-        "sheet": ws.title,
-        "columns": columns,
-        "rows": rows,
-        "rowCount": len(rows),
-        "totalRows": total_rows,
-        "truncated": truncated,
-        "truncationNote": _truncation_note(total_rows, shown, max_col, end_col)
-        if truncated
-        else "",
-    }
-
-
-def parse_spreadsheet(buffer: bytes, sheet_name: str | None) -> dict[str, Any]:
-    try:
-        workbook = openpyxl.load_workbook(io.BytesIO(buffer), data_only=True)
-    except Exception as exc:
-        raise FileParseError(f"Could not read the spreadsheet: {exc}") from exc
-    sheets = workbook.sheetnames
-    if not sheets:
-        raise FileParseError("The spreadsheet has no worksheets.")
-    target = sheet_name if sheet_name else sheets[0]
-    if target not in sheets:
-        raise FileParseError("The requested sheet was not found.", code="SHEET_NOT_FOUND")
-    result = _sheet_to_rows(workbook[target], sheets)
-    workbook.close()
-    return result
-
-
-def parse_csv(buffer: bytes, _sheet_name: str | None) -> dict[str, Any]:
-    text = buffer.decode("utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text))
-    collected: list[list[str]] = []
-    for index, row in enumerate(reader):
-        if index > MAX_PARSE_ROWS:  # header + MAX_PARSE_ROWS data rows
-            break
-        collected.append(row)
-    if not collected:
-        return _empty_sheet(["Sheet1"], "Sheet1")
-
-    header = collected[0]
-    end_col = min(len(header), MAX_PARSE_COLS)
-    seen: dict[str, int] = {}
-    columns = [_dedupe(header[c].strip() or f"Column {c + 1}", seen) for c in range(end_col)]
-    rows: list[dict[str, Any]] = []
-    for raw in collected[1:]:
-        rows.append({columns[c]: _infer(raw[c]) if c < len(raw) else None for c in range(end_col)})
-    total_rows = len(collected) - 1
-    truncated = total_rows > len(rows) or len(header) > end_col
-    return {
-        "kind": "spreadsheet",
-        "sheets": ["Sheet1"],
-        "sheet": "Sheet1",
-        "columns": columns,
-        "rows": rows,
-        "rowCount": len(rows),
-        "totalRows": total_rows,
-        "truncated": truncated,
-        "truncationNote": "",
-    }
-
-
-def _infer(cell: str) -> Any:
-    """SheetJS-style type inference for CSV (documented caveat: a leading-zero
-    identifier like '007' coerces to 7 — text-formatted xlsx preserves it)."""
-    if cell == "":
-        return None
-    try:
-        return int(cell)
-    except ValueError:
-        pass
-    try:
-        return float(cell)
-    except ValueError:
-        return cell
-
-
-def parse_word(buffer: bytes, filename: str) -> dict[str, Any]:
-    # Reuse Plan A's shared docx→Markdown extraction (structural gate + mammoth).
-    try:
-        result = extract_office(buffer, WORD_MEDIA_TYPE, name=filename)
-    except OfficeExtractError as exc:
-        raise FileParseError(str(exc), status=400, code="INVALID_OFFICE_FILE") from exc
-    return {
-        "kind": "document",
-        "format": "word",
-        "text": result.text,
-        "truncated": result.truncated,
-        "truncationNote": result.truncation_note,
-    }
+from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
 
 
 def _extract_office_payload(buffer: bytes, media_type: str, filename: str) -> dict[str, Any]:
@@ -249,12 +45,76 @@ def _extract_office_payload(buffer: bytes, media_type: str, filename: str) -> di
     }
 
 
+PDF_UNREADABLE_CODE: Final = "INVALID_PDF"
+"""What a PDF that will not parse is reported as. A 400, not the governor's generic 500
+`PARSE_FAILED`: a malformed upload is the caller's file, not the platform failing."""
+
+PDF_ENCRYPTED_CODE: Final = "PDF_ENCRYPTED"
+"""A PDF that parsed far enough to say it is locked. Distinct from `INVALID_PDF` because it is
+the one PDF failure the citizen can act on — every other one is a fact about the platform, and
+those stay collapsed behind a single sentence on purpose."""
+
+
+def _count_pdf_pages_payload(buffer: bytes) -> dict[str, Any]:
+    """A real PDF's page count, read by a real PDF reader. Runs INSIDE the governor child.
+
+    ★ THIS IS NOT `extract/deck.py::count_pdf_pages`, AND MUST NOT BECOME IT. That one scans
+    the raw bytes for `/Type /Page` markers, which is documented as reliable for the
+    LibreOffice/Gotenberg output it was written for and silently UNDER-counts any PDF whose
+    page objects live in a compressed object stream — the one failure mode an admission cap
+    cannot have, because under-counting is what admits the document the charge cannot cover.
+    The deck path keeps its scan and its own 100-page limit; the two caps disagreeing is
+    deliberate (D4) and is revisited when decks are enabled.
+
+    `len(reader.pages)` rather than the catalog's `/Count`: the count is walked from the page
+    tree, so a file that merely CLAIMS to be short is counted honestly. pypdf's own traversal
+    limits (depth, entry count) turn a page-tree bomb into an exception here rather than a
+    hang, and everything it can still raise — a truncated file, a broken cross-reference, a
+    recursion limit — is mapped to one 400. `MemoryError` is deliberately re-raised: the
+    governor maps it to its own 413, and swallowing it would report a contained OOM as a
+    malformed file."""
+    # Imported HERE, not at module scope: `spawn` re-imports this module in every governor
+    # child, so a top-level pypdf import would be paid by the office kinds too — and by the
+    # API process at boot, which never counts a page.
+    from pypdf import PdfReader
+    from pypdf.errors import FileNotDecryptedError
+
+    try:
+        reader = PdfReader(io.BytesIO(buffer))
+        pages = len(reader.pages)
+    except MemoryError:
+        raise
+    except FileNotDecryptedError as exc:
+        # A LOCKED DOCUMENT IS NOT A BROKEN ONE, and it is the one failure here the citizen can
+        # actually do something about. Every other arm below is a fact about the platform (a
+        # malformation, a bomb, a timeout) and is deliberately collapsed into one sentence; this
+        # is a fact about THEIR file, so it gets its own code and the caller gives it its own
+        # advice. Folding it in with the rest would tell someone holding a three-page locked
+        # invoice that it is too long — advice that cannot be followed, which is the exact shape
+        # `attachmentInput.ts` records as "advice is only honest while it leads somewhere".
+        raise FileParseError(
+            "The file is password-protected.", status=400, code=PDF_ENCRYPTED_CODE
+        ) from exc
+    except Exception as exc:
+        # Broad on purpose: a hostile file reaches pypdf through a dozen call paths and the
+        # library raises whatever the malformation happens to hit (`PdfReadError`, `KeyError`,
+        # `RecursionError`, `struct.error`, `zlib.error`). An allowlist of exception types
+        # here would let one unlisted shape through as the governor's generic 500.
+        raise FileParseError(
+            "The file could not be read as a PDF.", status=400, code=PDF_UNREADABLE_CODE
+        ) from exc
+    return {"pageCount": pages}
+
+
 def parse_dispatch(buffer: bytes, kind: str, filename: str, sheet: str | None) -> dict[str, Any]:
-    """Run the bounds then the parser for `kind`. Called INSIDE the killable governor
-    child. `__test_*` kinds are test-only governor seams (never reachable from the
-    HTTP endpoint, whose `parse_kind_for` returns only real kinds). The `extract_*`
-    kinds serve the chat office→Markdown path (A.U11), sharing this governor so an
-    untrusted docx/xlsx inflate can never OOM the shared API worker."""
+    """Run the bounds then the extract for `kind`. Called INSIDE the killable governor child.
+
+    The `extract_*` and `count_pdf_pages` kinds are the whole live surface — the chat
+    office→Markdown path and the PDF upload page cap — sharing this governor so neither an
+    untrusted docx/xlsx inflate nor a hostile PDF can OOM or stall the shared API worker. The
+    `__test_*` kinds are test-only governor seams; the live callers pass a kind derived from
+    the upload's own media type, so they can pass neither those nor an unknown one. `sheet` is
+    accepted for the governor's uniform call shape and is unused by every live kind."""
     if kind == "__test_sleep":  # governor timeout seam
         import time
 
@@ -274,27 +134,11 @@ def parse_dispatch(buffer: bytes, kind: str, filename: str, sheet: str | None) -
     if kind == "extract_excel":  # chat xlsx → Markdown, zip-bomb-bounded in the governor
         assert_zip_not_bomb(buffer)
         return _extract_office_payload(buffer, EXCEL_MEDIA_TYPE, filename)
+    if kind == "count_pdf_pages":  # PDF upload page cap, time- and memory-bounded in the governor
+        return _count_pdf_pages_payload(buffer)
 
-    if kind == "xlsx":
-        try:
-            assert_office_structure(buffer, "excel")
-        except OfficeExtractError as exc:
-            raise FileParseError(str(exc), status=400, code="INVALID_OFFICE_FILE") from exc
-        assert_zip_not_bomb(buffer)
-        return parse_spreadsheet(buffer, sheet)
-    if kind == "word":
-        assert_zip_not_bomb(buffer)
-        return parse_word(buffer, filename)
-    if kind == "csv":
-        if looks_like_zip(buffer):
-            assert_zip_not_bomb(buffer)
-        return parse_csv(buffer, sheet)
-    if kind == "xls":
-        if looks_like_zip(buffer):
-            assert_zip_not_bomb(buffer)
-        return parse_spreadsheet(buffer, sheet)
     raise FileParseError(
-        "Supported: Excel (.xlsx/.xls), CSV, Word (.docx).",
+        "Supported: Word (.docx), Excel (.xlsx) and PDF.",
         status=415,
         code="UNSUPPORTED_TYPE",
     )

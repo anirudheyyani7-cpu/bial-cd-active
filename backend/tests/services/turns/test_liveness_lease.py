@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 import fakeredis
 import fakeredis.aioredis
@@ -31,11 +31,14 @@ from structlog.testing import capture_logs
 
 import src.services.turns.engine as engine_mod
 from src.api.v1.build_sessions.schemas import (
+    HEARTBEAT_TTL_SECONDS,
     LIVENESS_LEASE_RENEW_CADENCE_SECONDS,
     LIVENESS_LEASE_TTL_SECONDS,
+    LOCK_TTL_SECONDS,
 )
-from src.db.models.conversation import ConversationMode
+from src.db.models.conversation import ChatKind
 from src.services.build_sessions import locks, reaper
+from src.services.build_sessions.manager import BuildSession
 from src.services.orchestrator.deps import SandboxSession
 from src.services.redis import (
     REGISTRY_STATE_READY,
@@ -91,7 +94,7 @@ def _turn_state(user: uuid.UUID, client: FakeSandboxClient) -> _TurnState:
         turn_id=uuid.uuid4(),
         conversation_id=uuid.uuid4(),
         user_id=user,
-        mode=ConversationMode.WRITE,
+        kind=ChatKind.BUILD,
     )
     fqdn = "sbx-x.westeurope.azurecontainerapps.io"
     state.sandbox = SandboxSession(
@@ -327,7 +330,7 @@ async def test_a_turn_that_never_attached_a_container_publishes_nothing(
         turn_id=uuid.uuid4(),
         conversation_id=uuid.uuid4(),
         user_id=USER,
-        mode=ConversationMode.ASK,
+        kind=ChatKind.PLAN,
     )
     engine = TurnEngine()
     state.lease_task = asyncio.create_task(engine._hold_liveness_lease(state))
@@ -351,7 +354,7 @@ async def test_a_turn_that_published_nothing_revokes_nothing(
         turn_id=uuid.uuid4(),
         conversation_id=uuid.uuid4(),
         user_id=USER,
-        mode=ConversationMode.ASK,
+        kind=ChatKind.PLAN,
     )
     assert state.lease_task is None
     await TurnEngine()._stop_liveness_lease(state)
@@ -365,6 +368,11 @@ class _RefusingRedis:
         raise RedisError("boom")
 
     async def set(self, *_args: object, **_kwargs: object) -> bool:
+        raise RedisError("boom")
+
+    async def eval(self, *_args: object, **_kwargs: object) -> object:
+        # `renew_lock`'s compare-and-swap. Here so the LOCK arm of the loop meets the same
+        # blip the lease arm does, rather than an AttributeError that would prove nothing.
         raise RedisError("boom")
 
 
@@ -406,6 +414,235 @@ async def test_a_renewal_with_nothing_to_protect_is_loud_in_its_own_words(
     }
     assert reasons == {"no_registry"}
     assert await fake_redis.exists(lease_key(USER)) == 0
+
+
+# --- the lock + heartbeat that ride the same loop (#193) ---------------------
+#
+# WHY THEY LIVE HERE AT ALL. `manager.on_progress` renews the one-sandbox-per-user lock and the
+# heartbeat once per non-terminal progress envelope, which is FRAME-driven. A build that spends
+# longer than the 90-second heartbeat TTL inside one tool call emits no frame, so it renews
+# nothing and drops the lock out from under its own container — observed as a build past fifteen
+# minutes losing its slot with the heartbeat key simply gone. The lease loop is the only
+# wall-clock tick a turn has, so the renewal rides it. These tests are about the CLOCK, not the
+# primitives: `test_locks.py` already pins what `renew_lock` and `write_heartbeat` do.
+
+
+def _write_session(user: uuid.UUID, lock_token: str) -> BuildSession:
+    """The manager's registry entry a Write turn carries on `state.write_session`. The renewal
+    reads `lock_token` and `session_id`; the rest is honest filler so the type stays truthful
+    about what a real session holds."""
+    return BuildSession(
+        session_id=uuid.uuid7(),
+        user_id=user,
+        project_id=uuid.uuid4(),
+        app_id=uuid.uuid4(),
+        prompt="",
+        lock_token=lock_token,
+        handle=SandboxHandle(
+            fqdn="x.example",
+            token="t",  # noqa: S106 - a fake, never a real bearer
+            app_name=a_sandbox_name("x"),
+            preview_url="https://x.example/",
+            ready=True,
+        ),
+    )
+
+
+def _write_turn_state(user: uuid.UUID, lock_token: str) -> _TurnState:
+    """A Build turn that took a container AND holds the user's lock — the only shape that may
+    renew either of them."""
+    state = _turn_state(user, FakeSandboxClient())
+    state.write_session = _write_session(user, lock_token)
+    return state
+
+
+@pytest.fixture
+def renewals(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, uuid.UUID, str]]:
+    """Every lock/heartbeat call the loop makes, in order — still delegating to the real
+    function, so the store's state stays the answer and this only records who asked."""
+    calls: list[tuple[str, uuid.UUID, str]] = []
+    # Delegating to `locks` rather than to the engine's re-exported names: same objects, and
+    # reading them off the engine module is an implicit re-export mypy refuses.
+    real_renew = locks.renew_lock
+    real_beat = locks.write_heartbeat
+
+    async def spy_renew(redis: aioredis.Redis, user_uuid: uuid.UUID, token: str) -> bool:
+        calls.append(("renew_lock", user_uuid, token))
+        return await real_renew(redis, user_uuid, token)
+
+    async def spy_beat(redis: aioredis.Redis, user_uuid: uuid.UUID) -> object:
+        calls.append(("write_heartbeat", user_uuid, ""))
+        return await real_beat(redis, user_uuid)
+
+    monkeypatch.setattr(engine_mod, "renew_lock", spy_renew)
+    monkeypatch.setattr(engine_mod, "write_heartbeat", spy_beat)
+    return calls
+
+
+async def _pump_until(predicate: Callable[[], bool], *, limit: int = 500) -> None:
+    """Bare event-loop turns until the loop has done the thing, rather than a fixed count that
+    is either flaky or slow. Bounded so a loop that never gets there fails loudly."""
+    for _ in range(limit):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the renewal loop never reached the expected state")
+
+
+def _calls(
+    renewals: list[tuple[str, uuid.UUID, str]], name: str
+) -> list[tuple[str, uuid.UUID, str]]:
+    return [call for call in renewals if call[0] == name]
+
+
+@pytest.mark.usefixtures("instant_cadence")
+async def test_a_write_turn_renews_its_own_lock_on_every_tick(
+    fake_redis: aioredis.Redis, renewals: list[tuple[str, uuid.UUID, str]]
+) -> None:
+    # THE #193 REGRESSION. The lock is pushed back out to its full TTL on the loop's clock, so
+    # a build that goes quiet for fifteen minutes still holds the slot it is working in.
+    await _register(fake_redis, USER)
+    token = await locks.acquire_lock(fake_redis, USER)
+    assert token is not None
+    # Wound down to nearly nothing, standing in for the minutes it took #193 to get here.
+    await fake_redis.expire(lock_key(USER), 5)
+
+    state = _write_turn_state(USER, token)
+    engine = TurnEngine()
+    state.lease_task = asyncio.create_task(engine._hold_liveness_lease(state))
+    try:
+        await _pump_until(lambda: len(_calls(renewals, "renew_lock")) >= 2)
+        # The SESSION'S token, never a wildcard: `renew_lock` is a compare-and-swap, so a
+        # renewal under any other token silently renews nothing at all.
+        assert set(_calls(renewals, "renew_lock")) == {("renew_lock", USER, token)}
+        # Restored, not decaying — a TTL running down to zero was the whole defect.
+        assert LOCK_TTL_SECONDS - 5 <= await fake_redis.ttl(lock_key(USER)) <= LOCK_TTL_SECONDS
+        assert await locks.lock_is_held(fake_redis, USER) is True
+    finally:
+        await engine._stop_liveness_lease(state)
+
+
+@pytest.mark.usefixtures("instant_cadence")
+async def test_the_heartbeat_comes_back_and_stays_while_the_turn_runs(
+    fake_redis: aioredis.Redis, renewals: list[tuple[str, uuid.UUID, str]]
+) -> None:
+    # The observed half of #193 was the heartbeat key vanishing at roughly 100 seconds and never
+    # returning — the start seed is written ONCE per turn against a 90 s TTL, and nothing on a
+    # clock re-wrote it. Deleted here to stand for that expiry, then the loop must put it back.
+    await _register(fake_redis, USER)
+    token = await locks.acquire_lock(fake_redis, USER)
+    assert token is not None
+    await locks.write_heartbeat(fake_redis, USER)  # the once-per-turn seed...
+    await fake_redis.delete(heartbeat_key(USER))  # ...which expired, ~100 s in
+
+    state = _write_turn_state(USER, token)
+    engine = TurnEngine()
+    state.lease_task = asyncio.create_task(engine._hold_liveness_lease(state))
+    try:
+        await _pump_until(lambda: len(_calls(renewals, "write_heartbeat")) >= 2)
+        assert await locks.heartbeat_is_alive(fake_redis, USER) is True
+        assert 0 < await fake_redis.ttl(heartbeat_key(USER)) <= HEARTBEAT_TTL_SECONDS
+    finally:
+        await engine._stop_liveness_lease(state)
+
+
+@pytest.mark.usefixtures("instant_cadence")
+async def test_a_turn_holding_no_build_session_renews_nobody_elses_lock(
+    fake_redis: aioredis.Redis, renewals: list[tuple[str, uuid.UUID, str]]
+) -> None:
+    # The guard, and it is the same hazard as the lease's: the lock and the heartbeat are keyed
+    # by USER, so a turn that took no build session of its own would vouch for — and extend —
+    # whatever this citizen's slot is actually holding in another conversation.
+    await _register(fake_redis, USER)
+    holder = await locks.acquire_lock(fake_redis, USER)  # somebody else's live build
+    assert holder is not None
+    await fake_redis.expire(lock_key(USER), 5)
+
+    state = _turn_state(USER, FakeSandboxClient())  # a container, but no build session
+    assert state.write_session is None
+    engine = TurnEngine()
+    with capture_logs() as logs:
+        state.lease_task = asyncio.create_task(engine._hold_liveness_lease(state))
+        try:
+            for _ in range(20):
+                await asyncio.sleep(0)
+            # LIVENESS FIRST, AND IT IS THE ASSERTION THE MUTANT LANDS ON. Making the guard
+            # unconditional turns `write_session.lock_token` into an AttributeError on `None`
+            # — and the handler that would log it reads `write_session.session_id`, so it
+            # raises too and the whole task dies on its first tick. Emptiness alone is green
+            # under that (nothing was called, nothing was renewed); a loop that is still
+            # ALIVE and still renewing the lease a full tick later is not.
+            assert not state.lease_task.done()
+            assert await fake_redis.exists(lease_key(USER)) == 1
+            await fake_redis.delete(lease_key(USER))
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert await fake_redis.exists(lease_key(USER)) == 1  # a second tick came round
+            assert renewals == []
+            assert await fake_redis.ttl(lock_key(USER)) <= 5  # the holder's TTL, untouched
+            assert await fake_redis.exists(heartbeat_key(USER)) == 0
+        finally:
+            await engine._stop_liveness_lease(state)
+    # AND IT DID NOT COMPLAIN EITHER — this line is what the mutation actually lands on.
+    # Making the guard unconditional turns `write_session.lock_token` into an AttributeError on
+    # `None`, which the loop catches and logs every tick: the three assertions above stay green
+    # under that mutant (nothing was called, nothing was renewed), this one goes red.
+    assert [entry for entry in logs if entry["event"] == engine_mod.LOCK_RENEW_FAILED_EVENT] == []
+
+
+@pytest.mark.usefixtures("instant_cadence")
+async def test_a_lock_lost_under_a_live_build_is_loud_and_the_turn_carries_on(
+    fake_redis: aioredis.Redis, renewals: list[tuple[str, uuid.UUID, str]]
+) -> None:
+    # The lock lapsed and was re-acquired under a build that is still working, so the CAS
+    # renewal matches nothing. Ending the turn here would destroy the very work the lock was
+    # protecting, so it carries on — but the slot may now be double-allocated, and an on-call
+    # engineer looking at a torn-down container needs this sentence in the log.
+    await _register(fake_redis, USER)
+    await locks.acquire_lock(fake_redis, USER)  # a token that is not ours
+    state = _write_turn_state(USER, "not-the-holders-token-any-more")
+    engine = TurnEngine()
+    with capture_logs() as logs:
+        state.lease_task = asyncio.create_task(engine._hold_liveness_lease(state))
+        try:
+            await _pump_until(lambda: len(_calls(renewals, "renew_lock")) >= 3)
+            # NOT raised and NOT ended: the loop is still going three renewals later.
+            assert not state.lease_task.done()
+        finally:
+            await engine._stop_liveness_lease(state)
+    lost = [entry for entry in logs if entry["event"] == engine_mod.LOCK_LOST_EVENT]
+    assert lost and all(entry["log_level"] == "warning" for entry in lost)
+    assert {entry["user_id"] for entry in lost} == {str(USER)}
+    # The heartbeat is written anyway: a lost lock must not ALSO read as an idle container and
+    # earn the turn a teardown on top of it.
+    assert _calls(renewals, "write_heartbeat")
+
+
+@pytest.mark.usefixtures("instant_cadence")
+async def test_a_store_that_refuses_the_lock_renewal_is_loud_and_the_turn_still_terminates(
+    fake_redis: aioredis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A Redis blip may not take a ten-minute build down, so the lock arm is best-effort exactly
+    # like the lease arm — and, exactly like it, never silent. Both arms are hit here because
+    # both reach the same refusing store, which is also the point of catching them separately:
+    # neither failure costs the other its renewal.
+    monkeypatch.setattr(engine_mod, "get_redis", lambda: _RefusingRedis())
+    state = _write_turn_state(USER, "tok")
+    with capture_logs() as logs:
+        await _renew_a_while(state, ticks=8)
+    lock_failures = [
+        entry for entry in logs if entry["event"] == engine_mod.LOCK_RENEW_FAILED_EVENT
+    ]
+    lease_failures = [
+        entry for entry in logs if entry["event"] == engine_mod.LEASE_RENEW_FAILED_EVENT
+    ]
+    # More than one of each: the loop RETRIED rather than dying on the first blip. A single
+    # entry would also be consistent with the task raising straight out of the loop.
+    assert len(lock_failures) > 1
+    assert len(lease_failures) > 1
+    assert all(entry["log_level"] == "error" for entry in lock_failures)
+    # The turn reached its terminal all the same — the `finally` ran and the task is gone.
+    assert state.lease_task is None
 
 
 # --- the assertion the in-process set could never make ------------------------

@@ -16,22 +16,35 @@ from typing import Any
 
 import pytest
 from pydantic_ai import RunContext
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import RunUsage
 
 from src.api.v1.build_sessions.schemas import BuildError, ErrorSource
 from src.core.prompt_blocks import APPLY_SCHEMA_CHANGE_TOOL, WRITE_TOOL_SURFACE
-from src.db.models.conversation import ConversationMode
+from src.db.models.conversation import ChatKind
 from src.services.agent.toolsets import (
     first_sentence,
     registered_tool_definitions,
     render_tool_surface,
 )
+from src.services.orchestrator.agent import build_agent
 from src.services.orchestrator.deps import SandboxSession
 from src.services.orchestrator.prompt import BUILD_SYSTEM_PROMPT, build_repair_prompt
 from src.services.orchestrator.tools import sandbox_toolset
 
+
+def _the_guard_never_calls_a_model(
+    _messages: list[ModelMessage], _info: AgentInfo
+) -> ModelResponse:
+    """`RunContext` needs a model; `get_tools` never reads it. Same shape as
+    `toolsets._the_renderer_never_calls_a_model` — a model that raises if it is ever asked."""
+    raise AssertionError("the divergence guard enumerates registrations; it runs nothing")
+
+
 _THE_SANDBOX_FACTORY = "src.services.agent.toolsets.sandbox_toolset"
-"""The name `toolsets_for_mode` reaches the sandbox six through — the seam the two
+"""The name `toolsets_for_kind` reaches the sandbox six through — the seam the two
 deliberate mutations below swap out. Patched by dotted path so the test never has to
 reach through the registry module for a name it only re-imports."""
 
@@ -130,16 +143,27 @@ def test_system_prompt_carries_the_generated_app_quality_rules() -> None:
 
 
 def test_system_prompt_tells_the_agent_who_is_reading() -> None:
-    """U15 / R20 / R22 — the build prompt narrates to a citizen, so it carries the audience block
-    from the one shared source (`prompt_blocks.NARRATION_VOICE`) that the live Write segment also
-    composes. Counted, not merely present: the block reaches this prompt through
-    `BUILD_WORKING_RULES_TAIL`, so a future author naming it again beside the TAIL would emit the
-    whole rule twice here and stutter at the model."""
+    """★ THE SCENARIO THE MOVE EXISTS TO MAKE SAFE (U5/R79).
+
+    The audience contract is shared by both chat kinds now, so it lives in
+    `mode_prompts._base()` — which this prompt CANNOT call, because `_base(context)` needs a
+    `PromptContext` the standalone build harness has no source for. It therefore names
+    `NARRATION_VOICE` itself, and this test is what stands between that line and its deletion.
+
+    `== 1`, NOT `in` AND NOT `<=`. The failure mode here is a count of ZERO — the block lifted
+    out of `BUILD_WORKING_RULES_TAIL` and never named at this site, which silently deletes the
+    audience contract from a live prompt and reinstates the 2026-08-18 defect it was written
+    for. An `in` assertion catches that; a `<= 1` does not, and the pair also catches the
+    opposite slip of naming it twice."""
     from src.core.prompt_blocks import NARRATION_VOICE
 
-    assert NARRATION_VOICE in BUILD_SYSTEM_PROMPT
     assert BUILD_SYSTEM_PROMPT.count(NARRATION_VOICE) == 1
-    assert BUILD_SYSTEM_PROMPT.count("A couple of lines at each milestone") == 1
+    # AND NO LENGTH BAR BESIDE IT. The per-kind "how long" sentence used to ride
+    # `BUILD_WORKING_RULES_TAIL` next to this block and went with the rest of the caps: telling
+    # the agent how long it may write is deciding how much of what it produced a citizen may
+    # read. WHO it writes for is a different rule and is the one that stayed.
+    assert "a couple of lines at each milestone" not in BUILD_SYSTEM_PROMPT.lower()
+    assert "HOW LONG —" not in BUILD_SYSTEM_PROMPT
     lowered = BUILD_SYSTEM_PROMPT.lower()
     assert "talking to the user" in lowered
     assert "plain, everyday words" in lowered
@@ -194,7 +218,13 @@ def test_completion_promises_no_round_trip_after_declare_done() -> None:
     # R22/AE13 — and what the summary must BE, since it is now the last thing the user reads.
     assert "the last thing the user reads" in completion
     assert "what they can now do" in completion
-    assert "no file names, commands, libraries or frameworks" in completion
+    # THE VOCABULARY CLAUSE IS GONE, and its absence is asserted rather than merely unmentioned.
+    # "with no file names, commands, libraries or frameworks in it" told the agent which WORDS
+    # its closing message could not contain — a restriction on what it may say rather than on
+    # who it is saying it to. What replaced it is the audience: an account of what the person
+    # can now do with their app, written to the person who asked for it.
+    assert "no file names, commands, libraries or frameworks" not in completion
+    assert "written to the person who asked for it" in completion
 
     # LIVENESS — the repair arm's promise is unchanged and still made.
     assert "does NOT check out you will receive the diagnostic" in completion
@@ -658,7 +688,7 @@ async def test_the_composite_is_offered_and_its_line_is_its_own_first_sentence()
 
     The generic drift check covers every tool at once; this names the one this unit adds, so a
     failure reads as "the composite fell out of the prompt" rather than as a snapshot mismatch."""
-    definitions = await registered_tool_definitions(ConversationMode.WRITE)
+    definitions = await registered_tool_definitions(ChatKind.BUILD)
     assert APPLY_SCHEMA_CHANGE_TOOL in definitions, "the composite is not registered for Write"
     described = definitions[APPLY_SCHEMA_CHANGE_TOOL].description or ""
     line = f"- `{APPLY_SCHEMA_CHANGE_TOOL}` \u2014 {first_sentence(described)}"
@@ -676,7 +706,7 @@ async def test_the_composite_is_offered_and_its_line_is_its_own_first_sentence()
 # `declare_done` does while the sentence describing it still promised a follow-up round-trip, and
 # every name-based assertion in this repo stayed green. So the block is rendered from the tool
 # definitions pydantic-ai hands the model at registration, and the drift check is a snapshot
-# assertion over that rendering plus a per-mode membership assertion against `toolsets_for_mode`.
+# assertion over that rendering plus a per-mode membership assertion against `toolsets_for_kind`.
 
 
 def _tool_surface_block(prompt: str) -> str:
@@ -690,7 +720,7 @@ async def _the_drift_check() -> None:
     An equality assertion proves the snapshot is right today; it does not prove the assertion
     would notice if it stopped being — which is exactly the property that failed under U18. The
     two mutation tests below run THIS function against a deliberately-mutated registry."""
-    generated = await render_tool_surface(ConversationMode.WRITE)
+    generated = await render_tool_surface(ChatKind.BUILD)
     assert WRITE_TOOL_SURFACE == generated, (
         "the TOOL SURFACE block in `core/prompt_blocks.py` no longer matches the tools the Write "
         "arm registers. Regenerate it with the one-liner in `services/agent/toolsets.py`'s U20 "
@@ -705,14 +735,61 @@ async def test_the_tool_surface_is_generated_from_the_tools_the_write_arm_regist
     assert BUILD_SYSTEM_PROMPT.count(WRITE_TOOL_SURFACE) == 1
 
 
+_THE_FOUR_THE_HARNESS_CANNOT_CALL = frozenset(
+    {"list_files", "search_files", "tell_the_user", "propose_first_slice"}
+)
+"""What `WRITE_TOOL_SURFACE` names that `build_agent` does not register. Not a wish list — the
+guard below derives the real divergence and asserts it EQUALS this, so the set cannot grow
+quietly."""
+
+
+async def test_the_harness_arm_is_told_about_four_tools_it_does_not_register() -> None:
+    """★ A DIVERGENCE GUARD, not a passing property — it pins a defect so it cannot get worse.
+
+    `BUILD_WORKING_RULES_TAIL` carries one `TOOL SURFACE` snapshot into TWO prompts, and only one
+    of them is what the snapshot was generated from:
+
+    * the chat Build arm registers `toolsets_for_kind(BUILD)` — all twelve. The drift check above
+      is about that arm and is correct about it.
+    * `build_agent` is constructed `toolsets=[sandbox_toolset(_sandbox_of)]` and nothing else
+      (`orchestrator/agent.py`), so a `/v1/build-sessions` run is handed eight — and told about
+      twelve on every request. The four extra get the runtime's unknown-tool rejection if called.
+
+    WHY THIS IS A TEST AND NOT A FIX. Both fixes are behaviour changes to a live agent, and the
+    harness plus its route are already scheduled for deletion (plan 009, unit 1). So the
+    divergence is recorded where it will be tripped over: this goes RED when the harness is
+    deleted, when it gains the missing toolsets, or when the prompt learns to render a
+    harness-specific surface — each of which is someone deliberately settling it.
+
+    Derived on both sides rather than hard-coded: the prompt side is parsed out of the shipped
+    block, the agent side is read off `build_agent.toolsets`. A tool added to either moves the
+    difference and fails here.
+    """
+    named_in_the_prompt = set(re.findall(r"^- `(\w+)`", WRITE_TOOL_SURFACE, re.M))
+    assert named_in_the_prompt, "the shipped TOOL SURFACE block names no tools"
+
+    ctx: RunContext[Any] = RunContext(
+        deps=None, model=FunctionModel(_the_guard_never_calls_a_model), usage=RunUsage()
+    )
+    registered_by_the_harness: set[str] = set()
+    for toolset in build_agent.toolsets:
+        registered_by_the_harness |= set((await toolset.get_tools(ctx)).keys())
+
+    assert registered_by_the_harness < named_in_the_prompt
+    assert named_in_the_prompt - registered_by_the_harness == _THE_FOUR_THE_HARNESS_CANNOT_CALL
+    # And the block IS in the harness prompt — a zero-composition-site version of this defect
+    # would pass every assertion above.
+    assert BUILD_SYSTEM_PROMPT.count(WRITE_TOOL_SURFACE) == 1
+
+
 async def test_the_prompts_tool_list_is_exactly_what_the_write_arm_registers() -> None:
-    """★ THE MEMBERSHIP HALF, asserted against `toolsets_for_mode` rather than a hand-kept list.
+    """★ THE MEMBERSHIP HALF, asserted against `toolsets_for_kind` rather than a hand-kept list.
 
     The hand-written block named six tools while the Write arm handed the model eight: the two
     structured reads it borrows off `read_only_toolset` (`_WRITE_STRUCTURED_READS`) were absent
     from the prompt for their entire life, so the model was never told it could list or search
     the tree and paid for that in `run_command` round-trips."""
-    registered = set(await registered_tool_definitions(ConversationMode.WRITE))
+    registered = set(await registered_tool_definitions(ChatKind.BUILD))
     named = set(re.findall(r"^- `(\w+)` \u2014 ", _tool_surface_block(BUILD_SYSTEM_PROMPT), re.M))
     assert named == registered
     # The two the old prose omitted, named explicitly so the failure reads as itself.
@@ -726,7 +803,7 @@ async def test_every_tool_line_is_its_registered_descriptions_first_sentence() -
 
     Each line must be the tool's OWN words, not a paraphrase of them, so the prompt and the tool
     schema cannot say different things about the same tool."""
-    for name, definition in (await registered_tool_definitions(ConversationMode.WRITE)).items():
+    for name, definition in (await registered_tool_definitions(ChatKind.BUILD)).items():
         assert definition.description, f"`{name}` reaches the model with no description"
         line = f"- `{name}` \u2014 {first_sentence(definition.description)}"
         assert line in BUILD_SYSTEM_PROMPT, f"the prompt paraphrases `{name}`; expected {line!r}"
@@ -752,7 +829,7 @@ async def test_the_drift_check_fails_when_a_tool_joins_a_mode(
         return toolset
 
     monkeypatch.setattr(_THE_SANDBOX_FACTORY, registers_a_seventh)
-    assert "summon_a_pony" in await render_tool_surface(ConversationMode.WRITE)
+    assert "summon_a_pony" in await render_tool_surface(ChatKind.BUILD)
     with pytest.raises(AssertionError, match="no longer matches the tools"):
         await _the_drift_check()
 
@@ -775,7 +852,7 @@ async def test_the_drift_check_fails_when_a_tools_docstring_is_reworded(
         return toolset
 
     monkeypatch.setattr(_THE_SANDBOX_FACTORY, describes_declare_done_the_old_way)
-    reworded = await render_tool_surface(ConversationMode.WRITE)
+    reworded = await render_tool_surface(ChatKind.BUILD)
     # Same eight tools — a membership check sees nothing at all here.
     assert set(re.findall(r"^- `(\w+)`", reworded, re.M)) == set(
         re.findall(r"^- `(\w+)`", WRITE_TOOL_SURFACE, re.M)
@@ -797,7 +874,7 @@ async def test_a_tool_without_a_docstring_fails_the_render_rather_than_shipping_
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(_THE_SANDBOX_FACTORY, registers_a_mute_tool)
         with pytest.raises(ValueError, match="registered with no description"):
-            await render_tool_surface(ConversationMode.WRITE)
+            await render_tool_surface(ChatKind.BUILD)
 
 
 async def test_run_commands_dev_server_rule_is_registered_copy_as_well_as_prompt_copy() -> None:
@@ -807,7 +884,7 @@ async def test_run_commands_dev_server_rule_is_registered_copy_as_well_as_prompt
     covers the agent starting a dev server through `/exec` without U14's marker — the supervisor's
     child env carries nothing that would tell a second `next dev` apart from the real one — so it
     must survive in BOTH voices: the tool's own description, and the ENVIRONMENT block."""
-    definitions = await registered_tool_definitions(ConversationMode.WRITE)
+    definitions = await registered_tool_definitions(ChatKind.BUILD)
     described = (definitions["run_command"].description or "").lower()
     assert "do not start or restart the dev server" in described
     assert "already running" in described

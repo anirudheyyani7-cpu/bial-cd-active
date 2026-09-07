@@ -38,6 +38,9 @@ from src.core.prompt_blocks import (
     DATA_INTEGRITY_RULES as DATA_INTEGRITY_RULES,
 )
 from src.core.prompt_blocks import (
+    NARRATION_VOICE as NARRATION_VOICE,
+)
+from src.core.prompt_blocks import (
     WRITE_IDENTITY as WRITE_IDENTITY,
 )
 
@@ -48,10 +51,28 @@ BUILD_SYSTEM_PROMPT = f"""\
 
 {DATA_INTEGRITY_RULES}
 
+{NARRATION_VOICE}
+
 {BUILD_WORKING_RULES_TAIL}"""
-"""The standalone build prompt, now assembled from EXACTLY the pieces `_WRITE_SEGMENT` uses
-(KTD-5a). It survives only for the legacy `/build-sessions` harness path; the identity paragraph
-that used to be typed out here is imported, so the two cannot drift while both exist."""
+"""The standalone build prompt, assembled from EXACTLY the pieces `_WRITE_SEGMENT` uses (KTD-5a).
+It is the live `@build_agent.instructions` return value, not dead legacy text; the identity
+paragraph that used to be typed out here is imported, so the two cannot drift while both exist.
+
+IT NAMES `NARRATION_VOICE` ITSELF, and that line is load-bearing (U5/R79). The audience contract
+is shared by both chat kinds now, so it moved into `mode_prompts._base()` — which THIS prompt
+cannot call, because `_base(context, kind)` needs a `PromptContext` the standalone harness has no
+source for. Lifting the block out of `BUILD_WORKING_RULES_TAIL` without this line would have
+deleted the audience contract from a live prompt and reinstated the 2026-08-18 defect that
+produced it.
+
+IT ALSO OVER-STATES ITS OWN TOOL SURFACE, and that is known rather than accidental. `TAIL` carries
+`WRITE_TOOL_SURFACE`, a snapshot of what the CHAT Build arm registers (twelve tools), while
+`build_agent` is constructed with `sandbox_toolset` alone (eight). So this prompt names
+`list_files`, `search_files`, `tell_the_user` and `propose_first_slice` to an agent that cannot
+call any of them. See `prompt_blocks.WRITE_TOOL_SURFACE`'s docstring for why it is recorded rather
+than fixed, and `test_prompt.py`'s
+`test_the_harness_arm_is_told_about_four_tools_it_does_not_register` for the guard that goes red
+when it is."""
 
 
 def build_repair_prompt(error: BuildError) -> str:

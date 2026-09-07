@@ -11,6 +11,12 @@
  * thing it claims to describe — the real mode list, the real attachment allowlist, the real
  * feature flag — which is the axis these strings actually drifted on.
  *
+ * The gate is deliberately incomplete, and the plan says which sentences it does NOT read:
+ * `HelpPage`'s inline "Describe the data" tip and the two attach-button `title` attributes are
+ * JSX-inline, and lifting them out so a test could scan them would be production code reshaped
+ * for a test. Their edits ride the release that narrows the allowlist; what is gated here is the
+ * two PROMISES about the picker — the attachment answer and the data answer.
+ *
  * They assert on the exported FAQS data rather than a render, on purpose. `AccordionItem`
  * renders its answer as `{open && ...}`, so against a collapsed accordion every negative
  * assertion here would pass with nothing in the DOM. That is not hypothetical: the #157
@@ -19,9 +25,18 @@
  */
 import { describe, it, expect } from 'vitest'
 import { FAQS } from '../HelpPage'
-import { MODES } from '../../components/chat/ModeSwitcher'
-import { ALLOWED_MEDIA_TYPES, PPTX_MEDIA_TYPE } from '../../utils/attachmentInput'
-import { DECK_ATTACHMENTS_ENABLED } from '../../config/features'
+import { ALLOWED_MEDIA_TYPES } from '../../utils/attachmentInput'
+
+/**
+ * Literal media types, not imports.
+ *
+ * Plan D's narrowing deleted the `EXCEL_MEDIA_TYPE` / `PPTX_MEDIA_TYPE` exports along with the
+ * formats. Keeping them as literals is what preserves the REFUSED direction of the reconciliation:
+ * a format that is gone from the module must still be checked for absence from the copy, and an
+ * inventory built from the module's own exports can only check what it still offers.
+ */
+const EXCEL_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const PPTX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
 /** The answer to the FAQ whose question matches — fails loudly rather than returning
  *  `undefined` and letting a `.toMatch` on nothing decide the test. */
@@ -43,32 +58,15 @@ describe('the FAQ answers are non-empty prose', () => {
   })
 })
 
-describe('the "Start Chat" answer agrees with the real mode list', () => {
-  const answer = answerTo(/Start Chat/)
-
-  it('names every mode the composer actually offers', () => {
-    // Additive drift is the failure being pinned: a fourth mode would otherwise leave this
-    // answer confidently describing three.
-    for (const { label } of MODES) {
-      expect(answer, `the FAQ never mentions the ${label} mode`).toContain(label)
-    }
-    expect(MODES.length).toBe(3) // if this changes, the answer's "three modes" does too
-    expect(answer).toMatch(/three modes/i)
-  })
-
-  it('does not claim a build never starts — in Write it starts immediately', () => {
-    // THE BUG this pins. The first rewrite opened "It opens a chat — it does not start a
-    // build," which is true in Ask and Plan and false in Write, where ProjectBuilder's own
-    // helper copy promises "it gets built right away — no plan step."
-    expect(answer).not.toMatch(/does not start a build/i)
-    expect(answer).toMatch(/no plan step|straight away|right away|immediately/i)
-  })
-
-  it('still says Plan is the default, because it is', () => {
-    expect(MODES[1].value).toBe('plan') // ModeSwitcher's own sticky default
-    expect(answer).toMatch(/defaults to Plan/i)
-  })
-})
+// The "Start Chat" reconciliation block that used to live here is retired, not merely
+// unwritten: it checked the FAQ answer against `ModeSwitcher.MODES` (this file's own doctrine —
+// reconcile prose against the code it describes), and U19 deleted `ModeSwitcher` outright — U1
+// collapsed conversation kind + the ask/plan/write mode it switched into one two-valued ChatKind
+// (plan | build) chosen once at chat creation, so there is no live mode list left to reconcile
+// against. The "Start Chat" answer in `HelpPage.tsx` still describes the retired switch
+// ("three modes", "defaults to Plan") — `chatKind.ts`'s own comment already named this exact
+// copy update a deferral ("rides a later release"); U19 only widens how true that deferral is,
+// it does not resolve it. Left for whichever unit lands the create-time Plan/Build picker.
 
 describe('the attachment answer agrees with the real allowlist', () => {
   const answer = answerTo(/files can I attach/)
@@ -76,8 +74,7 @@ describe('the attachment answer agrees with the real allowlist', () => {
   it('promises only formats the composer actually accepts', () => {
     // Both directions. The one-way version of this test is what let ".pptx" survive in the
     // copy after the composer stopped taking it (#157 B2).
-    const offersPptx = ALLOWED_MEDIA_TYPES.includes(PPTX_MEDIA_TYPE)
-    expect(offersPptx).toBe(DECK_ATTACHMENTS_ENABLED)
+    const offersPptx = (ALLOWED_MEDIA_TYPES as readonly string[]).includes(PPTX_MEDIA_TYPE)
     if (offersPptx) {
       expect(answer).toMatch(/PowerPoint|\.pptx/i)
     } else {
@@ -94,6 +91,36 @@ describe('the attachment answer agrees with the real allowlist', () => {
       expect(ALLOWED_MEDIA_TYPES).toContain(type)
       expect(answer).toMatch(phrase)
     }
+  })
+})
+
+describe('the "how does my app get its data" answer agrees with the real allowlist', () => {
+  // THE SECOND PROMISE ABOUT THE FILE PICKER IN THIS FILE, and until now the unread one. The
+  // block above reads "What files can I attach?"; this answer tells a citizen to "upload an Excel
+  // or CSV file", which is a claim about exactly the same allowlist and goes false at exactly the
+  // same moment — it just says it under a different question, which is why a grep for the drift
+  // found one and not the other (R48, R56).
+  const answer = answerTo(/How does my app get its data/)
+
+  it('offers no data format the picker refuses, and names every one it accepts', () => {
+    // BOUNDED to the formats this answer is ABOUT — a citizen bringing data brings a sheet, not
+    // a PNG — and two-directional within that bound, the same shape as the attachment block.
+    for (const [type, phrase] of [
+      [EXCEL_MEDIA_TYPE, /Excel|\.xlsx/i],
+      ['text/csv', /CSV/i],
+    ] as const) {
+      if (ALLOWED_MEDIA_TYPES.includes(type)) {
+        expect(answer, `the picker accepts ${type} but this answer never offers it`).toMatch(phrase)
+      } else {
+        expect(answer, `the picker refuses ${type} but this answer still offers it`).not.toMatch(phrase)
+      }
+    }
+  })
+
+  it('still says the app gets a database of its own, which is the half that stays true', () => {
+    // Liveness, and the part R46 does not touch: narrowing the allowlist must not be "fixed" by
+    // deleting the answer.
+    expect(answer).toMatch(/database/i)
   })
 })
 

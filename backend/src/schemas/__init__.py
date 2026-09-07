@@ -6,7 +6,9 @@ builder. Public surface via explicit `from .x import Y as Y` re-exports
 from src.schemas.base import CamelModel as CamelModel
 from src.schemas.marketplace import MarketplaceEntry as MarketplaceEntry
 from src.schemas.marketplace import MarketplaceListResponse as MarketplaceListResponse
+from src.schemas.projects import ProjectCountsResponse as ProjectCountsResponse
 from src.schemas.projects import ProjectCreate as ProjectCreate
+from src.schemas.projects import ProjectDeleteRequest as ProjectDeleteRequest
 from src.schemas.projects import ProjectListResponse as ProjectListResponse
 from src.schemas.projects import ProjectPatch as ProjectPatch
 from src.schemas.projects import ProjectResponse as ProjectResponse
@@ -18,3 +20,4 @@ from src.schemas.responses import DetailBody as DetailBody
 from src.schemas.responses import ErrorEnvelope as ErrorEnvelope
 from src.schemas.responses import OkResponse as OkResponse
 from src.schemas.responses import error_responses as error_responses
+from src.schemas.responses import raw_body_doc as raw_body_doc

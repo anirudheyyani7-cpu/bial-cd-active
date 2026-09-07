@@ -1,13 +1,31 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { Zap, Shield, Cloud } from 'lucide-react'
 import BIALLogo from '../components/BIALLogo'
 import { consumeSignoutReason, SIGNOUT_REASONS, LOGIN_URL, bootstrapSession } from '../utils/auth'
 
+// The shape Navbar's handleLogout hands `navigate('/login', { state })` on a failed
+// sign-out (U15) — the ONLY way for a warning owned by a page that is about to unmount
+// to reach the screen the user actually lands on. `useLocation().state` is typed `any`
+// by react-router, so it is narrowed here rather than trusted.
+interface SignoutWarningState {
+  signoutWarning: string
+}
+function isSignoutWarningState(value: unknown): value is SignoutWarningState {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'signoutWarning' in value &&
+    typeof (value as { signoutWarning: unknown }).signoutWarning === 'string'
+  )
+}
+
 // The app's authenticated landing route — the primary RequireAuth-wrapped page in
-// App.jsx (`/` and any unknown path both redirect to `/login`; `/dashboard` is the
+// App.tsx (`/` and any unknown path both redirect to `/login`; `/dashboard` is the
 // first real signed-in screen). A signed-in visitor is forwarded here.
-const HOME_ROUTE = '/dashboard'
+// §7 retired the welcome page; `/dashboard` still resolves but only to redirect here. Landing
+// on it made every sign-in pay a redirect for a page that no longer exists.
+const HOME_ROUTE = '/projects'
 
 // Signout-reason banners (client-recorded on logout / expiry). Record<string,
 // string> since consumeSignoutReason() reads back a plain string (whatever
@@ -39,6 +57,7 @@ const GENERIC_AUTH_ERROR = 'Sign-in failed. Please try again.'
 export default function LoginPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const [notice, setNotice] = useState('')
 
   // Forward an ALREADY-authenticated visitor into the app instead of dead-ending
@@ -78,9 +97,17 @@ export default function LoginPage() {
       )
       return
     }
+    // A failed sign-out's warning (U15 — see Navbar's handleLogout) arrives as router
+    // state on THIS navigation, not as a recorded reason to look up — it never touches
+    // localStorage, so it takes priority over `consumeSignoutReason()` below rather than
+    // racing it.
+    if (isSignoutWarningState(location.state)) {
+      setNotice(location.state.signoutWarning)
+      return
+    }
     const reason = consumeSignoutReason()
     if (reason && Object.hasOwn(SIGNOUT_BANNERS, reason)) setNotice(SIGNOUT_BANNERS[reason])
-  }, [searchParams])
+  }, [searchParams, location.state])
 
   // Full-page navigation to the FastAPI control-plane, which runs the OIDC
   // Authorization-Code + PKCE flow and redirects back to the app (or here with
@@ -111,7 +138,11 @@ export default function LoginPage() {
         </div>
 
         <div className="relative z-10 space-y-5">
-          <span className="inline-block bg-secondary text-white text-xs font-worksans font-semibold tracking-widest uppercase px-3 py-1 rounded-full">
+          {/* A LABEL, not an action — which is the only role the gold family keeps. It is the darker
+              `secondary-800` (#8C5D1E, the same gold the BUILD pill uses) rather than the DEFAULT:
+              white on #D9A036 is 2.34:1, below AA for text this size. No board covers the login
+              panel, so nothing else here changes. */}
+          <span className="inline-block bg-secondary-800 text-white text-xs font-worksans font-semibold tracking-widest uppercase px-3 py-1 rounded-full">
             Staff Internal Portal
           </span>
           <h1 className="text-5xl font-extrabold text-white leading-tight">

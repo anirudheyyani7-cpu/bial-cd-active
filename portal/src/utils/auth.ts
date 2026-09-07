@@ -10,10 +10,20 @@
  * explicit invalidate (after login/logout/refresh). A server-side revoke surfaces
  * on the next refresh/mutation 401.
  *
- * The legacy `getAccessToken`/`refreshAccessToken` exports remain as documented
- * shims so not-yet-migrated Express (Bearer) call sites still compile — there is
- * no bearer token in the cookie model, so `getAccessToken` returns null and those
- * Express calls 401 until each API migrates to the cookie session (KD-10).
+ * THE TWO BEARER-ERA NAMES ARE NOT A MATCHED PAIR, and this paragraph replaces one that said
+ * they were. It described both `getAccessToken` and `refreshAccessToken` as shims kept so
+ * "not-yet-migrated Express (Bearer) call sites still compile", with those calls 401ing until
+ * each API migrated. There are no Express call sites: that backend was deleted in fde58e8b, and
+ * nothing in this package depends on it. And only ONE of the two is a shim:
+ *
+ *  - `getAccessToken` IS one. It returns null and always will, and it survives for a reason that
+ *    has nothing to do with Express — it is the default of `authFetch`'s injectable `getToken`
+ *    seam, and its widened return type is what stops every TypeScript caller's dep bag from
+ *    narrowing to `() => null`. Its own docblock says so.
+ *  - `refreshAccessToken` is LIVE, load-bearing, and the most delicate function in this file:
+ *    the cross-tab Web-Locks single-flight silent refresh, called on the `/auth/me` 401 retry in
+ *    `fetchMe`, and by `authFetch`. It keeps its Bearer-era NAME and nothing else; two tabs racing the
+ *    same refresh cookie would trip the server's reuse-detection and force a full re-auth.
  */
 
 // Relative path: the vite dev proxy (and the production edge) route /api/v1/auth/*
@@ -28,6 +38,16 @@ export interface ProfileLimits {
   contextHardLimit: number
 }
 
+/** Mirrors the backend's `ChatKindInfo` (`backend/src/api/v1/auth/schemas.py`) — one entry
+ * in the U16/R73 catalogue of what a chat kind IS: its wire value, its display name, and the
+ * one line a citizen reads about what it does. `utils/chatKind.ts` is the only module that
+ * reads this array; nothing else should hold a literal chat-kind name or description. */
+export interface ChatKindInfo {
+  value: string
+  name: string
+  description: string
+}
+
 /** Mirrors the backend's `UserProfile` — deliberately snake_case on the wire
  * (`display_name`/`is_admin` are the SPA contract, per the schema's own doc
  * comment) plus the client-added camelCase `isAdmin` mirror (`fetchMe`). */
@@ -38,6 +58,7 @@ export interface UserProfile {
   is_admin: boolean
   isAdmin: boolean
   limits: ProfileLimits
+  chat_kinds: ChatKindInfo[]
 }
 
 /** Full-page navigation target for "Sign in with Microsoft" (handled by FastAPI). */
@@ -195,8 +216,8 @@ export function consumeSignoutReason(): string | null {
 
 // The full-page navigation, isolated behind one indirection so jsdom tests can
 // stub it (`window.location.assign` throws "Not implemented: navigation" in
-// jsdom). A hard navigation — not react-router — because the callers (authFetch,
-// fetchClaudeStream) have no router context and we WANT every in-flight page torn
+// jsdom). A hard navigation — not react-router — because the callers (`authFetch` and the
+// turn-stream reader) have no router context and we WANT every in-flight page torn
 // down, not a soft in-SPA transition that leaves stale trees mounted.
 function hardRedirect(url: string): void {
   window.location.assign(url)
@@ -215,8 +236,8 @@ let alreadyBouncing = false
  * hard-navigate to the login screen's (non-alarming) suspension banner.
  *
  * Idempotent / single-flight: concurrent 403s from several in-flight requests
- * produce exactly one navigation. Lives here (not in api.js) so `authFetch` and
- * `fetchClaudeStream` — which does NOT go through `authFetch` — share one path.
+ * produce exactly one navigation. Lives here rather than in `api.ts` so `authFetch` and the
+ * turn-stream reader — which does NOT go through `authFetch` — share one path.
  */
 export function handleSuspendedSession(): void {
   if (alreadyBouncing) return
@@ -300,7 +321,9 @@ export async function logout(): Promise<boolean> {
   }
 }
 
-// --- legacy Bearer shims (retired; kept so Express call sites compile) --------
+// --- the one surviving Bearer-era name ---------------------------------------
+// Kept for the seam it anchors, not for a caller: see this file's header, and the
+// docblock below, which states the reason that actually still holds.
 
 /**
  * No bearer token exists in the cookie model — always null (KD-10 shim). The

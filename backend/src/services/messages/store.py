@@ -34,7 +34,7 @@ import base64
 import dataclasses
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, TypeGuard
 
 import sqlalchemy as sa
@@ -46,16 +46,16 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.redaction import redact_secrets
 from src.db.models.attachment import Attachment
-from src.db.models.conversation import ConversationMode
+from src.db.models.conversation import ChatKind
 from src.db.models.message import Message, MessageEntryKind, MessageVisibility
 from src.services.media.magic import bytes_match_declared
 from src.services.storage import ObjectStorage, StorageError, assert_owned
@@ -65,7 +65,12 @@ _log = structlog.get_logger()
 # The payload serialization contract this code writes (pydantic-ai 2.5.0 native batch +
 # attachment-ref externalization). Readers of a row with a HIGHER version than they know
 # must refuse rather than guess.
-SCHEMA_VERSION: Final = 1
+#
+# The payload shape never differed between 1 and 2: the bump was spent on revision 0035's
+# narration-drop gate, and that gate went out with the drop, so nothing reads the version for
+# RENDERING any more. It stays at 2 because rows on disk carry the 2 — walking it back would
+# make the refusal above fire on payloads this server wrote itself.
+SCHEMA_VERSION: Final = 2
 
 # The attachment reference marker's discriminator value. The serialized `BinaryContent` uses
 # `kind: "binary"`; the externalized reference uses this kind so the two can never be confused.
@@ -82,6 +87,24 @@ _EMPTY: Final = -1
 
 # The synthesized result stitched under a dangling tool call at load (see
 # `repair_dangling_tool_calls`). Plain factual prose — the model reads this as history.
+#
+# KNOWN ISSUE, DELIBERATELY ACCEPTED (#189) — READ THIS BEFORE SHIPPING CHAT HISTORY.
+# A stop lands wherever the turn happens to be, which is routinely AFTER a tool call has been
+# issued and BEFORE its result is recorded. This line is what makes that replayable at all: it
+# keeps the history wire-valid, so a stopped turn never wedges the conversation.
+#
+# What it does NOT do is tell the truth when the tool actually RAN. "Treat it as not executed"
+# is a guess, and on the wrong side of it the model is told a file was never written when it
+# was — so it writes it again, or reasons forward from a state that never existed.
+#
+# THE DECISION (2026-09-04): accept it while a transcript is only ever replayed by the run that
+# produced it. The window is one turn wide, the citizen is watching, and a wrong guess is
+# visible immediately. WHEN REOPENING PAST CONVERSATIONS / CHAT HISTORY GOES LIVE THAT STOPS
+# HOLDING: an old transcript gets replayed by a run that was not there, nobody is left who saw
+# what happened, and this sentence becomes the ONLY account of it. The fix at that point is to
+# land the stop on a tool-call/tool-result boundary — let the in-flight tool finish and record
+# its result, then unwind — so nothing dangles and nothing has to be guessed. The stop itself
+# is `BuildSessionManager._stop_the_held_session`.
 _INTERRUPTED_RESULT: Final = (
     "This tool call was interrupted before a result was recorded (the run was cut short). "
     "Treat it as not executed."
@@ -168,15 +191,40 @@ def _assert_binaries_attributed(node: Any) -> None:
             _assert_binaries_attributed(getattr(node, field.name))
 
 
+THINKING_PART_KIND: Final = "thinking"
+"""The dumped part kind of a reasoning block — the one thing the redactor must not touch."""
+
+_THINKING_VERBATIM: Final = frozenset({"content", "signature"})
+"""The two fields of a reasoning block that are replayed to the provider and checked."""
+
+
 def _redact_tree(node: Any) -> Any:
     """`redact_secrets` over every string VALUE in the dumped tree (text, tool args — dict or
-    JSON-string — tool returns, thinking, error details: one uniform rule instead of a
-    per-part allowlist that drifts). Keys are structural, never redacted."""
+    JSON-string — tool returns, error details: one uniform rule instead of a per-part allowlist
+    that drifts). Keys are structural, never redacted.
+
+    ★ WITH ONE EXEMPTION, AND IT IS NOT A RELAXATION OF THE RULE — it is the rule applied to a
+    value that is not on its way out. The masker is shape-based and deliberately tuned to
+    OVER-redact, because a false positive costs nothing on a string headed for a screen. A
+    reasoning block is headed back to the SAME provider on the next turn, which verifies its
+    signature against its content: rewrite either and the block is rejected, and with it the
+    turn. An agent writing code mentions credential-shaped strings as ordinary commentary — an
+    environment variable name, a token assignment — so this is likely rather than theoretical.
+    Nothing is lost on the way out either, because a reasoning block is never projected, never
+    framed and never sent to the browser; the only thing that ever reads it is the provider.
+
+    EXEMPT BY PART KIND AND BY FIELD, not by "any string under a thinking part": a future field
+    on that part that IS user-facing would otherwise inherit the exemption silently."""
     if isinstance(node, str):
         return redact_secrets(node)
     if isinstance(node, list):
         return [_redact_tree(item) for item in node]
     if isinstance(node, dict):
+        if node.get("part_kind") == THINKING_PART_KIND:
+            return {
+                key: value if key in _THINKING_VERBATIM else _redact_tree(value)
+                for key, value in node.items()
+            }
         return {key: _redact_tree(value) for key, value in node.items()}
     return node
 
@@ -466,9 +514,18 @@ async def load_history(
     rehydrate: Rehydrator,
 ) -> list[ModelMessage]:
     """The conversation's full native history, ready for `message_history`: every row's
-    payload (hidden marker rows INCLUDED — the model must see where the mode changed) in seq
-    order, references rehydrated, validated, dangling calls repaired. Owner-scoped
-    (ADR-0004)."""
+    payload in seq order, references rehydrated, validated, dangling calls repaired.
+    Owner-scoped (ADR-0004).
+
+    HIDDEN ROWS ARE INCLUDED, and the reason is not the one that used to be written here. It
+    said "the model must see where the mode changed" — there are no mode changes any more. The
+    reason it still holds is different and stronger: a hidden row can carry the `ToolReturnPart`
+    that ANSWERS a deferred call (the plan-options resolution overlay is exactly that), and
+    dropping it would hand the model a call with no return. Hiddenness is a RENDER predicate;
+    it was never a statement about what the model may see.
+
+    A row that must not reach the model therefore carries an EMPTY payload rather than relying
+    on being hidden — the durable turn-terminal row is the one that does."""
     stored = (
         await db.execute(
             sa.select(Message.schema_version, Message.payload)
@@ -496,7 +553,40 @@ async def load_history(
     swapped = _swap_refs(combined, resolved)
     _assert_no_marker_left(swapped)
     history = ModelMessagesTypeAdapter.validate_python(swapped)
-    return repair_dangling_tool_calls(history)
+    return repair_dangling_tool_calls(_without_broken_reasoning(history))
+
+
+def _without_broken_reasoning(history: list[ModelMessage]) -> list[ModelMessage]:
+    """Drop reasoning blocks that cannot be replayed, rather than replay them broken.
+
+    ★ FAIL CLOSED, AND THE FAILURE MODE IS WHY. A `ThinkingPart` is sent back to the provider
+    only when it still carries the SIGNATURE that provider issued for it; without one the
+    library takes a different branch and sends the reasoning CONTENT as ordinary assistant
+    text wrapped in `<thinking>` tags. That turns a block the citizen was never meant to see
+    into part of the model's own visible transcript for the rest of the conversation, and it
+    does it silently — which is strictly worse than the turn simply thinking afresh.
+
+    NOTHING SHOULD EVER REACH THIS. The redaction pass exempts the block's content and its
+    signature, and the store writes what the library serialized. It exists for the case that
+    slipped through anyway — a row written before that exemption, a payload edited by hand,
+    a provider that stopped issuing signatures — where the honest answer is to lose the
+    reasoning and keep the transcript.
+
+    Messages without reasoning are returned UNCHANGED, by identity: the ordinary conversation
+    has no thinking parts at all, and rebuilding every response would be a copy per turn for
+    nothing."""
+    kept: list[ModelMessage] = []
+    for message in history:
+        if not isinstance(message, ModelResponse):
+            kept.append(message)
+            continue
+        parts = [
+            part
+            for part in message.parts
+            if not (isinstance(part, ThinkingPart) and not part.signature)
+        ]
+        kept.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
+    return kept
 
 
 async def load_rows(
@@ -507,8 +597,10 @@ async def load_rows(
     include_hidden: bool = False,
 ) -> Sequence[Message]:
     """The conversation's rows in seq order — the projection/audit read (U6 builds on this).
-    Hidden rows (mode-switch markers) are excluded unless asked for: hiddenness is this SQL
-    predicate, never a payload property."""
+    Hidden rows are excluded unless asked for: hiddenness is this SQL predicate, never a payload
+    property. (The example that used to be named here was the mode-switch marker, which is gone;
+    the build-started overlay, the plan-options resolution and the turn-terminal row are the
+    ones this predicate covers today.)"""
     query = (
         sa.select(Message)
         .where(Message.conversation_id == conversation_id, Message.user_id == user_id)
@@ -539,7 +631,7 @@ async def append_batch(
     conversation_id: uuid.UUID,
     messages: Sequence[ModelMessage],
     entry_kind: MessageEntryKind,
-    mode: ConversationMode,
+    kind: ChatKind,
     visibility: MessageVisibility = MessageVisibility.VISIBLE,
     meta: dict[str, Any] | None = None,
 ) -> StoredBatch:
@@ -565,7 +657,7 @@ async def append_batch(
                 schema_version=SCHEMA_VERSION,
                 entry_kind=entry_kind,
                 visibility=visibility,
-                mode=mode,
+                kind=kind,
                 payload=payload,
                 meta=safe_meta,
             )
@@ -589,54 +681,8 @@ async def append_batch(
     )
 
 
-# --- mode-switch markers ------------------------------------------------------
-
-
-def mode_switch_marker_text(old_mode: ConversationMode, new_mode: ConversationMode) -> str:
-    """The direction-aware marker prose (U4 decision). Upgrades stay minimal; a downgrade OUT
-    of Write adds the capability clarification — because post-Write history contains
-    successful write/run tool calls that contradict the current toolset, and that contradiction
-    exists exactly (and only) at this point in the history. The static mode prompts stay free
-    of absent-tool prose (R13); this marker is the one sanctioned exception."""
-    if old_mode is ConversationMode.WRITE and new_mode is not ConversationMode.WRITE:
-        follow_up = (
-            "read the app's files to answer questions."
-            if new_mode is ConversationMode.ASK
-            else "read the app's files and discuss what to change."
-        )
-        return (
-            f"[mode changed: {old_mode.value} → {new_mode.value}. The build tools used "
-            f"earlier in this conversation are not available in {new_mode.value.capitalize()} "
-            f"mode; {follow_up} The user can switch back to Write mode to make changes.]"
-        )
-    return f"[mode changed: {old_mode.value} → {new_mode.value}]"
-
-
-async def append_mode_switch_marker(
-    db: AsyncSession,
-    *,
-    user_id: uuid.UUID,
-    conversation_id: uuid.UUID,
-    old_mode: ConversationMode,
-    new_mode: ConversationMode,
-) -> StoredBatch:
-    """Persist the hidden mode-switch marker row: a pure native user message (payload) whose
-    hiddenness lives on the ROW (`entry_kind`/`visibility` — never in the payload). Written
-    directly by the switch endpoint, never through an agent run (`new_messages()` structurally
-    excludes injected history, so a run could never save it for us).
-
-    GOTCHA (pinned by test): never start a run with NO user prompt while a marker is the last
-    history message — pydantic-ai adopts the trailing request as the prompt, and the model
-    would be asked to answer the marker."""
-    marker = ModelRequest(
-        parts=[UserPromptPart(content=mode_switch_marker_text(old_mode, new_mode))]
-    )
-    return await append_batch(
-        db,
-        user_id=user_id,
-        conversation_id=conversation_id,
-        messages=[marker],
-        entry_kind=MessageEntryKind.MODE_SWITCH,
-        mode=new_mode,
-        visibility=MessageVisibility.HIDDEN,
-    )
+# THE MODE-SWITCH MARKER IS GONE, and nothing replaced it. It was a hidden `[mode changed: …]`
+# row written so the model could see where in the history its toolset changed. A chat's kind is
+# fixed at creation now (R14/R17), so there are no mode boundaries for a marker to name;
+# revision 0035 deleted every such row and the `mode_switch` entry kind went with the endpoint
+# that wrote them.

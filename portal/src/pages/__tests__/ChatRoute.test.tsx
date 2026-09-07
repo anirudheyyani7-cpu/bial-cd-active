@@ -1,44 +1,120 @@
 /**
  * ChatRoute — the flat `/chat/:chatId` kind dispatcher.
  *
- * Both pages are stubbed so this file tests exactly one thing: which page gets
- * rendered, with which project, and when the route bails to /projects instead.
+ * The SLOT is stubbed so this file tests exactly one thing: what the route resolves — which
+ * conversation, of which kind, in which project — and when it bails to /projects instead. It used
+ * to stub two pages and assert which one mounted; there is one surface now (Plan D U17), so the
+ * resolution IS the contract.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 
 const h = vi.hoisted(() => ({
   getConversation: vi.fn(),
   getProject: vi.fn(),
+  authFetch: vi.fn(),
+}))
+
+// The REAL `observe` module runs here — its deep-link guard IS what these tests are about, and a
+// mocked module would prove only that a function was called. Only the transport is replaced.
+// Each test uses its OWN project id: module state is per page load, so a shared id would let one
+// test's mark silence the next one's.
+vi.mock('../../utils/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/api')>()),
+  authFetch: h.authFetch,
 }))
 
 vi.mock('../../utils/conversationApi.js', () => ({ getConversation: h.getConversation }))
-vi.mock('../../utils/projectApi', () => ({ getProject: h.getProject }))
+// SPREAD FROM THE REAL MODULE, not listed. `ChatRoute` now imports the dead-address sentence from
+// `ProjectsPage` (`#206` — one string, three surfaces), and that page imports names this file has
+// no opinion about; against a hand-written factory Vitest throws "No X export is defined on the
+// mock" at IMPORT time and the whole file fails. `getProject` is still the only override.
+vi.mock('../../utils/projectApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/projectApi')>()),
+  getProject: h.getProject,
+}))
 
-// Stub both pages: which one mounts, and what props it received, is the whole contract.
-vi.mock('../ChatPage', () => ({
-  // Named, not an anonymous arrow: this stub calls `useNavigate`, and a hook is only legal
-  // inside something lint can SEE is a component. As `default: () => …` the rule reads the
-  // function's name as "default" — lowercase, so "not a component" — and errors.
-  default: function ChatPageStub({ chatId, projectId, projectName }: { chatId?: string; projectId?: string | null; projectName?: string | null }) {
+/**
+ * ONE STUB, AND IT IS THE SLOT (Plan D U17).
+ *
+ * This file used to stub two PAGES, because the route chose between them and "which one mounts"
+ * was the contract. There is one surface now, so the route's contract is the VALUE it hands the
+ * slot — a resolved conversation, kind included — rather than a component it selects. Stubbing
+ * the slot is what lets that value be asserted directly; stubbing the surface underneath it would
+ * leave the kind invisible, since the slot deliberately does not pass it down.
+ *
+ * Named, not an anonymous arrow: this stub calls `useNavigate`, and a hook is only legal inside
+ * something lint can SEE is a component. As `default: () => …` the rule reads the function's name
+ * as "default" — lowercase, so "not a component" — and errors.
+ */
+vi.mock('../../components/workspace/ConversationSlot', () => ({
+  default: function ConversationSlotStub({
+    conversation,
+    onTitleDerived,
+  }: {
+    conversation: { chatId: string; kind: string; projectId: string | null; projectName: string | null }
+    // The surface derives a title from the first message of a chat whose row had none, and hands
+    // it BACK to this route — see `onTitleDerived` in `ChatRoute`. Accepted here so the merge is
+    // reachable from a test at all; the stub used to drop it silently.
+    onTitleDerived?: (title: string) => void
+  }) {
     const navigate = useNavigate()
+    const { chatId, kind, projectId, projectName } = conversation
     return (
-      <div data-testid="chat-page">
-        {`planning|${chatId}|${projectId}|${projectName}`}
+      <div data-testid="conversation-slot" data-kind={kind}>
+        {`${kind}|${chatId}|${projectId}|${projectName}`}
         <button onClick={() => navigate(`/chat/${chatId}`, { replace: true })}>drop query</button>
         <button onClick={() => navigate('/chat/c2')}>go to c2</button>
+        <button onClick={() => onTitleDerived?.('Add an out-time column')}>derive a title</button>
       </div>
     )
   },
 }))
-vi.mock('../BuilderPage', () => ({
-  default: ({ chatId, projectId, projectName }: { chatId?: string; projectId?: string | null; projectName?: string | null }) => (
-    <div data-testid="builder-page">{`builder|${chatId}|${projectId}|${projectName}`}</div>
-  ),
-}))
 
 import ChatRoute from '../ChatRoute'
+import { PROJECT_GONE_NOTICE } from '../ProjectsPage'
+import { ApiError } from '../../utils/apiError'
+import {
+  WorkspaceChannelProvider,
+  createWorkspaceChannel,
+  useWorkspaceHeading,
+} from '../../components/workspace/workspaceChannel'
+import { beaconsFrom } from './_observeBeacons'
+import { markProjectOpened } from '../../utils/observe'
+
+/**
+ * WHAT THE TOOLBAR ROW WOULD NAME, read straight off the channel (plan 002, U2).
+ *
+ * The row itself is the shell's and has its own suite; what is only observable HERE is the value
+ * this route PUBLISHES, which every one of those scenarios takes as a given. Rendered as one
+ * string so a single assertion covers all four fields and a wrong one cannot hide behind a right
+ * one.
+ */
+function HeadingProbe() {
+  const { projectId, projectName, chatKind, chatTitle } = useWorkspaceHeading()
+  return <span data-testid="heading">{`${projectId}|${projectName}|${chatKind}|${chatTitle}`}</span>
+}
+
+
+/**
+ * WHERE A BOUNCE LANDS, AND WHAT IT SAID ON THE WAY (`#206`).
+ *
+ * The real `ProjectsPage` is not mounted here — its own arrival rendering is pinned in
+ * `ProjectPage.test.tsx`, which is where the two-page behaviour lives. What is only observable
+ * from THIS side is the sentence the route hands the navigation, and `null` for the failures that
+ * have not earned one. The `projects-index` testid is unchanged so the existing bail cases keep
+ * asserting exactly what they always did.
+ */
+function ProjectsIndexProbe() {
+  const carried = (useLocation().state as { notice?: unknown } | null)?.notice
+  return (
+    <div data-testid="projects-index">
+      projects
+      <span data-testid="arrival-notice">{typeof carried === 'string' ? carried : ''}</span>
+    </div>
+  )
+}
 
 /**
  * `state` is the freshly-minted marker's carrier. Entries without one stay plain strings so the
@@ -47,19 +123,26 @@ import ChatRoute from '../ChatRoute'
 function renderRoute(entry: string, state?: unknown) {
   const [pathname, search = ''] = entry.split('?')
   const initial = state === undefined ? entry : { pathname, search: search ? `?${search}` : '', state }
+  // UNDER A REAL CHANNEL, so the heading this route publishes is observable. The publishers all
+  // no-op without one, which is exactly how this route's heading went untested.
   return render(
-    <MemoryRouter initialEntries={[initial]}>
-      <Routes>
-        <Route path="/chat/:chatId" element={<ChatRoute />} />
-        <Route path="/projects" element={<div data-testid="projects-index">projects</div>} />
-      </Routes>
-    </MemoryRouter>,
+    <WorkspaceChannelProvider value={createWorkspaceChannel()}>
+      <MemoryRouter initialEntries={[initial]}>
+        <HeadingProbe />
+        <Routes>
+          <Route path="/chat/:chatId" element={<ChatRoute />} />
+          <Route path="/projects" element={<ProjectsIndexProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </WorkspaceChannelProvider>,
   )
 }
 
+const heading = () => screen.getByTestId('heading').textContent
+
 const conversation = (over: Record<string, unknown> = {}) => ({
   id: 'c1',
-  kind: 'planning',
+  kind: 'plan',
   projectId: 'p1',
   title: 'T',
   messages: [],
@@ -68,53 +151,70 @@ const conversation = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // EACH TEST IS A FRESH PAGE LOAD. The route remembers a chat's project per tab so the toolbar
+  // row has a back target during the next load window, and a memory left behind by the test
+  // above would make "a chat this browser has never seen" quietly untrue.
+  sessionStorage.clear()
+  h.authFetch.mockResolvedValue({ ok: true } as Response)
   h.getProject.mockResolvedValue({ id: 'p1', name: 'VIP Movement', description: null, appId: null, appStatus: null, createdAt: '', updatedAt: '' })
 })
 afterEach(() => cleanup())
 
-describe('ChatRoute — kind dispatch', () => {
-  it('renders ChatPage for a planning conversation', async () => {
-    h.getConversation.mockResolvedValue(conversation({ kind: 'planning' }))
+/** The observation bodies this render posted — see `_observeBeacons` for the mock contract. */
+const beacons = () => beaconsFrom(h.authFetch)
+
+describe('ChatRoute — kind RESOLUTION (it no longer dispatches)', () => {
+  // THE NAME CHANGED BECAUSE THE JOB DID (Plan D U17). These two used to assert which PAGE
+  // mounted; there is one surface now, so what is left to be right about is the kind the route
+  // RESOLVES and hands on. That is the whole of the route's remaining contract, and it is still
+  // worth pinning — the value decides which toolset the server gives the model.
+  it('resolves a plan conversation as plan', async () => {
+    h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
     renderRoute('/chat/c1')
-    expect(await screen.findByTestId('chat-page')).toBeTruthy()
-    expect(screen.queryByTestId('builder-page')).toBeNull()
+    expect((await screen.findByTestId('conversation-slot')).getAttribute('data-kind')).toBe('plan')
   })
 
-  it('renders BuilderPage for a builder conversation', async () => {
-    h.getConversation.mockResolvedValue(conversation({ kind: 'builder' }))
+  // Was "renders BuilderPage for a builder conversation": `builder` was the OLD three-valued
+  // ConversationKind's word. It collapsed into the two-valued ChatKind's `build` (U1).
+  it('resolves a build conversation as build', async () => {
+    h.getConversation.mockResolvedValue(conversation({ kind: 'build' }))
     renderRoute('/chat/c1')
-    expect(await screen.findByTestId('builder-page')).toBeTruthy()
+    expect((await screen.findByTestId('conversation-slot')).getAttribute('data-kind')).toBe('build')
   })
 
   it('lets the SERVER win when its kind disagrees with ?kind=', async () => {
-    h.getConversation.mockResolvedValue(conversation({ kind: 'planning' }))
-    renderRoute('/chat/c1?kind=builder')
-    // A stale or hand-edited query must never render a builder over a planning transcript.
-    expect(await screen.findByTestId('chat-page')).toBeTruthy()
-    expect(screen.queryByTestId('builder-page')).toBeNull()
+    h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
+    // The query has to name the REAL opt-in value to be a genuine disagreement — `?kind=build`
+    // (the retired word) matches neither branch of `kindFromQuery`'s `raw === 'build'` check, so
+    // both the query and the server would have resolved to `plan` regardless of which one won.
+    renderRoute('/chat/c1?kind=build')
+    // A stale or hand-edited query must never decide the toolset over a plan transcript.
+    expect((await screen.findByTestId('conversation-slot')).getAttribute('data-kind')).toBe('plan')
   })
 
   it('issues exactly ONE getConversation to resolve the kind', async () => {
     h.getConversation.mockResolvedValue(conversation())
     renderRoute('/chat/c1')
-    await screen.findByTestId('chat-page')
+    await screen.findByTestId('conversation-slot')
     expect(h.getConversation).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('ChatRoute — a conversation whose row does not exist yet', () => {
-  it('renders the ?kind= page when the id 404s but a ?projectId= is present', async () => {
+  it('takes the kind from ?kind= when the id 404s but a ?projectId= is present', async () => {
     h.getConversation.mockResolvedValue(null)
-    renderRoute('/chat/new-uuid?projectId=p1&kind=builder')
-    // The row appears on the first appendMessage; until then only the query knows the project.
-    expect(await screen.findByTestId('builder-page')).toBeTruthy()
-    expect(screen.getByTestId('builder-page').textContent).toContain('|new-uuid|p1|')
+    renderRoute('/chat/new-uuid?projectId=p1&kind=build')
+    // The row is written inside the first TURN's transaction; until then only the query knows
+    // the project. (`appendMessage` was the old separate round trip and no longer exists.)
+    const slot = await screen.findByTestId('conversation-slot')
+    expect(slot.getAttribute('data-kind')).toBe('build')
+    expect(slot.textContent).toContain('|new-uuid|p1|')
   })
 
-  it('defaults an unrecognised ?kind= to planning rather than trusting it', async () => {
+  it('defaults an unrecognised ?kind= to plan rather than trusting it', async () => {
     h.getConversation.mockResolvedValue(null)
     renderRoute('/chat/new-uuid?projectId=p1&kind=wat')
-    expect(await screen.findByTestId('chat-page')).toBeTruthy()
+    expect((await screen.findByTestId('conversation-slot')).getAttribute('data-kind')).toBe('plan')
   })
 
   it('redirects to /projects when the id 404s with NO query', async () => {
@@ -137,35 +237,34 @@ describe('ChatRoute — the GET that cannot succeed', () => {
   // `getConversation` is a guaranteed 404 on every cold new-chat open — and it is not the only
   // one: both pages keep their own hydration fetch, and StrictMode doubles the pair again in dev.
   it('a freshly-minted open issues NO getConversation and renders from the query', async () => {
-    renderRoute('/chat/fresh-id?projectId=p1&kind=builder', { freshlyMinted: true })
+    renderRoute('/chat/fresh-id?projectId=p1&kind=build', { freshlyMinted: true })
 
-    expect(await screen.findByTestId('builder-page')).toBeTruthy()
-    expect(screen.getByTestId('builder-page').textContent).toContain('|fresh-id|p1|')
+    expect(await screen.findByTestId('conversation-slot')).toBeTruthy()
+    expect(screen.getByTestId('conversation-slot').textContent).toContain('|fresh-id|p1|')
     expect(h.getConversation).not.toHaveBeenCalled()
   })
 
   // THE IMPORTANT ONE. Keying the skip on "the URL has query params" would be a security
   // regression, not just a wrong optimisation: `?kind=` is user-controllable, and a saved chat's
   // URL only loses its query after the FIRST append — so a shared or bookmarked
-  // `/chat/{id}?kind=builder` for an already-saved planning chat is an ordinary URL that MUST
+  // `/chat/{id}?kind=build` for an already-saved plan chat is an ordinary URL that MUST
   // still be resolved by the server. Router state does not survive a reload and does not travel
   // in a link, which is exactly what makes the marker safe to trust.
   it('an open WITHOUT the marker still fetches, and the server beats a conflicting ?kind=', async () => {
-    h.getConversation.mockResolvedValue(conversation({ kind: 'planning' }))
-    renderRoute('/chat/c1?projectId=p1&kind=builder')
+    h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
+    renderRoute('/chat/c1?projectId=p1&kind=build')
 
-    expect(await screen.findByTestId('chat-page')).toBeTruthy()
+    expect((await screen.findByTestId('conversation-slot')).getAttribute('data-kind')).toBe('plan')
     expect(h.getConversation).toHaveBeenCalledWith('c1')
-    expect(screen.queryByTestId('builder-page')).toBeNull()
   })
 
   it('falls back to the fetch when the marker arrives with no projectId to resolve from', async () => {
     // Fail-safe direction: the skip only ever removes a request whose answer the query already
     // holds. No project in the query means nothing to render from, so ask the server.
-    h.getConversation.mockResolvedValue(conversation({ kind: 'planning' }))
+    h.getConversation.mockResolvedValue(conversation({ kind: 'plan' }))
     renderRoute('/chat/c1', { freshlyMinted: true })
 
-    expect(await screen.findByTestId('chat-page')).toBeTruthy()
+    expect(await screen.findByTestId('conversation-slot')).toBeTruthy()
     expect(h.getConversation).toHaveBeenCalledTimes(1)
   })
 })
@@ -174,7 +273,7 @@ describe('ChatRoute — the project breadcrumb', () => {
   it('passes projectName down once getProject resolves', async () => {
     h.getConversation.mockResolvedValue(conversation())
     renderRoute('/chat/c1')
-    await waitFor(() => expect(screen.getByTestId('chat-page').textContent).toContain('VIP Movement'))
+    await waitFor(() => expect(screen.getByTestId('conversation-slot').textContent).toContain('VIP Movement'))
     expect(h.getProject).toHaveBeenCalledWith('p1')
   })
 
@@ -183,22 +282,152 @@ describe('ChatRoute — the project breadcrumb', () => {
     h.getConversation.mockResolvedValue(conversation())
     h.getProject.mockRejectedValue(new Error('gone'))
     renderRoute('/chat/c1')
-    await waitFor(() => expect(screen.getByTestId('chat-page').textContent).toContain('|null'))
+    await waitFor(() => expect(screen.getByTestId('conversation-slot').textContent).toContain('|null'))
     expect(screen.queryByTestId('projects-index')).toBeNull()
   })
 
   it('falls back to the query projectId when the conversation carries none', async () => {
     h.getConversation.mockResolvedValue(conversation({ projectId: undefined }))
     renderRoute('/chat/c1?projectId=p9')
-    await waitFor(() => expect(screen.getByTestId('chat-page').textContent).toContain('|p9|'))
+    await waitFor(() => expect(screen.getByTestId('conversation-slot').textContent).toContain('|p9|'))
+  })
+})
+
+/**
+ * WHAT THE ROW IS TOLD TO NAME (plan 002, U2), and the merge that fills in its title.
+ *
+ * The row's own rendering is covered in `WorkspaceToolbar.test.tsx`, but every scenario there
+ * publishes a SYNTHETIC heading. This is the component that publishes the real one in production,
+ * and nothing was asserting it — so the loading branch, the stale-project guard and the title merge
+ * could all regress with the whole suite green and the row quietly naming the wrong project.
+ */
+describe('ChatRoute — what it publishes for the toolbar row', () => {
+  it('names the project, the kind and the title once the conversation resolves', async () => {
+    h.getConversation.mockResolvedValue(conversation({ kind: 'build', title: 'Add an out-time column' }))
+    renderRoute('/chat/c1')
+
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|build|Add an out-time column'))
+  })
+
+  it('★ names the URL\'s project while the conversation is still resolving, and no kind', async () => {
+    // The whole `GET /conversations/{id}` window. The kind is the SERVER's to answer, so nothing is
+    // claimed about it; the project is the URL's own and is right whenever it is there, which is
+    // what gives the row a breadcrumb and a back target from the first frame.
+    let land: ((value: unknown) => void) | undefined
+    h.getConversation.mockImplementation(() => new Promise((res) => { land = res }))
+
+    renderRoute('/chat/c1?projectId=p1&kind=build')
+
+    await waitFor(() => expect(heading()).toBe('p1|null|null|null'))
+    // LIVENESS: the same render goes on to publish the server's answer, so the state above is a
+    // load window rather than a route that never resolved.
+    land?.(conversation({ kind: 'build', title: 'Add an out-time column' }))
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|build|Add an out-time column'))
+  })
+
+  it('★ names the project this tab already learned, on a reload that carries no query', async () => {
+    // THE ORDINARY CASE, and the one the URL fallback above cannot reach. A chat's address is
+    // rewritten to the bare `/chat/{id}` the instant its first message lands, so every reload,
+    // bookmark and shared link into an existing chat arrives with nothing in the query — and for
+    // the whole of the next `GET` the row had no project to name and a back control aimed at the
+    // projects list, out of the project the citizen was working in.
+    //
+    // The memory is EARNED here rather than seeded: the first render is the visit that learns the
+    // project, and the second is the reload that reads it back. Seeding storage directly would
+    // pass even if nothing ever wrote to it.
+    h.getConversation.mockResolvedValue(conversation({ kind: 'build', title: 'Add an out-time column' }))
+    renderRoute('/chat/c1')
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|build|Add an out-time column'))
+    cleanup()
+
+    let land: ((value: unknown) => void) | undefined
+    h.getConversation.mockImplementation(() => new Promise((res) => { land = res }))
+
+    renderRoute('/chat/c1') // the reload: no ?projectId=, no ?kind=
+
+    await waitFor(() => expect(heading()).toBe('p1|null|null|null'))
+    // LIVENESS: the same render goes on to publish the server's answer, so the state above is a
+    // load window and not a route that never resolved.
+    land?.(conversation({ kind: 'build', title: 'Add an out-time column' }))
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|build|Add an out-time column'))
+  })
+
+  it('★ and claims nothing for a chat this browser has never seen', async () => {
+    // The memory is a memory, never a guess. This tab HAS learned a project — from a different
+    // chat — so the neutral shape here is a real answer rather than an empty store: it says the
+    // memory is per chat, and a chat nobody has opened inherits nothing from the one beside it.
+    // Mutation receipt: drop the chat id from the storage key and this goes red while the reload
+    // scenario above stays green.
+    h.getConversation.mockResolvedValue(conversation())
+    renderRoute('/chat/c1')
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|plan|T'))
+    cleanup()
+
+    let land: ((value: unknown) => void) | undefined
+    h.getConversation.mockImplementation(() => new Promise((res) => { land = res }))
+
+    renderRoute('/chat/never-seen')
+
+    // Found by the words it SHOWS. This used to read `getByRole('status', { name: /loading
+    // chat/i })`, which was satisfied by an `aria-label` on a region with NO visible text — the
+    // wordless wait #210 forbids. The label is gone (a live region announces its CONTENT, and a
+    // label repeating that content is the sentence read twice), and `role="status"` takes no name
+    // from content, so the wait is now asserted by the sentence a citizen can actually read.
+    await waitFor(() => expect(screen.getByText('Loading this chat…')).toBeTruthy())
+    expect(heading()).toBe('null|null|null|null')
+    // LIVENESS: this chat does resolve, so the neutral shape above is a load window and not a
+    // route that never answered.
+    land?.(conversation({ id: 'never-seen' }))
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|plan|T'))
+  })
+
+  it('★ withholds a project NAME that belongs to a different project', async () => {
+    // This route stays mounted across chat navigations, so a `project` read for the previous chat
+    // outlives the chat it was read for. Naming it would put another project's name on this row.
+    h.getConversation.mockResolvedValue(conversation({ projectId: 'p-other' }))
+    h.getProject.mockResolvedValue({ id: 'p1', name: 'VIP Movement' })
+
+    renderRoute('/chat/c1')
+
+    await screen.findByTestId('conversation-slot')
+    await waitFor(() => expect(h.getProject).toHaveBeenCalledWith('p-other'))
+    expect(heading()).toBe('p-other|null|plan|T')
+  })
+
+  it('★ takes the title back from the surface when the chat had none', async () => {
+    // A chat's row is created by its first send and its title is derived from that message, so a
+    // freshly minted chat legitimately has none until the surface works one out. Without the merge
+    // the row goes on naming the kind for the whole life of the chat.
+    h.getConversation.mockResolvedValue(conversation({ title: '' }))
+    renderRoute('/chat/c1')
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|plan|null'))
+
+    fireEvent.click(screen.getByText('derive a title'))
+
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|plan|Add an out-time column'))
+  })
+
+  it('★ and never lets a derived title overwrite the stored one', async () => {
+    // The stored title is the one a citizen may have seen before; a surface re-deriving one from
+    // the first message must not rename the chat under them.
+    h.getConversation.mockResolvedValue(conversation({ title: 'What the row already says' }))
+    renderRoute('/chat/c1')
+    await waitFor(() => expect(heading()).toBe('p1|VIP Movement|plan|What the row already says'))
+
+    fireEvent.click(screen.getByText('derive a title'))
+
+    // Awaited on the FINAL shape rather than sampled once, so this cannot pass by reading the
+    // heading before a merge that was going to happen anyway.
+    await waitFor(() => expect(screen.getByTestId('conversation-slot')).toBeTruthy())
+    expect(heading()).toBe('p1|VIP Movement|plan|What the row already says')
   })
 })
 
 describe('ChatRoute — load failure', () => {
   it('falls back to the query rather than stranding the user on a spinner', async () => {
     h.getConversation.mockRejectedValue(new Error('boom'))
-    renderRoute('/chat/c1?projectId=p1&kind=builder')
-    expect(await screen.findByTestId('builder-page')).toBeTruthy()
+    renderRoute('/chat/c1?projectId=p1&kind=build')
+    expect(await screen.findByTestId('conversation-slot')).toBeTruthy()
   })
 
   it('bails to /projects when the load fails and there is no query to fall back on', async () => {
@@ -208,26 +437,88 @@ describe('ChatRoute — load failure', () => {
   })
 })
 
+describe('ChatRoute — a dead address says something on the way out (`#206`)', () => {
+  /* THE BOUNCE IS UNCHANGED. Every case above still bails to /projects, and should. What these
+     pin is the sentence it carries — and, more importantly, the two failures that must NOT
+     carry one. The catch this route hangs on is reached by a 400 (a malformed id — the only
+     "the chat is not there" status that actually throws; a 404 is null-ed one arm above), by a
+     500, and by a DROPPED CONNECTION, and treating all three as "the chat is gone" is the class
+     of over-claiming this codebase keeps refusing. */
+
+  const arrivalSaid = () => screen.getByTestId('arrival-notice').textContent
+
+  it('an absent row with no query says the neutral line', async () => {
+    // `getConversation` answers a real 404 with `null` rather than by throwing, so this — not
+    // the catch — is the ordinary dead-bookmark path.
+    h.getConversation.mockResolvedValue(null)
+    renderRoute('/chat/ghost-206')
+
+    await screen.findByTestId('projects-index')
+    expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
+  })
+
+  it('★ a mangled chat link says the same line — the status the server really sends', async () => {
+    /* THE STATUS HERE IS LOAD-BEARING, and this test used to fabricate one the endpoint cannot
+       send. `GET /v1/conversations/{id}` matches the id against `_ID_RE` by hand and answers a
+       malformed token with **400**; the path param is a plain `str`, so FastAPI never validates
+       it and the 422 this case once asserted is unreachable. Verified against the running server:
+       `/chat/abc%20def` → 400 `Invalid conversation id.`
+
+       So the old assertion passed while the real citizen path — a chat link a mail client wrapped
+       with a space or a `<` — bounced to the list in SILENCE, the exact failure `#207` names. */
+    h.getConversation.mockRejectedValue(new ApiError('Invalid conversation id.', 400))
+    renderRoute('/chat/abc def')
+
+    await screen.findByTestId('projects-index')
+    expect(arrivalSaid()).toBe(PROJECT_GONE_NOTICE)
+  })
+
+  it('★ a dropped connection bounces in silence — it does NOT say the chat is gone', async () => {
+    /* A `fetch` that never reached the server rejects with a plain `TypeError`: no status, not an
+       `ApiError`. The bounce stays (a spinner with no answer is worse), but the platform knows
+       nothing here and must not claim otherwise.
+
+       MUTATION CHECK — this is the named mutant for `#206`: widen `goneNoticeFor` to return the
+       sentence unconditionally and this goes red while every other case in this file stays green. */
+    h.getConversation.mockRejectedValue(new TypeError('Failed to fetch'))
+    renderRoute('/chat/c-206-offline')
+
+    // LIVENESS FIRST — the bounce genuinely happened, so the empty string below is a silent
+    // arrival rather than a tree that never rendered.
+    expect(await screen.findByTestId('projects-index')).toBeTruthy()
+    expect(arrivalSaid()).toBe('')
+  })
+
+  it('★ a 500 is not a deletion either', async () => {
+    // The server failed to LOOK. Same silence, for the same reason.
+    h.getConversation.mockRejectedValue(new ApiError('Internal Server Error', 500))
+    renderRoute('/chat/c-206-boom')
+
+    expect(await screen.findByTestId('projects-index')).toBeTruthy()
+    expect(arrivalSaid()).toBe('')
+  })
+})
+
 describe('ChatRoute — the page is never torn down mid-turn', () => {
   // A brand-new chat rewrites `/chat/{id}?projectId=…` to `/chat/{id}` the instant its first
   // append lands. If that rewrite re-runs the resolve effect, ChatRoute falls back to its
-  // spinner, the page unmounts, and useClaudeAPI's unmount cleanup ABORTS the very stream the
-  // append was for — killing the first turn of every new chat.
+  // spinner, the surface unmounts, and its unmount cleanup ABORTS the very stream the append
+  // was for — killing the first turn of every new chat.
   it('dropping the transient query does not re-resolve the conversation or unmount the page', async () => {
     h.getConversation.mockResolvedValue(conversation())
     render(
-      <MemoryRouter initialEntries={['/chat/c1?projectId=p1&kind=planning']}>
+      <MemoryRouter initialEntries={['/chat/c1?projectId=p1&kind=plan']}>
         <Routes>
           <Route path="/chat/:chatId" element={<ChatRoute />} />
         </Routes>
       </MemoryRouter>,
     )
-    const page = await screen.findByTestId('chat-page')
+    const page = await screen.findByTestId('conversation-slot')
     expect(h.getConversation).toHaveBeenCalledTimes(1)
 
     // The page rewrites its own URL, exactly as ChatPage/BuilderPage do after the first append.
     fireEvent.click(screen.getByText('drop query'))
-    await waitFor(() => expect(screen.getByTestId('chat-page')).toBe(page)) // same node: no remount
+    await waitFor(() => expect(screen.getByTestId('conversation-slot')).toBe(page)) // same node: no remount
 
     expect(h.getConversation).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('status', { name: /loading chat/i })).toBeNull()
@@ -248,7 +539,7 @@ describe('ChatRoute — the page is never torn down mid-turn', () => {
         </Routes>
       </MemoryRouter>,
     )
-    const page = await screen.findByTestId('chat-page')
+    const page = await screen.findByTestId('conversation-slot')
     expect(page.textContent).toContain('|c1|')
 
     fireEvent.click(screen.getByText('go to c2'))
@@ -256,9 +547,89 @@ describe('ChatRoute — the page is never torn down mid-turn', () => {
 
     // c2 has not resolved. The page is still mounted, still showing c1.
     expect(screen.queryByRole('status', { name: /loading chat/i })).toBeNull()
-    expect(screen.getByTestId('chat-page').textContent).toContain('|c1|')
+    expect(screen.getByTestId('conversation-slot').textContent).toContain('|c1|')
 
-    resolveSecond?.({ id: 'c2', kind: 'planning', projectId: 'p1', messages: [] })
-    await waitFor(() => expect(screen.getByTestId('chat-page').textContent).toContain('|c2|'))
+    resolveSecond?.({ id: 'c2', kind: 'plan', projectId: 'p1', messages: [] })
+    await waitFor(() => expect(screen.getByTestId('conversation-slot').textContent).toContain('|c2|'))
+  })
+})
+
+describe('ChatRoute — the chat-open mark (U4; R105)', () => {
+  it('marks a chat open for a project whose page this load opened', async () => {
+    // R105's numerator, taken at THE resolution seam rather than on the three handlers that
+    // navigate here — those live in components other work is mid-rewrite of.
+    markProjectOpened('p-open', { hasApp: false })
+    h.authFetch.mockClear()
+    h.getConversation.mockResolvedValue(conversation({ projectId: 'p-open' }))
+
+    renderRoute('/chat/c1')
+
+    await screen.findByTestId('conversation-slot')
+    await waitFor(() => expect(beacons()).toEqual([{ name: 'project_opened_chat' }]))
+  })
+
+  it('counts one visit, not two chats', async () => {
+    markProjectOpened('p-two', { hasApp: false })
+    h.authFetch.mockClear()
+    h.getConversation.mockResolvedValue(conversation({ id: 'c1', projectId: 'p-two' }))
+    renderRoute('/chat/c1')
+    await screen.findByTestId('conversation-slot')
+    await waitFor(() => expect(beacons()).toHaveLength(1))
+
+    cleanup()
+    h.getConversation.mockResolvedValue(conversation({ id: 'c2', projectId: 'p-two' }))
+    renderRoute('/chat/c2')
+    await screen.findByTestId('conversation-slot')
+
+    expect(beacons()).toEqual([{ name: 'project_opened_chat' }])
+  })
+
+  it('★ marks nothing for a deep link into a project this load never opened', async () => {
+    // A bookmark, a shared link or a browser restore resolves a project whose page was never on
+    // screen. Counting it would push R105's ratio above 1 — a denominator smaller than its
+    // numerator is not a bias, it is a broken number. And it must not invent the denominator
+    // either: no `project_opened` appears here.
+    h.getConversation.mockResolvedValue(conversation({ projectId: 'p-deep-link' }))
+
+    renderRoute('/chat/c1')
+
+    await screen.findByTestId('conversation-slot')
+    expect(beacons()).toEqual([])
+  })
+
+  it('marks nothing for a chat that resolves with no project behind it', async () => {
+    h.getConversation.mockResolvedValue(conversation({ projectId: null }))
+
+    renderRoute('/chat/c1')
+
+    await screen.findByTestId('conversation-slot')
+    expect(beacons()).toEqual([])
+  })
+})
+
+describe('ChatRoute — the cold-load wait says what it is doing (`#210`, R11)', () => {
+  it('★ shows a visible sentence and one busy polite region while the chat resolves', async () => {
+    // R11 binds the whole batch: suppressing an animation never leaves a wait silent. The three
+    // dots here are `animate-bounce`, which the reduce-motion block freezes — so without words
+    // this arm is three static dots for a citizen who asked for reduced motion. D3 named four
+    // such waits; this is the fifth, in a file that unit did not reach.
+    let settle: (v: unknown) => void = () => {}
+    h.getConversation.mockImplementation(() => new Promise((r) => { settle = r }))
+
+    renderRoute('/chat/c1')
+
+    const wait = await screen.findByTestId('chat-wait')
+    // The sentence, visible — not an sr-only copy and not an aria-label.
+    expect(wait.textContent).toContain('Loading this chat…')
+    expect(wait.getAttribute('aria-busy')).toBe('true')
+    expect(wait.getAttribute('aria-live')).toBe('polite')
+    // No label: a live region announces its content, and a label repeating it reads it twice.
+    expect(wait.getAttribute('aria-label')).toBeNull()
+    // EXACTLY ONE region says it. A second copy is the sentence read twice.
+    expect(screen.getAllByText('Loading this chat…')).toHaveLength(1)
+    // The dots are decoration now that the words carry the meaning.
+    expect(wait.querySelector('[aria-hidden="true"]')).toBeTruthy()
+
+    settle({ id: 'c1', projectId: 'p1', kind: 'build', title: 't' })
   })
 })

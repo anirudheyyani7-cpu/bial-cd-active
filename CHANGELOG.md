@@ -4,6 +4,683 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Pre-releases.** The sandbox-first workspace ships to `main` as one release, `1.7.0`. Until then
+> each wave that lands on `feat/sandbox-first-workspace` is cut as a beta below, and `VERSION`
+> carries the suffix — `1.7.0-beta.N`, then `-rc.N` once only fixes remain. At the merge a dated
+> `1.7.0` section is added above them and tagged `v1.7.0`; the betas stay as the record of how it
+> got there. A version number marks a build, not a merge.
+
+## [1.7.0-beta.9] - 2026-09-06
+
+Eighteen findings from the end-to-end campaign, and the waits finally say what they are doing.
+
+### Added
+
+- **A way to take the workspace back.** When another project is holding the one workspace, the
+  blocked project now offers to stop it and open this app instead, naming the project that has it.
+  Pressing it asks first — it will not throw away unsaved work in the other app without saying so —
+  and it sends no message on your behalf, which is what it used to do.
+- **The review queue says how old the backlog is.** Every pending submission shows its age, and the
+  queue says out loud that the oldest is at the top, so an administrator can see depth at a glance
+  rather than inferring it.
+
+### Fixed
+
+- **Everything that waits now says what it is waiting for, and stops moving if you asked it to.**
+  A reduced-motion preference was honoured by three of thirty-seven continuously animating things.
+  Spinners, pulses and bounces are all silenced now, and every wait they used to stand in for says
+  its sentence in words instead — including the one that appears while your app is starting, and the
+  one on a chat that is still loading.
+- **A reloaded chat shows the app it says is running.** The chat would claim "Your app is running"
+  over an empty pane, because the address it needed was never handed to that screen. A hard load, a
+  move between screens and a refresh now all frame the same running app.
+- **The project screen stops waiting once your app is serving.** It could sit on "Getting your app
+  ready" for up to three quarters of a minute after the app was already up. It now leaves promptly.
+- **A document that is too long is refused in plain words, before it costs you anything.** A
+  sixty-one page PDF quietly occupied more than three quarters of a conversation's room to think
+  while the counter reported it as almost nothing. Documents are now admitted by page count and
+  charged what the longest admissible one really costs. A password-protected file gets its own
+  sentence rather than being told it is "too long" — advice nobody holding a three-page locked
+  invoice could follow.
+- **A refused document says why, instead of "try again".** When the server refused an over-long
+  document, its explanation was overwritten a moment later by a generic "That message did not send
+  — try again". Trying again sent the same document to the same limit, forever. You now read what
+  the server actually said, and your message and your file both stay where you left them.
+- **An address that no longer works says so on the way out.** A dead bookmark, a link a mail client
+  has mangled with a stray space or bracket, a project someone else owns — each used to bounce you
+  to the project list in silence, or show you the raw text of a validator. They now arrive with one
+  neutral sentence, and no dead Rename control over a project that never loaded. A server that
+  merely failed to answer still says nothing, because it does not know anything.
+- **The projects list remembers where you were.** Which page you were on, what you had searched for
+  and how many rows you had chosen now survive a reload, a Back, and a link shared with a colleague.
+- **Stopping a build no longer reads as a crash.** A turn you stopped was announced as "The build
+  failed", and stopped looking stopped once the page was reloaded. It now says what actually
+  happened, and keeps saying it.
+- **The last-saved line names the version you just saved**, rather than the one before it.
+- **A busy workspace answers a question instead of an error.** Asking for a workspace another
+  project holds returned a server error; it now returns the refusal the interface already knew how
+  to turn into a choice, carrying the name of the project holding it.
+- **A long build no longer loses its own workspace.** The lock and heartbeat that mark a workspace
+  as in use were taken once and never renewed, so a build outrunning the lease could have its
+  container reclaimed underneath it.
+- **Deleting a project takes its sandbox with it.** The container and its registry entry are torn
+  down on delete rather than left running.
+
+### Changed
+
+- **An uncaught database error can no longer write a citizen's email into an operator log.** Query
+  parameters are hidden at source on all three database engines rather than at one route.
+- **The reclamation report tells the truth about itself.** It claimed the sweeper was enabled while
+  the worker disagreed; it now carries the outcome and detail of the last pass, and records what it
+  found before the flag is consulted rather than after.
+
+## [1.7.0-beta.8] - 2026-09-05
+
+A busy workspace hands over, and an image can be built where the registry refuses to.
+
+### Added
+
+- **A second way to build an app's image, for subscriptions that refuse the registry's own
+  builder.** Some Azure subscriptions answer every registry build with `TasksOperationsNotAllowed`,
+  which makes the entire publish half of the product impossible to exercise. A development-only
+  builder that uses the local Docker daemon can be selected with `DEPLOY__IMAGE_BUILDER`. The
+  shipping path is untouched and is still the default, and the control plane refuses to start in
+  production with anything else set, because a BIAL host quietly shelling out to Docker is a worse
+  outcome than a failed publish.
+
+### Fixed
+
+- **A busy workspace offers to hand over, instead of telling you to try again.** With another
+  project holding the one workspace, a message sent to a second project was refused with "That
+  message did not send — try again", which stayed wrong for as long as the other build ran. It now
+  names the project that is holding the workspace and offers to stop it — the dialog that was
+  already built for exactly this, and was simply unreachable behind the poorer answer. A genuine
+  double-send on the same project still just asks you to wait, because there is nothing there to
+  hand over.
+
+## [1.7.0-beta.7] - 2026-09-03
+
+The project list becomes the landing screen: three numbers, two views, and a delete that asks
+why. (#158)
+
+### Added
+
+- **`/projects` is where you land after signing in.** Three numbers sit above your projects —
+  how many are live, how many you have made in total, and how many are moving through review —
+  and then the projects themselves.
+- **Two ways to look at them: a list (the default) and a grid**, with a switch beside the
+  search box. The list has a column header; the grid has small, medium and large cards. Your
+  choice is remembered, so the next visit opens the way you left it.
+- **Page numbers and a rows-per-page picker**, in both views, with `Showing 1–8 of 12` so you
+  can see where you are in the whole set rather than only what is on screen.
+- **A status on every project**, in the same words the project page uses: *Nothing built yet*,
+  *Draft*, *In review*, *Changes requested*, *Approved*, *Switched off*, and *Live* when the app
+  is actually deployed and reachable. *Approved* and *Live* are deliberately different: an
+  administrator saying yes is not the same as the app running.
+- **A description too long for its row shows in full on hover**, and one that already fits shows
+  nothing — no tooltip on text you can already read.
+
+### Changed
+
+- **Deleting a project now asks why**, in five to fifty words, instead of asking you to retype
+  the project's name. Retyping a name proves you can read it, not that you meant it. The reason
+  is required before the Delete button will do anything, and it is kept with the deletion
+  record. Nobody can read it back yet — that arrives with the admin console's Deletions tab —
+  and the dialog says only what is true today rather than promising the rest early.
+- **A deletion is recorded against the account that made it**, and the dialog names that account
+  before you confirm. It is not something you type: a name a person can write in is a name that
+  can say somebody else, and this is the field an administrator reads to find out who deleted
+  something.
+- **Project titles are capped at about six to eight words** on both creating and renaming. The
+  old limit was 120 characters — roughly twenty words — which reads as no limit at all to
+  someone naming a tool. The counter beside the field shows where you are, and names already
+  saved keep working.
+- **Refusals from the server are written for people.** Renaming a project too long used to
+  answer *"Value error, name must be at most 120 characters"*; that machine prefix no longer
+  reaches the screen, on any form in the product.
+- **The dialogs soften the page behind them** instead of blacking it out, so you can still see
+  where the panel came from.
+- **The welcome page is gone.** It existed to put a button in front of your projects, and the
+  project list now carries the summary it was showing. Old links to it still work.
+- **The repeated icon on every project is removed.** It was identical on all of them and
+  identified nothing.
+
+### Fixed
+
+- The BIAL logo sat a few pixels high in the header and could be squeezed at narrow widths; it
+  now renders identically on every screen.
+- **A brand-new project's first message opens its chat.** Sending from the project screen asked
+  the server first whether there was a saved app to bring back — and a project with nothing built
+  yet has none, so the answer was "no saved build", the send was reported as failed, and the very
+  first thing anyone does on a new project could not be done at all. Nothing to bring back now
+  opens the chat instead. A project that has gone, or was never yours, is still reported as a
+  failed send.
+- **A reload in the middle of a build no longer doubles the reply once the build ends.** The
+  earlier fix held only while the stream was still open; the moment the turn finished, the stored
+  writing and the re-told live turn were both drawn again.
+- **Your own message stays on screen when you reload mid-turn.** It was removed from the
+  transcript until the turn finished, so you watched the agent answer a question that was no
+  longer written anywhere.
+- **Five files dropped at once are counted as five.** A single multi-file drop, paste or picker
+  selection slipped past the five-file limit and the text budget without a word, because each file
+  was checked against a list the others had not been added to yet.
+- **A plan that has been written stops saying it is still being written.** "Writing up the plan…"
+  was never retracted, so a tab that stayed open kept a spinner running under a plan you had
+  already finished reading — including when the turn was stopped or failed.
+- **"Take it back" says so when it does not work.** A refusal from the server or a network failure
+  was stored and never shown, so a withdrawal that had not happened looked exactly like nothing
+  happening.
+- **An app that published without an administrator no longer prints "We could not tell" beside
+  Approved.**
+- **An activity group you opened stays open between two steps**, instead of snapping shut in the
+  pause before the next one starts.
+- **A send no longer damages what you are typing in another chat.** The draft store was cleared on
+  every accepted send, including the case where the box deliberately keeps text you rewrote while
+  the message was in flight, and a late send whose text began the same way as a sibling chat's
+  typing could slice that chat's box.
+
+### Notes
+
+- A review of the two waves before this one — the agent's whole voice, and the workspace the
+  canvas draws — upheld sixty-five defects. This build carries the one that stopped a new project
+  being used at all, every one of the next two grades, and forty of the remainder; each fix was
+  checked by an independent reader before it was kept. What stays open is written down with its
+  reason, and the largest of them is a ten-second wait between a model failing and the turn
+  saying so.
+- The residue of the two-page era was deleted rather than left to rot: six hundred and fifty-seven
+  lines of source, the tests that only covered it, and the comments that described mechanisms this
+  branch had already removed. Nothing to see on screen. **Local development must delete
+  `BACKEND_URL=` from `backend/.env` and `backend/.env.test` before starting the API** — the
+  setting is gone, and a leftover line now fails startup rather than being ignored. Containers are
+  unaffected.
+
+## [1.7.0-beta.6] - 2026-09-02
+
+The agent's whole voice, and the workspace the canvas draws.
+
+### Added
+
+- **The agent's writing reaches you as it is written, in the order it was written.** It used to be
+  held back until the turn ended, and any sentence written beside an action was thrown away
+  outright — so the account of a build was a row of receipts with the explanation between them
+  deleted. Words and steps now arrive interleaved, and a chat you reload reads in exactly the order
+  you watched it happen in.
+- **The agent can think for as long as a question needs, and the thinking costs you nothing.**
+  Reasoning tokens no longer count against your daily allowance.
+- **The project rail says what is live, what an administrator approved, and what you last saved,
+  without you opening anything.** All three used to sit behind a small grey chip you had to click,
+  one row at a time. They are drawn straight on the rail now, dated, under a status pill that is
+  actually coloured by the state it names rather than the one grey every state used to share. When
+  the running app is behind work you have already saved, that date prints in amber to say so.
+- **The boundary between your chat and your app can be moved.** It used to open at one of two
+  fixed widths with no way to change it. A handle between the two columns drags from 360 to 640
+  pixels, arrow keys nudge it, Home and End jump to either end, and the width you settle on is
+  still there next time you open the project.
+
+### Changed
+
+- **Nothing is said in the agent's name that the agent did not write.** "Getting started on that…"
+  is the platform's own line, and it used to sit there spinning underneath an answer you had already
+  finished reading. It is taken back off the screen the moment there is anything real above it.
+- **You can see what the agent read to get somewhere.** A build's activity used to open on a write,
+  with no account of what was looked at first. Reads are drawn now. Only plumbing stays hidden — a
+  configuration file, a housekeeping command — and a step that failed is never hidden.
+- **The agent writes at the length the answer needs.** The rules that capped how much it could say,
+  forced every plan into the same five parts, and prescribed how it had to sign off are gone. What
+  stays is who it is writing for.
+- **The project screen and both chat screens share one toolbar now, instead of three headers that
+  disagreed.** The rail's own header cut the project name off and vanished entirely once the panel
+  was collapsed; the chat header named neither the chat nor whether it was Build or Plan; and the
+  app drew a third header that only appeared once something had been built, so a new project had
+  no device switcher and no Save at all. It is one row now, always present. A chat's row reads
+  project name, then Build or Plan, then the chat's own title. The device width you pick survives
+  moving between a project and a chat instead of resetting, renaming happens in a small dialog
+  rather than by turning the page heading into a text box, and the running app can be opened in
+  its own tab.
+- **Teal is the colour of every action, and gold has stopped painting buttons.** Send, Launch, Try
+  again — all of them filled gold before, which is not what the design draws, and an unused gold
+  button style has been deleted so it cannot come back. Outline buttons highlight neutrally on
+  hover instead of turning solid orange, the selected half of the Plan/Build switch is a white
+  pill rather than a saturated block, and the login page's "Staff Internal Portal" badge — white
+  on gold at about 2.3:1, under the accessible minimum — is legible now.
+- **The rail is one flat white panel, and it no longer lists your past conversations.** It used to
+  be four bordered cards floating on a grey-blue column, one of them a list of every chat on the
+  project with a menu to reopen or delete each. It is a single panel divided by hairlines into
+  Start a chat, App status and Description. Leaving a chat means starting a new one; there is no
+  route back to an old one and no way to delete one anywhere in the product. Nothing is removed
+  from the server — the chats, their plans and their files all stay.
+- **Each kind of chat is laid out for what it is.** A build chat used to sit in a narrow fixed
+  strip with a band of grey between it and your app; it fills the panel now, and the panel is what
+  you resize. A plan chat has no app beside it, so stretching it across the whole window made it
+  unreadable; it centres in one column, and moving between a plan chat and a build chat slides the
+  app panel away rather than making it blink out (skipped if your system asks for reduced motion).
+- **The box you start a chat in and the box you type into are the same control.** They were built
+  separately and had drifted — a wide gold Start Chat button beside a separate Upload File pill on
+  one screen, a gold square beside the input on the other. Both are one bordered box now with
+  attach and send inside it at the right, a file can be dropped anywhere in it rather than onto a
+  pill, and the hint text speaks to the screen you are actually on.
+- **A build's steps are drawn as a list of tiles rather than a line of identical ticks.** Reading a
+  file, adding something, installing a package, checking work — each has its own icon in a
+  bordered panel now. The list stays collapsed while the build runs, showing a count with the
+  current step named underneath instead of opening itself; a group you opened for a look closes
+  again when the turn ends, while one you open after it finished stays open. A group where
+  something failed is tinted red and opens on its own.
+
+### Fixed
+
+- **Two first messages racing on the same new chat no longer lose one of them.** The message that
+  lost the race was answered with a bare failure, and the citizen watched their sentence vanish
+  while the reply it had started was already running in the other chat. It now joins the chat that
+  won, with the message intact.
+- **An administrator can no longer set a per-conversation maximum that locks someone out.** Below a
+  floor, the limit refused every chat that person opened — including a brand-new empty one — and
+  told them to start a new chat, which was the one thing that also failed. The form refuses the
+  value with a sentence saying why, and a value already stored below the floor is clamped on read,
+  so the people the defect already reached are working again without an administrator touching
+  anything.
+- **A reload in the middle of a build no longer shows you every sentence twice.** The turn's stored
+  prose and the re-told live turn were both drawn.
+- **"Working on your app" stays where the agent actually is.** It was pinned to the top of the
+  reply, so a build that thought again between steps pushed everything you had already read down
+  the screen until it stopped.
+- **Sending a message to a project while another one is running now asks first, instead of
+  opening your chat and asking afterwards.** The browser used to navigate immediately — address
+  changed, chat opened, message sent — and the question about the other project arrived after the
+  fact, interrupting a build two minutes in or bouncing you back where you came from. It asks
+  before anything moves: a dialog names both projects in plain words while your typed message and
+  your files stay where you left them. Cancelling changes nothing anywhere. Agreeing stops the
+  other project, saves it if you asked, waits for it to genuinely finish rather than trusting a
+  clock, and only then opens your chat with your message. Each step says what it is doing while it
+  happens, and it tells you when the other project's assistant is still writing, even if nothing
+  there is unsaved.
+- **Every way out of a workspace now asks about unsaved work, including the back arrow and signing
+  out.** The back arrow left silently. Signing out skipped the check altogether, which made the
+  one exit most people use at the end of the day the one that could throw away an afternoon. Both
+  go through the same warning as everything else, and it now names the project whose work is at
+  risk.
+- **Typing while a message is sending is no longer thrown away.** The box stays open for more
+  typing during a send on purpose — waiting on the server is no reason to stop writing — but it
+  was emptied unconditionally when that send completed, so anything written, or any file added,
+  during the wait disappeared the moment the original message went through. It clears only what it
+  actually sent.
+- **"Hide details" no longer wipes the screen on a narrow window.** Below the width where the
+  panel and the app stack instead of sitting side by side, the control whose whole job is to give
+  the app the screen did the opposite: the collapsed panel kept its full height, squeezing the app
+  to nothing and pushing it almost two screens down. Collapsing clears the height with the width.
+- **Save works from the project screen, not only from inside a chat**, which is where you are when
+  you open a project, watch its app start, and change something. A failed launch now tells you why
+  it failed instead of refreshing the reason away and leaving a stopped spinner.
+- **An attached file says what happened to it.** One too large, or of a kind the platform does not
+  take, was sometimes dropped without a word, so you would think the agent could see a file it
+  never got; a refusal is always spoken now. A file attached but not yet sent had no address the
+  site's security rules would show, so its preview was an empty box — text files show their
+  contents, and anything else says plainly that it opens once sent.
+- **The plan-ready offer explains itself, and the smaller places the screens disagreed with the
+  design are fixed.** "Build this plan" and "Keep planning" were two bare buttons with nothing
+  saying that Build opens a new chat and leaves this one untouched. Alongside that: the send
+  control was painted the grey reserved for a locked composer whenever the box was empty, at about
+  1.4:1 contrast; the paperclip sat at the far left of the box, up to a screen's width from Send;
+  a quarter of the build-step icons were blank circles because the icon map was matched to words
+  the app never sends; the plan chat floated as a card on grey instead of running edge to edge and
+  took half its screen for an app pane it does not have; the empty app pane had no frame or label;
+  a duplicate "Draft" chip sat beside the project title; the status pill dropped onto its own line
+  below its heading; "Take it back" was painted as a primary action; and your own messages were
+  grey fills rather than white with a hairline.
+- **The two message boxes really are one control.** They were made to look alike, but the project
+  screen mounted only the shell of the chat's box, so it inherited the border and the controls and
+  none of the behaviour built on them: no character limit and no counter, so forty-five thousand
+  characters were accepted with Send still lit and then refused by the server; and no saved draft,
+  so a half-written description died on a step to another screen — on the screen that carries the
+  longest message anyone writes. It mounts the whole control now: ten thousand characters with the
+  count beside it, and your text kept where you left it. A Plan chat also stops asking for "the
+  change you need" directly under the sentence promising it changes nothing.
+- **A draft survives a plain reload.** Type into a chat, reload, and both the box and the stored
+  text were empty — the first of the three losses the draft store exists to prevent. Saving your
+  text and restoring it are two steps of one render, and the saving step ran first with the
+  outgoing chat's empty box, wiping the incoming chat's draft before anything could read it.
+  Nothing ever reported this, because an empty box where a draft should be looks exactly like
+  never having had one.
+- **A message that already reached the agent no longer tells you it failed.** Tidying the box after
+  a successful send could itself throw, and that throw landed in the same place a refused send
+  does — so you were told to try again for a message that was already being answered.
+- **One reply is one message, so copying gives back the whole answer.** You ask once and are
+  answered once, but a reloaded conversation did not read that way: a reply that mixed writing with
+  steps came back as one message per piece — fourteen, on one real turn. Everything that hangs off
+  a message multiplied with them, the copy control most visibly: forty-one copy buttons on an
+  eight-turn conversation that should offer eight, one of them sitting between an answer's own
+  paragraphs, and none of them copying the answer you had just read. A live reply never had this
+  shape; the reloaded one now matches it.
+
+### Notes
+
+- The backend dependency stack was brought current and every floor pinned — pydantic-ai 2.37, and
+  an Anthropic SDK that now carries its own fork of its HTTP client. That upgrade is what made the
+  reasoning allowance reachable at all.
+- A verification pass over this wave, with nothing to see on screen: six tests that the branch had
+  left red or hanging are green, the test fixture that made a route's own rollback observable is
+  scoped to the two tests that need it rather than reshaping all 3,700, and a handful of comments
+  and docstrings that described mechanisms this wave deleted now describe what is there.
+- A guard test fails the build if a brand colour is used outside its role. The test environment
+  cannot read rendered colour, so it reads class names — enough to catch gold painting a surface
+  the design does not call for.
+- Three defects found while reviewing this wave rather than by using it: the hand-over dialog's
+  narration froze on chat screens, so it said "closing the other app" for the whole sequence; a
+  stalled network read could hold that dialog open past its own two-minute limit with no way out
+  but a reload; and the polled deployment-status route could abandon a database query mid-flight if
+  the object store failed. A cleanup pass removed dead code and comments naming things that never
+  existed, and added the tests several of these fixes were missing.
+- Twelve differences from the design boards remain, each recorded with its reason — several need a
+  product decision rather than more work.
+
+## [1.7.0-beta.5] - 2026-09-02
+
+The project screen becomes the app.
+
+### Added
+
+- **Your app is on the project screen now, beside everything else about the project.** Opening a
+  project shows the app on the right and its details on the left — the composer, what the app is
+  doing, and the description. The app does not start because you opened the screen: it starts when
+  you press **Launch Application**, once, and it stays running while you work.
+- **The pane answers for every state, in plain language.** Saved and waiting for you, getting ready,
+  running, another project is using your workspace (and which one, with a way to get there), and
+  "we could not check". It never says an app is running on a signal that does not prove it is
+  serving a page, and it never names a number nobody has measured.
+- **You can choose a Plan chat or a Build chat before you type.** Until now the project screen could
+  only ever start a Build chat — the other kind of chat existed but nothing in the product could
+  reach it.
+- **A Plan chat says everything the app pane would have said.** It has no pane, deliberately, and it
+  is not silent about the workspace: the same sentence, in words, above the composer.
+- **A warning before you leave the workspace with unsaved work**, on the ways out that the browser's
+  own "are you sure" cannot cover — a link in the header, the breadcrumb, opening another project.
+  Where the platform could not check, it says so instead of reassuring you.
+- **A way past the app with the keyboard.** The app is somebody else's page inside a frame, and it
+  swallows the Tab key; there is now a control that steps back out to the rail.
+
+### Changed
+
+- **You are asked before another project's app is stopped — every time, not only when there is
+  something to lose.** It used to stop silently whenever the platform judged there was nothing at
+  risk, which is a fair judgement about the work and the wrong one about the person. When the other
+  project genuinely has nothing unsaved, the question says so plainly and offers no Save button for
+  work that does not exist.
+- **The question comes before the chat is created, not after.** Sending the first message in a new
+  chat used to create the chat, then ask whether the workspace was free — so a refusal left an empty
+  conversation behind, named after the message it had just refused. Nothing is created until the
+  answer is known. *(Closes #161.)*
+- **The switch dialog leads with the app you are starting**, not the one you are leaving, and both
+  its buttons name the project whose changes are at stake. A non-technical audience could not tell
+  which app "Switch without saving" applied to, and said so.
+- One control collapses the details rail, and it lives beside the app so it is still reachable once
+  the rail is hidden.
+
+### Fixed
+
+- **An unreadable answer from the platform can no longer cost you your work.** Pressing Launch
+  Application on a container the platform could not reach fell into the branch written for "it is
+  definitely gone", which tears the container down before restoring the last saved copy. It now
+  refuses and offers a retry — the saved version is intact, and so is whatever was in the container.
+- **Signing out when the sign-out fails now warns you where you can read it.** The warning said this
+  browser might still hold a live session, then navigated away in the same instant and destroyed
+  itself. Nobody had ever seen it.
+- **The admin console tells a failure from a confirmation.** Both arrived looking identical, on the
+  surface where being wrong costs the most, and a failure faded after three seconds. Failures now
+  wait to be dismissed.
+- A planning chat on a brand-new project now talks about what could be built, instead of stopping at
+  what is there.
+
+### Notes
+
+- Sandbox-first turns a planning question, not just a save, into something that can create a build
+  container — multiplying how often the fleet is built up — while the pass that would reclaim
+  orphaned ones stays on its own deferred track (C10 §7), not shipped with this change.
+- There is no feature flag. The primary project screen changes for everyone at once.
+- A consolidation pass over this wave, with nothing to see on screen: the stop-then-save-then-release
+  hand-over now has one home rather than two copies that had to agree, the short commit shown beside
+  a saved version has one spelling again, and the project screen stops re-drawing its whole
+  conversation list every forty-five seconds for a reading that had not changed. Typing in a chat no
+  longer re-renders the page frame around it.
+
+## [1.7.0-beta.4] - 2026-09-01
+
+Finishing the removal, and putting back the guardrail it dropped.
+
+### Added
+
+- **A long chat now warns you before it stops working, and tells you why when it does.** As a
+  conversation grows you get one line saying it is getting long and suggesting a new chat; past the
+  limit your administrator set, the next message is refused with a sentence that says what happened,
+  what to do, and — the part that actually matters — that your app and everything in it stays exactly
+  as it is. Before this, a chat that got too long simply failed, with no warning and no reason.
+- The limit is enforced on the **server**, at both places a chat can start a turn: an ordinary
+  message and pressing "Build this plan". Enforcing it in the browser is what let it disappear
+  silently in the first place.
+
+### Changed
+
+- **The per-conversation limits in the admin console do what their labels say.** "Per-conversation
+  warn" and "Per-conversation max" saved cleanly and changed nothing — for anyone, since the release
+  that deleted the old two-page chat. Both are now real, their help text describes what actually
+  happens, and the note about when a change takes effect distinguishes the two: the max applies to
+  the user's next message, the warning after their next reload.
+- While the app is being refined, the overlay says **"Still working…"** rather than "Still
+  iterating…".
+
+### Removed
+
+- **The legacy chat endpoint is gone.** There were two ways to run a chat turn; the portal stopped
+  using the older one, and it has now been removed rather than left mounted. A second, unused path
+  through the same work is a way around every limit the first one enforces — including the one this
+  release restores.
+- Six unused pieces of interface scaffolding and four dependencies that came with them, plus a chat
+  helper that has had no callers since June.
+
+### Fixed
+
+- Around sixty comments across the codebase that described the portal as it was two releases ago —
+  including four inside the new chat screen that referred to it by the name of the page it replaced,
+  and one that would have led the next reader to delete a working feature. Guards in both the
+  frontend and backend test suites now fail if a future removal leaves the same trail.
+- Switching between chats could briefly show the previous conversation's "getting long" warning on
+  the new one's composer.
+- A message refused for length no longer quietly consumes a "Build this plan" card you had not
+  pressed yet. It used to refuse the message and spend the offer at the same time, with nothing on
+  screen saying the second thing had happened.
+
+### Known limitations
+
+- **The length warning does not yet count attached documents properly.** A PDF is measured as though
+  it were a single image, so a conversation carrying several long documents can still pass the limit
+  without warning and fail the way it did before. Chats made mostly of writing are measured
+  correctly. Fixing this needs the page count recorded when a file is uploaded.
+- An administrator can set a per-conversation maximum low enough to refuse every chat for that user,
+  including a brand-new empty one. The lowest useful value is around 8,000; below that the person is
+  locked out until the number is raised.
+
+## [1.7.0-beta.3] - 2026-09-01
+
+One chat surface, one publish chip, one agent voice. (#168, #170, #169)
+
+### Added
+
+- The agent can now say something **while it is working**, instead of only at the end. A build that
+  runs for two minutes used to show a row of finished steps and no words; it can now send a short
+  line as each piece starts or lands — *"Adding the status picker next to your search box now."*
+  The line is bounded by the platform rather than by a request in its instructions, so it stays a
+  line and cannot become an essay.
+- When a single message asks for many separate things, the agent proposes what to build first:
+  everything you asked for listed back, the two to four pieces it would start with, why those, and
+  one question. Saying the whole thing back matters — a request for nine things answered with three
+  reads as a refusal unless you can see all nine were heard.
+- A build now ends by saying **what was agreed and not built**, taken from the list you agreed to
+  rather than from the agent's recollection. Where the platform cannot tell which pieces landed, it
+  says so instead of guessing.
+- A single build is now bounded by what it **spends**, as well as by how many steps it takes and how
+  long it runs. When it reaches that point it stops where the app works, keeps a copy of your work
+  first, and tells you what is left.
+- **"Take it back."** A version waiting with an administrator can be withdrawn from the chip with
+  one confirmation, so you are not stuck behind a decision that is not yours to make. The chip also
+  shows *when* a version was approved, not only which one.
+
+### Changed
+
+- **The chat is one screen now.** Planning a change and building it used to be two different pages
+  that looked and behaved differently — different scrolling, a different composer, a different idea
+  of what a message is. There is one surface, and which kind of chat you are in changes the
+  placeholder and nothing else.
+- **What the app is doing is written where it happened.** The build used to narrate itself in a card
+  pinned to the bottom of the screen, which erased and rewrote itself as it went and left nothing
+  behind. The steps now sit in the conversation, in order, grouped by the run they belong to, and
+  they are still there next week. A run that hit a problem says so and opens itself; a clean one
+  stays collapsed to a single line.
+- **Stop moved to the composer**, where the rest of the controls are, and it no longer goes dead
+  under your cursor when you press it.
+- Attachments open over the conversation instead of in a new browser tab, so you keep your place and
+  the reply keeps arriving behind them.
+- The plan offer is a strip on the composer rather than a card in the transcript, and there is
+  exactly one Build control on the screen.
+- **Publishing is one chip beside your project's name.** The Publish card, the Review & approval
+  card and the small button in the builder's toolbar are gone; there is one chip, it says where your
+  app stands, and pressing it opens one sentence and — where there is something to do — exactly one
+  button. Where there is nothing to do there is no button, rather than one that fails when pressed.
+- **The chip stops guessing.** Every label is read from a single answer the server works out, instead
+  of each screen recombining the same four or five fields and sometimes reaching a different
+  conclusion. That guesswork had produced the same kind of mistake four times in this one feature,
+  most recently promising "this can publish automatically" beside a Publish button moments before
+  the app was sent to an administrator instead.
+- **Being live and having newer unsaved work are now visibly different**, without opening anything:
+  "Live", "Live · newer work saved", and — on the rare occasion the platform cannot check — a plain
+  statement to that effect rather than a claim that nothing of yours is waiting.
+- **"Taken offline" and "Switched off" are two different things again**, because they have two
+  different remedies: a taken-offline app can be published straight back to the same address, and a
+  switched-off one cannot be published at all until an administrator says so.
+- The word "deploy", and the pipeline's own vocabulary — "Packaging your app", "Setting up the
+  server" — are gone from everything you read. While a publish runs, the chip says "Starting up".
+- **A plan now arrives in five named parts** — what this gives you, what you will see, what the app
+  will remember, what stays exactly as it is, and what was assumed. The fourth is left out entirely
+  for a first build, because there is nothing yet to leave alone. Nothing in a plan names a file, a
+  folder, a framework or a command.
+- The buttons under a plan are now **Build this plan** and **Keep planning**, and the agent uses the
+  same two words. An agent telling you to press something the screen does not draw is a broken
+  instruction at the moment you are being asked to decide.
+- **One rule now governs the agent's words in both kinds of chat.** Anything written in the same
+  breath as an action is the agent talking to itself on the way there, and it no longer reaches you
+  in a planning chat either — which is where the 2,397-word reply of file paths came from. The
+  consequence, stated plainly: **a planning answer no longer appears word by word.** It arrives
+  whole when the agent finishes writing it, at the same moment it would have finished arriving
+  before. Build chats have always worked this way.
+
+### Fixed
+
+- **A refused message is no longer lost.** If the server turned a message down — the daily limit
+  reached, a build already running, the service unavailable — the composer had already emptied
+  itself by the time the refusal arrived, and the text and any attached files were gone with no way
+  to get them back. The box now empties only once the server has accepted the message. Two relatives
+  of the same bug went with it: pressing Enter twice quickly no longer clears the box for the press
+  it ignored, and a message refused while you were looking at another chat no longer leaves that
+  chat unable to send anything for the rest of the session.
+- When sending is refused, the reason is the one that applies — the daily limit, a build in
+  progress, the attachment limit — instead of one generic sentence for all of them.
+- **A file attached in one chat no longer follows you into the next one**, where it would have been
+  sent to a conversation you never attached it to.
+- **Attached spreadsheets and text files no longer print their whole contents into the
+  conversation**, and attached images and PDFs show up at all.
+- A turn can no longer end with nothing to read. Where the agent said nothing at all, the platform
+  says so itself rather than leaving a screen of finished steps and silence.
+- Screen readers are told what a run of work amounted to when it finishes, not only that it started
+  — and are no longer read a summary of every past build when an old chat is opened.
+
+## [1.7.0-beta.2] - 2026-09-01
+
+The workspace owns the running app, and a chat is a plan chat or a build chat. (#166, #167)
+
+### Added
+
+- Pressing **Build this plan** now opens a new build chat that starts from the plan itself — the
+  plan arrives as the first message, word for word, exactly as if it had been pasted in. The plan
+  chat is left untouched, so a plan can be read again next week and built a second time,
+  differently, without anything having to be undone.
+- A plan chat can now answer questions about the app as it actually is. It used to answer from a
+  saved copy, which could be days old; it reads the same running app a build chat does. Where there
+  is nothing running to read, the message is refused with a sentence saying so rather than answered
+  confidently from stale code.
+- The warning about unsaved work now follows you across the whole workspace, not only while the
+  build chat happens to be the thing on screen.
+
+### Changed
+
+- A chat is a **plan chat** or a **build chat**, chosen when it is created and never after. There is
+  no mode pill, no switch part-way through, and no way to be in a conversation whose next message
+  does something other than what the conversation is for. Two overlapping ideas with six labels
+  between them became one idea with two.
+- The running app is now part of the workspace itself rather than something each screen draws for
+  itself. It used to exist only because the build chat was the page you happened to be on, which is
+  why walking away from that page took the app down with it.
+- Conversations are opened and deleted from the project page. The list that used to sit inside a
+  chat — beside the chat you were already reading — is gone, so there is one place that answers
+  "what is in this project" instead of two that could disagree.
+- Taking the workspace no longer depends on what kind of chat asked for it. A planning question that
+  needs the app running takes it on the same terms a build does, and is refused on the same terms
+  when someone else holds it.
+- Whether an app is published is now decided in one place on the server and read everywhere else,
+  instead of each screen working it out from parts and occasionally disagreeing.
+
+### Fixed
+
+- **Walking away from a build chat no longer disturbs the running app.** Going to the project page
+  and back reloaded it; leaving mid-build reloaded it, because the pane read the departure as "the
+  turn just finished"; and leaving right after a build succeeded shut it down altogether — at the
+  moment a citizen is most likely to walk away.
+- **The Build button can no longer appear underneath something that was never a plan.** The offer is
+  tied to the plan the agent actually wrote, because the plan travels inside the offer itself;
+  nothing reads the agent's prose to guess whether a plan happened.
+- Starting a build from a plan can no longer leave behind an empty chat with no message in it. The
+  conversation and its first message are written together, so a failure part-way through leaves
+  nothing rather than a shell you cannot use or explain.
+- A plan is never quietly cut short. An overlong plan is refused with a reason instead of being
+  trimmed to fit and offered as though it were complete.
+- A first message that fails to save no longer takes the typed text with it. The notice asking you
+  to try again appeared over an empty box, offering a retry of something that no longer existed on
+  screen or in storage.
+- Screens inside the workspace are no longer clipped. Each fills the space it is given instead of
+  asserting a full window height of its own, and the spinner shown while a conversation loads is no
+  longer pushed below centre and cut off by the navigation bar.
+
+### Removed
+
+- The mid-conversation mode switch and the endpoint behind it. A chat's kind is fixed at creation,
+  so there is nothing to switch.
+- The warning that a plan had gone stale, and the override that let you build anyway. They asked the
+  citizen to adjudicate something the platform could not actually tell them.
+
+## [1.7.0-beta.1] - 2026-08-31
+
+Conversations say which kind they are, and the platform starts measuring. (#165)
+
+### Added
+
+- Every conversation on a project page now says which kind it is, in words. The list drew two
+  different icons and never named either, so telling a Plan chat from a Build chat meant knowing
+  what a wrench stands for. Rows now read "Build", "Plan" or "Chat", and a screen reader hears the
+  whole phrase rather than a bare noun.
+- The platform started measuring four things about the citizen's journey that nobody could
+  previously observe: how long a cold start actually takes, how many starts reach a running app, how
+  long it takes to first see your app after opening a project, and how often a project is opened
+  without any chat being opened. Until now every claim about any of these was unfalsifiable. An
+  administrator reads them through the counters endpoint that already existed; the two only a
+  browser can see arrive through a narrow endpoint that stores no record of who sent them. No number
+  reaches a citizen's screen.
+
+### Fixed
+
+- A conversation row could be labelled the wrong kind, or crash instead of rendering at all. The old
+  test knew about one of the three kinds, so an assistant chat was labelled a plan; separately, a
+  kind whose name collided with a built-in JavaScript property took the whole row down. Both were
+  reachable from ordinary API data.
+- A measurement failing can no longer slow down or break the thing it is measuring. The counter
+  writes moved out from under the lock that a citizen's next build waits on, and a measurement that
+  throws is contained instead of taking the builder's screen down with it.
+
 ## [1.6.19] - 2026-08-29
 
 ### Added
@@ -446,7 +1123,6 @@ most a handful of workspaces, and every candidate is re-checked immediately befo
 - Restore no longer manufactures containers with no identity.
 - Two flag defects: one that would have stopped sandbox reaping entirely on deploy, and one
   switch that did nothing.
-
 
 **The publish gate no longer works backwards.** Since 1.6.10, answering the data-classification
 questions honestly had the opposite effect to the one intended: an app that declared credentials

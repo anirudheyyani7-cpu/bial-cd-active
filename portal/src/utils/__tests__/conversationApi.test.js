@@ -4,14 +4,12 @@ import {
   listConversations,
   listProjectConversations,
   getConversation,
-  createConversation,
   messagesFromProjection,
-  patchConversation,
-  deleteConversation,
   createConversationStore,
   deriveTitle,
 } from '../conversationApi'
 import { toStepItem } from '../turnStreamApi'
+import { OUTCOME_COPY, outcomeSummary } from '../messageTypes'
 
 // authFetch deps injection — no real token/network.
 const deps = (fetchImpl) => ({ fetchImpl, getToken: () => 'tok', refresh: vi.fn() })
@@ -19,14 +17,14 @@ const ok = (json) => ({ ok: true, status: 200, json: async () => json })
 
 describe('listConversations', () => {
   it('GETs ?kind= and normalizes _id → id', async () => {
-    const fetchImpl = vi.fn(async () => ok({ conversations: [{ _id: 'c1', kind: 'planning', title: 'T', updatedAt: '2026-06-20T00:00:00Z' }] }))
-    const list = await listConversations('planning', deps(fetchImpl))
-    expect(fetchImpl.mock.calls[0][0]).toBe('/api/conversations?kind=planning')
-    expect(list).toEqual([{ id: 'c1', kind: 'planning', title: 'T', createdAt: undefined, updatedAt: '2026-06-20T00:00:00Z' }])
+    const fetchImpl = vi.fn(async () => ok({ conversations: [{ _id: 'c1', kind: 'plan', title: 'T', updatedAt: '2026-06-20T00:00:00Z' }] }))
+    const list = await listConversations('plan', deps(fetchImpl))
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/conversations?kind=plan')
+    expect(list).toEqual([{ id: 'c1', kind: 'plan', title: 'T', createdAt: undefined, updatedAt: '2026-06-20T00:00:00Z' }])
   })
   it('throws the server message on failure', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: { message: 'boom' } }) }))
-    await expect(listConversations('planning', deps(fetchImpl))).rejects.toThrow('boom')
+    await expect(listConversations('plan', deps(fetchImpl))).rejects.toThrow('boom')
   })
 })
 
@@ -35,14 +33,14 @@ describe('listProjectConversations', () => {
     const fetchImpl = vi.fn(async () =>
       ok({
         conversations: [
-          { _id: 'c1', kind: 'planning', projectId: 'p1', title: 'Plan' },
-          { _id: 'c2', kind: 'builder', projectId: 'p1', title: 'Build' },
+          { _id: 'c1', kind: 'plan', projectId: 'p1', title: 'Plan' },
+          { _id: 'c2', kind: 'build', projectId: 'p1', title: 'Build' },
         ],
       }),
     )
     const list = await listProjectConversations('p1', deps(fetchImpl))
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/conversations?projectId=p1')
-    expect(list.map((c) => c.kind)).toEqual(['planning', 'builder'])
+    expect(list.map((c) => c.kind)).toEqual(['plan', 'build'])
     expect(list.every((c) => c.projectId === 'p1')).toBe(true)
   })
   it('url-encodes the project id', async () => {
@@ -58,19 +56,22 @@ describe('listProjectConversations', () => {
 
 describe('getConversation', () => {
   it('hydrates header + PROJECTION into the in-memory message shape (U7)', async () => {
+    // `mode` is gone from the wire doc entirely — ConversationHeader lost the field, and the
+    // reload projection no longer carries a per-item mode either. `kind` is the whole of what
+    // a chat is now, fixed at creation. No assertion below reads `.mode`; that IS the proof.
     const fetchImpl = vi.fn(async () =>
       ok({
-        conversation: { _id: 'c1', kind: 'builder', mode: 'plan', title: 'App', context: { theme: 'bial' } },
+        conversation: { _id: 'c1', kind: 'build', title: 'App', context: { theme: 'bial' } },
         projection: [
-          { type: 'user_text', seq: 0, mode: 'plan', text: 'hi', attachmentIds: [] },
-          { type: 'assistant_text', seq: 1, mode: 'plan', text: 'hello!' },
+          { type: 'user_text', seq: 0, text: 'hi', attachmentIds: [] },
+          { type: 'assistant_text', seq: 1, text: 'hello!' },
         ],
         activeTurn: null,
       }),
     )
     const conv = await getConversation('c1', deps(fetchImpl))
     expect(conv.id).toBe('c1')
-    expect(conv.mode).toBe('plan')
+    expect(conv.kind).toBe('build')
     expect(conv.context).toEqual({ theme: 'bial' })
     expect(conv.activeTurn).toBeNull()
     expect(conv.messages).toEqual([
@@ -86,7 +87,7 @@ describe('getConversation', () => {
   // caller read `undefined`. ChatRoute's kind dispatch and the chat breadcrumb both
   // depend on this surviving hydration.
   it('surfaces conversation.projectId', async () => {
-    const fetchImpl = vi.fn(async () => ok({ conversation: { _id: 'c1', kind: 'builder', projectId: 'p1' }, projection: [] }))
+    const fetchImpl = vi.fn(async () => ok({ conversation: { _id: 'c1', kind: 'build', projectId: 'p1' }, projection: [] }))
     expect((await getConversation('c1', deps(fetchImpl))).projectId).toBe('p1')
   })
 })
@@ -108,10 +109,19 @@ describe('messagesFromProjection', () => {
       },
     ])
   })
-  it('maps a plan_options item to a card part carrying the STORED item (U13)', () => {
-    const item = { type: 'plan_options', seq: 3, mode: 'plan', toolCallId: 't', state: 'pending', reason: null }
-    expect(messagesFromProjection([item])).toEqual([
-      { id: 'srv_3_p_0', role: 'assistant', parts: [{ type: 'plan_options', item }], seq: 3 },
+  it('maps a plan_options item to a card part carrying the NARROWED item (U13) — mode/reason do not ride along', () => {
+    // The stored item is fed through toPlanOptionsItem, same as the live path (turnStreamApi.ts)
+    // — not forwarded verbatim. `mode` and `reason` are given here as an old stored row could
+    // still carry them, and neither reaches the rendered part: PlanOptionsItem dropped `reason`
+    // along with the `build_failed` state that used to need it.
+    const stored = { type: 'plan_options', seq: 3, mode: 'plan', toolCallId: 't', state: 'pending', reason: null }
+    expect(messagesFromProjection([stored])).toEqual([
+      {
+        id: 'srv_3_p_0',
+        role: 'assistant',
+        parts: [{ type: 'plan_options', item: { type: 'plan_options', seq: 3, toolCallId: 't', state: 'pending' } }],
+        seq: 3,
+      },
     ])
   })
   it('maps visible steps and the in-progress anchor; hidden (read) steps stay out (U15)', () => {
@@ -123,15 +133,15 @@ describe('messagesFromProjection', () => {
         { type: 'build_in_progress', seq: 3, sessionId: 's' },
       ]),
     ).toEqual([
-      // The step part is now toStepItem(visible), not the raw stored item — same
-      // narrowing function turnStreamApi.ts's live path uses (PR #93 review finding
-      // 9), so it also fills toStepItem's own defaults for fields `visible` never
-      // had (mode: '', detail: {args: null, result: null}) rather than forwarding
-      // the raw object's exact fields untouched.
+      // The step part is now toStepItem(visible), not the raw stored item — the same
+      // narrowing function turnStreamApi.ts's live path uses (PR #93 review finding 9).
+      // It used to default-fill two fields the stored row never had, `mode` and
+      // `detail: {args: null, result: null}`; StepItem carries neither any more, so a
+      // reloaded step is exactly the six fields below and nothing is synthesized.
       {
         id: 'srv_1_s_0',
         role: 'assistant',
-        parts: [{ type: 'step', step: { ...visible, mode: '', detail: { args: null, result: null } } }],
+        parts: [{ type: 'step', step: { ...visible } }],
         seq: 1,
       },
       // …index 2, not 1: the ordinal counts SOURCE position, so skipping the hidden step at
@@ -157,27 +167,129 @@ describe('messagesFromProjection', () => {
   })
 })
 
-describe('createConversation / patchConversation / deleteConversation', () => {
-  it('POSTs {id, projectId, kind} (+title/context when given) to the conversations route', async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: true, status: 201, json: async () => ({ conversation: { _id: 'c1', kind: 'planning', projectId: 'p1', mode: 'plan' } }) }))
-    const header = await createConversation('c1', { projectId: 'p1', kind: 'planning', title: 'T' }, deps(fetchImpl))
-    const [url, opts] = fetchImpl.mock.calls[0]
-    expect(url).toBe('/api/conversations')
-    expect(opts.method).toBe('POST')
-    expect(JSON.parse(opts.body)).toEqual({ id: 'c1', projectId: 'p1', kind: 'planning', title: 'T' })
-    expect(header).toMatchObject({ id: 'c1', kind: 'planning', projectId: 'p1', mode: 'plan' })
-  })
-  it('createConversation rejects on failure (no silent drop)', async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ error: { message: 'id already in use' } }) }))
-    await expect(createConversation('c1', { projectId: 'p1', kind: 'planning' }, deps(fetchImpl))).rejects.toThrow('id already in use')
-  })
-  it('patchConversation PATCHes the body; deleteConversation DELETEs (404 tolerated)', async () => {
-    const patchFetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }))
-    await patchConversation('c1', { title: 'new' }, deps(patchFetch))
-    expect(patchFetch.mock.calls[0][1].method).toBe('PATCH')
+describe('messagesFromProjection — the loud fallback arm (Plan D U4, L4)', () => {
+  // Until this arm existed the if/else-if chain simply ENDED, so a projection item type this
+  // client did not recognise vanished with no error, no warning and no trace — on the one path a
+  // reloaded transcript is rebuilt from, for both kinds of chat. That is the four-edit change no
+  // compiler enforces, and this is the edit that makes the fourth one impossible to forget.
 
-    const delFetch = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }))
-    await expect(deleteConversation('c1', deps(delFetch))).resolves.toBe(true) // 404 is fine (already gone)
+  it('surfaces an unknown item type instead of swallowing it', () => {
+    const onUnknown = vi.fn()
+    const messages = messagesFromProjection(
+      [
+        { type: 'user_text', seq: 1, text: 'hello' },
+        { type: 'something_the_server_added_last_week', seq: 2, payload: { a: 1 } },
+      ],
+      onUnknown,
+    )
+
+    expect(onUnknown).toHaveBeenCalledTimes(1)
+    // The SHAPE is asserted, not just the count: whoever reads this report needs the type name
+    // and the seq to find the item, and a bare "something was dropped" is not actionable.
+    expect(onUnknown.mock.calls[0][0]).toMatchObject({
+      type: 'something_the_server_added_last_week',
+      seq: 2,
+    })
+    // Liveness, and the deliberate non-behaviour: the rest of the transcript still renders. A
+    // throw here would take a whole conversation down because the server shipped one new item
+    // kind ahead of the browser, which is a routine deployment order.
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts[0]).toEqual({ type: 'text', text: 'hello' })
+  })
+
+  it('stays silent for a COMPLETED turn_terminal, which is KNOWN and deliberately draws nothing', () => {
+    // ★ THE MUTANT'S TEST. #186 narrowed this silence to completed terminals; it did not remove
+    // it, and the difference is the whole design. `_write_turn_terminal` writes one of these
+    // rows for EVERY turn of BOTH kinds, unconditionally — so a `turn_terminal` arm that drew
+    // whatever it was handed would stamp "Build finished." after every single exchange in every
+    // chat, including a Plan conversation that never built anything. Make the arm render
+    // unconditionally and this goes red; that is the guard.
+    //
+    // The distinction the fallback arm exists to draw rides along: "we decided this renders
+    // nothing" and "we have never heard of this" are different facts, and only the second is a
+    // bug — collapsing them would train everyone to ignore the report.
+    const onUnknown = vi.fn()
+    const messages = messagesFromProjection(
+      [{ type: 'turn_terminal', seq: 3, turnId: 't1', terminal: 'completed', reason: null }],
+      onUnknown,
+    )
+
+    expect(onUnknown).not.toHaveBeenCalled()
+    expect(messages).toEqual([])
+  })
+
+  it('stays silent for a terminal word it does not recognise, without reporting it', () => {
+    // The same degradation rule the banner mapping follows: a client behind its server says
+    // LESS, never something invented. And it is still a known arm, so it is not a bug report —
+    // the item reached a branch that decided about it.
+    const onUnknown = vi.fn()
+    const messages = messagesFromProjection(
+      [{ type: 'turn_terminal', seq: 3, turnId: 't1', terminal: 'evaporated', reason: null }],
+      onUnknown,
+    )
+
+    expect(onUnknown).not.toHaveBeenCalled()
+    expect(messages).toEqual([])
+  })
+
+  it('never reports an item it rendered', () => {
+    const onUnknown = vi.fn()
+    messagesFromProjection(
+      [
+        { type: 'user_text', seq: 1, text: 'hi' },
+        { type: 'assistant_text', seq: 2, text: 'hello' },
+        { type: 'step', seq: 3, tool: 'bash', label: 'Read the file', state: 'ok', hidden: false },
+        { type: 'build_in_progress', seq: 4, sessionId: 's1' },
+      ],
+      onUnknown,
+    )
+
+    expect(onUnknown).not.toHaveBeenCalled()
+  })
+
+  it('defaults to a console report when no handler is injected', () => {
+    // The default matters: production has no handler, and the whole point is that the drop is
+    // visible to a developer rather than silent.
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      messagesFromProjection([{ type: 'brand_new_kind', seq: 9 }])
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0][0])).toMatch(/brand_new_kind/)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('the create / patch / delete round trips are gone', () => {
+  /**
+   * A GUARD, not deleted coverage (plan 001, unit 6). All three were clients with no caller, and
+   * each lost its caller to a decision rather than to an accident.
+   *
+   * `createConversation` and `patchConversation`: a row's parentage rides its FIRST TURN now
+   * (`startTurn`'s `create` block), written inside that turn's transaction after every
+   * side-effect-free refusal — so a refused first message no longer leaves a titled, empty chat
+   * in the project, which is what the separate `POST /conversations` round trip did. The wire
+   * contract this block used to assert — THE CHAT'S KIND IS BOUND INTO THE CREATE BODY — moved
+   * with it, to `turnStreamApi.test.ts`, against the request that now carries it.
+   *
+   * `deleteConversation` had exactly one caller, the project rail's past-conversations list, and
+   * the ruling of 2026-09-02 deleted the list: nothing points back to a chat, so nothing offers
+   * to delete one. The SERVER routes are all untouched. Asserted rather than left silent so that
+   * re-adding any of these clients has to be a decision someone makes on purpose.
+   */
+  it('★ neither the module nor the store offers create, patch or delete', async () => {
+    const mod = await import('../conversationApi')
+    expect('createConversation' in mod).toBe(false)
+    expect('patchConversation' in mod).toBe(false)
+    expect('deleteConversation' in mod).toBe(false)
+    const store = mod.createConversationStore('plan')
+    expect('createConversation' in store).toBe(false)
+    expect('deleteConversation' in store).toBe(false)
+    // Paired with a liveness assertion: the READ half is still there, so the absences above are
+    // real absences and not an empty module or an empty store object.
+    expect(typeof mod.listProjectConversations).toBe('function')
+    expect(typeof store.getConversation).toBe('function')
   })
 })
 
@@ -216,21 +328,13 @@ describe('uuidv7', () => {
 
 describe('createConversationStore', () => {
   it('newConversation mints a client UUIDv7 synchronously (no network)', () => {
-    const store = createConversationStore('planning')
+    const store = createConversationStore('plan')
     const a = store.newConversation()
     expect(a).toMatch(/^[0-9a-f-]{36}$/i)
     // The wiring, asserted where the decision is made: the store's mint IS `uuidv7`, so a
     // `crypto.randomUUID()` regression here shows up as a `4` in the version nibble.
     expect(a[14]).toBe('7')
     expect(store.newConversation()).not.toBe(a)
-  })
-
-  it('createConversation binds the kind into the create body', async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: true, status: 201, json: async () => ({ conversation: { _id: 'c1', kind: 'assistant' } }) }))
-    const store = createConversationStore('assistant')
-    await store.createConversation('c1', { projectId: 'p1', title: 'T' }, deps(fetchImpl))
-    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body).toEqual({ id: 'c1', projectId: 'p1', kind: 'assistant', title: 'T' })
   })
 })
 
@@ -249,18 +353,23 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
   const keysOf = (projection) => messagesFromProjection(projection).map((m) => m.id)
   const unique = (keys) => new Set(keys).size === keys.length
 
-  it('THE BUG: one row projecting two assistant_text items yields two DISTINCT keys', () => {
-    const keys = keysOf([
+  it('two assistant_text items in one row become ONE reply, under one key', () => {
+    // N3's collision is answered by there being nothing to collide: consecutive assistant
+    // content is now PARTS of one reply rather than separate messages. The source ordinal is
+    // still in the key, which is what keeps it unique against everything around it.
+    const messages = messagesFromProjection([
       { type: 'assistant_text', seq: 4, mode: 'write', text: 'first part' },
       { type: 'assistant_text', seq: 4, mode: 'write', text: 'second part' },
     ])
-    expect(keys).toHaveLength(2)
-    expect(unique(keys)).toBe(true)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts.map((p) => p.text)).toEqual(['first part', 'second part'])
+    expect(unique(messages.map((m) => m.id))).toBe(true)
   })
 
-  it('holds for every kind that can repeat within one row', () => {
-    // The same collision shape for _u / _s / _b / _p / _g, since any of them can be emitted
-    // more than once for a single stored row.
+  it('keys stay unique across kinds that can repeat within one row', () => {
+    // Two user turns, one coalesced reply carrying both steps, and two in-progress markers —
+    // five messages, five distinct keys. What matters here is uniqueness, not the count: a
+    // duplicate key is what React says "may cause children to be duplicated and/or omitted".
     const keys = keysOf([
       { type: 'user_text', seq: 1, mode: 'ask', text: 'a', attachmentIds: [] },
       { type: 'user_text', seq: 1, mode: 'ask', text: 'b', attachmentIds: [] },
@@ -269,7 +378,7 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
       { type: 'build_in_progress', seq: 3, sessionId: 's' },
       { type: 'build_in_progress', seq: 3, sessionId: 's' },
     ])
-    expect(keys).toHaveLength(6)
+    expect(keys).toHaveLength(5)
     expect(unique(keys)).toBe(true)
   })
 
@@ -306,11 +415,219 @@ describe('messagesFromProjection — keys are unique per ITEM, not per row (N3)'
   it('a hidden step does not renumber the items after it', () => {
     // The ordinal counts SOURCE position precisely so that flipping a step's `hidden` cannot
     // shift every later key — which an output-array index would have done.
+    // A user turn between the two replies, so each one opens its OWN message and therefore
+    // shows its own key — otherwise the trailing text joins the reply above it and the ordinal
+    // under test never reaches an id.
     const withHidden = [
       { type: 'step', seq: 1, tool: 'write_file', label: 'x', state: 'ok', hidden: false },
       { type: 'step', seq: 2, tool: 'read_file', label: 'y', state: 'ok', hidden: true },
-      { type: 'assistant_text', seq: 3, mode: 'write', text: 'done' },
+      { type: 'user_text', seq: 3, mode: 'ask', text: 'and now?', attachmentIds: [] },
+      { type: 'assistant_text', seq: 4, mode: 'write', text: 'done' },
     ]
-    expect(keysOf(withHidden)).toEqual(['srv_1_s_0', 'srv_3_a_2'])
+    // `_3` and not `_2`: the ordinal counts SOURCE position, so dropping the hidden step at
+    // index 1 does not pull the items after it down.
+    expect(keysOf(withHidden)).toEqual(['srv_1_s_0', 'srv_3_u_2', 'srv_4_a_3'])
+  })
+})
+
+/**
+ * ONE REPLY IS ONE MESSAGE — the regression guard for the copy control.
+ *
+ * A citizen asks once and is answered once. This path used to push a separate message per
+ * projection item, so a reply of prose-and-steps came back from a reload as seven or fourteen
+ * messages. Anything mounted per message multiplied with them: a real eight-turn transcript
+ * offered 41 copy buttons, and none of them copied the reply that had been read — only the
+ * fragment beside it. The live path never had this shape (`streamingParts` builds one ordered
+ * part list per turn), so this was also a live-vs-reload divergence against R72/AE43.
+ */
+describe('one reply is one message (the copy-control guard)', () => {
+  it('prose and steps interleaved come back as ONE assistant message, in order', () => {
+    const messages = messagesFromProjection([
+      { type: 'user_text', seq: 0, mode: 'ask', text: 'build me a visitor log', attachmentIds: [] },
+      { type: 'assistant_text', seq: 1, mode: 'write', text: "I'll start by looking around." },
+      { type: 'step', seq: 2, tool: 'read_file', label: "Looked through the app's files", state: 'ok', hidden: false },
+      { type: 'step', seq: 3, tool: 'read_file', label: 'Looked at the main page', state: 'ok', hidden: false },
+      { type: 'assistant_text', seq: 4, mode: 'write', text: 'Now let me build the schema.' },
+      { type: 'step', seq: 5, tool: 'write_file', label: 'Updated the page', state: 'ok', hidden: false },
+    ])
+
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+    // ORDER IS THE RENDER: the library groups ADJACENT tool parts, so this part list draws one
+    // paragraph, a group of two steps, a second paragraph, then a group of one.
+    expect(messages[1].parts.map((p) => p.type)).toEqual(['text', 'step', 'step', 'text', 'step'])
+  })
+
+  it('a new question starts a new reply', () => {
+    const messages = messagesFromProjection([
+      { type: 'user_text', seq: 0, mode: 'ask', text: 'first', attachmentIds: [] },
+      { type: 'assistant_text', seq: 1, mode: 'write', text: 'answer one' },
+      { type: 'user_text', seq: 2, mode: 'ask', text: 'second', attachmentIds: [] },
+      { type: 'assistant_text', seq: 3, mode: 'write', text: 'answer two' },
+    ])
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(messages.filter((m) => m.role === 'assistant')).toHaveLength(2)
+  })
+
+  it('a banner ends the reply rather than joining it', () => {
+    // The outcome bubble is its own message on the live path too, so it stays one here.
+    const messages = messagesFromProjection([
+      { type: 'assistant_text', seq: 1, mode: 'write', text: 'working on it' },
+      { type: 'banner', seq: 2, mode: 'write', banner: 'completed', text: 'Done.', previewUrl: null, sessionId: 's1' },
+      { type: 'assistant_text', seq: 3, mode: 'write', text: 'anything else?' },
+    ])
+    expect(messages).toHaveLength(3)
+    expect(messages[1].parts.map((p) => p.type)).toEqual(['text', 'build'])
+  })
+
+  it('a hidden step does not split the reply around it', () => {
+    // Dropping a step must not seal the group and open a second one — the adjacency the
+    // library's grouping reads is the whole reason hidden steps are dropped, not positioned.
+    const messages = messagesFromProjection([
+      { type: 'step', seq: 1, tool: 'write_file', label: 'x', state: 'ok', hidden: false },
+      { type: 'step', seq: 2, tool: 'read_file', label: 'plumbing', state: 'ok', hidden: true },
+      { type: 'step', seq: 3, tool: 'write_file', label: 'y', state: 'ok', hidden: false },
+    ])
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts).toHaveLength(2)
+  })
+})
+
+describe('messagesFromProjection — a stopped turn still looks stopped after a reload (#186)', () => {
+  // A stopped build used to say NOTHING once the page was refreshed. Live, the surface writes a
+  // sentence the moment the turn ends; the durable `turn_terminal` row is the only record of that
+  // ending (a turn writes no build-outcome part on purpose — that would render the same ending
+  // twice) and it drew nothing at all. So a citizen coming back to a build they had stopped found
+  // a transcript that simply trailed off.
+
+  /** What a turn terminal looks like on the wire, in the shape the projection sends it. */
+  const terminalItem = (terminal, reason) => ({
+    type: 'turn_terminal',
+    seq: 7,
+    turnId: '01a05879-5345-73b6-b795-47767884ea4c',
+    terminal,
+    reason,
+  })
+
+  /** The sentence a RELOAD produces — read off the real projection mapping. */
+  const reloaded = (terminal, reason) => {
+    const messages = messagesFromProjection([terminalItem(terminal, reason)])
+    if (messages.length === 0) return null
+    expect(messages).toHaveLength(1)
+    expect(messages[0].role).toBe('assistant')
+    expect(messages[0].parts).toHaveLength(1)
+    expect(messages[0].parts[0].type).toBe('text')
+    return messages[0].parts[0].text
+  }
+
+  /**
+   * The sentence the LIVE path produces, derived the way the live path derives it.
+   *
+   * This is `ConversationSurface`'s `announceTerminal` verbatim — `status: sink.terminal ===
+   * 'completed' ? 'ended' : sink.terminal`, then the shared table. It is here so the assertions
+   * below can compare the two DERIVATIONS rather than compare each of them to a string literal:
+   * two tests that each pin their own copy of the expected sentence both stay green while the
+   * paths drift apart, which is exactly the failure
+   * `docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`
+   * records — fixing one emitter only changed WHEN the wrong text appeared.
+   */
+  const live = (terminal, reason) =>
+    outcomeSummary({ status: terminal === 'completed' ? 'ended' : terminal, reason })
+
+  it('renders the stored stop, where it used to render nothing', () => {
+    const messages = messagesFromProjection([terminalItem('stopped', 'stopped_by_user')])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0].parts[0].text).toBe('You stopped this build before it finished.')
+    // …and the sentence is the citizen's, not the machine's: the token that used to be printed
+    // at people is nowhere in it.
+    expect(messages[0].parts[0].text).not.toMatch(/stopped_by_user/)
+  })
+
+  it('says the same thing after a reload as it said live, for every reason in the table', () => {
+    // ★ THE EQUALITY, and it is asserted as an equality on purpose. The two paths reach the
+    // sentence by different routes — live maps `sink.terminal` with a ternary, reload maps
+    // `item.terminal` through `bannerStatus` — and this is the only assertion that goes red when
+    // those two mappings stop agreeing. Driven off `OUTCOME_COPY` itself, so a reason added to
+    // the table tomorrow is covered by this test the day it lands.
+    const reasons = [...Object.keys(OUTCOME_COPY), null, 'a_reason_no_client_has_heard_of']
+    expect(reasons.length).toBeGreaterThan(5)
+
+    for (const reason of reasons) {
+      for (const terminal of ['failed', 'stopped']) {
+        expect([terminal, reason, reloaded(terminal, reason)]).toEqual([
+          terminal,
+          reason,
+          live(terminal, reason),
+        ])
+      }
+    }
+  })
+
+  it('reads a quota terminal as the stop it is, exactly as the live path would', () => {
+    // `quota` exists in the stored vocabulary but never on the live sink, so it is pinned here
+    // rather than in the loop above: both mappings land it on `stopped`, which is what makes the
+    // sentence match a stop rather than a failure.
+    expect(reloaded('quota', 'quota_exceeded')).toBe(live('stopped', 'quota_exceeded'))
+    expect(reloaded('quota', 'quota_exceeded')).toBe('The build stopped: you reached your daily limit.')
+  })
+
+  it('discriminates: the table is doing work, not returning one sentence for everything', () => {
+    // The anti-false-pass guard for the equality above. If `outcomeSummary` collapsed to a single
+    // string, every assertion in this file would pass and say nothing — so the distinctness of
+    // what the reload renders is asserted directly.
+    const rendered = Object.keys(OUTCOME_COPY).map((reason) => reloaded('stopped', reason))
+    expect(new Set(rendered).size).toBe(rendered.length)
+    expect(rendered.every((text) => typeof text === 'string' && text.length > 0)).toBe(true)
+  })
+
+  it('falls back to the neutral sentence rather than printing the machine token', () => {
+    // Every `reason` on this wire is a machine token — `sandbox_unavailable`,
+    // `wall_clock_deadline_exceeded` — and none of them is prose. An unlisted one gets the
+    // neutral line for its terminal; interpolating it is the defect this replaced.
+    const text = reloaded('failed', 'wall_clock_deadline_exceeded')
+    expect(text).toBe('The build failed.')
+    expect(text).not.toMatch(/wall_clock_deadline_exceeded/)
+  })
+
+  it('preserves the absence signal: a turn with no terminal row says nothing about how it ended', () => {
+    // ENDED-UNKNOWN IS THE ABSENCE OF THE ITEM, by the server's design — a turn killed by a
+    // restart never reaches the write, so there is no row and no `unknown` member to fake one.
+    // The reload path must not invent an ending for a turn that never recorded one.
+    const messages = messagesFromProjection([
+      { type: 'user_text', seq: 1, text: 'add a chart' },
+      { type: 'assistant_text', seq: 2, text: 'Working on it…' },
+    ])
+
+    // LIVENESS FIRST — the transcript still renders, so the absence below is an absence of the
+    // outcome sentence and not of everything.
+    expect(messages).toHaveLength(2)
+    expect(messages[1].parts[0].text).toBe('Working on it…')
+    const everything = messages.flatMap((m) => m.parts.map((p) => p.text ?? ''))
+    for (const sentence of Object.values(OUTCOME_COPY)) {
+      expect(everything).not.toContain(sentence)
+    }
+    expect(everything).not.toContain('The build failed.')
+    expect(everything).not.toContain('This build was stopped before it finished.')
+  })
+
+  it('is its own message, so a reply is not swallowed into the outcome or vice versa', () => {
+    // It seals the open reply the same way a banner does. Appended to the reply instead, the
+    // outcome sentence would land inside the assistant bubble's activity group and the copy
+    // control would hand back the platform's words as part of the model's answer.
+    const messages = messagesFromProjection([
+      { type: 'assistant_text', seq: 1, text: 'Starting.' },
+      terminalItem('stopped', 'stopped_by_user'),
+      { type: 'assistant_text', seq: 8, text: 'Anything else?' },
+    ])
+
+    expect(messages.map((m) => m.parts.map((p) => p.type))).toEqual([['text'], ['text'], ['text']])
+    expect(messages.map((m) => m.parts[0].text)).toEqual([
+      'Starting.',
+      'You stopped this build before it finished.',
+      'Anything else?',
+    ])
+    // Distinct keys, since one row can project several items and React silently corrupts a list
+    // with duplicates.
+    expect(new Set(messages.map((m) => m.id)).size).toBe(3)
   })
 })

@@ -9,9 +9,10 @@ explicit alias because Pydantic treats a leading-underscore field name as privat
 The legacy message-append/read schemas died with their endpoints (U4's destructive reset);
 the projection read shape joins in U6.
 
-Net-new routes (the U13 mode switch, the U10/U11/U12 turn surfaces) parse their bodies
-through models normally — only the Express-era routes keep the byte-matched JSONResponse
-discipline.
+Net-new routes (the turn surfaces, the Build-it handoff) parse their bodies through models
+normally — only the Express-era routes keep the byte-matched JSONResponse discipline. The
+mode-switch request/response models are gone with the route that took them: a chat's kind is
+chosen at creation and there is nothing to switch.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from pydantic import (
 )
 
 from src.api.v1.build_sessions.schemas import ErrorSource
-from src.db.models.conversation import ConversationKind, ConversationMode
+from src.db.models.conversation import ChatKind
 from src.schemas import CamelModel
 from src.services.messages.projection import DisplayItem, PlanOptionsItem, StepItem
 from src.services.orchestrator.errors import user_facing
@@ -39,15 +40,15 @@ from src.services.sandbox.base import CompileState
 
 class HeaderOut(CamelModel):
     """One conversation header. `title`/`context` are omitted when unset — the route's
-    `_header_dict` builds them in only when present. `mode` is the server-owned sticky chat
-    mode (U4). This model is documented-only (the route returns a pre-built `JSONResponse`),
-    so no exclude-unset serialization flag is involved; the `= None` defaults are what
-    document those fields as non-required."""
+    `_header_dict` builds them in only when present. `kind` is what the chat IS, fixed when it
+    was created (R14/R16) — there is no second field beside it, because there is no longer a
+    second concept. This model is documented-only (the route returns a pre-built
+    `JSONResponse`), so no exclude-unset serialization flag is involved; the `= None` defaults
+    are what document those fields as non-required."""
 
     id: str = Field(alias="_id")
     project_id: str
     kind: str
-    mode: str
     created_at: str
     updated_at: str
     title: str | None = None
@@ -66,12 +67,12 @@ class ConversationCreateRequest(CamelModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
-    kind: ConversationKind
+    # REQUIRED, and the only place a chat's kind is ever set (R15). There is no route that
+    # changes it afterwards; a value outside the enum is refused at this boundary rather than
+    # coerced to a default, because "which chat is this" decides what the model can do.
+    kind: ChatKind
     title: str | None = None
     context: Any = None
-    # The starting chat mode (U13): the root box mints Ask/Plan/Write chats. Optional so
-    # older callers keep the server default ('plan').
-    mode: ConversationMode | None = None
 
 
 class ConversationCreateResponse(CamelModel):
@@ -108,12 +109,46 @@ class ConversationDetailResponse(CamelModel):
 # types never silently break an older parser that revalidates a stream.
 
 
+class TurnTextPart(CamelModel):
+    """One block of the turn's prose, at the position it took."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class TurnStepPart(CamelModel):
+    """One of the turn's steps, at the position it took.
+
+    `tool_call_id` is the SAME key the live `StepFrame` carries, so a step that resolves
+    after this snapshot replaces the one the snapshot delivered instead of stacking a second
+    copy beside it. It used to be absent, and a client had to key a snapshot's steps on
+    `seq`+`tool` — which is `0`+the tool name for every in-flight step, so two concurrent
+    reads collided on one key and a reattaching citizen lost one of them."""
+
+    type: Literal["step"] = "step"
+    tool_call_id: str
+    item: StepItem
+
+
+TurnPart = Annotated[TurnTextPart | TurnStepPart, Field(discriminator="type")]
+"""What a turn has produced so far, prose and steps INTERLEAVED in emission order.
+
+A flat "text so far" string beside an unordered step list cannot express a turn that wrote,
+acted, and wrote again — the two shapes agreed only while a turn was guaranteed at most one
+block of text, always last. That guarantee came from prose beside a tool call being thrown
+away; with it gone, the snapshot has to carry the order, or a citizen who reloads mid-turn
+reads the same turn in a different order from one who never left."""
+
+
 class SnapshotFrame(CamelModel):
     """The catch-up snapshot — always the first frame of a subscription that cannot prove
     gap-free continuity (fresh subscribe, F5, cursor fallen out of the ring). `items` are
-    the turn's PERSISTED rows projected through the one U6 derivation; `text_so_far` and
-    `steps` are the in-memory tail the DB does not hold yet. A client renders snapshot
-    state then applies the live tail from `seq`.
+    the turn's PERSISTED rows projected through the one U6 derivation. A client renders
+    snapshot state then applies the live tail from `seq`.
+
+    `parts` is the in-memory tail the DB does not hold yet — the turn's prose and its steps
+    in one ordered list, hidden steps included (`hidden` is a render hint, and filtering it
+    here once cost a mid-turn reconnect the very steps the other two paths kept).
 
     `error_message` carries the WHY of a failed turn. The in-band `error` frame lives only in
     the ring, so a subscriber that arrives after the failure — or whose cursor fell past it —
@@ -136,8 +171,10 @@ class SnapshotFrame(CamelModel):
     turn_id: str | None
     turn_status: Literal["idle", "running", "completed", "failed", "stopped"]
     items: list[DisplayItem] = Field(default_factory=list)
-    text_so_far: str = ""
-    steps: list[StepItem] = Field(default_factory=list)
+    parts: list[TurnPart] = Field(default_factory=list)
+    # The same catch-up reasoning as the fields below: a client that reattaches while the model
+    # is mid-thought would otherwise see a still screen until the next frame changed something.
+    working: bool = False
     error_message: str | None = None
     workspace_state: Literal["preparing", "ready", "unavailable"] | None = None
     preview_url: str | None = None
@@ -146,11 +183,34 @@ class SnapshotFrame(CamelModel):
 
 
 class TextDeltaFrame(CamelModel):
-    """One streamed slice of the assistant's reply text."""
+    """One streamed slice of the assistant's reply text.
+
+    `new_block` says this slice OPENS a block rather than continuing the current one — the
+    live half of the boundary the reload projection gets for free from one stored `TextPart`
+    per item. Without it a client could only concatenate, and a turn that wrote, acted and
+    wrote again would render as one paragraph under all of its steps live, and as two
+    paragraphs around them after a reload."""
 
     type: Literal["text_delta"] = "text_delta"
     seq: int
     text: str
+    new_block: bool = False
+
+
+class WorkingFrame(CamelModel):
+    """The model is REASONING — and this is the whole of what reasoning becomes.
+
+    A BOOLEAN, NEVER THE TEXT. Reasoning blocks are stored so the provider can be given them
+    back on the next turn (it rejects a tool call whose reasoning block is missing), and they
+    are never projected, never framed and never sent to the browser. What the citizen reads is
+    one status line saying the agent is working.
+
+    EDGE-TRIGGERED: emitted when the flag CHANGES, not per reasoning delta, which would put
+    thousands of identical frames through a ring sized for a turn's whole narrative."""
+
+    type: Literal["working"] = "working"
+    seq: int
+    working: bool
 
 
 class StepFrame(CamelModel):
@@ -239,15 +299,17 @@ class DiagnosticFrame(CamelModel):
     """An in-narrative build diagnostic. Deliberately NOT an `error` frame: the turn is not
     failing — a repair run follows.
 
-    TWO AUDIENCES RIDE ON ONE FRAME (U16), and they must not be confused for each other:
+    ONE AUDIENCE RIDES THIS FRAME, and it did not used to be that way. `title` and
+    `cleaned_stack` — the compiler's own first meaningful line and the de-noised log — travelled
+    here beside the citizen's half, described in this very docstring as "safe to transmit; NOT a
+    product surface". That distinction is not one a wire format can hold: the sentence "safe to
+    render verbatim" is what once put a stack trace under a file-path title in a citizen's chat,
+    and the note warning against it was already in place when that happened.
 
-    * `title` / `cleaned_stack` are the MODEL's half, carried unchanged from `BuildError` —
-      `title` is the compiler's own first meaningful line and `cleaned_stack` the de-noised,
-      secret-redacted log. Safe to transmit; NOT a product surface. The portal does not render
-      either, and the sentence "safe to render verbatim" that used to sit here is what produced
-      a stack trace under a file-path title in a citizen's chat.
-    * `user_message` / `user_action` are the CITIZEN's half — a plain sentence about their app
-      and something they can do about it. This is what the feed renders.
+    So the model's half stays SERVER-SIDE, where the repair run reads it off the `BuildError`
+    that produced it. It is not lost, it is not redacted, and it is not sent. What crosses is
+    `user_message` / `user_action`: a plain sentence about the citizen's app and something they
+    can do about it, which is the only half any surface ever rendered.
     """
 
     type: Literal["diagnostic"] = "diagnostic"
@@ -255,9 +317,12 @@ class DiagnosticFrame(CamelModel):
     # The build's OWN enum, not a re-spelled Literal. `ErrorSource` is a StrEnum, so the
     # wire shape is identical either way — but a second copy of the member list is a copy
     # that can drift, and the producer already holds a `BuildError.source`.
+    #
+    # KEPT, and it is worth saying why when its two neighbours went: `source` is a closed
+    # vocabulary of error CLASSES this schema already publishes, it is what the citizen-facing
+    # pair is derived from below, and it carries nothing out of the build — a class name is not
+    # a stack.
     source: ErrorSource
-    title: str
-    cleaned_stack: str
     # DERIVED FROM `source` WHEN THE PRODUCER SUPPLIES NOTHING, which is the whole safety
     # property: the pair cannot be forgotten into emptiness by a caller that only knows about
     # the model's half, so every diagnostic that reaches a person carries a sentence AND a next
@@ -331,6 +396,7 @@ _KNOWN_FRAME_TAGS: Final = frozenset(
         "snapshot",
         "text_delta",
         "step",
+        "working",
         "plan_options",
         "error",
         "turn_ended",
@@ -359,6 +425,7 @@ TurnStreamFrame = Annotated[
     Annotated[SnapshotFrame, Tag("snapshot")]
     | Annotated[TextDeltaFrame, Tag("text_delta")]
     | Annotated[StepFrame, Tag("step")]
+    | Annotated[WorkingFrame, Tag("working")]
     | Annotated[PlanOptionsFrame, Tag("plan_options")]
     | Annotated[TurnErrorFrame, Tag("error")]
     | Annotated[TurnEndedFrame, Tag("turn_ended")]
@@ -386,11 +453,3 @@ class TurnStopResponse(CamelModel):
     already settled — stopping twice is not an error)."""
 
     status: Literal["stopping", "already_settled"]
-
-
-class ModeSwitchResponse(CamelModel):
-    """`POST /conversations/{id}/mode` → the conversation's mode AFTER the switch (the same
-    value on an idempotent same-mode call). Documentation-only: the route hand-builds this
-    body as a `JSONResponse`, so declaring it changes the schema, never the bytes."""
-
-    mode: ConversationMode

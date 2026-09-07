@@ -59,7 +59,7 @@ def copy_attempts(monkeypatch: pytest.MonkeyPatch) -> list[CopyAttempt]:
 
 #: Every signal lapsed — the shape the classifier judged these containers in.
 UNCLAIMED = RegistryClaim(
-    lock_held=False, heartbeat_alive=False, stay_current=False, lease_held=False
+    lock_held=False, heartbeat_alive=False, stay_current=False, lease_held=False, starting=False
 )
 
 
@@ -221,7 +221,11 @@ async def test_a_builder_who_came_back_is_spared_even_though_the_tags_never_chan
     Mutation-check: drop the `_somebody_came_back` call from the destroy loop and this goes red
     while every other test in this file stays green."""
     resumed = RegistryClaim(
-        lock_held=True, heartbeat_alive=True, stay_current=False, lease_held=False
+        lock_held=True,
+        heartbeat_alive=True,
+        stay_current=False,
+        lease_held=False,
+        starting=False,
     )
     arm = _Arm(claims={"sbx-resumed": resumed})
 
@@ -436,6 +440,16 @@ class _SandboxFlags:
         self.sweep_enabled = sweep
         # Read by `_threshold()` on the full-task path; irrelevant to the arm-level tests above.
         self.reclaim_fleet_alarm_threshold = 25
+        # THE TARGETING FIELDS ARE NOT OPTIONAL ON THE REAL THING, so this double may not omit
+        # them. `SandboxConfig` declares all four with no default (fail-first), and `#190` made
+        # the pass name the fleet it is about before the flag gate — so every path through the
+        # task now reads them, including the report-only and raising arms below. A double that
+        # carries only the flags it happens to gate on drifts from the config it stands in for,
+        # and the drift surfaces as an AttributeError in an unrelated test rather than as a
+        # missing setting. Fake values, real shape.
+        self.subscription_id = "00000000-0000-0000-0000-000000000000"
+        self.resource_group = "rg-under-test"
+        self.managed_environment_name = "env-under-test"
 
 
 def _report(  # noqa: ANN201

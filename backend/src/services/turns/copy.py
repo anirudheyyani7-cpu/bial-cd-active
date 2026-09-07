@@ -2,9 +2,12 @@
 
 ONE FILE, FOR TWO REASONS THAT ARE BOTH ABOUT KEEPING A PROMISE. The plan commits that no message
 it introduces contains a file path, a command, a library name or a framework term — and a promise
-about a class of text can only be tested if the class has an address. `test_no_jargon_reaches_the_
-citizen` iterates over this module; a sentence written inline at its call site would be outside
-that guard by construction, and nobody would notice until a user read it.
+about a class of text can only be tested if the class has an address.
+`test_write_turn.py::test_no_sentence_this_plan_shows_a_citizen_carries_developer_jargon` iterates
+`vars()` of this module; a sentence written inline at its call site would be outside that guard by
+construction, and nobody would notice until a user read it. (This paragraph named the guard
+`test_no_jargon_reaches_the_citizen`, which is not a test anywhere in the tree — so a reader
+checking the promise found nothing and had every reason to conclude the guard was gone.)
 
 The second reason is precedence. The plan's message surface allows AT MOST ONE banner on screen at
 a time, newest wins, and deciding that is only possible when the whole set is visible together.
@@ -22,6 +25,89 @@ companion plan's work; this file is deliberately the whole of what this one chan
 from __future__ import annotations
 
 from typing import Final
+
+WORKSPACE_UNAVAILABLE_TEXT: Final = (
+    "Your workspace isn't available right now, so this message wasn't sent. Try again in a moment."
+)
+"""R98 — there is no working workspace service, said at the moment of sending.
+
+WHAT IT REPLACED WAS A BRANCH, NOT A MESSAGE. A turn with no sandbox service configured used
+to quietly answer from the last SAVED copy of the app instead of the running one — a
+degradation nobody asked for and nobody was told about, wearing a branch on the chat's mode
+even though the condition it read was a deployment fact. Both kinds read the live app and only
+the live app now, so where there is nothing to read from, the honest answer is to say so before
+the message is spent rather than after.
+
+IT SAYS THE TWO THINGS THE PERSON NEEDS: that their message did not go, and that trying again
+is worth doing. It names no container, no sandbox and no orchestrator, because none of those
+are words they have. The machine-readable code beside it is what lets the browser tell this
+apart from the workspace CONFLICTS that share its status family — the two have different
+remedies and a client that reads only the status cannot tell them apart."""
+
+WORKSPACE_UNAVAILABLE_CODE: Final = "workspace_unavailable"
+"""The code the R98 refusal carries. See `WORKSPACE_UNAVAILABLE_TEXT`."""
+
+CHAT_TOO_LONG_TEXT: Final = (
+    "This chat has got too long to carry on. Start a new chat to keep going — your app and "
+    "everything you have built stays exactly as it is."
+)
+"""What a citizen is told when a conversation has grown past the boundary set for them.
+
+WHAT IT REPLACED WAS NOTHING, and that is the defect it closes. The two-page portal warned as a
+chat got long and stopped it at the wall; the unified surface shipped with neither, so the first
+a citizen knew of the boundary was a failed turn with no reason and no next move — worse than
+what came before, not merely absent. Meanwhile an administrator has been setting a number on a
+field whose help text promises a hard stop, and nothing enforced it.
+
+IT NAMES NO NUMBER. "You have used 203,412 of your 200,000" is not something a person can act
+on, and both halves of it are words for the platform's accounting rather than for what is in
+front of them. The number belongs where an administrator sets it.
+
+THE SECOND SENTENCE IS THE LOAD-BEARING ONE. The only reason a citizen would hesitate to start
+a new chat is the fear that the work goes with the conversation. It does not — the app lives in
+the project — so saying so is what turns a refusal into an instruction they will actually
+follow. Without it the honest reading of the first sentence is "you have lost your app"."""
+
+CHAT_TOO_LONG_CODE: Final = "context_hard_limit_exceeded"
+"""The code the too-long refusal carries. See `CHAT_TOO_LONG_TEXT`.
+
+NOTHING IN THIS CODEBASE FORCES A READER TO HANDLE A NEW CODE — no `Literal` union, no native
+enum, no exhaustiveness anywhere on the refusal path; every code is an open string compared by
+hand. So adding one is free and silent, and the only thing that can notice a reader dropping it
+is a test. `test_context_gate.py` and the composer's own suite are that test."""
+
+ALREADY_BUILDING_HERE_CODE: Final = "already_building_here"
+"""R19's first refusal: this user's one workspace is committed to another chat of their own.
+
+The remedy is "finish or stop what is running there". The OTHER 409 on this route —
+`sandbox_reclaim_blocked` — means somebody's work in a DIFFERENT project is in the way, and its
+remedy is a choice about that project. Two refusals, two remedies, one status code: without a
+machine code on each, a client can only tell them apart by reading prose, which is how a bug
+of exactly this shape has already shipped here once."""
+
+WRITING_UP_THE_PLAN_LABEL: Final = "Writing up the plan"
+"""What the screen says between the model beginning the offer call and the plan arriving.
+
+IT EXISTS BECAUSE THE PLAN BECAME A TOOL ARGUMENT. When the offer took no arguments the call
+was instantaneous and nothing had to fill the gap; now thousands of tokens stream between the
+block opening and the call resolving, with nothing else on screen for the whole of it. A
+present-participle phrase like every other step label, so the long-operation narrator can
+restate it ("Still writing up the plan — this one takes a little longer.") without a second
+table to keep in step."""
+
+PLAN_NOT_KEPT_TEXT: Final = (
+    "That plan didn't arrive in a form we could keep, so there's nothing to build from yet. "
+    "Ask for it again and it should come through whole."
+)
+"""R28a / R44 — the offer carried no plan, or one past what a message can hold.
+
+ONE SENTENCE FOR BOTH, because they are one thing from where the citizen sits: they asked for a
+plan and there is nothing to press. It says so, and says what to do, and never mentions a limit,
+a tool or a character count — the number is the platform's problem, not theirs.
+
+WHAT IT REPLACES IS WORSE THAN NOTHING: a Build it button under an empty or half-written plan.
+The long plan is REFUSED rather than trimmed, deliberately — a plan cut mid-sentence is one the
+citizen would agree to and the build would never see the end of."""
 
 STILL_SHOWING_TEMPLATE: Final = "the starting template"
 """The app responds, and its home page is still the one the workspace was created with."""
@@ -178,9 +264,88 @@ address, so the sentence ends in a dead end. `{contact}` is a single configured 
 (`ApiSettings.SUPPORT_CONTACT_EMAIL`), and it is a plain address rather than a `mailto:` URI on
 purpose: the banner above the composer renders text, and a URI scheme printed mid-sentence is
 exactly the register this module exists to keep out. Making it clickable is the renderer's job —
-`BuildProgress` turns the address in this sentence into a real `mailto:` link.
+`portal/src/components/chat/TurnBanner.tsx` finds the address in this sentence and wraps it in a
+real `mailto:` anchor. It was `BuildProgress.tsx`, which the two-page era's removal deleted; the
+behaviour moved to `TurnBanner` with it.
 
 "After midnight" rather than a clock time: the reset is the next IST midnight, this is a
 single-tenant deployment in one timezone, and a rendered timestamp would invite the reader to
 work out whether it means tonight or tomorrow. The exact instant is still on the wire
 (`QuotaFrame.resets_at`) for the surfaces that want to show it."""
+
+
+PROPOSAL_EVERYTHING_LEAD: Final = "Here is everything I picked up from that:"
+"""R85's first move — say the whole thing back before narrowing it.
+
+WITHOUT THIS THE PROPOSAL READS AS A REFUSAL. A citizen who asked for nine things and is
+answered with three has been told "no" to six of them unless they can see that all nine were
+heard. Listing them back costs a few lines and turns the same message from a decline into a
+running order.
+
+The list under it is the agent's own words for its own pieces, and nothing here filters them:
+that would be a vocabulary check over model text, which this plan rejects everywhere else."""
+
+PROPOSAL_FIRST_LEAD: Final = "I would start with:"
+"""What this round is. Present tense and first person, matching the register the agent narrates
+in — the platform is framing the agent's proposal, not announcing a decision of its own."""
+
+PROPOSAL_REST_TEXT: Final = (
+    "The rest stays on the list — say the word once these are working and I will carry on."
+)
+"""What happens to everything else, and it is only true when something IS left.
+
+RENDERED CONDITIONALLY, because a slice that covers everything found has no remainder and a
+sentence promising to come back to nothing is the platform inventing an outstanding item. The
+renderer omits it rather than softening it.
+
+IT NAMES THE NEXT ACTION. "Say the word" is something the citizen can do in the composer
+already in front of them; "the rest is deferred" tells them a state and leaves them nowhere."""
+
+REMAINDER_TEXT: Final = "Still to do from what we agreed: {pieces}."
+"""R89 — what was agreed and not built, named by the platform from its own record.
+
+NOT THE AGENT'S RECOLLECTION, which is the requirement. The agreed list is the arguments of the
+proposal call the citizen read; the finished list is what the agent marked as it landed; this
+sentence is the difference. Nothing here reads the closing summary or any other prose.
+
+`{pieces}` is filled from the agreed list, so the citizen sees the same words in the same order
+they agreed to — not a re-description of them."""
+
+CANNOT_TELL_WHAT_REMAINS_TEXT: Final = (
+    "Some of what we agreed may still be outstanding — I could not tell which pieces landed. "
+    "Have a look and say what is missing."
+)
+"""R89's honest middle, and the reason U12 is not simply `agreed − marked`.
+
+THE DESIGN COULD HAVE SHIPPED A LIE HERE. The finished half is agent-supplied: an agent that
+built all four pieces and marked none is indistinguishable, from the marks alone, from one that
+built nothing. Rendering "these four remain" in the platform's own voice would be a false fact
+the citizen has no reason to doubt — strictly worse than the agent's own recollection, which is
+what this whole unit exists to replace.
+
+So the claim is keyed on something the platform DOES hold: whether the workspace was touched.
+Marks and no touch, marks and touch, no marks and no touch are all answerable. No marks and
+work landed is not, and this is what it says instead. The same tri-state discipline the
+workspace note keeps, where "could not tell" is never collapsed into a verdict."""
+
+
+SPENT_ENOUGH_TEXT: Final = (
+    "This one has taken as much as I want to spend on it in a single go, {kept}. "
+    "Your app is working — have a look, and send me the next bit when you are ready."
+)
+"""R91 — how a turn ends when it reaches the platform's spend bound.
+
+IT DOES NOT NAME A BOUND, AND THAT IS DELIBERATE. Three internal ceilings can end a run —
+requests, wall clock, spend — and which one fired is not something a citizen can act on
+differently: the next move is the same message either way. Naming one would also run straight
+into this module's own register rule, since "token budget", "request limit" and "wall clock"
+are all words for the platform's problem rather than theirs. Which bound fired is in the record
+and the logs, where the person who can act on it will look.
+
+"AS MUCH AS I WANT TO SPEND" rather than "you have run out". The citizen has not done anything
+wrong and has not hit a limit of their own — the daily budget is a different sentence, and
+confusing the two would tell them to wait until midnight when they can carry on right now.
+
+IT SAYS THE APP IS WORKING, because that is what the piece-at-a-time ordering buys and it is
+the fact that makes this ending survivable. `{kept}` is filled by the same securing function
+the daily-budget ending uses, so the reassurance is conditional on a copy actually landing."""

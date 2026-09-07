@@ -8,15 +8,16 @@ prove gap-free continuity, plain replay for one that can (`?turn=&cursor=`). Mul
 simultaneous subscribers each get the identical stream — fan-out is the engine's, the
 route only walks the ring.
 
-Wire discipline (copied from the build feed + relay, D6): commit the SSE response and
+Wire discipline (copied from the build feed and the since-retired relay, D6): commit the
+SSE response and
 emit the first frame BEFORE any model byte (the snapshot serves that role), `: ping`
 keepalives only between complete frames, errors travel in-band, and the terminal
 `turn_ended` frame is followed by `data: [DONE]` which closes the transport.
 
-The turn plumbing this route shares with the relay (binaries resolution, prompt assembly,
-history rehydration, the model/session-factory/storage dependencies) lives in `_shared.py`
-alongside this module — one source, no copies, and no reaching into another router's
-underscore-private names (ADR-0010).
+The turn plumbing this route shares with the plan→build handoff (binaries resolution, prompt
+assembly, history rehydration, the model/session-factory/storage dependencies) lives in
+`_shared.py` alongside this module — one source, no copies, and no reaching into another
+router's underscore-private names (ADR-0010).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic_ai import BinaryContent
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.api.deps import CurrentUser, DbSession
@@ -57,7 +59,7 @@ from src.api.v1.conversations.schemas import (
 from src.api.v1.live_build import ReclaimBlockedEnvelope, reclaim_blocked_response
 from src.core.errors import AppApiError
 from src.db.models.app_registry import AppRegistry
-from src.db.models.conversation import Conversation, ConversationMode
+from src.db.models.conversation import ChatKind, Conversation
 from src.db.models.message import MessageEntryKind, MessageVisibility
 from src.db.models.project import Project
 from src.db.models.user import User
@@ -73,8 +75,16 @@ from src.services.messages.store import (
     load_history,
     load_rows,
 )
+from src.services.projects import owned_project_or_404
 from src.services.redis import build_coordination_or_503
 from src.services.sandbox import SandboxClient
+from src.services.turns.copy import (
+    ALREADY_BUILDING_HERE_CODE,
+    CHAT_TOO_LONG_CODE,
+    CHAT_TOO_LONG_TEXT,
+    WORKSPACE_UNAVAILABLE_CODE,
+    WORKSPACE_UNAVAILABLE_TEXT,
+)
 from src.services.turns.engine import (
     TurnNotRunningError,
     get_turn_engine,
@@ -87,6 +97,10 @@ from src.services.turns.plan_options import (
 )
 from src.services.turns.plan_options import (
     resolve as resolve_plan_options,
+)
+from src.services.usage.context_window import (
+    ContextWindowExceededError,
+    enforce_context_limit,
 )
 from src.services.usage.gate import DailyTokenLimitExceededError, enforce_daily_limit
 
@@ -103,11 +117,40 @@ _DONE = b"data: [DONE]\n\n"
 KEEPALIVE_SECONDS = 15.0
 
 
+class NewConversation(CamelModel):
+    """The parentage of a conversation that DOES NOT EXIST YET (R-18).
+
+    Present only on a chat's FIRST message. The id rides the path exactly as it does for every
+    other turn, so this carries what a row cannot be built without and nothing else.
+
+    WHY IT LIVES ON THE TURN REQUEST AT ALL. The BROWSER used to create the row with a separate
+    `POST /v1/conversations` a round trip earlier, whose only workspace awareness was a
+    project-ownership check — so a message the workspace then refused left a real, titled,
+    empty conversation in the project's list, named after the text that was refused. (That route
+    is still MOUNTED and still works — only its client went. Do not read this paragraph as a
+    retirement notice and delete the handler.) Folding the creation into this request lets every
+    side-effect-free refusal already above it roll
+    the row back with it, because nothing is committed until the turn's own commit.
+    """
+
+    project_id: uuid.UUID
+    # REQUIRED, and this is still the only place a chat's kind is ever set. There is no route
+    # that changes it afterwards; a value outside the enum is refused at this boundary rather
+    # than coerced, because "which chat is this" decides what the model can do.
+    kind: ChatKind
+    title: str | None = None
+
+
 class StartTurnBody(CamelModel):
-    """`POST /conversations/{id}/turns` — the new message only (R9); the conversation id
-    rides the path."""
+    """`POST /conversations/{id}/turns` — the new message (R9); the conversation id rides the
+    path.
+
+    `create` is present only on a chat's first message, and it is what makes R-18 true: check
+    the workspace, THEN create, THEN run. Absent for every subsequent turn, where the row
+    already exists and an unknown id is a client bug."""
 
     message: TurnMessage
+    create: NewConversation | None = None
 
 
 def _frame_bytes(frame: TurnStreamFrame) -> bytes:
@@ -118,6 +161,22 @@ def _frame_bytes(frame: TurnStreamFrame) -> bytes:
         + frame.model_dump_json(by_alias=True).encode()
         + b"\n\n"
     )
+
+
+async def _conversation_or_none(
+    db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID
+) -> Conversation | None:
+    """The owner-scoped conversation row, or `None` when there is not one yet.
+
+    Deliberately NOT `resolve_conversation_or_404`: on a first message the absence is the ordinary
+    case, and raising there would make the 404 arrive before the parentage that can answer it has
+    been looked at."""
+    row: Conversation | None = await db.scalar(
+        sa.select(Conversation).where(
+            Conversation.id == conversation_id, Conversation.user_id == user_id
+        )
+    )
+    return row
 
 
 async def _app_id_for_project(
@@ -174,7 +233,7 @@ async def start_conversation_turn(
             conversation_id=conversation.id,
             messages=[ModelRequest(parts=[UserPromptPart(content=prompt)])],
             entry_kind=MessageEntryKind.TURN,
-            mode=conversation.mode,
+            kind=conversation.kind,
             visibility=visibility,
             meta=meta,
         )
@@ -219,6 +278,17 @@ async def start_conversation_turn(
             ReclaimBlockedEnvelope,
             "The agent is already working here, or another project holds the workspace",
         ),
+        # TWO DIFFERENT REFUSALS SHARE THIS STATUS, and naming only one of them made the schema
+        # read as though the other could not happen. `resolve_binaries` (`_shared.py`) answers a
+        # third document on one message with the same 413 and its own `too_many_documents` code —
+        # a per-MESSAGE document cap, not the cumulative size limit. The `code` field is what
+        # tells them apart; the description now admits both exist.
+        (
+            413,
+            ErrorEnvelope,
+            "This conversation has grown past its per-conversation limit, "
+            "or the message carries more than two documents",
+        ),
         (429, DailyTokenLimitBody, "Daily token limit exceeded"),
         (503, ErrorEnvelope, "Claude client not configured"),
     ),
@@ -234,18 +304,69 @@ async def start_turn(
     manager: SessionManagerDep,
     sandbox: OptionalSandbox,
 ) -> TurnStartResponse | JSONResponse:
-    conversation = await resolve_conversation_or_404(db, user.id, conversation_id)
+    # R-18 — CHECK, THEN CREATE, THEN RUN, and the order is the whole deliverable.
+    #
+    # A first message used to commit its conversation row a round trip EARLIER, in
+    # `POST /conversations`, whose only workspace awareness was a project-ownership check. Only
+    # afterwards did this route ask whether the workspace was free — so a refused or declined
+    # first message deposited a real, titled, empty conversation into the project's list, named
+    # after the text that was refused. Observed live: a citizen submitted a build, watched it run
+    # for nearly two minutes, and was then asked whether they wanted the workspace at all.
+    #
+    # Nothing durable — no row, no title, no list entry — may exist before the workspace answer is
+    # known. So the row is STAGED here and created below, after every side-effect-free refusal has
+    # passed, and it becomes durable only when the turn's own commit lands.
+    #
+    # THE PATTERN IS ALREADY IN THE TREE. `build_it` — the Build-this-plan transition — is the same
+    # shape and already gets it right: preflight first, then `db.add` + `db.flush()` and
+    # deliberately NOT a commit. This copies it rather than inventing a second ordering.
+    staged = body.create
+    existing = await _conversation_or_none(db, user.id, conversation_id)
+    conversation: Conversation | None
+    project_id: uuid.UUID
+    if existing is not None:
+        # A `create` block on a conversation that already exists is a retry or a second tab. The
+        # existing row wins; the block is ignored rather than refused, matching the idempotency
+        # `POST /v1/conversations` gives on the same id (it answers 200 with the existing header
+        # rather than 409ing a retry). Clearing `staged` is what makes that true —
+        # it is the sole guard on the row-creating branch far below.
+        staged = None
+        conversation, project_id = existing, existing.project_id
+    elif staged is not None:
+        conversation, project_id = None, staged.project_id
+        # OWNERSHIP FIRST, and before anything else reads this project. A 404 here is the same
+        # non-leaking answer the resolver gives, so a project under another owner is
+        # indistinguishable from one that does not exist. Only this arm needs it: an existing
+        # conversation was already read under this user's scope.
+        await owned_project_or_404(db, user.id, project_id)
+    else:
+        # Unchanged for every turn after the first: THIS route creates a conversation only from a
+        # `create` block, so an unknown id with no parentage to build one from is a client bug —
+        # and a cross-user id is indistinguishable from it, which is one non-leaking 404
+        # (ADR-0004). Not a claim that a row can be born no other way: `POST /v1/conversations`
+        # still creates one outright, with no message, and is deliberately retained.
+        raise AppApiError(404, "Conversation not found.")
 
     # Daily-token gate BEFORE anything persists — a capped user's message is refused
     # whole, never half-recorded. The error carries its own byte-stable body (limit/used/
     # remaining, what the SPA's interceptor reads), so it is RETURNED, not flattened into
-    # the plain envelope — the same contract `claude/router.py` honours.
+    # the plain envelope. The context refusal below chooses the opposite and says why.
     try:
         await enforce_daily_limit(db, user.id)
     except DailyTokenLimitExceededError as exc:
         return exc.as_response()
     if model is None:
         raise AppApiError(503, "Claude client not configured.")
+    # R98 — NO WORKSPACE SERVICE, SAID HERE RATHER THAN DEGRADED SILENTLY. Both kinds read the
+    # project's live app and only that, so a deployment with no sandbox service has nothing for
+    # either of them to read. The same shape as the refusal above it, with a machine-readable
+    # code so the browser can tell it from the workspace CONFLICTS that share its status family
+    # — different cause, different remedy, and a client reading only the status cannot tell.
+    #
+    # AT THE MOMENT OF SENDING, and before anything is claimed or written: the message is not
+    # consumed, no turn exists, and there is no half-started reply to explain afterwards.
+    if sandbox is None:
+        raise AppApiError(503, WORKSPACE_UNAVAILABLE_TEXT, code=WORKSPACE_UNAVAILABLE_CODE)
 
     # Every side-effect-free rejection lands BEFORE `resolve_pending_as_refine`, which is a
     # WRITE: a refused start must never burn the user's pending plan-options card. Both
@@ -257,34 +378,45 @@ async def start_turn(
     # check below it: the two genuinely disagree (a build's first seconds run before the flip;
     # `POST /build-sessions` never touches the mode at all), and only liveness answers "is the
     # agent building THIS thread right now".
-    if manager.live_session_for_conversation(conversation.id) is not None:
+    if manager.live_session_for_conversation(conversation_id) is not None:
         raise AppApiError(409, BUILD_IN_FLIGHT_MSG)
-    if conversation_is_mid_reply(conversation.id):
+    if conversation_is_mid_reply(conversation_id):
         raise AppApiError(409, "A turn is already running for this conversation.")
-    # WRITE only, and BELOW the mid-reply guard on purpose: a Write send during a streaming
+    # UNCONDITIONAL, and BELOW the mid-reply guard on purpose: a send during a streaming
     # reply must still 409 as a busy conversation, or it races `transcript_head_seq`. This
-    # one asks a different question — is this user's single sandbox already committed to a
-    # DIFFERENT conversation? Cheap and synchronous; the expensive provision happens inside
-    # the detached turn, because blocking the POST on 30-60s recreates the dead end the
-    # composer contract exists to remove.
-    if conversation.mode is ConversationMode.WRITE:
-        active = manager.active_session_for(user.id)
-        if active is not None and active.conversation_id != conversation.id:
-            raise AppApiError(409, BUILD_IN_FLIGHT_MSG)
+    # one asks a different question — is this user's single workspace already committed to a
+    # DIFFERENT conversation of their own? Cheap and synchronous; the expensive provision
+    # happens inside the detached turn, because blocking the POST on 30-60s recreates the dead
+    # end the composer contract exists to remove.
+    #
+    # IT NO LONGER READS THE CHAT'S KIND, and that is R93: every turn takes the whole workspace
+    # for as long as it runs, whatever kind of chat it was sent in. A Plan turn pins the live
+    # container exactly as a Build turn does — that is what R18 made true — so a Plan send that
+    # slipped past this gate would take a workspace another of the user's chats was mid-build
+    # in, which is the one thing this check exists to prevent.
+    active = manager.active_session_for(user.id)
+    if active is not None and active.conversation_id != conversation_id:
+        raise AppApiError(409, BUILD_IN_FLIGHT_MSG, code=ALREADY_BUILDING_HERE_CODE)
 
-    # #83 — EVERY MODE, not just Write, and the guard above cannot answer this one.
+    # #83 — BOTH KINDS, not just Build, and the guard above cannot answer this one.
     #
     # Two reasons it sits outside that block. `active_session_for` only sees in-process
     # sessions, so a finished build's pardoned container — warm, holding no session, no lock
     # and no heartbeat — is invisible to it, and that is the state a user is most often in.
-    # And `_pin_workspace` attaches the project's LIVE container for Ask and Plan as well
-    # ("Resolve the turn-pinned read surface ONCE, for EVERY mode"), so a Plan turn in
-    # another project reclaims the incumbent's workspace exactly as a Write turn does.
+    # And `_pin_workspace` attaches the project's LIVE container for a Plan turn as well
+    # ("Resolve the turn-pinned read surface ONCE, for BOTH KINDS"), so a Plan turn in
+    # another project reclaims the incumbent's workspace exactly as a Build turn does.
     #
-    # Gating this on WRITE meant an Ask or Plan send still destroyed the other project's
+    # Gating this on the chat's kind meant a Plan send still destroyed the other project's
     # unsaved work, and did it inside the detached turn where the only thing the user saw was
     # "Your workspace could not be started right now" — no dialog, no named project, no way
     # to save. Asked here so the refusal is an HTTP 409 the client turns into a choice.
+    #
+    # THE SECOND OF R19'S TWO REFUSALS, and it carries `sandbox_reclaim_blocked` where the one
+    # above carries `already_building_here`. Same status, different cause, different remedy:
+    # one is "your own other chat is using it", the other is "somebody's unsaved work in
+    # another project is in the way". A client that could only read the status told the citizen
+    # the wrong thing about half the time.
     if sandbox is not None:
         # The seam wraps the preflight because the guard reads the registry through the
         # deliberately-unguarded `read_registry` (`locks.py`'s policy: an answer-bearing
@@ -293,31 +425,155 @@ async def start_turn(
         # the same 503 every other coordination route gives, not a 500. An UNCONFIGURED Redis
         # skips the block and proceeds, which is right: with no coordination subsystem there is
         # no registry, no slot, and nothing a reclaim could destroy.
+        #
+        # AND IT IS ALSO THE HAND-OVER'S PREFLIGHT, which is why the body it returns carries
+        # more than the status. The browser asks the one-workspace question BY SENDING — every
+        # refusal above this line is side-effect-free, so a send that is refused leaves no chat,
+        # no turn row and no spent card — and draws its dialog from what comes back:
+        # `projectName` for which project holds the workspace, and `agentWorking` for whether
+        # that project's agent is mid-thought, of ANY kind (`building` stays narrow, and only
+        # marks a turn that can write — see `SandboxReclaimBlockedError`). Neither fact is
+        # obtainable from the cheap state poll: its documented budget forbids the container
+        # round trip the unsaved-work half needs.
         with build_coordination_or_503():
             try:
-                await manager.reclaim_preflight(
-                    db, user, conversation.project_id, sandbox_client=sandbox
-                )
+                await manager.reclaim_preflight(db, user, project_id, sandbox_client=sandbox)
             except SandboxReclaimBlockedError as exc:
                 return reclaim_blocked_response(exc)
 
-    project = await db.get(Project, conversation.project_id)
-    if project is None:  # FK guarantees this; fail loudly if it ever breaks
+    project = await db.get(Project, project_id)
+    if project is None:  # ownership was checked above; fail loudly if it ever breaks
         raise AppApiError(404, "Conversation not found.")
 
-    # Free text while plan options are pending resolves them as an implicit "keep
-    # refining" (U11) — BEFORE history loads, so the model always sees a resolved call.
-    await resolve_pending_as_refine(db, user_id=user.id, conversation_id=conversation.id)
-
     rehydrate = history_rehydrator(db, storage, user.id)
-    try:
-        history = await load_history(
-            db, user_id=user.id, conversation_id=conversation.id, rehydrate=rehydrate
-        )
-    except AttachmentRehydrationError as exc:
-        raise AppApiError(400, str(exc)) from None
+
+    async def _history() -> list[ModelMessage]:
+        """Read twice on the rare path below, so the translation of a rehydration failure into
+        the citizen's 400 is written once rather than kept in step by hand."""
+        try:
+            return await load_history(
+                db, user_id=user.id, conversation_id=conversation_id, rehydrate=rehydrate
+            )
+        except AttachmentRehydrationError as exc:
+            raise AppApiError(400, str(exc)) from None
+
+    history = await _history()
     binaries = await resolve_binaries(db, storage, user.id, body.message.attachment_ids)
     prompt = prompt_content(body.message, binaries)
+
+    # The per-conversation guardrail — STILL ABOVE THE FIRST WRITE, which is what the ordering
+    # below it is arranged to keep true. Nothing has been persisted, so a refusal leaves no
+    # turn row, no usage row, no claim to release, and no spent plan-options card.
+    #
+    # IT CANNOT RELY ON A ROLLBACK, and that is why it is here rather than three lines lower.
+    # `resolve_pending_as_refine` reaches `append_batch`, which OWNS ITS COMMIT — so a refusal
+    # raised after it would leave the citizen's card resolved on disk with `get_db`'s rollback
+    # powerless to take it back: their message refused AND their offer silently consumed.
+    #
+    # It is a REFUSAL, not a run bound. The three ceilings inside the engine stop a run already
+    # under way; this one declines to start a turn whose prompt would not fit — which is why it
+    # copies the daily cap's pre-start gate rather than the mid-run terminal.
+    try:
+        await enforce_context_limit(db, user.id, history=history, prompt=prompt)
+    except ContextWindowExceededError as exc:
+        # The PROSE says neither number on purpose — a citizen does not think in tokens. The
+        # `detail` does, because a non-browser caller has no other way to learn how far over it
+        # is: the daily cap's 429 carries `limit`/`used`/`remaining` for exactly this reason, and
+        # a refusal that withholds what it already measured makes the second caller guess.
+        raise AppApiError(
+            413,
+            CHAT_TOO_LONG_TEXT,
+            code=CHAT_TOO_LONG_CODE,
+            detail={"occupied": exc.occupied, "hardLimit": exc.hard_limit},
+        ) from None
+
+    # THE CREATION, AND IT LANDS HERE FOR A REASON THAT IS EASY TO GET WRONG BY ONE LINE.
+    #
+    # Every refusal above this point is side-effect-free — the daily cap, the missing workspace,
+    # "your own other chat is running", the reclaim refusal, the context guardrail — so a message
+    # refused by any of them leaves NOTHING behind. That is R-18: the project's conversation list
+    # is afterwards exactly as long as it was before.
+    #
+    # `flush`, NOT `commit`. The row becomes durable only when `start_conversation_turn` commits it
+    # together with the first message, so a failure between the two leaves neither — and every
+    # refusal below it still rolls the row back through `get_db`. Committing here would restore the
+    # exact orphan this reorder exists to remove, one line lower down.
+    if staged is not None:
+        conversation = Conversation(
+            id=conversation_id,
+            user_id=user.id,
+            project_id=project_id,
+            kind=staged.kind,
+            title=staged.title,
+        )
+        db.add(conversation)
+        try:
+            await db.flush()
+        except IntegrityError:
+            # THE RACE BACKSTOP, transcribed from `transition.build_it` — the sibling route that
+            # creates a conversation the same way and has had this arm all along.
+            #
+            # THE ORDINARY DOUBLE SEND NEVER REACHES HERE: it was answered by the owner-scoped
+            # read at the top of this route, which is one SELECT rather than a failed INSERT.
+            # What lands here is two first messages on the same minted id genuinely in flight at
+            # once — a duplicated tab on a fresh chat, or a client that re-posted — where both
+            # found nothing up there and one of them loses this insert. Without the arm that
+            # loser got a bare 500: the citizen was told their message failed and watched it
+            # vanish from the screen while the reply it started was actually running.
+            #
+            # `rollback` rather than a savepoint, for the same reason the sibling gives: this is
+            # the one path holding an object the database refused, it has to go, and nothing
+            # this request has written so far is durable — the row above is the first write, and
+            # it is deliberately flushed rather than committed.
+            #
+            # THE RE-READ CANNOT COME BACK EMPTY on the path that gets here. Postgres blocks a
+            # duplicate-key insert until the transaction holding the key settles, so an
+            # `IntegrityError` means the winner has already committed and is visible. An empty
+            # read would mean the id belongs to another owner, and the 404 below is then the
+            # same non-leaking answer every other cross-owner lookup gives.
+            await db.rollback()
+            # THE ROLLBACK EXPIRES EVERY ORM INSTANCE THIS REQUEST HAS LOADED, and both of the
+            # ones below are read after it — `user.id` scopes the re-read on the very next line
+            # and every query under it, and `user.display_name`/`user.email` and `project.name`
+            # compose the prompt context. An expired attribute is fetched lazily, which in an
+            # ASYNC session is IO in a place SQLAlchemy cannot await: it raises `MissingGreenlet`
+            # and the citizen gets exactly the bare 500 this arm exists to replace. Refreshed
+            # explicitly, awaited, so the reads below are ordinary attribute reads again — two
+            # SELECTs on a path that only runs when two first messages genuinely raced.
+            await db.refresh(user)
+            await db.refresh(project)
+            conversation = await _conversation_or_none(db, user.id, conversation_id)
+            if conversation is not None and conversation.project_id != project_id:
+                # THE WINNER'S ROW IS THE AUTHORITY ON WHICH PROJECT THIS CHAT BELONGS TO, the
+                # same rule the `existing` arm applies five branches up. The staged body is the
+                # LOSER's, and if the two asks named different projects then everything below
+                # that still reads the staged id — which app the turn pins, and whose project
+                # name goes into the prompt — would describe a different project from the one
+                # `start_conversation_turn` is handed off `conversation.project_id`. One turn
+                # cannot belong to two projects; the row that exists decides.
+                project_id = conversation.project_id
+                winner = await db.get(Project, project_id)
+                if winner is None:  # the winner's project vanished under us
+                    raise AppApiError(404, "Conversation not found.")
+                project = winner
+        else:
+            # The refresh is not optional: server-default timestamps on a fresh row raise
+            # `MissingGreenlet` when projected without one. It belongs to the winning arm only —
+            # the loser's row was loaded by a SELECT and already has them.
+            await db.refresh(conversation)
+    if conversation is None:  # the losing arm's cross-owner id; otherwise unreachable
+        raise AppApiError(404, "Conversation not found.")
+
+    # Free text while plan options are pending resolves them as an implicit "keep refining"
+    # (U11). The model must see a RESOLVED call — the dangling-call repair never has to guess
+    # about a card the user typed past — so when this actually writes one, the history is read
+    # again. Only then: the common case is no pending card, and a second full load of a long
+    # conversation on every turn to serve the rare one would be a poor trade.
+    #
+    # It moved BELOW the guardrail above (it used to lead this block) because it is this
+    # route's first committing write, and every side-effect-free refusal has to land above it.
+    if await resolve_pending_as_refine(db, user_id=user.id, conversation_id=conversation_id):
+        history = await _history()
 
     display_name = user.display_name or user.email
     prompt_context = PromptContext(
@@ -325,7 +581,7 @@ async def start_turn(
         project_name=project.name,
         project_description=project.description or None,
     )
-    app_id = await _app_id_for_project(db, user.id, conversation.project_id)
+    app_id = await _app_id_for_project(db, user.id, project_id)
 
     turn_id = await start_conversation_turn(
         db=db,
@@ -461,15 +717,15 @@ async def turn_events(
 
 
 class ResolvePlanOptionsBody(CamelModel):
-    """The user's click. Only `refine` resolves HERE — `build` goes through U12's atomic
-    Build-it transition endpoint (record + flip mode + lock + start, one operation), so a
-    resolved-build can never exist without its build."""
+    """The user's click. Only `refine` resolves HERE — `build` goes through the Build-it
+    handoff endpoint, which creates the new Build chat and starts its turn BEFORE it answers
+    the offer, so a resolved-build can never exist without the build it names."""
 
     choice: Literal["refine"]
 
 
 class ResolvePlanOptionsResponse(CamelModel):
-    state: Literal["refine", "build", "build_failed"]
+    state: Literal["refine", "build"]
     already_resolved: bool
 
 

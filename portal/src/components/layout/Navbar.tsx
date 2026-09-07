@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import { useWorkspaceExit } from '../workspace/UnsavedWorkGuard'
 // `Info` is NOT left over from the removed settings menu — it is the toast's own icon
 // (see the toast render below). The nine icons that went with #157's dead header controls
 // are gone; these four all have live consumers.
@@ -43,6 +44,8 @@ const compactTokens = (n: number): string => _compactTokenFormat.format(n)
 
 export default function Navbar() {
   const navigate = useNavigate()
+  // The workspace's unsaved-work guard, or a pass-through on every page that has no workspace.
+  const exit = useWorkspaceExit()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [usage, setUsage] = useState<UsageToday | null>(null)
@@ -51,9 +54,11 @@ export default function Navbar() {
   // the ask failed — never rendered as a number, and never asked for at all unless this
   // user is a superadmin (see the effect below).
   const [waiting, setWaiting] = useState<number | null>(null)
-  // The cookie-session /auth/me profile is { id, email, display_name } — no
-  // name/username/role/isAdmin (RBAC deferred this phase). Derive the display bits
-  // from what's actually present.
+  // The /auth/me profile carries { id, email, display_name, is_admin, limits, chat_kinds } —
+  // this comment used to say it had no role or isAdmin and that RBAC was deferred, which is
+  // contradicted three lines of this same component later: `isAdmin` gates the waiting-count
+  // fetch and the admin link. Only the DISPLAY bits are derived, and only because the profile
+  // has no separate name/username field.
   const user = getStoredUser()
   const displayName = user?.display_name || user?.email || 'User'
   const secondaryLine = user?.display_name ? user?.email || '' : ''
@@ -132,19 +137,37 @@ export default function Navbar() {
     toastTimer.current = setTimeout(() => setToastMsg(null), 3000)
   }
 
+  /**
+   * SIGNING OUT GOES THROUGH THE WORKSPACE'S GUARD (plan 002, U11).
+   *
+   * It did not, and it is one of the two most-used exits out of a workspace: every nav LINK in
+   * this bar was routed through `exit` and the one control that ends the session entirely was
+   * not, so a citizen with unsaved work could lose it by pressing the single most final button
+   * on the screen, in silence. The guard is the same one, so the dialog, the save-first offer and
+   * the failed-save refusal are all the ones they have already seen.
+   *
+   * OUTSIDE A WORKSPACE `exit` is a function that simply calls what it is given, which is why
+   * every other page's sign-out is untouched by this.
+   */
+  const signOut = () => exit(() => void handleLogout())
+
   const handleLogout = async () => {
     // Await the server-side revoke (bumps token_version + revokes refresh
-    // families + clears cookies). logout() records the LOGGED_OUT banner and
-    // never throws — on failure we still leave, surfacing a toast so the user
-    // knows this device's session may linger until it expires. Never trap the
-    // user's intent to sign out.
+    // families + clears cookies). logout() never throws. Never trap the
+    // user's intent to sign out — the very next statement always leaves.
     const ok = await logout()
     // Attachment BYTES now live server-side, scoped per user — nothing local to
     // wipe on logout. Release any in-memory attachment object URLs so the next
     // user's tab doesn't inherit cached blob handles (memory hygiene only).
     revokeAllAttachmentUrls()
-    if (!ok) showToast('Sign-out may be incomplete on this device.')
-    navigate('/login')
+    // U15: a failed revoke means this browser's session MAY still be live — a fact worth
+    // telling the user — but this component cannot be the one to show it. `navigate` below
+    // unmounts this page in the same tick, which unmounts the navbar, which owns
+    // `toastMsg` — a local toast set here would be destroyed before a single frame renders
+    // it (nobody has ever seen it). A message that must outlive its own page cannot be
+    // owned by that page: hand it forward as router state instead, so the screen it
+    // actually reaches — LoginPage — is the one that renders it, *after* the redirect.
+    navigate('/login', ok ? undefined : { state: { signoutWarning: 'Sign-out may be incomplete on this device.' } })
   }
 
   return (
@@ -153,7 +176,23 @@ export default function Navbar() {
         <div className="px-6 h-14 flex items-center justify-between gap-4">
           {/* Brand + Nav */}
           <div className="flex items-center gap-8">
-            <NavLink to="/dashboard" className="flex items-center whitespace-nowrap">
+            {/* THE WORKSPACE'S IN-PLACE EXITS ROUTE THROUGH ITS GUARD (Plan F, U8).
+                `beforeunload` cannot cover these: a single-page navigation is not an unload, so
+                leaving the workspace by a nav link used to discard unsaved work in silence. Outside
+                a workspace `useWorkspaceExit` hands back a function that simply goes, which is why
+                every other page's navigation is untouched by this.
+
+                THE DESTINATION IS `/projects`, not `/dashboard`: that address is a redirect now
+                (#158 §7), and the most-clicked element in the product should not pay an extra hop
+                through it. The guard is unchanged — only where it lets you go. */}
+            <NavLink
+              to="/projects"
+              onClick={(e) => {
+                e.preventDefault()
+                exit(() => navigate('/projects'))
+              }}
+              className="flex items-center whitespace-nowrap"
+            >
               <BIALLogo />
             </NavLink>
             <div className="hidden md:flex items-center gap-6">
@@ -161,9 +200,17 @@ export default function Navbar() {
                 <NavLink
                   key={to}
                   to={to}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    exit(() => navigate(to))
+                  }}
                   className={({ isActive }) =>
-                    `text-sm font-medium transition pb-0.5 inline-flex items-center gap-1.5 ${
-                      isActive ? 'text-primary font-bold border-b-2 border-primary' : 'text-neutral hover:text-primary'
+                    // THE BOARD DISTINGUISHES THE ACTIVE ITEM BY WEIGHT AND INK, NOTHING ELSE.
+                    // No underline, no teal, no size change: `color:#1A2B34;font-weight:600`
+                    // against siblings at `color:#6B7280;font-weight:500`. The teal rule this
+                    // replaced put brand colour on a nav item on every screen the client sees.
+                    `text-sm transition inline-flex items-center gap-1.5 ${
+                      isActive ? 'text-primary-900 font-semibold' : 'text-neutral font-medium hover:text-primary-900'
                     }`
                   }
                 >
@@ -178,14 +225,17 @@ export default function Navbar() {
 
           {/* Right cluster */}
           <div className="flex items-center gap-1">
-            {/* Daily token usage — prominent status chip bound to the live
-                /api/usage/today source. Three-state colour: healthy (primary) →
-                nearing the limit (accent/amber) → exhausted (danger). */}
+            {/* Daily token usage — the board's outlined pill bound to the live
+                /api/usage/today source. Two-state colour: amber while there is budget,
+                danger once it is spent. */}
             {usage && (() => {
               const pct = usage.limit ? Math.min(100, (usage.used / usage.limit) * 100) : 0
               const exhausted = usage.remaining <= 0
-              const nearing = !exhausted && pct >= 80
-              const barColor = exhausted ? 'bg-danger' : nearing ? 'bg-accent' : 'bg-primary'
+              // NO "NEARING" THRESHOLD. It used to turn the bar amber only past 80%, which the
+              // board contradicts directly: its worked example draws 537,102 / 1,000,000 — 54% —
+              // with an amber fill. Amber IS the meter, and danger is kept for a budget that is
+              // actually spent. This is one of exactly two places the canvas uses `accent`.
+              const barColor = exhausted ? 'bg-danger' : 'bg-accent'
               return (
                 // N4: NEVER `hidden md:flex`. F7 removed the in-rail meter on the grounds that
                 // "the header already shows real usage" — but the header hid it below 768px, so
@@ -193,20 +243,25 @@ export default function Navbar() {
                 // small screens instead of vanishing: the count drops to a compact
                 // used-of-limit and the bar narrows, so a citizen on a phone can still see
                 // their budget running out.
+                // THE BOARD'S PILL: a 1px hairline outline with NO fill, so it sits on the
+                // white header rather than on a grey chip of its own, and a 3px track in the
+                // hairline colour so the UNSPENT part of the budget is visible. It was a
+                // #F8F9FA chip with a 6px white track, which made the remainder invisible
+                // against the header behind it.
                 <div
-                  className="flex flex-col justify-center gap-1 bg-surface-muted border border-bial-border rounded-full px-2 md:px-3 py-1.5 mr-1 select-none"
+                  className="flex flex-col justify-center gap-1 border border-bial-border rounded-full px-2 md:px-3.5 py-1.5 mr-1 select-none"
                   title="Daily AI tokens used today · resets at midnight IST"
                   data-testid="usage-meter"
                 >
-                  <span className={`text-[10px] md:text-xs font-semibold leading-none whitespace-nowrap ${exhausted ? 'text-danger' : 'text-tertiary'}`}>
+                  <span className={`text-[10px] md:text-[11px] font-semibold leading-none whitespace-nowrap ${exhausted ? 'text-danger' : 'text-primary-900'}`}>
                     <span className="md:hidden">
                       {compactTokens(usage.used)} / {compactTokens(usage.limit)}
                     </span>
                     <span className="hidden md:inline">
-                      {usage.used.toLocaleString('en-US')} / {usage.limit.toLocaleString('en-US')} tokens
+                      {usage.used.toLocaleString('en-US')} / {usage.limit.toLocaleString('en-US')} tokens today
                     </span>
                   </span>
-                  <div className="h-1.5 w-14 md:w-28 rounded-full bg-white overflow-hidden">
+                  <div className="h-[3px] w-14 md:w-28 rounded-full bg-bial-border overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${barColor}`}
                       style={{ width: `${pct}%` }}
@@ -258,7 +313,7 @@ export default function Navbar() {
                       pixels below the first. */}
                   <div className="mt-1">
                     <button
-                      onClick={handleLogout}
+                      onClick={signOut}
                       className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-danger hover:bg-red-50 transition"
                     >
                       <LogOut size={13} />

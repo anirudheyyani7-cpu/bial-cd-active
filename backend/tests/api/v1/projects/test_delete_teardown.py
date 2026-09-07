@@ -1,15 +1,19 @@
-"""U5 — deleting a project destroys its database, its role, and its container (ADR-0028).
+"""Deleting a project destroys its database, its role, and both of its containers
+(U5 / ADR-0028, plus the sandbox reap of #184).
 
 The ordering under test is the one the whole delete path is built around: gather handles →
-delete rows → COMMIT → `salt_the_earth` → sweep. Nothing irreversible outside PostgreSQL's
-own rows happens before the commit that authorizes it, and nothing after the commit is
-allowed to raise — a delete that already succeeded must not 500 because a drop failed.
+delete rows → COMMIT → `salt_the_earth` → sweep → reap the sandbox. Nothing irreversible
+outside PostgreSQL's own rows happens before the commit that authorizes it, and nothing after
+the commit is allowed to raise — a delete that already succeeded must not 500 because a drop
+failed.
 
 The interesting scenario is the one the build-session guard does NOT cover. A relaunched
-preview holds no lock (pinned by `test_a_relaunched_preview_does_not_block_the_delete_and_
-is_not_torn_down`) and a deployed container has no interlock at all, so at delete time
-something can still be holding live connections to the app database. `DROP DATABASE ...
-WITH (FORCE)` after the sever — not the guard — is what makes that stop.
+preview holds no lock (pinned by
+`test_projects_crud.py::test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`)
+and a deployed container has no interlock at all, so at delete time something can still be
+holding live connections to the app database. `DROP DATABASE ... WITH (FORCE)` after the sever
+— not the guard, and not the reap, which is best-effort and cannot see a published container at
+all — is what makes that stop.
 
 Real cluster: the `db_session` rollback cannot undo cluster DDL run on the separate
 AUTOCOMMIT engine, so every database created here is destroyed either by the endpoint under
@@ -32,6 +36,7 @@ from sqlalchemy.pool import NullPool
 from src.config import settings
 from src.db.models.app_registry import AppRegistry
 from src.db.models.audit import AuditLog
+from src.db.models.deleted_project import DeletedProject
 from src.db.models.project import Project
 from src.db.models.project_database import ProjectDatabase
 from src.services.appdb import teardown as appdb_teardown
@@ -39,6 +44,7 @@ from src.services.appdb.engine import get_maintenance_engine
 from src.services.appdb.provision import control_plane_dsn, ensure_project_database
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.storage import AppContainerStore
+from tests.api.v1.projects.conftest import DELETE_BODY
 from tests.factories import AppRegistryFactory, ProjectFactory, UserFactory
 from tests.services.appdb.helpers import scalar_on
 
@@ -104,7 +110,12 @@ async def test_delete_drops_the_database_the_role_and_the_container(
     _override_container_store(app, containers)
     headers, user, project, app_row, record = await _project_with_database(db_session)
 
-    resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/projects/{project.id}",
+        headers=headers,
+        json=DELETE_BODY,
+    )
 
     assert resp.status_code == 200
     # Rows first: the registry row goes with the project (ON DELETE CASCADE), which is what
@@ -131,6 +142,18 @@ async def test_delete_drops_the_database_the_role_and_the_container(
         "appId": str(app_row.id),
     }
 
+    # THE ONLY TEST THAT EVER PROVISIONS A REAL DATABASE THROUGH THE DELETE PATH, so it is
+    # the only one that can prove `had_database` is ever actually `True`. Every OTHER
+    # tombstone test builds its project via the bare factory, where `teardown_handles()`
+    # always returns `None` — a mutant hard-coding `had_database=False` on the
+    # `DeletedProject(...)` construction passed every one of them.
+    tombstone = await db_session.scalar(
+        sa.select(DeletedProject).where(DeletedProject.project_id == project.id)
+    )
+    assert tombstone is not None
+    assert tombstone.had_database is True
+    assert tombstone.had_app is True
+
 
 async def test_an_app_less_project_still_has_its_database_dropped(
     app: Any, client: AsyncClient, db_session: AsyncSession
@@ -144,7 +167,12 @@ async def test_an_app_less_project_still_has_its_database_dropped(
     record = await ensure_project_database(db_session, project.id)
     assert record is not None
 
-    resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/projects/{project.id}",
+        headers=headers,
+        json=DELETE_BODY,
+    )
 
     assert resp.status_code == 200
     assert await _catalog(_DATABASE_EXISTS, db=record.db_name) is False
@@ -198,7 +226,12 @@ async def test_a_live_preview_connection_does_not_survive_the_delete(
         async with preview.connect() as connection:
             assert await connection.scalar(sa.text("SELECT 1")) == 1
 
-            resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+            resp = await client.request(
+                "DELETE",
+                f"/v1/projects/{project.id}",
+                headers=headers,
+                json=DELETE_BODY,
+            )
             assert resp.status_code == 200
     except DBAPIError:
         pass  # the forced-out connection may fail on its way out; that is the point
@@ -238,7 +271,12 @@ async def test_a_live_build_still_refuses_the_delete_and_leaves_the_database_alo
         },
     )
 
-    resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/projects/{project.id}",
+        headers=headers,
+        json=DELETE_BODY,
+    )
 
     assert resp.status_code == 409
     assert await db_session.get(Project, project.id) is not None
@@ -270,7 +308,12 @@ async def test_a_failed_drop_logs_an_orphan_and_still_returns_success(
 
     monkeypatch.setattr(appdb_teardown, "_drop_database", explode)
     with structlog.testing.capture_logs() as captured:
-        resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+        resp = await client.request(
+            "DELETE",
+            f"/v1/projects/{project.id}",
+            headers=headers,
+            json=DELETE_BODY,
+        )
 
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
@@ -301,7 +344,12 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
     # the real engine, so the orphan is still observable and the session hook still cleans it.
     monkeypatch.setattr(appdb_teardown, "get_maintenance_engine", lambda: _UnreachableEngine())
     with structlog.testing.capture_logs() as captured:
-        resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+        resp = await client.request(
+            "DELETE",
+            f"/v1/projects/{project.id}",
+            headers=headers,
+            json=DELETE_BODY,
+        )
 
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
@@ -321,7 +369,12 @@ async def test_a_project_without_a_database_deletes_exactly_as_before(
     project = await ProjectFactory.create(db_session, user.id)
     await db_session.commit()
 
-    resp = await client.delete(f"/v1/projects/{project.id}", headers=headers)
+    resp = await client.request(
+        "DELETE",
+        f"/v1/projects/{project.id}",
+        headers=headers,
+        json=DELETE_BODY,
+    )
 
     assert resp.status_code == 200
     assert await db_session.get(Project, project.id) is None
@@ -330,3 +383,565 @@ async def test_a_project_without_a_database_deletes_exactly_as_before(
             sa.select(sa.func.count()).select_from(AuditLog).where(AuditLog.action == "db:drop")
         )
     ) == 0
+
+
+# --- #184: the sandbox container goes with the project ------------------------------------
+#
+# THE MOST DESTRUCTIVE STEP ON THIS PATH, and the reason every test below pins the identity
+# check as hard as it pins the teardown. The sandbox registry key is per-USER
+# (`registry_key(user_id)`), so an unconditional clear destroys whatever container that
+# citizen happens to be running — for ANY project. `refuse_while_build_session_live` cannot
+# cover it: it is app-scoped and, by its own docblock, does not cover a relaunched preview,
+# which holds no lock by design. The check in front of `reap_user` is the whole guard.
+#
+# EVERY ARM IS FAKES. Nothing here reaches ARM; `FakeSandboxClient.teardown` records a name.
+
+
+def _wire_sandbox(app: Any, sandbox: Any) -> None:
+    from src.api.v1.build_sessions.deps import sandbox_or_none_dependency
+
+    app.dependency_overrides[sandbox_or_none_dependency] = lambda: sandbox
+
+
+def _wire_manager(app: Any) -> Any:
+    """A FRESH `SessionManager` per test, bound to the route.
+
+    Not the process singleton: the object under test here is `_start_locks[user_id]`, and a
+    test that has to reason about which lock object the route picked up is a test that can go
+    green for the wrong reason."""
+    from src.api.v1.build_sessions.deps import session_manager_dependency
+    from src.services.build_sessions import SessionManager
+
+    manager = SessionManager()
+    app.dependency_overrides[session_manager_dependency] = lambda: manager
+    return manager
+
+
+def _the_router_module() -> Any:
+    """The projects ROUTER MODULE, for `monkeypatch.setattr`.
+
+    `from src.api.v1.projects import router` hands back the `APIRouter` object — the package
+    `__init__` re-exports it under that exact name, shadowing the submodule — so patching an
+    attribute on it raises `AttributeError` on a module that never saw the change. Same idiom
+    as `test_projects_crud.py`."""
+    import importlib
+
+    return importlib.import_module("src.api.v1.projects.router")
+
+
+async def _project_with_app(db: AsyncSession) -> tuple[dict[str, str], Any, Project, AppRegistry]:
+    """A project + its app row, with NO per-project database — the light setup.
+
+    `_project_with_database` above provisions a real cluster database on the AUTOCOMMIT
+    engine; the sandbox arms have no opinion about that and should not pay for it. The one
+    test that asserts the reap did not displace the database drop uses the heavy helper."""
+    user = await UserFactory.create(db)
+    headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
+    project = await ProjectFactory.create(db, user.id)
+    app_row = await AppRegistryFactory.create(db, user_id=user.id, project_id=project.id)
+    await db.commit()
+    return headers, user, project, app_row
+
+
+async def _registry_names(
+    fake_redis: Any, user_id: uuid.UUID, app_id: uuid.UUID, state: str
+) -> None:
+    """Put the registry into the state a live container leaves behind: this user's one hash,
+    naming this app's container."""
+    from src.services.build_sessions import app_name_for
+    from src.services.redis.keys import (
+        REGISTRY_FIELD_APP_NAME,
+        REGISTRY_FIELD_FQDN,
+        REGISTRY_FIELD_STATE,
+        registry_key,
+    )
+
+    await fake_redis.hset(
+        registry_key(user_id),
+        mapping={
+            REGISTRY_FIELD_APP_NAME: app_name_for(app_id),
+            REGISTRY_FIELD_FQDN: "sbx.example.net",
+            REGISTRY_FIELD_STATE: state,
+        },
+    )
+
+
+def _registry(user_id: uuid.UUID) -> str:
+    from src.services.redis.keys import registry_key
+
+    return registry_key(user_id)
+
+
+def _named(app_id: uuid.UUID) -> str:
+    from src.services.build_sessions import app_name_for
+
+    return app_name_for(app_id)
+
+
+async def _delete(client: AsyncClient, project_id: uuid.UUID, headers: dict[str, str]) -> Any:
+    """The delete, BOUNDED. The bound is an assertion, not a convenience: the whole point of
+    `_SANDBOX_REAP_LOCK_WAIT_SECONDS` is that an already-committed delete never parks behind a
+    provision, and an unbounded `await lock.acquire()` would hang this call forever rather than
+    fail it."""
+    import asyncio
+
+    return await asyncio.wait_for(
+        client.request("DELETE", f"/v1/projects/{project_id}", headers=headers, json=DELETE_BODY),
+        timeout=10,
+    )
+
+
+async def test_the_sandbox_serving_the_deleted_project_is_torn_down(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # #184's whole point: a container serving a project that no longer exists bills at roughly
+    # $2.60/day until the citizen next builds. Registry named this app; ARM delete called;
+    # registry entry cleared.
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project.id) is None
+    assert sandbox.torn_down == [_named(app_row.id)]
+    assert await fake_redis.exists(_registry(user.id)) == 0
+
+
+async def test_a_sandbox_serving_a_different_project_is_left_alone(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # THE GUARD WHOSE ABSENCE DESTROYS LIVE WORK. The registry key is per-USER, so the same
+    # citizen's container for project B is what an unconditional clear would delete — and the
+    # route's own build-session guard proceeds here exactly as it should, because nothing is
+    # building.
+    #
+    # Mutation check: delete the `reg is None or reg.get(...) != app_name_for(app_id)` arm in
+    # `_reap_the_project_sandbox_or_shrug` and this goes red on BOTH assertions — B's container
+    # torn down and B's registry entry cleared.
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project_a, app_a = await _project_with_app(db_session)
+    project_b = await ProjectFactory.create(db_session, user.id)
+    app_b = await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project_b.id)
+    await db_session.commit()
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    # B is the one that is up; A is the one being deleted.
+    await _registry_names(fake_redis, user.id, app_b.id, "ready")
+
+    resp = await _delete(client, project_a.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project_a.id) is None
+    assert sandbox.torn_down == []
+    from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
+
+    survivor = await fake_redis.hgetall(_registry(user.id))
+    assert survivor[REGISTRY_FIELD_APP_NAME] == _named(app_b.id)
+    assert await db_session.get(Project, project_b.id) is not None
+    assert app_a.id != app_b.id  # the two names really are different
+
+
+async def test_the_start_lock_is_held_across_the_check_and_the_reap(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # The direct form of the invariant: while the ARM delete is in flight, nobody else can be
+    # inside `start`. Asserted from INSIDE `teardown`, which is the latest moment in the reap
+    # and therefore the one an interleaving start would land in.
+    #
+    # Mutation check: drop the `async with`/`wait_for(lock.acquire())` and this goes red —
+    # `locked()` reads False at teardown time.
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    manager = _wire_manager(app)
+    held_during_teardown: list[bool] = []
+
+    class _LockProbingSandbox(FakeSandboxClient):
+        async def teardown(self, handle: Any) -> None:
+            held_during_teardown.append(manager._start_lock_for(user.id).locked())
+            await super().teardown(handle)
+
+    sandbox = _LockProbingSandbox()
+    _wire_sandbox(app, sandbox)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert sandbox.torn_down == [_named(app_row.id)]
+    assert held_during_teardown == [True]
+    # ...and it is given back, or the citizen's next build waits on a delete that is over.
+    assert not manager._start_lock_for(user.id).locked()
+
+
+async def test_a_racing_start_for_another_project_is_not_destroyed_by_the_reap(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # THE CONSEQUENCE OF DROPPING THE LOCK, spelled out. The identity check and `reap_user` are
+    # a TOCTOU pair without it: `reap_user` does its OWN fresh `read_registry` and tears down
+    # whatever it finds THEN, so a start for a different project that lands in the gap has its
+    # brand-new container's record deleted underneath it — the container survives with nothing
+    # able to find it again, which is the twelve-day-orphan shape the reaper's own docstring
+    # describes.
+    #
+    # Mutation check: drop the lock and this goes red — B's registry entry is gone, cleared by
+    # A's reap.
+    import asyncio
+
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project_a, app_a = await _project_with_app(db_session)
+    project_b = await ProjectFactory.create(db_session, user.id)
+    app_b = await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project_b.id)
+    await db_session.commit()
+    manager = _wire_manager(app)
+    teardown_reached = asyncio.Event()
+    let_teardown_finish = asyncio.Event()
+
+    class _BlockingSandbox(FakeSandboxClient):
+        async def teardown(self, handle: Any) -> None:
+            teardown_reached.set()
+            await let_teardown_finish.wait()
+            await super().teardown(handle)
+
+    sandbox = _BlockingSandbox()
+    _wire_sandbox(app, sandbox)
+    await _registry_names(fake_redis, user.id, app_a.id, "ready")
+
+    async def a_start_for_project_b() -> None:
+        """What `_start_locked` does, reduced to the two steps that matter: take the per-user
+        start lock, then write the registry record for the container it just provisioned."""
+        await teardown_reached.wait()
+        async with manager._start_lock_for(user.id):
+            await _registry_names(fake_redis, user.id, app_b.id, "ready")
+
+    racing_start = asyncio.create_task(a_start_for_project_b())
+    delete = asyncio.create_task(_delete(client, project_a.id, headers))
+    try:
+        # BOUNDED, and not for speed: a mutant that removes the reap outright never reaches
+        # `teardown`, and a bare `await` on this event would HANG the run instead of failing
+        # it. A hang is not a red — it is a test that cannot report.
+        await asyncio.wait_for(teardown_reached.wait(), timeout=10)
+    except TimeoutError:
+        let_teardown_finish.set()
+        racing_start.cancel()
+        await asyncio.gather(delete, racing_start, return_exceptions=True)
+        raise AssertionError(
+            "the reap never reached teardown; nothing was reaped at all"
+        ) from None
+    for _ in range(20):
+        await asyncio.sleep(0)  # give the racing start every chance to get in
+    let_teardown_finish.set()
+    resp = await delete
+    await racing_start
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project_a.id) is None
+    # A's container went; B's record — written by the start that had to WAIT — is intact.
+    assert sandbox.torn_down == [_named(app_a.id)]
+    from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
+
+    survivor = await fake_redis.hgetall(_registry(user.id))
+    assert survivor.get(REGISTRY_FIELD_APP_NAME) == _named(app_b.id)
+
+
+async def test_an_unconfigured_sandbox_still_deletes_the_project(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # `.env.test` carries no `SANDBOX__*`, and neither does any dev machine — so this is the
+    # DEFAULT posture, not a corner. `OptionalSandbox` hands the route `None`; the reap is
+    # skipped with a line, and the delete is a plain 200.
+    #
+    # Mutation check: swap `OptionalSandbox` for `SandboxDep` on `delete_project` and this goes
+    # red at dependency-solve time with `SandboxNotConfiguredError` — before the route body,
+    # where no `except` of the route's can reach it. See `docs/solutions/design-patterns/
+    # eager-fastapi-depends-bypasses-in-body-error-seam-2026-07-21.md`; that mistake has
+    # shipped here once already.
+    headers, user, project, app_row = await _project_with_app(db_session)
+    _wire_sandbox(app, None)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    with structlog.testing.capture_logs() as captured:
+        resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert "detail" not in resp.json()  # not the catch-all envelope
+    assert await db_session.get(Project, project.id) is None
+    assert any(
+        e.get("event") == "project_delete_sandbox_reap_skipped_unconfigured" for e in captured
+    )
+    # Nothing was reaped, so the record is exactly as it was.
+    assert await fake_redis.exists(_registry(user.id)) == 1
+
+
+async def test_a_busy_start_lock_leaves_the_container_to_the_scheduled_sweep(
+    app: Any,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The lock is held across an ENTIRE provision (ACA create, image pull, bundle restore,
+    # `wait_ready`), so an unbounded acquire parks a delete that has already committed behind
+    # minutes of somebody else's build — and a browser giving up first cancels the request
+    # mid-wait, losing the reap altogether. Bounded, then skipped, then logged.
+    #
+    # Mutation check: replace the `wait_for` with a bare `await lock.acquire()` and this goes
+    # red — `_delete`'s own 10 s bound fires, because nothing ever releases that lock.
+    import asyncio
+
+    projects_router = _the_router_module()
+    from tests.fakes import FakeSandboxClient
+
+    # BOUNDED IS THE SHIPPED PROPERTY; the shrink below is only so the test does not sit out
+    # the real wait. Asserted here so a future edit cannot quietly make it a minute.
+    assert 0 < projects_router._SANDBOX_REAP_LOCK_WAIT_SECONDS <= 5
+    monkeypatch.setattr(projects_router, "_SANDBOX_REAP_LOCK_WAIT_SECONDS", 0.05)
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    manager = _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+    # Somebody else's provision owns the lock for the whole request.
+    await manager._start_lock_for(user.id).acquire()
+    try:
+        with structlog.testing.capture_logs() as captured:
+            resp = await asyncio.wait_for(
+                client.request(
+                    "DELETE",
+                    f"/v1/projects/{project.id}",
+                    headers=headers,
+                    json=DELETE_BODY,
+                ),
+                timeout=5,
+            )
+    finally:
+        manager._start_lock_for(user.id).release()
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project.id) is None
+    assert sandbox.torn_down == []
+    assert any(e.get("event") == "project_delete_sandbox_reap_skipped_lock_busy" for e in captured)
+    # Left standing ON PURPOSE — the scheduled sweep reclaims it, the same posture
+    # `strict=False` already chooses for a failed teardown.
+    assert await fake_redis.exists(_registry(user.id)) == 1
+
+
+async def test_a_registry_entry_left_ending_is_still_torn_down(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # WHY THE CHECK IS NAME-EQUALITY AND NOT `_registry_serves_and_is_ready`. That helper also
+    # demands `state == "ready"`, and `ending` is what an earlier FAILED teardown leaves behind
+    # — an entry naming THIS project's own container, on a container that is still standing and
+    # still billing. Sparing it is the exact leak #184 is about.
+    #
+    # Mutation check: swap the name comparison for `_registry_serves_and_is_ready(reg, name)`
+    # and this goes red — nothing is torn down and the `ending` record survives forever.
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ending")
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert sandbox.torn_down == [_named(app_row.id)]
+    assert await fake_redis.exists(_registry(user.id)) == 0
+
+
+async def test_a_raising_redis_during_the_reap_is_logged_and_the_delete_still_succeeds(
+    app: Any,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `reap_user` guards only `SandboxError` around the teardown — its Redis calls are bare by
+    # module policy — so a blip propagates straight out of the post-commit section, which
+    # `delete_project`'s own docstring forbids: a delete that already succeeded must not 500
+    # because a drop failed. The explicit `except Exception` is the mechanism.
+    #
+    # Mutation check: delete that `except Exception` and this goes red with a 500 (and the rows
+    # still gone, which is the whole problem).
+    from redis.exceptions import RedisError
+
+    projects_router = _the_router_module()
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    manager = _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    async def _blip(*args: Any, **kwargs: Any) -> bool:
+        raise RedisError("registry write blip mid-reap")
+
+    monkeypatch.setattr(projects_router, "reap_user", _blip)
+    with structlog.testing.capture_logs() as captured:
+        resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert "detail" not in resp.json()
+    assert await db_session.get(Project, project.id) is None
+    assert any(e.get("event") == "project_delete_sandbox_reap_failed" for e in captured)
+    # The lock is handed back even on the raising path, or the citizen's next build hangs.
+    assert not manager._start_lock_for(user.id).locked()
+
+
+async def test_an_arm_delete_that_raises_keeps_the_registry_entry_for_a_later_sweep(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # `reap_user`'s failure arm, reached through this route: KEEP the registry so a later sweep
+    # retries — clearing it would orphan a container that is still standing, which is the one
+    # state nothing can ever find again. `strict=False` is what keeps the raise inside the
+    # reaper instead of at a delete that has already committed.
+    from src.services.sandbox import SandboxError
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    sandbox.teardown_error = SandboxError("ARM said no")
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    with structlog.testing.capture_logs() as captured:
+        resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project.id) is None
+    assert sandbox.torn_down == []  # it raised instead
+    from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
+
+    survivor = await fake_redis.hgetall(_registry(user.id))
+    assert survivor[REGISTRY_FIELD_APP_NAME] == _named(app_row.id)
+    assert any(
+        e.get("event") == "reaper teardown failed; leaving state for a later sweep"
+        for e in captured
+    )
+
+
+async def test_an_empty_registry_reaps_nothing_and_raises_nothing(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # The ordinary case — the citizen has not built in a while and nothing is up. No ARM call,
+    # no error, and no 500 from a `None` registry read.
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, _app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    assert await fake_redis.exists(_registry(user.id)) == 0
+
+    with structlog.testing.capture_logs() as captured:
+        resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project.id) is None
+    assert sandbox.torn_down == []
+    assert any(e.get("event") == "project_delete_sandbox_reap_skipped_not_ours" for e in captured)
+    assert not any(e.get("event") == "project_delete_sandbox_reap_failed" for e in captured)
+
+
+async def test_the_per_user_lock_and_the_liveness_lease_go_with_a_successful_teardown(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    # THE ARM THE PRE-EXISTING TESTS NEVER HAD TO CHECK. `LOCK_TTL_SECONDS = 900`, so a reap
+    # that cleared only the registry would leave the citizen unable to start ANY sandbox for
+    # fifteen minutes after deleting a project — manufacturing the very slot-taken state the
+    # rest of this batch is fixing.
+    #
+    # THE LOCK IS SEEDED FROM INSIDE `teardown`, not before the request, and that is forced:
+    # a lock present at guard time makes `refuse_while_build_session_live` answer 409 (the
+    # registry names this app), so the delete would never reach the reap at all. A lock that
+    # drifts into existence mid-reap is exactly the population `reap_lock` exists for — it
+    # compare-and-deletes the OBSERVED value rather than a token it never held.
+    from src.services.redis.keys import lease_key, lock_key
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+
+    class _LockDriftingSandbox(FakeSandboxClient):
+        async def teardown(self, handle: Any) -> None:
+            await fake_redis.set(lock_key(user.id), "a-token-nobody-here-holds")
+            await super().teardown(handle)
+
+    sandbox = _LockDriftingSandbox()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+    await fake_redis.set(lease_key(user.id), "9999999999", ex=900)
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    assert sandbox.torn_down == [_named(app_row.id)]
+    assert await fake_redis.exists(_registry(user.id)) == 0
+    assert await fake_redis.exists(lock_key(user.id)) == 0
+    assert await fake_redis.exists(lease_key(user.id)) == 0
+
+
+async def test_the_reap_displaces_nothing_that_the_delete_already_did(
+    app: Any,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: Any,
+    fake_storage: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ONE ASSERTION EACH for the four steps that were already there, so the new last step
+    # cannot quietly displace one of them: the tombstone, the blob sweep, the per-app database
+    # drop, and the published-container teardown. This is the only sandbox test that pays for a
+    # real cluster database, and it pays for it precisely to keep the drop under assertion.
+    projects_router = _the_router_module()
+    from src.services.storage import snapshot_key
+    from tests.fakes import FakeSandboxClient
+
+    containers = _RecordingContainerStore()
+    _override_container_store(app, containers)
+    headers, user, project, app_row, record = await _project_with_database(db_session)
+    fake_storage.objects[snapshot_key(app_row.id)] = b"# v2 git bundle"
+    published: list[uuid.UUID] = []
+
+    async def _record_published(app_ids: Any) -> int:
+        published.extend(app_ids)
+        return len(published)
+
+    monkeypatch.setattr(projects_router, "sweep_published_apps", _record_published)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    # 1. the tombstone
+    assert (
+        await db_session.scalar(
+            sa.select(DeletedProject).where(DeletedProject.project_id == project.id)
+        )
+    ) is not None
+    # 2. the blob sweep
+    assert snapshot_key(app_row.id) not in fake_storage.objects
+    # 3. the per-app database
+    assert await _catalog(_DATABASE_EXISTS, db=record.db_name) is False
+    # 4. the published container app
+    assert published == [app_row.id]
+    # ...and 5, the new one.
+    assert sandbox.torn_down == [_named(app_row.id)]

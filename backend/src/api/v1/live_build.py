@@ -43,15 +43,23 @@ serving this app". A relaunched preview holds NO lock by design (`manager.py`'s
 `relaunch_preview`: the scope "RELEASES the per-user lock on exit", and the container's
 lifetime is owned by an explicit stay of execution on the registry hash instead,
 `locks.py::grant_stay_of_execution`). So the container-still-serving state is PRECISELY
-the state where `lock_is_held` is False: this guard returns without refusing, and the
-delete proceeds with the container left running and serving a deleted project's UI. That
-gap — recorded in
-`docs/solutions/architecture-patterns/long-lived-resource-lifecycle-ownership-triad-2026-07-19.md`
-— is STILL OPEN. Closing it means reading `preview_stay_until`
-(`stay_of_execution_is_current`) and calling sandbox teardown from the delete path, which
-needs a `SandboxDep` `delete_project` does not have. It is pinned by
-`test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_down`; do not mark it
-closed because this guard shipped.
+the state where `lock_is_held` is False: this guard returns without refusing, and it is the
+CALLER's job to deal with whatever is still running. That gap is recorded in
+`docs/solutions/architecture-patterns/long-lived-resource-lifecycle-ownership-triad-2026-07-19.md`.
+
+CLOSED ON THE DELETE PATH, AND ONLY THERE (#184). `projects.delete_project` now reaps the
+container itself: post-commit it asks the registry whether it still names this project's
+app and, if it does, hands it to `reap_user` — the one teardown sequence — under the
+per-user start lock. Closed in the CALLER rather than here, because this guard's answer
+("nothing is building") is true and a delete is the only caller that wants the container
+gone; submit and deploy still only want the refusal. Two things this doc used to say about
+the fix were wrong and are worth correcting rather than deleting: it needs no
+`preview_stay_until` read (the stay is the reaper's business, not the delete's), and it
+needs no `SandboxDep` — `delete_project` takes `OptionalSandbox`, so a sandbox-off
+deployment still deletes instead of 500ing at dependency-solve time. The reap stays
+best-effort, so a busy start lock, an unconfigured sandbox or a Redis blip still leave the
+container to the scheduled sweep. Pinned by
+`test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`.
 """
 
 from __future__ import annotations
@@ -91,12 +99,21 @@ class ReclaimBlockedError(CamelModel):
     # matters. The client must render a different dialog: the remedy is to stop the build
     # first, and Save/Release both refuse until it has stopped.
     building: bool
+    # → `agentWorking`: an agent is mid-turn in there, of ANY kind. DELIBERATELY WIDER than
+    # `building` and deliberately a SEPARATE field: `building` marks only turns whose toolset
+    # can write, because widening that one put a hammer icon and two Stop buttons in front of a
+    # citizen who had asked a question. The hand-over dialog needs the wide answer for a
+    # different sentence — "their agent is working, transferring will stop it" — and it must be
+    # able to say that over a workspace it has just reported as holding nothing to lose. So the
+    # two travel together: `building` decides WHICH dialog, `agentWorking` decides what that
+    # dialog says is happening right now.
+    agent_working: bool
 
 
 class ReclaimBlockedEnvelope(CamelModel):
-    """`{"error": {message, code, projectId, projectName, dirty, building}}` — the 409 a turn,
-    start or relaunch returns when taking the one sandbox slot would destroy another project's
-    work.
+    """`{"error": {message, code, projectId, projectName, dirty, building, agentWorking}}` — the
+    409 a turn, start or relaunch returns when taking the one sandbox slot would destroy another
+    project's work.
 
     Lives here rather than in `build_sessions/router.py` because two routers now answer it:
     the turn route (`conversations/turns.py`, the path a user actually walks) and relaunch."""
@@ -115,7 +132,22 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
     TWO SENTENCES, because there are two situations and only one of them is about saving. A
     project whose agent is mid-build has no settled tree to describe and cannot be released at
     all until the build stops, so telling that user their project "has unsaved changes" is both
-    untrue and a dead end — it points at a Save button the server will refuse."""
+    untrue and a dead end — it points at a Save button the server will refuse.
+
+    THE PREFLIGHT FOR THE HAND-OVER IS THIS BODY, and that is what `agentWorking` is here for.
+    The hand-over dialog has to name both projects and say whether the other one's agent is
+    mid-thought BEFORE the citizen chooses, and the alternative — teaching the cheap state poll
+    to answer it — cannot: that read is contractually forbidden from the container round trip
+    the unsaved-work half needs. Every refusal on the send path is side-effect-free before
+    anything is persisted, so asking by sending is legitimate, and all FOUR entry points come
+    through this one function — which is what makes the answer identical on all four rather than
+    correct on the one that was tested. They are: the send (`conversations/turns.py::start_turn`),
+    the plan offer's build action (`conversations/transition.py::build_it`), relaunch and
+    `start_build` (both in `build_sessions/router.py`). `start_build` is the newest and was the
+    counter-example to the sentence above it: it raised uncaught and answered 500 (#183) — a door
+    into the hand-over dialog that crashed instead of asking, while this docstring was claiming
+    every door answered identically. Three was the count when it was three; the number is part of
+    the claim, so it moves when a call site is added."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:
@@ -131,6 +163,7 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
                 "projectName": exc.project_name,
                 "dirty": exc.dirty,
                 "building": exc.building,
+                "agentWorking": exc.agent_working,
             }
         },
     )

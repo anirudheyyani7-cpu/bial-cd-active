@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { ChevronDown, CheckCircle, XCircle } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
-import { DECK_ATTACHMENTS_ENABLED } from '../config/features'
 
 // The one support address this page states, rather than the two hardcoded copies it
 // carried (each under its own "TODO: confirm support address"). The CONFIGURED address
 // is `ApiSettings.SUPPORT_CONTACT_EMAIL`, but it is backend-only: it reaches a citizen
-// solely inside the server-rendered at-limit sentence that BuildProgress turns into a
+// solely inside the server-rendered at-limit sentence that `TurnBanner` turns into a
 // mailto. No endpoint returns it, and the portal reads no VITE_* vars, so this page
 // cannot read it without the config endpoint filed under #157 B3. Until then a single
 // constant is the honest shape: one place to fix when the address is confirmed, instead
@@ -69,8 +68,8 @@ export const FAQS = [
     a: 'Sign in with your BIAL Microsoft account — the only sign-in the portal offers. Access is limited to the BIAL organisation. No programming experience is required.',
   },
   {
-    q: 'What happens when I click "Start Chat"?',
-    a: 'That depends on the mode you picked. The composer has three modes and defaults to Plan. In Ask, it opens a chat that answers questions about your app and changes nothing. In Plan, it works out an approach with you and waits for your confirmation before anything is built. In Write, it starts the multi-minute build straight away, with no plan step — so from Plan you reach a build by approving the plan first, and from Write you are already in one. Changes stay in your workspace until you save them.',
+    q: 'What happens when I send my first message?',
+    a: 'That depends on which of the two kinds of chat you picked, and a chat\u2019s kind is fixed when you start it. A Plan chat talks through what you want and shapes it into a plan, without changing your app yet; when the plan looks right, you turn it into a build. A Build chat is where your live app actually changes \u2014 you ask for changes and watch it update as you go. Either way your app opens beside the conversation, and changes stay in your workspace until you save them.',
   },
   {
     q: 'Can I edit the app after it is generated?',
@@ -78,17 +77,15 @@ export const FAQS = [
   },
   {
     q: 'How does my app get its data?',
-    a: 'Apps work with the data you provide — upload an Excel or CSV file to view and analyze it, or let the app capture and store records in its own private database, which the platform creates for each project automatically. The portal does not connect to external airport systems during this pilot.',
+    a: 'Apps work with the data you provide — upload a CSV file to view and analyze it, or let the app capture and store records in its own private database, which the platform creates for each project automatically. The portal does not connect to external airport systems during this pilot.',
   },
   {
     q: 'What files can I attach in chat?',
-    a: DECK_ATTACHMENTS_ENABLED
-      ? 'Images (PNG, JPEG, GIF, WebP), PDFs, text files (CSV, TXT), Word (.docx) and Excel (.xlsx) documents, and PowerPoint (.pptx) presentations — up to 4 MB each. Word and Excel files are read by extracting their text and tables, so the assistant sees the content, not the original layout: Word headers/footers, tracked changes, comments, charts, and embedded images are not extracted, and Excel formulas are read as their last-saved values. PowerPoint presentations are read differently — the assistant looks at each slide visually, so it understands diagrams, charts, and layout, not just the text. Fonts may be substituted and complex SmartArt can shift, the assistant sees each slide\'s final static look (animations and transitions aren\'t shown), and a slide limit applies to very large decks. Very large Word and Excel files are summarised (the first 200 rows of each sheet, and up to ~100 KB of extracted text per file) — the original file is always kept and can be re-downloaded from its chip. Legacy .doc and .ppt files are not supported; save them as .docx, .xlsx, or .pptx first.'
-      : 'Images (PNG, JPEG, GIF, WebP), PDFs, text files (CSV, TXT), and Word (.docx) and Excel (.xlsx) documents — up to 4 MB each. Word and Excel files are read by extracting their text and tables, so the assistant sees the content, not the original layout: Word headers/footers, tracked changes, comments, charts, and embedded images are not extracted, and Excel formulas are read as their last-saved values. Very large files are summarised (the first 200 rows of each sheet, and up to ~100 KB of extracted text per file) — the original file is always kept and can be re-downloaded from its chip. Legacy .doc files are not supported; save them as .docx or PDF first.',
+    a: 'Images (PNG, JPEG, GIF, WebP), PDFs, and text files (CSV, TXT) — up to 4 MB each. Images and PDFs are attached as they are; a CSV or TXT rides inside the message itself, so the assistant reads its contents directly. The original file is always kept and can be re-downloaded from its chip. Anything else is not accepted — save the part you need as a PDF, or export a spreadsheet as CSV.',
   },
   {
     q: 'Is there a limit to how many apps I can build?',
-    a: 'There is no limit on how many apps you can create. There is a daily limit on how much AI work you can use across all of them: the token counter in the header shows what you have left and turns amber once you have used 80% of it. When the allowance runs out it stops every AI action, not just builds — Ask and Plan included — until it resets at midnight IST.',
+    a: 'There is no limit on how many apps you can create. There is a daily limit on how much AI work you can use across all of them: the token counter in the header shows what you have left and turns amber once you have used 80% of it. When the allowance runs out it stops every AI action, not just builds — planning included — until it resets at midnight IST.',
   },
   {
     q: 'Who do I contact for help?',
@@ -161,7 +158,7 @@ export default function HelpPage() {
                 <div className="space-y-3">
                   {[
                     { title: 'Be specific about the problem', body: 'Instead of "Build a tracking app", say "Build a real-time baggage carousel status tracker for Terminal 3, showing load percentage, motor temperature, and maintenance alerts for belts 12A through 24C."' },
-                    { title: 'Describe the data', body: 'Explain what information the app works with — the columns of an Excel/CSV you will upload, or the records the app should capture and store. Attaching a sample file in the builder grounds the app in real data.' },
+                    { title: 'Describe the data', body: 'Explain what information the app works with — the columns of a CSV you will upload, or the records the app should capture and store. Attaching a sample file in the builder grounds the app in real data.' },
                     { title: 'Describe the users', body: 'Who will use this app? Ground ops staff on mobile during shifts? Control room operators on desktop dashboards? Knowing the user shapes the layout.' },
                     { title: 'Specify key features', body: 'List the 3–5 most important features. For example: "Include a calendar view, a status dashboard, alert notifications, and a CSV export button."' },
                     { title: 'Set design expectations', body: 'Mention if you want mobile-first, dashboard-style, kiosk-friendly, or standard desktop layout.' },

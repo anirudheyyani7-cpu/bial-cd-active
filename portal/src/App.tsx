@@ -1,24 +1,38 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import LoginPage from './pages/LoginPage'
-import Dashboard from './pages/Dashboard'
 import HelpPage from './pages/HelpPage'
 import AdminPage from './pages/AdminPage'
 import ChatRoute from './pages/ChatRoute'
 import MarketplacePage from './pages/MarketplacePage'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectPage from './pages/ProjectPage'
+import WorkspaceShell from './components/workspace/WorkspaceShell'
 import { isAuthenticated, bootstrapSession } from './utils/auth'
 
-// Full-screen silent-refresh spinner. Reuses the app's inline-SVG animate-spin
-// idiom (LoginPage) so we don't introduce a new shared component.
+/**
+ * The boot / silent-refresh wait — WORDS, not only a spinner (`#210`).
+ *
+ * `index.css`'s reduced-motion block suppresses `.animate-spin` outright, so for a citizen who
+ * asks for less motion this screen was a stationary circle and nothing else: a full-bleed white
+ * page with no sentence on it, at the one moment nothing else is on screen to explain the pause.
+ * The sentence is what carries the wait now and the glyph is decoration beside it — `aria-hidden`
+ * rather than `aria-label="Loading"`, because a named spinner next to a sentence saying the same
+ * thing is the wait announced twice.
+ *
+ * `aria-busy` sits on the box and announces nothing; the words are the announcement, read out of
+ * the permanent region in `RequireAuth` below.
+ */
 function AuthLoading() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
-      <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" aria-label="Loading">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-      </svg>
+    <div className="min-h-screen flex items-center justify-center bg-white" aria-busy="true">
+      <div className="flex flex-col items-center gap-3">
+        <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+        <p className="text-sm font-medium text-neutral">Getting things ready…</p>
+      </div>
     </div>
   )
 }
@@ -61,8 +75,28 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }, [location.key])
 
   if (status === 'redirect') return <Navigate to="/login" replace />
-  if (status === 'loading') return <AuthLoading />
-  return children
+
+  // THE POLITE REGION IS PERMANENT AND THE WAIT BOX IS WHAT APPEARS INSIDE IT (ASM5).
+  //
+  // A live region inserted together with its text is missed entirely by several reader-and-browser
+  // combinations — `TurnBanner` and `LivePreview` both record it — and this wait has no leaf of its
+  // own that outlives it, so the region cannot live in `AuthLoading`. It lives here, where the
+  // guard is mounted whichever way the session resolved, and only its contents change. That is
+  // what makes the SILENT REFRESH audible: a later navigation flips a decided guard back to
+  // `loading` against a region that has been sitting in the accessibility tree since the first
+  // paint.
+  //
+  // It WRAPS the visible sentence rather than adding an `sr-only` copy of it. Two elements
+  // carrying one sentence is that sentence read twice to anything reading the DOM, and
+  // `Announcer.tsx` records that writing it the other way broke three tests.
+  return (
+    <>
+      <div role="status" aria-live="polite" data-testid="auth-wait">
+        {status === 'loading' ? <AuthLoading /> : null}
+      </div>
+      {status === 'ok' ? children : null}
+    </>
+  )
 }
 
 export default function App() {
@@ -71,24 +105,50 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
-        {/* Enterprise Space + Team Space removed (POC dummy features) — redirect old links. */}
-        <Route path="/enterprise" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/teamspace" element={<Navigate to="/dashboard" replace />} />
+        {/* THE PROJECT LIST IS THE LANDING SCREEN (#158 §7). `/dashboard` used to be a
+            welcome page whose only job was a button to `/projects`; once the project list
+            carries the summary numbers, that hop has nothing left to do. Both addresses
+            still resolve so existing links, bookmarks and the navbar keep working — the
+            welcome page is what went, not the URL. */}
+        <Route path="/dashboard" element={<Navigate to="/projects" replace />} />
+        {/* Enterprise Space + Team Space were POC features, removed long ago. These
+            redirects outlived the welcome page they pointed at; they now land on the list
+            like everything else. Worth deleting once nothing links to them. */}
+        <Route path="/enterprise" element={<Navigate to="/projects" replace />} />
+        <Route path="/teamspace" element={<Navigate to="/projects" replace />} />
 
         {/* Project-first: a project is the thing you open, name, and return to. */}
         <Route path="/projects" element={<RequireAuth><ProjectsPage /></RequireAuth>} />
         {/* Cross-user by design (#145): every signed-in BIAL user sees the same catalog. */}
         <Route path="/marketplace" element={<RequireAuth><MarketplacePage /></RequireAuth>} />
-        <Route path="/projects/:projectId" element={<RequireAuth><ProjectPage /></RequireAuth>} />
+        {/* THE WORKSPACE. A pathless layout route wrapping both addresses inside a project, so
+            the shell — and above all the running app it holds — is preserved across a move
+            between them: React Router renders the same layout element at the same position
+            through a sibling route change, and only the outlet content is replaced.
 
-        {/* One flat chat URL for both kinds. ChatRoute reads the conversation's `kind`
-            and renders ChatPage (planning) or BuilderPage (builder). The project is a
-            breadcrumb resolved from the chat, never a path segment.
-            NOTE: `/apps/:appId` is deliberately NOT a route here — nginx proxies /apps/
-            to the backend runner, and the Vite dev proxy does not, so an SPA route there
-            would work locally and 404 in the deployed container. */}
-        <Route path="/chat/:chatId" element={<RequireAuth><ChatRoute /></RequireAuth>} />
+            THE URLS DO NOT NEST. `/projects/:projectId` and `/chat/:chatId` keep the flat
+            addressing they have; the layout route adds a shared frame, not a path segment.
+
+            THE AUTH WRAPPER IS ABOVE THE SHELL, not around each child. `RequireAuth` is a
+            component re-run per `location.key`, so one instance here is one guard for the whole
+            workspace rather than one per address re-running its effect on every move between
+            them.
+
+            NOTE: `/apps/:appId` is deliberately NOT a route here, and deliberately not part of
+            this layout. BOTH edges send `/apps/` to the control plane — nginx (`portal/nginx.conf`)
+            and the Vite dev proxy (`vite.config.js`) — so a route declared here would be shadowed
+            before React Router ever saw it, in dev and in the container alike. A deployed app is
+            reached on the apps hostname at `/a/<key>/` (nginx SITE 2), never from here. */}
+        <Route element={<RequireAuth><WorkspaceShell /></RequireAuth>}>
+          <Route path="/projects/:projectId" element={<ProjectPage />} />
+          {/* One flat chat URL for both kinds, and ONE surface behind it: `ChatRoute` renders
+              `ConversationSurface` whatever the conversation's `kind` is — the kind changes the
+              tools a turn is handed on the server, never which component mounts here. (This
+              used to fork between two pages, which is exactly the branch the unified surface
+              removed.) The project is a breadcrumb resolved from the chat, never a path
+              segment. */}
+          <Route path="/chat/:chatId" element={<ChatRoute />} />
+        </Route>
 
         <Route path="/help" element={<RequireAuth><HelpPage /></RequireAuth>} />
         <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />

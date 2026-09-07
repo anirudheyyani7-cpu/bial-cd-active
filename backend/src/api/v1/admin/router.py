@@ -1,6 +1,11 @@
-"""Super-admin app-registry governance (R27, R29, R9) — the lifecycle state machine,
-danger ops, and the durable clear-data confirm token, all `requires_superadmin`-gated
-and audited. Ported from Express `admin/apps-routes.js`, but gated by Plan A's env
+"""Super-admin app-registry governance (R27, R29, R9) — the lifecycle state machine and the
+danger ops, all `requires_superadmin`-gated and audited. This opener also advertised "the
+durable clear-data confirm token"; there is no clear-data route, no token and no minting code
+anywhere in this package — the only surviving trace of that vocabulary is `db/models/audit.py`
+naming "clear-data" as an EXAMPLE of the open action set. The nearest live thing is a plain
+`confirm_all: bool` request flag on the bulk-limits route, which is a body field, not a token.
+
+Ported from Express `admin/apps-routes.js`, but gated by Plan A's env
 allowlist (`requires_superadmin`), NOT Express's `role==='admin'` claim. Approval
 pins an immutable git-bundle SUBMISSION (APPROVAL D5): approve carries the reviewed
 submission id, verifies the artifact exists (R11), and the guarded UPDATE refuses a
@@ -107,6 +112,7 @@ from src.db.models.project_database import ProjectDatabase
 from src.db.models.token_usage import TokenUsage, TokenUsageKind
 from src.db.models.user import User
 from src.db.models.user_limit import UserLimit
+from src.db.models.worker_pass import PassOutcome, WorkerPass
 from src.schemas import ADMIN_AUTH, AUTH_401, ErrorEnvelope, OkResponse, error_responses
 from src.services.appdb.engine import get_maintenance_engine
 from src.services.appdb.errors import AppDatabaseUnconfiguredError
@@ -153,11 +159,13 @@ from src.services.storage.reconcile import (
 )
 from src.services.usage.gate import billable_spend, ist_today, resolve_daily_limit
 from src.services.usage.limits import (
+    CONTEXT_HARD_FLOOR,
     DEFAULT_CONTEXT_HARD,
     DEFAULT_CONTEXT_SOFT,
     MODEL_CONTEXT_WINDOW,
     effective_context,
 )
+from src.workers.reclamation import RECLAMATION_TASK_NAME
 
 _log = structlog.get_logger()
 
@@ -172,7 +180,8 @@ router = APIRouter(prefix="/admin/apps", tags=["admin"])
 # The tuple itself now lives in `src/schemas/responses.py` beside `AUTH_401`, because
 # `deploy/router.py`'s `unpublish` (#113) is gated by the same dependency and a second
 # copy would be free to drift. Aliased under the module-private name the routes below
-# already spread, so the shared definition costs no churn at 24 call sites.
+# already spread, so the shared definition costs no churn at any of the call sites in this file.
+# (A count stood here and had drifted from 24 to 26; a number in a comment cannot go red.)
 _ADMIN_AUTH = ADMIN_AUTH
 
 # How many registry rows one listing returns. Pagination is deliberately deferred, so the
@@ -1378,6 +1387,37 @@ async def reconcile_sandboxes(
     raise coordination_is_gone()
 
 
+async def _what_the_worker_actually_did(db: DbSession) -> tuple[PassOutcome | None, str | None]:
+    """The newest reclamation pass's `(outcome, detail)`, or `(None, None)` if none was ever run.
+
+    THE FIELD `reclaimEnabled` CANNOT ANSWER THIS AND NEVER COULD (`#190`). It is the API
+    process's own flag; the pass is gated on the worker's, in another container reading another
+    env file. The row the worker wrote is the only artefact in this deployment that both processes
+    agree about, so it is what the report quotes.
+
+    A SECOND READ OF THE SAME ROW `reclamation_pass_freshness` just took, deliberately. That
+    function owns exactly one question — is the worker alive — and answers it for two endpoints;
+    widening its return to carry an outcome would push the reporting concern into the liveness
+    check that `reconcile-sandboxes` also depends on. The cost is one extra indexed single-row
+    select on a superadmin-only, human-invoked endpoint. Worst case under READ COMMITTED is a pass
+    landing between the two reads, which pairs a fresh timestamp with the previous outcome — one
+    tick of staleness in a report whose whole subject is a 15-minute cadence.
+    """
+    row = (
+        await db.execute(
+            sa.select(WorkerPass.outcome, WorkerPass.detail)
+            .where(WorkerPass.task_name == RECLAMATION_TASK_NAME)
+            .order_by(WorkerPass.finished_at.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    if row is None:
+        return None, None
+    # The member itself: the response model is typed `PassOutcome`, so pydantic owns the wire
+    # rendering and a future change to the enum's base class cannot silently re-spell it here.
+    return row.outcome, row.detail
+
+
 @router.post(
     "/reclamation-report",
     responses=error_responses(
@@ -1441,6 +1481,7 @@ async def reclamation_report(
         )
         await db.commit()
         last_pass, stale = await reclamation_pass_freshness(db)
+        outcome, detail = await _what_the_worker_actually_did(db)
         flags = settings.sandbox
         return ReclamationReportResponse(
             scanned=report.scanned,
@@ -1460,6 +1501,8 @@ async def reclamation_report(
             reclaim_destroy=flags is not None and flags.reclaim_destroy,
             last_reclamation_pass_at=last_pass,
             reclamation_stale=stale,
+            last_pass_outcome=outcome,
+            last_pass_detail=detail,
         )
     # Reached only when `build_coordination_or_503` skipped the body on an unconfigured Redis.
     # The spare-list IS the classifier's second source — without it every claimed container reads
@@ -1639,8 +1682,11 @@ async def reconcile_deploys(admin: CurrentSuperadmin, db: DbSession) -> DeployRe
     must still be able to settle a wedged deploy by hand, and a lever that the kill switch also
     kills is not a recovery lever.
 
-    SAFE TO PRESS AT ANY TIME, including while both the scheduled pass and the in-process loop
-    are running. Staleness is measured from `heartbeat_at`, so a live pipeline is never in the
+    SAFE TO PRESS AT ANY TIME, including alongside the other two things that reconcile: the
+    scheduled pass on the worker (`src/workers/deploy_reconcile.py`) and the API's boot one-shot
+    (`main._reconcile_interrupted_deploys`). It used to name "the in-process loop" as the second
+    of those — U15 deleted that `while True` from the lifespan, and `main.py`'s own docstring is
+    the authority. Staleness is measured from `heartbeat_at`, so a live pipeline is never in the
     work list at all, and every terminal write is guarded on `status = 'running'` — of two racing
     reconcilers exactly one settles a given row and the other learns it lost.
 
@@ -1871,8 +1917,22 @@ async def set_user_limits(
                 400, f"{to_camel(field)} must be a positive integer, or null to reset to default."
             )
         changes[field] = value
-    if (hard := changes.get("context_hard_limit")) is not None and hard > MODEL_CONTEXT_WINDOW:
-        raise AppApiError(400, "contextHardLimit cannot exceed the model context window.")
+    if (hard := changes.get("context_hard_limit")) is not None:
+        if hard > MODEL_CONTEXT_WINDOW:
+            raise AppApiError(400, "contextHardLimit cannot exceed the model context window.")
+        # THE FLOOR, AND THE ADMINISTRATOR IS TOLD THE NUMBER. Below it the context gate
+        # refuses every conversation that person opens — including a brand-new empty one,
+        # because the gate charges the system-prompt reserve before it counts a word — and the
+        # refusal they read tells them to start a new chat, which also fails. A form that
+        # accepted the number and silently locked someone out is the defect; naming the lowest
+        # usable value is the whole fix at this end. The read-time clamp in `effective_context`
+        # is the other end, for the people a value stored before this validator already reached.
+        if hard < CONTEXT_HARD_FLOOR:
+            raise AppApiError(
+                400,
+                f"contextHardLimit cannot be below {CONTEXT_HARD_FLOOR}. Under that, every "
+                "chat this person opens is refused before they have typed anything.",
+            )
     soft, hard = changes.get("context_soft_limit"), changes.get("context_hard_limit")
     if soft is not None and hard is not None and soft >= hard:
         raise AppApiError(400, "contextSoftLimit must be less than contextHardLimit.")

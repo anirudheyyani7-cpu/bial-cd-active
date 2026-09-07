@@ -82,6 +82,37 @@ body {
   width: 100%;
 }
 
-.scrollbar-thin::-webkit-scrollbar { width: 4px; }
-.scrollbar-thin::-webkit-scrollbar-track { background: #f1f5f9; }
-.scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  /* THE PORTAL'S REDUCED-MOTION GUARANTEE. Two mechanisms carry it, and these are both of them.
+   *
+   * 1. THIS BLOCK. A media query needs no component to opt in and cannot be out of date the way
+   *    a subscribed boolean can, so everything expressible as "stop moving" lives here. It covers
+   *    the app pane's entrance and exit (plan 002, U6) — the pane still appears and disappears,
+   *    it simply does so without travelling — and the three perpetual Tailwind utilities the
+   *    portal waits with: `.animate-spin` (every spinner in the product), `.animate-pulse` (the
+   *    skeletons) and `.animate-bounce`. Suppressing the UTILITY is what reaches all of them
+   *    without editing three dozen components.
+   * 2. `usePrefersReducedMotion()` in `src/components/chat/ToolActivityLine.tsx` — a subscribed
+   *    `matchMedia` boolean with exactly three consumers: `ToolActivityLine`, `OfferStrip` and
+   *    `StopTurnControl`. It exists because those three swap the ELEMENT rather than the motion
+   *    (a spinner becomes a static glyph), which CSS alone cannot do.
+   *
+   * THERE IS NO THIRD MECHANISM. No motion library owns any of this and nothing reads the
+   * preference at any other layer. `#210` happened because this file and `tailwind.config.js`
+   * both claimed coverage that did not exist, so if a fourth consumer or a new mechanism
+   * appears, correct this text with it — `src/__tests__/reducedMotion.test.ts` asserts it.
+   *
+   * SOURCE ORDER IS THE MECHANISM. These rules beat Tailwind's own `.animate-spin` only because
+   * they sit AFTER `@tailwind utilities` at equal specificity, and outside any `@layer`. Moving
+   * this block up, or wrapping it in a layer, restores every spinner while looking like a tidy-up.
+   *
+   * NOT COVERED HERE: `tailwindcss-animate`'s `animate-in` / `animate-out` enter-and-exit
+   * utilities on the Radix overlays — one-shot 150-200ms transitions, not a perpetual wait. */
+  .animate-pane-leave,
+  .animate-pane-return,
+  .animate-spin,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none;
+  }
+}

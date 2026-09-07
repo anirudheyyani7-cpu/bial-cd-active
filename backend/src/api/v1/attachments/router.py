@@ -8,6 +8,9 @@ envelopes. Text is never uploaded (it travels inline); office/deck branches land
 Identity is the authenticated caller; object keys are `att/{user_id}/{uuid}` (traversal-safe,
 UUID axes) and every read/delete is scoped by `user_id` AND re-guarded with `assert_owned`.
 The object store is injected via `storage_dependency` so tests swap an in-memory fake.
+
+A PDF is additionally admitted by PAGE COUNT (`MAX_PDF_PAGES`, D4) — bytes cannot stand in for
+pages, and the window charge a document carries is sized to the cap rather than to its size.
 """
 
 from __future__ import annotations
@@ -16,14 +19,20 @@ import base64
 import binascii
 import re
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 import sqlalchemy as sa
+import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
 from src.api.deps import CurrentUser, DbSession
 from src.api.v1.attachments.schemas import UploadResponse
+
+# The one media type admitted and charged as a document. Imported rather than re-spelled:
+# `_shared.resolve_binaries` is what decides a stored ref IS a document, so a second copy here
+# could drift from the definition the send route actually enforces.
+from src.api.v1.conversations._shared import PDF_MEDIA_TYPE
 from src.core.errors import AppApiError
 from src.db.models.attachment import MAX_ATTACHMENT_NAME, Attachment
 from src.db.models.conversation import Conversation
@@ -52,6 +61,8 @@ from src.services.storage import (
     get_storage,
 )
 
+logger = structlog.get_logger()
+
 router = APIRouter(prefix="/attachments", tags=["attachments"])
 
 # Client-minted attachment id shape (Express `ID_RE`) — a safe object-key token.
@@ -63,9 +74,59 @@ ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024
 ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
 _BODY_LIMIT_BYTES = 6 * 1024 * 1024
 
+
+MAX_PDF_PAGES: Final = 30
+"""How long a document may be, in pages, and the byte cap above cannot express it.
+
+A text PDF runs about 1.3 KB a page and a scanned one about 300 KB, so the same 4 MB spans
+roughly 13 pages to 3,200. The document that pushed a conversation to 77% of its hard context
+limit was 79 KB (#194) — comfortably inside every size bound the platform had.
+
+THE NUMBER IS PAIRED WITH `usage/context_window.NOMINAL_PDF_TOKENS`, which charges every
+admitted PDF what the LARGEST admissible one costs (~2,500 tokens a page, measured). Raising
+this cap without raising that charge re-opens exactly the hole it closes: a document admitted
+here that the window guard cannot honestly cover. Thirty pages covers the large majority of
+business documents and still leaves room for a document plus a real build conversation."""
+
+PDF_TOO_LONG_TEXT: Final = (
+    f"That document is too long to work with. Try one under {MAX_PDF_PAGES} pages."
+)
+"""The ONE sentence every failure of the page check gives the citizen.
+
+IT IS ONE SENTENCE FOR THREE OUTCOMES — over the cap, unreadable, and too slow to read — and
+that is a decision, not an oversight. There is nothing true and useful the platform can tell
+someone about a PDF it could not read, and any second sentence would have to reach for the
+vocabulary this one exists to keep out: page objects, parsers, cross-reference tables, bytes.
+The real cause is logged server-side, which is where an operator can act on it
+(`.claude/rules/security.md`: user-facing messages only, details in the log).
+
+It is built from `MAX_PDF_PAGES` so the number a citizen is told and the number enforced cannot
+drift apart."""
+
+PDF_TOO_LONG_CODE: Final = "PDF_TOO_LONG"
+"""The machine-readable code beside `PDF_TOO_LONG_TEXT`, so a client can branch on the page
+cap without string-matching prose."""
+
+PDF_LOCKED_TEXT: Final = (
+    "That document is password-protected. Remove the password and upload it again."
+)
+"""THE ONE PDF FAILURE THE CITIZEN CAN ACT ON, so it is the one that does not get the sentence
+above. A locked document is a fact about THEIR file, not about the platform — and telling
+someone holding a three-page locked invoice that it is "too long to work with, try one under 30
+pages" is advice that cannot be followed. They would shorten the document and be refused again,
+learning nothing. `attachmentInput.ts` already records this rule for the format refusals:
+advice is only honest while it leads somewhere.
+
+It names no parser, no encryption scheme and no internal state, so it keeps the property the
+collapsed sentence exists for."""
+
+PDF_LOCKED_CODE: Final = "PDF_ENCRYPTED"
+"""Mirrors `parse/parsers.py::PDF_ENCRYPTED_CODE` — the child raises it, this route maps it."""
+
 # The allowlist + magic-byte prefixes live in `src.services.media.magic` — the SINGLE source of
-# truth shared with the `/v1/claude` chat relay, so an inline block the upload path would reject
-# can never slip through the relay unvalidated. `ALLOWED_MEDIA` / `magic_matches` imported above.
+# truth shared with every other path that can put bytes in front of the model, so a block the
+# upload path would reject cannot slip in through one of them. `ALLOWED_MEDIA` / `magic_matches`
+# imported above.
 
 # Attachment limiter (Express: ~30/min, POST + DELETE only; GET is never limited).
 ATTACHMENT_RATE_LIMIT = 30
@@ -254,6 +315,47 @@ def _decode_bounded(b64: Any) -> bytes:
     return data
 
 
+async def _assert_pdf_within_page_cap(data: bytes, name: str) -> None:
+    """Refuse a PDF longer than `MAX_PDF_PAGES`, BEFORE anything is stored.
+
+    ★ THE COUNT RUNS IN THE KILLABLE GOVERNOR, NEVER IN THIS HANDLER, and that is the load-
+    bearing half of this function. `.claude/rules/security.md` is explicit — treat uploaded
+    attachments as untrusted, validate at the boundary, SANDBOX PARSING — and a PDF is the
+    worst-behaved thing this route accepts: a Flate bomb, a circular object graph, a
+    cross-reference stream declaring millions of entries are all reachable inside 4 MB, and the
+    last of those costs eight kilobytes and tens of seconds. Read on the event loop, one upload
+    stalls the worker serving every other citizen's request. Read through `run_parse`, it is a
+    fresh spawned child with a wall-clock deadline and an address-space rlimit, terminated when
+    it overruns. `_handle_office_upload` next door takes the same route for the same reason.
+
+    EVERY FAILURE WEARS ONE ANSWER. Over the cap, unreadable, killed at the deadline, contained
+    OOM — all four are `PDF_TOO_LONG_TEXT` and a 413. The alternative is telling a citizen
+    which of the platform's internal failure modes their file hit, which is both useless to
+    them and the leak `.claude/rules/security.md` forbids; the distinguishing detail goes to
+    the log instead — `pdf_page_check_failed` (the parser's `code`/`status`) or
+    `pdf_over_page_cap` (`pages`/`cap`).
+
+    THOSE TWO EVENTS ARE THE COMPENSATING CONTROL the collapse was traded for, so they are
+    pinned by a test rather than left to good intentions. They go through STRUCTLOG, like every
+    other module here: nothing in this process configures stdlib `logging` (`main.py` wires
+    structlog to a `PrintLogger`, and uvicorn's config names only the `uvicorn*` loggers), so a
+    `logging.getLogger(__name__)` line would be dropped at the root or reach `lastResort`, whose
+    bare `%(message)s` strips exactly the fields an operator came for."""
+    try:
+        counted = await run_parse(data, "count_pdf_pages", name, None)
+        pages = counted["pageCount"]
+    except FileParseError as exc:
+        logger.warning("pdf_page_check_failed", code=exc.code, status=exc.status)
+        # The locked arm is the one exception to the collapse above, and only this one: it is a
+        # 415 rather than a 413 because nothing about the file's SIZE was the problem.
+        if exc.code == PDF_LOCKED_CODE:
+            raise AppApiError(415, PDF_LOCKED_TEXT, code=PDF_LOCKED_CODE) from exc
+        raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE) from exc
+    if not isinstance(pages, int) or pages > MAX_PDF_PAGES:
+        logger.info("pdf_over_page_cap", pages=pages, cap=MAX_PDF_PAGES)
+        raise AppApiError(413, PDF_TOO_LONG_TEXT, code=PDF_TOO_LONG_CODE)
+
+
 async def _handle_office_upload(
     db: DbSession,
     storage: ObjectStorage,
@@ -347,7 +449,12 @@ async def _handle_deck_upload(
     responses=error_responses(
         (400, ErrorEnvelope, "Invalid attachment id, conversation id, name, type, or bytes"),
         (404, ErrorEnvelope, "conversationId not found (or not owned by the caller)"),
-        (413, ErrorEnvelope, "Attachment too large or per-user storage full"),
+        (413, ErrorEnvelope, "Attachment too large, over the PDF page cap, or storage full"),
+        # DECLARED BECAUSE IT IS RAISED — the locked-PDF arm above answers 415, and a status the
+        # route really sends but the schema never mentions is the generated client's problem
+        # later. It is 415 and not 413 for the reason given there: nothing about the SIZE was
+        # wrong. (This route's own contract test asserts a SUBSET, so it did not catch the gap.)
+        (415, ErrorEnvelope, "The PDF is password-protected and cannot be read"),
         (501, ErrorEnvelope, "PowerPoint attachments are not enabled"),
         (429, ErrorEnvelope, "Too many attachment requests"),
         AUTH_401,
@@ -409,11 +516,18 @@ async def upload_attachment(
         ) from None
     if len(data) > ATTACHMENT_MAX_BYTES:
         raise AppApiError(413, "Attachment is too large (max 4 MB).")
+    # AFTER the magic-byte and size checks and BEFORE the store, so a refused document leaves
+    # no object and no row — the ordering `_handle_office_upload` already keeps. The arm is
+    # split on media type rather than run for everything: an image's cost does not scale with
+    # its page count (it has none), and charging every screenshot a subprocess spawn would be
+    # a real regression in the common path.
+    if media_type == PDF_MEDIA_TYPE:
+        await _assert_pdf_within_page_cap(data, name)
 
     ref = await _store_attachment_bytes(
         db, storage, user.id, attachment_id, media_type, name, conversation_id, data
     )
-    kind = "document" if media_type == "application/pdf" else "image"
+    kind = "document" if media_type == PDF_MEDIA_TYPE else "image"
     return JSONResponse(status_code=201, content={"attachment": {**ref, "kind": kind}})
 
 

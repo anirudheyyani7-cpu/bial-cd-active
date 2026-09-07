@@ -330,7 +330,14 @@ def get_image_builder() -> ImageBuilder:
             raise DeployNotConfiguredError(
                 "publishing is not configured: set the DEPLOY__* block."
             )
-        _builder = AcrImageBuilder(settings.deploy)
+        if settings.deploy.image_builder == "local_docker":
+            # Imported HERE, not at module scope: `local_images` imports this module for
+            # `BuiltImage`/`ImageBuildError`, so a top-level import is a cycle.
+            from src.services.deploy.local_images import LocalDockerImageBuilder
+
+            _builder = LocalDockerImageBuilder(settings.deploy)
+        else:
+            _builder = AcrImageBuilder(settings.deploy)
     return _builder
 
 
@@ -339,8 +346,3 @@ async def aclose_image_builder() -> None:
     builder, _builder = _builder, None
     if builder is not None:
         await builder.aclose()
-
-
-def set_image_builder_for_tests(builder: ImageBuilder | None) -> None:
-    global _builder
-    _builder = builder

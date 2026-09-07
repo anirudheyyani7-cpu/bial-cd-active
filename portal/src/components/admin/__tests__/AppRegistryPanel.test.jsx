@@ -1002,7 +1002,10 @@ describe('★ the admin delete collects a reason (U23, R5)', () => {
 
     // Too short — the same 5-word floor the citizen's own delete uses.
     fireEvent.change(screen.getByTestId('admin-delete-reason'), { target: { value: 'because' } })
-    expect(confirm.disabled).toBe(true)
+    // ANNOUNCED, NOT `disabled`. A real `disabled` attribute on the control the citizen is
+    // about to press throws focus to the document body; the refusal lives in the handler, so
+    // the press below is what proves it holds.
+    expect(confirm.getAttribute('aria-disabled')).toBe('true')
     fireEvent.click(confirm)
     expect(h.deleteApp).not.toHaveBeenCalled()
 
@@ -1023,6 +1026,30 @@ describe('★ the admin delete collects a reason (U23, R5)', () => {
 
     // ★ THE ASSERTION THAT WOULD HAVE CAUGHT THE BREAK: the reason is the second argument.
     await waitFor(() => expect(h.deleteApp).toHaveBeenCalledWith(APPROVED.appId, REASON))
+  })
+
+  it('★ Escape closes it and the keyboard lands back on the control that opened it', async () => {
+    // It was hand-rolled — a `fixed inset-0` div with `role="dialog"` and nothing else — so
+    // Escape did nothing, Tab walked straight out of it, and closing it dropped focus on the
+    // document body. The most destructive control on this screen had the weakest keyboard
+    // contract on it, in the very file whose review modal carries an explicit focus restore.
+    h.listApps.mockResolvedValue([APPROVED])
+    render(<AppRegistryPanel onToast={vi.fn()} />)
+    await screen.findByText(APPROVED.name)
+
+    const trash = screen.getByTestId(`delete-${APPROVED.appId}`)
+    trash.focus()
+    fireEvent.click(trash)
+    const field = screen.getByTestId('admin-delete-reason')
+    // LIVENESS: it really opened and really took focus off the trash, so the restore below is
+    // a restore rather than focus that never moved.
+    expect(field).toBeTruthy()
+    expect(document.activeElement).not.toBe(trash)
+
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByTestId('admin-delete-reason')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trash))
   })
 
   it('keeps the words on screen when the server refuses them', async () => {

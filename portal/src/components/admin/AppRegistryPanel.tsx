@@ -14,7 +14,14 @@ import { relativeTimeVerbose } from '../../utils/relativeTime'
 import { readDeclaration, shortSha, MIN_REJECTION_NOTE } from './declaration'
 import type { ReadDeclaration } from './declaration'
 import { auditLabel } from './auditLabels'
-import { countWords, MIN_DELETE_REASON_WORDS, MAX_DELETE_REASON_WORDS } from '../../utils/words'
+import {
+  countWords,
+  MIN_DELETE_REASON_WORDS,
+  MAX_DELETE_REASON_WORDS,
+  MAX_DELETE_REASON_CHARS,
+} from '../../utils/words'
+import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
+import { Textarea } from '../ui/textarea'
 
 /** What to call an app on screen. The internal id used to stand in for a missing name, but
  *  a UUID is not a name — it identifies the row for the platform, not the app for a person,
@@ -601,7 +608,15 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
   // It uses the SAME word rule as the citizen's own project delete (`utils/words.ts`, mirrored
   // at `src/core/words.py`), because the harsher act — destroying somebody else's work — should
   // not ask for less than the gentler one.
-  const onDelete = (app: RegistryApp) => setDeleting(app)
+  const onDelete = (app: RegistryApp) => {
+    // THE REASON IS PER-APP AND MUST NOT TRAVEL. `deleteReason` lives on the panel, so a
+    // justification typed for one app and abandoned would open pre-filled on the next one —
+    // and if it happened to be valid, one press away from destroying a different citizen's
+    // work under words that were never about it. Cleared on OPEN rather than only on close,
+    // because close is the path a mid-flight failure deliberately does not take.
+    setDeleteReason('')
+    setDeleting(app)
+  }
 
   // Pending is the only tab that is a REVIEW QUEUE — the only one ordered oldest-first,
   // and the only one whose rows carry a submittedAt (it is null everywhere else). One
@@ -766,8 +781,19 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
 /**
  * THE ADMIN DELETE'S REASON (U23, R5).
  *
- * A `window.confirm` stood here. It could not collect anything, and the route now REQUIRES a
- * 5-50 word justification — so the old control would 422 on every press. The words ride the
+ * ON THE VENDORED RADIX `Dialog`, like every other dialog in this portal — and this one was
+ * hand-rolled when it first landed, which reintroduced in the admin panel the exact defect U9
+ * exists to close: a `fixed inset-0` div with `role="dialog"` gives no focus trap, no Escape,
+ * and no focus restored to the trash control that opened it. Its sibling review modal in this
+ * same file carries an explicit `reviewTriggerRef` restore for that reason. The most
+ * destructive control on this screen must not be the one with the weakest keyboard contract.
+ * Radix gives the trap, Escape and the overlay click (both routed through `onOpenChange`, so
+ * `busy` guards them the way the hand-rolled overlay only guarded its own click), and the
+ * restore — via `useFocusBackstop` in `ui/dialog.tsx`, because this dialog is rendered
+ * conditionally like the rest.
+ *
+ * A `window.confirm` stood here before that. It could not collect anything, and the route now
+ * REQUIRES a 5-50 word justification — so the old control would 422 on every press. The words ride the
  * `app:delete` audit row, which is written before destruction and carries no foreign key to
  * the app, so it is still readable long after what it describes is gone.
  *
@@ -788,10 +814,23 @@ function DeleteAppDialog({ app, reason, onReason, busy, onClose, onConfirm }: {
   const valid = words >= MIN_DELETE_REASON_WORDS && words <= MAX_DELETE_REASON_WORDS
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="admin-delete-title">
-      <div className="absolute inset-0 bg-black/40" onClick={() => { if (!busy) onClose() }} />
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-        <h3 id="admin-delete-title" className="text-base font-bold text-tertiary">Delete “{appLabel(app)}”?</h3>
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        // Radix routes Escape, the overlay click and its own close through here, and `busy`
+        // holds it open mid-request — the same guard the hand-rolled overlay carried, now
+        // covering the two exits it never did.
+        if (!next && !busy) onClose()
+      }}
+    >
+      <DialogContent
+        hideClose
+        // The scrim this dialog already used, kept exactly — the vendored default is
+        // `bg-black/80`, which is a different design.
+        overlayClassName="bg-black/40"
+        className="font-manrope w-full max-w-md rounded-2xl bg-white p-6 shadow-xl gap-0 border-0"
+      >
+        <DialogTitle className="text-base font-bold text-tertiary">Delete “{appLabel(app)}”?</DialogTitle>
         {/* Names the two things that do not come back. "Data and files" undersold it: the app's
             own PostgreSQL database is dropped outright — no export, no snapshot, no undo. */}
         <p className="mt-2 text-sm text-neutral">
@@ -799,13 +838,19 @@ function DeleteAppDialog({ app, reason, onReason, busy, onClose, onConfirm }: {
         </p>
         <label className="block mt-4">
           <span className="text-xs font-semibold text-tertiary">Why are you deleting this app?</span>
-          <textarea
+          {/* The SHARED `Textarea`, like the citizen dialog this one models itself on down to
+              the word rule — two dialogs with the same job drifting apart on their input is how
+              a design system stops being one. `maxLength` mirrors the server's own 2,000-char
+              backstop (`clean_deletion_reason`): a paste guard, not the rule a person is told
+              about, which is the word count below. */}
+          <Textarea
             data-testid="admin-delete-reason"
             value={reason}
             onChange={(e) => onReason(e.target.value)}
             rows={3}
+            maxLength={MAX_DELETE_REASON_CHARS}
             aria-describedby="admin-delete-reason-count"
-            className="mt-1.5 w-full rounded-xl border border-bial-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="mt-1.5 resize-y"
           />
           <span id="admin-delete-reason-count" className="mt-1 block text-xs text-neutral">
             Between {MIN_DELETE_REASON_WORDS} and {MAX_DELETE_REASON_WORDS} words. Kept on the audit record.{' '}
@@ -824,14 +869,25 @@ function DeleteAppDialog({ app, reason, onReason, busy, onClose, onConfirm }: {
           <button
             type="button"
             data-testid="admin-delete-confirm"
-            disabled={!valid || busy}
-            onClick={onConfirm}
-            className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            // `aria-disabled`, never `disabled`, and this is the control it matters most on:
+            // it is the one holding focus at the instant it goes busy, because the citizen just
+            // pressed it. A real `disabled` attribute throws focus to the document body from
+            // under them, mid-request, which is the defect `ui/dialog.tsx`'s backstop exists to
+            // clean up after — better not to cause it. The refusal is enforced in the handler,
+            // the only place it can be once the attribute is gone.
+            aria-disabled={!valid || busy}
+            onClick={() => {
+              if (!valid || busy) return
+              onConfirm()
+            }}
+            className={`flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-xl transition text-sm ${
+              !valid || busy ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
             {busy ? <Loader2 size={15} className="animate-spin" /> : null} Delete app
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

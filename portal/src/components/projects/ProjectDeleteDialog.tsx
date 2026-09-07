@@ -59,6 +59,7 @@ import {
   countWords,
   MAX_DELETE_REASON_WORDS,
   MIN_DELETE_REASON_WORDS,
+  MAX_DELETE_REASON_CHARS,
 } from '../../utils/words'
 
 /** Ties the TEXTAREA to the rule it must satisfy and to its own running count (R44b/AE9b).
@@ -79,7 +80,6 @@ const COUNT_ID = 'delete-remark-count'
 const CASCADE_ID = 'delete-project-cascade'
 
 /** A paste backstop only — 50 words of ordinary English is far under this. */
-const MAX_DELETE_REASON_CHARS = 2000
 
 /**
  * `null` count = not resolved yet (loading, or the count call failed) → name the cascade with

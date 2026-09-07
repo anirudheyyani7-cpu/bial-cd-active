@@ -441,13 +441,21 @@ const STATE_FIELD_EQ: {
  *  second hand-kept list, so the two cannot drift apart. */
 export const WORKSPACE_STATE_FIELDS = Object.keys(STATE_FIELD_EQ).sort()
 
+/** One field, compared by its own entry. Generic in the KEY, which is what lets TypeScript
+ *  correlate the three lookups — the comparator's parameter types and both operands are all
+ *  `WorkspaceState[K]` for the same `K` — so no cast is needed to read them together. Written
+ *  out rather than inlined for exactly that reason: inline, `key` widens to the union and the
+ *  three types stop lining up. */
+const fieldsAgree = <K extends keyof Required<WorkspaceState>>(
+  key: K,
+  a: WorkspaceState,
+  b: WorkspaceState,
+): boolean => STATE_FIELD_EQ[key](a[key], b[key])
+
 export const sameWorkspaceState = (a: WorkspaceState, b: WorkspaceState): boolean =>
   a === b ||
   (Object.keys(STATE_FIELD_EQ) as Array<keyof Required<WorkspaceState>>).every((key) =>
-    // The indexed access is sound — `key` ranges over exactly the keys of the record — but
-    // TypeScript cannot correlate the two lookups through a generic index, so each side is read
-    // once and handed to the field's own comparator.
-    (STATE_FIELD_EQ[key] as (x: unknown, y: unknown) => boolean)(a[key], b[key]),
+    fieldsAgree(key, a, b),
   )
 
 const sameAction = (a: WorkspaceAction | null, b: WorkspaceAction | null): boolean =>

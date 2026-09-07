@@ -171,11 +171,19 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     // change what the app compiles to; a poll would spend a container call per tick to hear the
     // same answer. A start that brings a new app up changes `framedUrl`, which is what re-asks.
     let live = true
-    void fetchCompileState(project.id).then((verdict) => {
-      // The answer describes the workspace this effect was armed for. A late reply after a
-      // teardown, a project switch or a restart would otherwise land on a different app.
-      if (live) setCompileState(verdict)
-    })
+    fetchCompileState(project.id)
+      .then((verdict) => {
+        // The answer describes the workspace this effect was armed for. A late reply after a
+        // teardown, a project switch or a restart would otherwise land on a different app.
+        if (live) setCompileState(verdict)
+      })
+      // THE CLIENT PROMISES NOT TO THROW; THIS DOES NOT DEPEND ON THE PROMISE. A bare `void` on
+      // the chain leaves a rejection with nowhere to go — an unhandled rejection in the shell,
+      // which under a test runner is an error the suite reports beside otherwise-green tests and
+      // in a browser is a console error nobody owns. HOLDING is the correct answer anyway: it is
+      // exactly what `unknown` and `null` do, so a rejection lands on the same behaviour the
+      // client's own swallow produces, rather than on a second failure.
+      .catch(() => {})
     return () => {
       live = false
     }

@@ -1072,3 +1072,46 @@ describe('guarantees carried over from the controls this chip replaces', () => {
     expect(chip.className).toContain('narrow:min-h-[44px]')
   })
 })
+
+describe('★ the publish wait says what it is doing (R31)', () => {
+  // `busyReason` existed and was rendered ONLY as a `title` attribute — neither visible text
+  // nor an exposed busy state, and unreachable to a keyboard or a touch screen. So the one
+  // thing this component announced was the publish OUTCOME: press Save and publish, and hear
+  // nothing at all until it is over, on an operation that uploads a bundle, claims a
+  // deployment row and starts a container.
+
+  it('names the wait in the button, in the region, and as a busy state', async () => {
+    wire(view('draft'), { saving: true })
+    mount()
+    await openChip()
+
+    const action = screen.getByTestId('publish-action')
+    // VISIBLE TEXT, not a tooltip. Under the defect the label still read "Save and publish"
+    // while it was already saving — a control that looks pressable and is doing the thing.
+    expect(action.textContent).toContain('Saving and publishing')
+    expect(action.getAttribute('aria-busy')).toBe('true')
+    // ANNOUNCED, through the region that previously only ever spoke the outcome.
+    expect(screen.getByTestId('publish-announce').textContent).toContain('Saving and publishing')
+  })
+
+  it('names a take-back the same way, and gives the label back when the wait ends', async () => {
+    // PAIRED WITH THE LEAVING, because an announcement on entering a wait and silence on
+    // leaving it is a screen that never says the thing finished.
+    wire(view('draft'), { withdrawing: true })
+    mount()
+    await openChip()
+    expect(screen.getByTestId('publish-action').textContent).toContain('Taking it back')
+    expect(screen.getByTestId('publish-announce').textContent).toContain('Taking it back')
+
+    cleanup()
+    wire(view('draft'))
+    mount()
+    await openChip()
+
+    const settled = screen.getByTestId('publish-action')
+    expect(settled.textContent).not.toContain('Taking it back')
+    expect(settled.getAttribute('aria-busy')).toBe('false')
+    // LIVENESS: the control really is the same one, back to offering its action.
+    expect(settled.textContent?.trim().length).toBeGreaterThan(0)
+  })
+})

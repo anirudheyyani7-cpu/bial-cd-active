@@ -199,6 +199,16 @@ export default function PublishStatusChip({
   else if (answer === null && presentation !== null) {
     announcement = `Publish status: ${presentation.label}`
   }
+  // R31: THE WAIT ITSELF SPEAKS, and it takes precedence while it is running. `busyReason`
+  // existed and was rendered ONLY as a `title` attribute — which is neither visible text nor an
+  // exposed busy state, and is unreachable to a keyboard or a touch screen. So the one thing
+  // this component said out loud was the publish OUTCOME: a citizen who pressed Save and
+  // publish heard nothing at all until it finished, on an operation that force-drops nothing
+  // but does upload a bundle, claim a deployment row and start a container.
+  //
+  // ENTERING AND LEAVING BOTH ANNOUNCE, which is what the region already gives for free: this
+  // string replaces the outcome while busy, and the outcome replaces it when the wait ends.
+  if (busyReason !== undefined) announcement = busyReason
 
   const liveRegion = (
     <span data-testid="publish-announce" role="status" aria-live="polite" className="sr-only">
@@ -414,7 +424,10 @@ export default function PublishStatusChip({
               data-testid="publish-action"
               onClick={pressAction}
               aria-disabled={busy}
-              title={busyReason}
+              // `aria-busy` is the PROPERTY that says a control is working — `aria-disabled`
+              // only says it will not respond, which is also true of a state with nothing to
+              // do. The label below is the visible half of the same fact.
+              aria-busy={busy}
               // SECONDARY WHERE THE BOARD DRAWS IT SECONDARY — `StatusCardStates` fills every
               // action but state 3's with the primary teal. The set is shared with the rail panel
               // so the two surfaces cannot disagree about which action that is.
@@ -424,7 +437,10 @@ export default function PublishStatusChip({
                   : 'bg-primary text-white'
               } ${busy ? 'cursor-default opacity-40' : SECONDARY_ACTIONS.has(presentation.action) ? 'hover:border-primary hover:text-primary' : 'hover:bg-primary-600'}`}
             >
-              {ACTION_LABEL[presentation.action]}
+              {/* THE WAIT IS READABLE, not a tooltip. `busyReason` was rendered only as
+                  `title`, so what the button said while it worked was still "Save and publish"
+                  — a control that looks pressable, reads pressable, and is doing the thing. */}
+              {busyReason ?? ACTION_LABEL[presentation.action]}
             </button>
           )}
 

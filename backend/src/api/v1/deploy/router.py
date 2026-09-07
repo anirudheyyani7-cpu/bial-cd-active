@@ -176,11 +176,11 @@ _SNAPSHOT_MOVED_MSG = (
     "Your app was saved again while this request was being decided, so nothing was "
     "submitted. Try again to publish the version that's saved now."
 )
-# NOT "could not be removed" — see the route. `sweep_published_apps` returns a count, and a
-# zero collapses "ARM refused" together with "the delete is still running past our ceiling",
-# whose outcome `await_lro` documents as genuinely unknown. Claiming removal failed would
-# assert something nobody observed; this says only what is true, and points at the retry that
-# settles it either way (`delete_app` is idempotent, so retrying is safe in both cases).
+# NOT "could not be removed" — see the route. `sweep_published_apps` names the ids that
+# SURVIVED, and a survivor collapses "ARM refused" together with "the delete is still running
+# past our ceiling", whose outcome `await_lro` documents as genuinely unknown. Claiming removal
+# failed would assert something nobody observed; this says only what is true, and points at the
+# retry that settles it either way (`delete_app` is idempotent, so retrying is safe in both).
 _TEARDOWN_UNCONFIRMED = "The takedown could not be confirmed. Retrying is safe and will settle it."
 
 
@@ -1214,22 +1214,24 @@ async def unpublish(
     state and never touches Azure again — a repeat click cannot fail.
 
     FAILS LOUD, NOT BEST-EFFORT: `sweep_published_apps` is reused exactly as it exists
-    (best-effort, never-raising) rather than duplicating a second delete path, but its
-    return count is read back here — 0 swept means this request never observed the delete
-    succeed, and `unpublished_at` is deliberately NOT written in that case. The count is a
-    weak signal in BOTH directions, and the route is written to over-claim in neither: a
-    non-zero count means "no error" rather than "something was deleted", because `delete_app`
-    no-ops on an absent container and still counts; a zero means "not observed" rather than
-    "failed", because the sweep collapses a terminal `AcaError` and an `AcaTransientError`
-    from ceiling expiry into the same number. Both readings are the right ones for a lever
-    whose job is to guarantee absence rather than to prove authorship of it. Retrying is safe
-    either way, because `AcaPublishedApps.delete_app` is independently idempotent — a partial
-    failure never leaves the row and reality permanently disagreeing.
+    (best-effort, never-raising) rather than duplicating a second delete path, but the
+    SURVIVORS it names are read back here — this app coming back as a survivor means the
+    request never observed the delete succeed, and `unpublished_at` is deliberately NOT
+    written in that case. The signal is weak in BOTH directions, and the route is written to
+    over-claim in neither: an empty survivor list means "no error" rather than "something was
+    deleted", because `delete_app` no-ops on an absent container and still returns clean; a
+    survivor means "not observed" rather than "failed", because the sweep collapses a terminal
+    `AcaError` and an `AcaTransientError` from ceiling expiry into the same entry. Both
+    readings are the right ones for a lever whose job is to guarantee absence rather than to
+    prove authorship of it. Retrying is safe either way, because `AcaPublishedApps.delete_app`
+    is independently idempotent — a partial failure never leaves the row and reality
+    permanently disagreeing.
     """
     # First, and before any query: an environment with `DEPLOY__*` unset has no publish plane
     # at all. Without this the `None` flows into `sweep_published_apps`, which re-resolves the
-    # singleton, catches `DeployNotConfiguredError` and returns 0 — landing in the
-    # unconfirmed-teardown branch below, which invites a retry that can never work here. This
+    # singleton, catches `DeployNotConfiguredError` and returns NO survivors — landing in the
+    # confirmed-teardown path below and stamping `unpublished_at` for a container that this
+    # deployment could never have published. That is the wrong lie in the wrong direction. This
     # is the one 503 on this route that is TERMINAL, hence the distinct `code`: the other says
     # "try again", and a client cannot tell them apart from the prose. Both sibling routes in
     # this module open with the same check against the same constant, whose "tell an
@@ -1299,15 +1301,16 @@ async def unpublish(
     if await sweep_published_apps([app_id], client=remover):
         # UNCONFIRMED, NOT FAILED, and the distinction is the same one this route's audit
         # discipline is built on. `sweep_published_apps` collapses every exception into a
-        # count, so a zero means "we did not observe a success" — which covers a terminal
-        # `AcaError` (ARM refused; it really is still up) AND an `AcaTransientError` from
-        # `await_lro`'s ceiling expiry, whose docstring says the outcome is genuinely unknown
-        # because "the operation may still land". Recording that as a confirmed failure would
-        # be the same sin as recording an unobserved success, and the far likelier one here:
-        # the ceiling is 300s and the gateway gives up at 20, so a slow-but-fine delete is
-        # exactly what lands in this branch. `unpublished_at` stays NULL either way, which is
-        # the conservative choice — a retry re-attempts the delete (idempotent) and settles
-        # the row, whereas stamping it now could mark an app down that is still serving.
+        # survivor entry, so this app coming back means "we did not observe a success" — which
+        # covers a terminal `AcaError` (ARM refused; it really is still up) AND an
+        # `AcaTransientError` from `await_lro`'s ceiling expiry, whose docstring says the
+        # outcome is genuinely unknown because "the operation may still land". Recording that
+        # as a confirmed failure would be the same sin as recording an unobserved success, and
+        # it is the far likelier one here: the ceiling is 300s and the gateway gives up at 20,
+        # so a slow-but-fine delete is exactly what lands in this branch. `unpublished_at`
+        # stays NULL either way, which is the conservative choice — a retry re-attempts the
+        # delete (idempotent) and settles the row, whereas stamping it now could mark an app
+        # down that is still serving.
         _log.warning(
             "app_unpublish_teardown_unconfirmed", app_id=str(app_id), deployment_id=str(row.id)
         )

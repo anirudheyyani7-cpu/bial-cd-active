@@ -28,8 +28,18 @@ const STATUS: Record<AppStatus, { label: string; cls: string }> = {
   rejected: { label: 'Rejected', cls: 'bg-red-100 text-red-700' },
   disabled: { label: 'Disabled', cls: 'bg-gray-200 text-gray-600' },
 }
-// Admin reviews these statuses (draft is builder-side and hidden here).
-const TABS: AppStatus[] = ['pending', 'approved', 'rejected', 'disabled']
+// Draft used to be hidden here as "builder-side", which was true of the REVIEW flow and
+// false of the ops one: a self-published app is a draft (one-click deploy never writes a
+// status), so the ordinary live app in the marketplace had no row on this screen at all —
+// and the kill switch below can now reach it (#163). A lever nobody can get to is not a
+// lever. Pending stays the default tab; this only adds a place to stand.
+const TABS: AppStatus[] = ['pending', 'draft', 'approved', 'rejected', 'disabled']
+
+// `STATUS_TRANSITIONS[DISABLED]` on the server (`db/models/app_registry.py`), mirrored so
+// the control appears exactly where the transition is legal. PENDING is absent on purpose:
+// an app waiting for review is REJECTED, not switched off, and the server refuses it — an
+// affordance whose only outcome is a refusal is a bug, not a safety net.
+const CAN_DISABLE: readonly AppStatus[] = ['approved', 'draft', 'rejected']
 
 const fmtWhen = (iso: string | null): string => {
   // NULL IS ITS OWN ANSWER, and it cannot be routed through Date. `new Date(0)` is the
@@ -656,8 +666,8 @@ export default function AppRegistryPanel({ onToast }: AppRegistryPanelProps) {
                         {app.status === 'approved' && app.approvalRoute !== 'self_publish' && (
                           <button data-testid={`mark-deployed-${app.appId}`} onClick={() => onMarkDeployed(app)} disabled={busy} title="Record that the go-live runbook was run for the approved build" className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-bial-border text-neutral hover:text-primary hover:bg-bial-bg transition disabled:opacity-50"><Rocket size={12} /> Mark deployed</button>
                         )}
-                        {app.status === 'approved' && (
-                          <button onClick={() => onDisable(app)} disabled={busy} title="Disable (kill switch)" className="p-1.5 rounded-lg border border-bial-border text-amber-600 hover:bg-amber-50 transition disabled:opacity-50"><Power size={13} /></button>
+                        {CAN_DISABLE.includes(app.status) && (
+                          <button data-testid={`disable-${app.appId}`} onClick={() => onDisable(app)} disabled={busy} title="Disable (kill switch)" className="p-1.5 rounded-lg border border-bial-border text-amber-600 hover:bg-amber-50 transition disabled:opacity-50"><Power size={13} /></button>
                         )}
                         {app.status === 'disabled' && (
                           <button onClick={() => onEnable(app)} disabled={busy} title="Re-enable" className="p-1.5 rounded-lg border border-bial-border text-green-600 hover:bg-green-50 transition disabled:opacity-50"><Power size={13} /></button>

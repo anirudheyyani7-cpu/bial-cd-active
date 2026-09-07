@@ -112,12 +112,26 @@ approval_route_enum = sa.Enum(
 # reaches draft: approve/reject/disable all move forward, never back to unsubmitted.
 # A transition is applied as an atomic `UPDATE ... WHERE status = ANY(allowed)`;
 # zero rows updated is a rejected (illegal) transition (→ 409), never a silent no-op.
+#
+# `DISABLED` accepts DRAFT and REJECTED as well as APPROVED (#163). The kill switch used
+# to reach approved apps ONLY, and the ORDINARY member of the marketplace catalog is a
+# DRAFT — one-click deploy never writes a status (`deployment.py`: "a self-deployed app is
+# still `draft`") — so the two categories most likely to need switching off could only be
+# hard-deleted, which destroys the owner's work. PENDING is deliberately NOT in the set: an
+# app sitting in the review queue is REJECTED, not switched off, and adding it would let an
+# admin bypass the review decision with the ops lever.
+#
+# THE `DRAFT` ROW IS NOT THE PLACE TO UNDO THIS, and the temptation is real: a switched-off
+# draft has no approval to be re-enabled back to, so the obvious repair is to let
+# `disabled → draft`. Do not. `apps/router.py::withdraw` is CITIZEN-facing and reads this
+# same row with only an ownership predicate, so widening it would let the OWNER of an app an
+# administrator killed walk it straight back to draft — containment turned into a bypass.
 STATUS_TRANSITIONS: dict[AppStatus, frozenset[AppStatus]] = {
     AppStatus.DRAFT: frozenset({AppStatus.PENDING}),
     AppStatus.PENDING: frozenset({AppStatus.DRAFT, AppStatus.REJECTED, AppStatus.APPROVED}),
     AppStatus.APPROVED: frozenset({AppStatus.PENDING, AppStatus.DISABLED}),
     AppStatus.REJECTED: frozenset({AppStatus.PENDING}),
-    AppStatus.DISABLED: frozenset({AppStatus.APPROVED}),
+    AppStatus.DISABLED: frozenset({AppStatus.APPROVED, AppStatus.DRAFT, AppStatus.REJECTED}),
 }
 
 # Publishable app-key shape (Express `bial_${randomBytes(24).base64url}`): the

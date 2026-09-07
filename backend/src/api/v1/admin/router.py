@@ -300,6 +300,16 @@ def _db_detail(app_id: uuid.UUID, handles: TeardownHandles) -> dict[str, Any]:
 _SANDBOX_UNAVAILABLE = "The sandbox service is unavailable. Please try again."
 _DB_LEVER_FAILED = "The app's database could not be reached. Please try again."
 
+# `STATUS_TRANSITIONS[DISABLED]` in one sentence, plus the ONE thing an administrator who
+# hits this is most likely to have meant. PENDING is the only status this refusal really
+# fires for in practice — the panel renders the control for the other three — and "reject
+# it instead" is the lever they actually want, so the copy names it rather than leaving a
+# bare refusal (#163).
+_NOT_DISABLABLE = (
+    "Only an approved, draft or rejected app can be disabled — "
+    "an app waiting for review must be rejected instead."
+)
+
 # The reconcile/observe half's copy. Same posture, different subject: the whole CLUSTER, not
 # one app's database — and a sweep must never answer with a partial report dressed as a
 # clean one, so an unreachable cluster is a retryable failure, not an empty tally.
@@ -690,7 +700,7 @@ async def patch_app(
     "/{app_id}/disable",
     responses=error_responses(
         (404, ErrorEnvelope, "App not found"),
-        (409, ErrorEnvelope, "Only an approved app can be disabled"),
+        (409, ErrorEnvelope, "Only an approved, draft or rejected app can be disabled"),
         (503, ErrorEnvelope, "The app database could not be severed"),
         *_ADMIN_AUTH,
     ),
@@ -703,6 +713,13 @@ async def disable(
     now the only data kill there is — the shared-table plane and its per-request app-key
     403 are gone, so a deployed container holds a real credential and answers to nobody but
     PostgreSQL. Hence the sever, not merely the status.
+
+    REACHES DRAFT AND REJECTED APPS TOO (#163), not approved ones only. The ordinary member
+    of the marketplace catalog is a DRAFT — one-click deploy never writes a status — so the
+    approved-only version of this lever could not switch off the very apps most likely to
+    need it; the only remaining answer was `nuke_app`, which destroys the owner's work.
+    PENDING stays out: an app waiting for review is REJECTED, not switched off, and the copy
+    below says so rather than leaving the administrator to guess which lever they wanted.
 
     Order: the status transition FIRST, the sever after it. `→approved` legally accepts
     `pending`, so the guarded UPDATE is the only thing separating "disable an approved app"
@@ -719,7 +736,7 @@ async def disable(
     app = await _get_app_or_404(db, app_id)
     project_id = app.project_id
     if not await _transition(db, app_id, AppStatus.DISABLED):
-        raise AppApiError(409, "Only an approved app can be disabled.")
+        raise AppApiError(409, _NOT_DISABLABLE)
     await append_audit(
         db, actor_id=admin.id, action="disable", resource_type="app", resource_id=str(app_id)
     )

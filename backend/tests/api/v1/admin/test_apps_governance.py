@@ -21,6 +21,7 @@ from src.db.models.app_registry import MAX_DEPLOYED_URL, AppRegistry, ApprovalRo
 from src.db.models.audit import AuditLog
 from src.main import create_app
 from src.services.appserving.governance import nuke_app
+from src.services.auth.csrf import issue_csrf_token
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.storage import AppContainerStore, StorageError, snapshot_key, submission_key
 from tests.factories import AppRegistryFactory, ProjectFactory, UserFactory
@@ -371,11 +372,77 @@ async def test_disable_then_enable_preserves_the_pin(client, db_session) -> None
     assert fresh.approved_submission_id == pinned  # the pin survives the round trip
 
 
-async def test_disable_requires_approved(client, db_session) -> None:
+@pytest.mark.parametrize("source", [AppStatus.DRAFT, AppStatus.REJECTED])
+async def test_disable_switches_off_a_draft_or_rejected_app(
+    client, db_session, source: AppStatus
+) -> None:
+    """AE8/#163: the kill switch reaches the two categories most likely to need it.
+
+    DRAFT is the ORDINARY member of the marketplace catalog — one-click deploy never writes
+    a status — and REJECTED apps keep serving whatever they last deployed. Before the
+    `STATUS_TRANSITIONS[DISABLED]` widening, the only lever that touched either was
+    `nuke_app`, which destroys the owner's work; that is the harm this transition removes.
+    """
+    app = await _app(db_session, status=source)
+    headers = await _admin(db_session)
+    resp = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "disabled"
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED
+    # ADR-0005: a gated action that moves the state machine writes its audit row — the
+    # widened source set must not slip a transition past the trail.
+    assert "disable" in await _audited_actions(db_session, app.id)
+
+
+async def test_disable_refuses_a_pending_app_and_names_the_right_lever(client, db_session) -> None:
+    """PENDING is the one status deliberately LEFT OUT of the widening (#163).
+
+    An app sitting in the review queue is REJECTED, not switched off: disabling it would let
+    an administrator dispose of a submission with the ops lever instead of deciding it, and
+    the citizen would never get the rejection note the review flow owes them. The copy names
+    the lever they actually wanted rather than refusing bare.
+    """
     app = await _app(db_session, **_pending())
     headers = await _admin(db_session)
     resp = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=headers)
     assert resp.status_code == 409
+    assert "rejected instead" in resp.json()["error"]["message"]
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.PENDING  # still in the queue
+    # A refused transition writes nothing: the early-return 409 leaves the trail (and the
+    # database) exactly as it found them.
+    assert "disable" not in await _audited_actions(db_session, app.id)
+
+
+async def test_an_administrators_kill_switch_survives_the_owners_withdraw(
+    client, db_session
+) -> None:
+    """THE BYPASS `#163` DOCUMENTS, pinned so the obvious repair cannot ship silently.
+
+    `withdraw` is citizen-facing and reads `STATUS_TRANSITIONS[DRAFT]` with nothing but an
+    ownership predicate in front of it. Add DISABLED to that row — the tempting way to
+    un-stick a switched-off draft — and this test goes red: the owner of an app an
+    administrator killed walks it straight back to draft from their own workspace.
+    """
+    owner = await UserFactory.create(db_session, email="owner@rvaiglobal.com")
+    app = await AppRegistryFactory.create(db_session, user_id=owner.id, status=AppStatus.DRAFT)
+    admin_headers = await _admin(db_session)
+    killed = await client.post(f"/v1/admin/apps/{app.id}/disable", headers=admin_headers)
+    assert killed.status_code == 200
+
+    # The owner's own signed double-submit headers — the citizen route's real gate, so the
+    # 409 below is the state machine refusing and not CSRF refusing for it.
+    csrf = issue_csrf_token(owner.id, owner.token_version)
+    session = mint_session_jwt(owner.id, owner.token_version, _TTL)
+    owner_headers = {"Cookie": f"session={session}; csrf={csrf}", "X-CSRF-Token": csrf}
+    resp = await client.post(f"/v1/apps/{app.id}/withdraw", headers=owner_headers)
+    assert resp.status_code == 409
+    fresh = await db_session.get(AppRegistry, app.id)
+    await db_session.refresh(fresh)
+    assert fresh.status is AppStatus.DISABLED  # containment held
 
 
 async def test_enable_guard_rejects_non_disabled(client, db_session) -> None:

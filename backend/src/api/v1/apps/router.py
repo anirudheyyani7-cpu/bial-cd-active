@@ -114,6 +114,11 @@ async def withdraw(app_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Withd
             # The ownership predicate (ADR-0004) — a dropped user_id clause is a
             # cross-user leak, not a style nit.
             AppRegistry.user_id == user.id,
+            # THIS IS WHY `STATUS_TRANSITIONS[DRAFT]` STAYS `{PENDING}` (#163). The row is
+            # shared with the admin state machine, and this reader is citizen-facing with
+            # nothing but an ownership check in front of it: add DISABLED to it and the
+            # owner of an app an administrator switched off walks it back to draft from
+            # their own workspace. Whatever un-sticks a disabled app, it is not this set.
             AppRegistry.status.in_(tuple(STATUS_TRANSITIONS[AppStatus.DRAFT])),
         )
         .values(

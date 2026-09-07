@@ -439,6 +439,39 @@ async def test_the_catalog_lists_by_app_status(
     assert names == ([f"App In {case}"] if listed else [])
 
 
+async def test_an_admin_can_switch_off_the_ordinary_catalog_member(
+    app, client, db_session
+) -> None:
+    """#163, end to end and across two routers: the kill switch now reaches a DRAFT.
+
+    The case above pins the PREDICATE (a seeded DISABLED row is not listed). This pins the
+    LEVER, which is the half that was broken: the ordinary entry in this catalog is a
+    self-published DRAFT, and `STATUS_TRANSITIONS[DISABLED]` used to accept APPROVED only,
+    so `POST /disable` answered 409 and the app stayed advertised org-wide. Nothing in this
+    module's query changed to make this pass — the widening did.
+
+    Mutation receipt: narrow `STATUS_TRANSITIONS[DISABLED]` back to `{APPROVED}` and this
+    goes red at the 200, not at the listing.
+    """
+    viewer = await _signed_in(db_session, "viewer@rvaiglobal.com")
+    admin = await _signed_in(db_session, "admin@bial.com")  # the .env.test superadmin
+    deployment = await _published_app(
+        db_session,
+        owner_email="builder@rvaiglobal.com",
+        name="Self Published Tool",
+        description="A tool nobody approved.",
+    )
+    listed = await client.get(_MARKETPLACE, headers=viewer)
+    assert [item["name"] for item in listed.json()["items"]] == ["Self Published Tool"]
+
+    killed = await client.post(f"/v1/admin/apps/{deployment.app_id}/disable", headers=admin)
+    assert killed.status_code == 200, killed.text
+    assert killed.json()["status"] == "disabled"
+
+    resp = await client.get(_MARKETPLACE, headers=viewer)
+    assert resp.json()["items"] == []
+
+
 async def test_a_laundered_rejection_stays_out_of_the_catalog(app, client, db_session) -> None:
     """`rejection_standing` is the DURABLE fact, and `status` is not.
 

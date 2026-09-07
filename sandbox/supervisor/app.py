@@ -20,6 +20,8 @@ exist without `/dev/start` (the agent has replaced the supervisor's child before
 
 from __future__ import annotations
 
+import base64
+import binascii
 import collections
 import enum
 import http.client
@@ -1148,12 +1150,23 @@ class ExecBody(BaseModel):
     timeout: int = 900
 
 
+# The decoded ceiling for `create_bytes`. It matches the platform's per-file attachment cap,
+# because attachments are what this action exists to place: a file the control plane refused to
+# store cannot arrive here, so a larger bound would only widen what a compromised caller could
+# write. Base64 inflates by roughly 4/3 on the wire; the check is on the DECODED length, which is
+# what actually lands on disk.
+MAX_BINARY_WRITE_BYTES = 4 * 1024 * 1024
+
+
 class FilesBody(BaseModel):
     action: str
     path: str
     old_str: str | None = None
     new_str: str | None = None
     file_text: str | None = None
+    # `create_bytes` only. Base64 of the file's real bytes — see the action for why this is a
+    # separate field and a separate action rather than a flag on `create`.
+    file_b64: str | None = None
     insert_line: int | None = None
     insert_text: str | None = None
     view_range: list[int] | None = None
@@ -1243,6 +1256,38 @@ def files(body: FilesBody) -> dict[str, Any]:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(body.file_text.replace("\r\n", "\n"), encoding="utf-8")
         return {"ok": True, "created": str(p)}
+
+    if body.action == "create_bytes":
+        # THE ONLY WAY TO PUT A REAL FILE IN THE WORKSPACE. Every other write action here is
+        # text: `create` decodes as UTF-8 and — the part that matters — rewrites every CRLF to
+        # LF unconditionally. That is right for source, which is why it is there (CRLF has burned
+        # BIAL twice), and it silently corrupts any binary containing the byte pair 0x0D 0x0A. A
+        # spreadsheet is a ZIP archive; that pair occurs in one constantly.
+        #
+        # A SEPARATE ACTION RATHER THAN A FLAG ON `create`, so the no-normalisation rule is a
+        # property of the action a caller chose rather than a branch they might not notice, and
+        # so nobody can send both fields and leave the precedence to be discovered later.
+        #
+        # The existing way to get bytes in — base64 into `file_text`, then `sh -c 'base64 -d'`,
+        # the git-bundle restore transport — needs a shell, which the read-only surface
+        # structurally cannot reach. This action is what lets the control plane place an
+        # attachment without granting one.
+        if body.file_b64 is None:
+            raise HTTPException(400, "create_bytes needs file_b64")
+        try:
+            data = base64.b64decode(body.file_b64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(422, "file_b64 is not valid base64") from None
+        # Bounded on the DECODED length — the encoded string is 4/3 the size and is not what
+        # lands on disk. Checked before the write, so an oversized body never creates a file.
+        if len(data) > MAX_BINARY_WRITE_BYTES:
+            raise HTTPException(413, f"file exceeds {MAX_BINARY_WRITE_BYTES} bytes")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        # NO `_redact` HERE, and that is not an omission: redaction keeps an injected secret out
+        # of text the MODEL reads back. This writes bytes the control plane already holds, and
+        # reading them back goes through `view`, which redacts exactly as it always did.
+        return {"ok": True, "created": str(p), "bytes": len(data)}
 
     if body.action == "insert":
         if body.insert_line is None or body.insert_text is None:

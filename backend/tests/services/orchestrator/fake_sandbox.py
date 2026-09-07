@@ -15,6 +15,7 @@ let a test assert BRAIN never ran `git`, restarted the dev server, or tore down.
 
 from __future__ import annotations
 
+import base64
 from collections import deque
 from typing import assert_never
 
@@ -23,6 +24,7 @@ from src.services.sandbox import (
     DevStatus,
     ExecResult,
     FileCreate,
+    FileCreateBytes,
     FileInsert,
     FileOp,
     FileResult,
@@ -82,6 +84,8 @@ class FakeSandbox(SandboxClient):
         fqdn: str = "app-xyz.westeurope.azurecontainerapps.io",
         seed_files: dict[str, str] | None = None,
     ) -> None:
+        # Binary writes land here rather than in `workspace` — see `files()`'s create_bytes arm.
+        self.binary_workspace: dict[str, bytes] = {}
         self.workspace: dict[str, str] = {
             path: _lf(text) for path, text in (seed_files or {}).items()
         }
@@ -292,6 +296,14 @@ class FakeSandbox(SandboxClient):
             return self._str_replace(op)
         if isinstance(op, FileInsert):
             return self._insert(op)
+        if isinstance(op, FileCreateBytes):
+            # A SEPARATE STORE, not `workspace`, because `workspace` is `dict[str, str]` and
+            # these are real bytes. Coercing them into the text map would make the fake model
+            # the very confusion the op exists to prevent — and a test asserting on a decoded
+            # string would pass against a supervisor that had corrupted the file.
+            self._guard_escape(op.path)
+            self.binary_workspace[op.path] = base64.b64decode(op.file_b64, validate=True)
+            return FileResult(ok=True, detail={"path": op.path, "created": True})
         assert_never(op)
 
     def _view(self, op: FileView) -> FileResult:

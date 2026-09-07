@@ -14,6 +14,7 @@ process's own account BEFORE importing `app`; on the image `APP_USER` is the rea
 from __future__ import annotations
 
 import atexit
+import base64
 import os
 import pwd
 import shutil
@@ -274,6 +275,95 @@ def test_files_create_lf_normalizes_and_makes_parents() -> None:
 
 def test_files_create_missing_file_text_is_400() -> None:
     r = client.post("/files", json={"action": "create", "path": "x.txt"}, headers=AUTH)
+    assert r.status_code == 400
+
+
+# --- /files: create_bytes (#214 — the binary lane) --------------------------------------------
+def test_files_create_bytes_writes_the_real_bytes_unchanged() -> None:
+    """A REAL FILE, NOT TEXT. Every other write action here decodes UTF-8 and rewrites CRLF to
+    LF; a spreadsheet is a ZIP archive and carries 0x0D 0x0A constantly, so `create` would
+    silently corrupt one. This is the action that lets the control plane place an attachment.
+
+    Mutation receipt: point `create_bytes` at `write_text` with the CRLF replace and this fails
+    on the byte comparison — the pair in the middle is there to make that certain.
+    """
+    raw = bytes([0x50, 0x4B, 0x03, 0x04]) + b"\r\n" + bytes([0x00, 0xFF, 0x0D, 0x0A, 0x1A])
+    r = client.post(
+        "/files",
+        json={
+            "action": "create_bytes",
+            "path": "att/book.xlsx",
+            "file_b64": base64.b64encode(raw).decode(),
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["bytes"] == len(raw)
+    assert (WORKSPACE / "att/book.xlsx").read_bytes() == raw
+
+
+def test_files_create_bytes_makes_parent_directories() -> None:
+    r = client.post(
+        "/files",
+        json={
+            "action": "create_bytes",
+            "path": "deep/er/still/f.bin",
+            "file_b64": base64.b64encode(b"x").decode(),
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert (WORKSPACE / "deep/er/still/f.bin").read_bytes() == b"x"
+
+
+def test_files_create_bytes_missing_payload_is_400() -> None:
+    r = client.post("/files", json={"action": "create_bytes", "path": "x.bin"}, headers=AUTH)
+    assert r.status_code == 400
+
+
+def test_files_create_bytes_rejects_payload_that_is_not_base64() -> None:
+    """422, not 500. A malformed body is the caller's mistake and must be answered as one —
+    letting binascii raise would surface as an unhandled error from inside the container."""
+    r = client.post(
+        "/files",
+        json={"action": "create_bytes", "path": "x.bin", "file_b64": "not base64!!"},
+        headers=AUTH,
+    )
+    assert r.status_code == 422
+
+
+def test_files_create_bytes_refuses_an_oversized_file_before_writing_it() -> None:
+    """Bounded on the DECODED length, and checked BEFORE the write — an over-cap body must not
+    leave a partial file behind for something else to find."""
+    from app import MAX_BINARY_WRITE_BYTES
+
+    too_big = b"\x00" * (MAX_BINARY_WRITE_BYTES + 1)
+    r = client.post(
+        "/files",
+        json={
+            "action": "create_bytes",
+            "path": "huge.bin",
+            "file_b64": base64.b64encode(too_big).decode(),
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 413
+    assert not (WORKSPACE / "huge.bin").exists()
+
+
+def test_files_create_bytes_cannot_escape_the_workspace() -> None:
+    """The path guard is `_resolve`'s and is shared with every other action, but a NEW write
+    action is exactly where a missed guard would land — so it is asserted here rather than
+    assumed from the others."""
+    r = client.post(
+        "/files",
+        json={
+            "action": "create_bytes",
+            "path": "../escaped.bin",
+            "file_b64": base64.b64encode(b"x").decode(),
+        },
+        headers=AUTH,
+    )
     assert r.status_code == 400
 
 

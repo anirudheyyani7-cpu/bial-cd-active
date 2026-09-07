@@ -38,3 +38,19 @@ def bytes_match_declared(media_type: str, data: bytes) -> bool:
     if magic is None or not magic_matches(data, magic):
         return False
     return not (media_type == "image/webp" and data[8:12] != b"WEBP")
+
+
+def chip_kind_for(media_type: str) -> str:
+    """The chip vocabulary the browser branches on: `document` for a PDF, `image` otherwise.
+
+    HERE RATHER THAN AT THE UPLOAD ROUTE, which is where this rule used to live as a lone
+    ternary. It now has a second caller — the conversation projection, which has to name the
+    same kind for a chip rebuilt on reload as the upload response named when the file was first
+    attached. Two call sites deriving one vocabulary independently is how a reloaded chip ends
+    up rendering as a different shape from the one the citizen just watched appear.
+
+    It sits beside `ALLOWED_MEDIA` deliberately: #214 adds five formats to that allowlist and
+    every one of them needs a kind here in the same change. Splitting them across two modules is
+    what would let a format be admitted with no chip to draw it.
+    """
+    return "document" if media_type == "application/pdf" else "image"

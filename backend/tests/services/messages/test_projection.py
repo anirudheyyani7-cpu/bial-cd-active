@@ -2079,6 +2079,11 @@ async def test_an_attachment_reference_becomes_a_chip_id_not_prose(db_session) -
 
     items = await _user_items(db_session, user, conversation)
 
-    assert items[0].attachment_ids == ["att-7f3c"]
+    assert [a.attachment_id for a in items[0].attachments] == ["att-7f3c"]
     assert items[0].text == "what is in this file?"
     assert "att-7f3c" not in items[0].text
+    # `project_rows` is pure, so it carries the id and nothing else; the name and media type
+    # are filled by `project_conversation`, which has a database session. Pinned so the split
+    # stays deliberate rather than looking like an unfinished item.
+    assert items[0].attachments[0].name == ""
+    assert items[0].attachments[0].media_type == ""

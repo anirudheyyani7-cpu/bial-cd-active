@@ -47,7 +47,7 @@ from src.services.extract.office import (
     office_format_for,
 )
 from src.services.extract.zip_safety import FileParseError
-from src.services.media.magic import ALLOWED_MEDIA, magic_matches
+from src.services.media.magic import ALLOWED_MEDIA, chip_kind_for, magic_matches
 from src.services.parse.governor import run_parse
 from src.services.ratelimit import rate_limit
 from src.services.storage import (
@@ -524,7 +524,7 @@ async def upload_attachment(
     ref = await _store_attachment_bytes(
         db, storage, user.id, attachment_id, media_type, name, conversation_id, data
     )
-    kind = "document" if media_type == PDF_MEDIA_TYPE else "image"
+    kind = chip_kind_for(media_type)
     return JSONResponse(status_code=201, content={"attachment": {**ref, "kind": kind}})
 
 

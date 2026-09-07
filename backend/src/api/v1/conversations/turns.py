@@ -59,7 +59,7 @@ from src.services.agent.mode_prompts import PromptContext
 from src.services.build_sessions import SandboxReclaimBlockedError
 from src.services.build_sessions.appdata import APP_SWITCHED_OFF, APP_SWITCHED_OFF_CODE
 from src.services.build_sessions.manager import SessionManager
-from src.services.messages.projection import DisplayItem, project_rows
+from src.services.messages.projection import DisplayItem, project_conversation
 from src.services.messages.store import (
     AttachmentRehydrationError,
     SeqContentionError,
@@ -682,7 +682,7 @@ async def turn_events(
             rows = await load_rows(
                 db, user_id=user.id, conversation_id=conversation.id, include_hidden=True
             )
-            projected = project_rows(rows)
+            projected = await project_conversation(db, user_id=user.id, rows=rows)
             items = projected[-8:]  # the turn's own tail; full history is a separate GET
         snapshot = engine.build_snapshot(state, items=items)
 

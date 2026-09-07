@@ -71,6 +71,7 @@ from src.services.projects import (
     owned_project_or_404,
     resweep_submission_prefixes,
 )
+from src.services.ratelimit import rate_limit
 from src.services.redis import get_redis
 from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
 from src.services.sandbox import SandboxClient
@@ -899,17 +900,65 @@ async def delete_project(
     return OkResponse(ok=True)
 
 
+# THE DESCRIPTION GENERATOR'S ONLY PER-USER SPEND BOUND, and the reason it needs one:
+# what this route spends is deliberately recorded under `review` and never counted back
+# into the citizen's daily budget (R14) — the platform's reasoning about their code is
+# not theirs to pay for. That exemption travelled here from the classification review;
+# the BOUND that made it safe there did not. Without one, `enforce_daily_limit` admits
+# call N for every N, and each call ships up to 600,000 characters of app source to the
+# premium deployment — from a citizen who may have already exhausted their build budget.
+#
+# Six in a quarter of an hour is far more than revising a description ever needs (R19's
+# revise loop is a person reading a paragraph and pressing again), and the refusal costs
+# nothing that cannot be retried: the description that exists stays, and the button works
+# again shortly.
+DESCRIPTION_RATE_LIMIT = 6
+DESCRIPTION_RATE_WINDOW_SECONDS = 15 * 60
+
+
+async def _description_rate_key(user: CurrentUser) -> str:
+    # Per-user bucket, matching the review/feedback/attachment limiters. Declaring
+    # `CurrentUser` here resolves identity BEFORE the limiter runs — the "limiter after
+    # key" ordering, so an unauthenticated request is a 401 rather than a counted hit.
+    return f"project-description:{user.id}"
+
+
+_description_limiter = rate_limit(
+    _description_rate_key,
+    limit=DESCRIPTION_RATE_LIMIT,
+    window_seconds=DESCRIPTION_RATE_WINDOW_SECONDS,
+    message=(
+        "Too many description generations in a short time. "
+        "Please wait a few minutes and try again."
+    ),
+)
+
+
 @router.post(
     "/{project_id}/description:generate",
     response_model=ProjectResponse,
-    responses=error_responses(
-        AUTH_401,
-        (404, ErrorEnvelope, "Project not found"),
-        (409, ErrorEnvelope, "Nothing to generate from yet (no app / no code)"),
-        (429, DailyTokenLimitBody, "Daily token limit exceeded"),
-        (500, ErrorEnvelope, "The description generation failed"),
-        (503, ErrorEnvelope, "Claude client not configured"),
-    ),
+    dependencies=[Depends(_description_limiter)],
+    responses={
+        # TWO DIFFERENT 429 BODIES REACH THIS ROUTE and `error_responses` refuses a
+        # duplicated code, so this one is written out: the daily gate answers its 5-key
+        # body, the limiter above answers the plain `{"error": {"message"}}` envelope.
+        # Documented as the union rather than as whichever one was written first — a
+        # client that parses the schema would break on the other.
+        429: {
+            "model": DailyTokenLimitBody | ErrorEnvelope,
+            "description": (
+                "Daily token limit exceeded (5-key body), or too many generations "
+                "started in a short time (error envelope)"
+            ),
+        },
+        **error_responses(
+            AUTH_401,
+            (404, ErrorEnvelope, "Project not found"),
+            (409, ErrorEnvelope, "Nothing to generate from yet (no app / no code)"),
+            (500, ErrorEnvelope, "The description generation failed"),
+            (503, ErrorEnvelope, "Claude client not configured"),
+        ),
+    },
 )
 async def generate_description(
     project_id: uuid.UUID, user: CurrentUser, db: DbSession, model: ModelDep

@@ -15,6 +15,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import delete, select
 
+from src.api.v1.projects.router import DESCRIPTION_RATE_LIMIT
 from src.config import settings
 from src.db.models.project import Project
 from src.db.models.token_usage import TokenUsage, TokenUsageKind
@@ -375,3 +376,63 @@ async def test_generate_losing_race_to_delete_is_404_and_rolls_back_billing(
 # `tests/api/v1/conversations/test_project_grounding.py`. What stays in this file is the
 # `description:generate` ENDPOINT, which is a different thing from where a description is
 # later read.
+
+
+async def test_a_burst_of_generations_is_rate_limited_per_user(
+    client, db_session, set_chat_model
+) -> None:
+    """THE ROUTE'S ONLY PER-USER SPEND BOUND. Its daily-token exemption is deliberate —
+    what this route spends is recorded under `review` and never counted back into the
+    citizen's budget (R14) — so `enforce_daily_limit` above admits call N for every N.
+    Each admitted call ships up to `CODE_BUDGET_CHARS` of app source to the premium
+    deployment. Without the limiter the exemption is an uncapped spend channel, which is
+    exactly the pairing the classification review already ships (its exemption travelled
+    here; its bound did not).
+    """
+    set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
+    headers, user = await _auth(db_session)
+    project = await ProjectFactory.create(db_session, user.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=user.id, project_id=project.id, current_code=_CODE
+    )
+    url = f"/v1/projects/{project.id}/description:generate"
+
+    codes = [
+        (await client.post(url, headers=headers)).status_code
+        for _ in range(DESCRIPTION_RATE_LIMIT + 1)
+    ]
+
+    assert codes[-1] == 429
+    assert 429 not in codes[:-1]  # only the one over the line
+    # The refusal is the LIMITER's envelope, not the daily gate's 5-key body — the two
+    # 429s on this route are different shapes and the schema documents both.
+    over = await client.post(url, headers=headers)
+    assert "error" in over.json() and "message" in over.json()["error"]
+
+
+async def test_the_generation_limiter_is_per_user_not_global(
+    client, db_session, set_chat_model
+) -> None:
+    """A second citizen is unaffected by the first's burst. The bucket is keyed by user
+    id, so one person hammering Generate cannot take the button away from everyone else."""
+    set_chat_model(TestModel(custom_output_text="Tracks VIP movements at the airport."))
+    noisy_headers, noisy = await _auth(db_session)
+    noisy_project = await ProjectFactory.create(db_session, noisy.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=noisy.id, project_id=noisy_project.id, current_code=_CODE
+    )
+    for _ in range(DESCRIPTION_RATE_LIMIT + 1):
+        await client.post(
+            f"/v1/projects/{noisy_project.id}/description:generate", headers=noisy_headers
+        )
+
+    quiet_headers, quiet = await _auth(db_session)
+    quiet_project = await ProjectFactory.create(db_session, quiet.id)
+    await AppRegistryFactory.create(
+        db_session, user_id=quiet.id, project_id=quiet_project.id, current_code=_CODE
+    )
+    resp = await client.post(
+        f"/v1/projects/{quiet_project.id}/description:generate", headers=quiet_headers
+    )
+
+    assert resp.status_code == 200

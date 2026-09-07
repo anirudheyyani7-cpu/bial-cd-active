@@ -26,6 +26,7 @@ import { useState } from 'react'
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import WorkspaceShell from '../WorkspaceShell'
+import { rememberProjectsSearch } from '../../../utils/projectsListMemory'
 import {
   useAppPaneVisible,
   usePublishAddress,
@@ -65,7 +66,7 @@ const APP_URL = 'https://app-a.example.azurecontainerapps.io/'
 
 const EMPTY_PANE: PaneView = {
   iterating: false, reconnecting: false,
-  restoredFromFailedBuild: false, completedLive: true, hasSavedBuild: null,
+  hasSavedBuild: null,
   previewState: null, occupyingProjectName: null, turnRunning: false,
   compileState: null, workspaceLost: false,
 }
@@ -114,7 +115,7 @@ function Surface({
 }: SurfaceProps) {
   useWorkspaceProject(heading.projectId)
   usePublishHeading(heading)
-  usePublishAddress({ url: appUrl, status: appUrl ? 'ready' : null }, heading.projectId)
+  usePublishAddress({ url: appUrl, status: appUrl ? 'ready' : null, serving: appUrl !== null }, heading.projectId)
   // A FRESH OBJECT PER RENDER, which is what the real conversation surface publishes — the pane
   // cell is identity-compared, so this is what makes a keystroke reach the channel at all.
   usePublishPaneView({ ...EMPTY_PANE })
@@ -693,6 +694,61 @@ describe('the back control and the rename', () => {
     expect(screen.getByRole('button', { name: 'Back to project' })).toBeTruthy()
     // Rename is a project-screen control; a chat address never had it, name or no name.
     expect(screen.queryByRole('button', { name: /rename/i })).toBeNull()
+  })
+})
+
+describe('the back control carries the projects list state back (R45, plan U35, `#208`)', () => {
+  /* `#208` put `page`, `pageSize` and `q` in `/projects`'s own address, which is a one-way fix:
+     reading it in is `ProjectsPage.test.tsx`'s job. This control is mounted on a DIFFERENT
+     address — a project, a chat — and has to name a destination without ever having read that
+     query string itself. Before this it hardcoded a bare `/projects`, so leaving a filtered,
+     paged list and pressing Back landed on page one with the search cleared:
+     `projectsListMemory.ts`'s own docblock calls this "addressable in one direction and silent
+     in the other". `Navbar` is the one place that remembers what the address bar carried, since
+     `ProjectsPage` mounts its own instance of it — this suite only has to seed that memory. */
+
+  function WhereFull() {
+    return <span data-testid="where-full">{useLocation().pathname + useLocation().search}</span>
+  }
+
+  function renderAt(entry: string) {
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route element={<WorkspaceShell />}>
+            <Route path="/projects/:projectId" element={<Surface heading={PROJECT_HEADING} />} />
+          </Route>
+          <Route path="/projects" element={<WhereFull />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  afterEach(() => {
+    // Leaves the module in the same "nothing remembered" state it starts in — every other test
+    // in this file presses this same button and expects a bare `/projects`.
+    rememberProjectsSearch('')
+  })
+
+  it('★ returns to the remembered page, search and page size — not to page one', () => {
+    rememberProjectsSearch('?page=2&pageSize=20&q=ramp')
+    renderAt('/projects/pA')
+
+    // LIVENESS FIRST: the project screen actually rendered — not a crash a bare presence check
+    // on the destination below would miss.
+    expect(screen.getByTestId('surface')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to projects' }))
+
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects?page=2&pageSize=20&q=ramp')
+  })
+
+  it('falls back to the bare list when nothing has been remembered this session', () => {
+    renderAt('/projects/pA')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to projects' }))
+
+    expect(screen.getByTestId('where-full').textContent).toBe('/projects')
   })
 })
 

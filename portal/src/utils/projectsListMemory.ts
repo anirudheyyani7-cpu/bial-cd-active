@@ -1,0 +1,47 @@
+/**
+ * THE LAST `/projects` ADDRESS THIS TAB VISITED — the half of `#208` that address alone cannot
+ * cover (R45).
+ *
+ * `#208` put `page`, `pageSize` and `q` in the URL, so opening `/projects?page=2&q=ramp`, pressing
+ * the browser's own Back, reloading, or pasting the address all land on the same view. What it
+ * did NOT cover is the product's OWN "back to the list" controls — the workspace toolbar's back
+ * chevron and the navbar's brand mark — because neither of them IS `/projects`: they are
+ * components mounted on a *different* address (`/projects/:id`, `/chat/:id`) that have to name a
+ * destination without ever having read the list's own query string themselves. Before this,
+ * both hardcoded a bare `/projects`, so leaving a filtered, paged list and pressing either control
+ * bounced back to page one with the search cleared — the address bar became addressable in one
+ * direction (reading it in) and stayed silent in the other (writing it back out).
+ *
+ * `Navbar` is mounted on `/projects` too — `ProjectsPage` renders its own instance — so it is the
+ * one place already positioned to WRITE this on every render where the address bar reads
+ * `/projects`. `WorkspaceShell`'s back control and `Navbar`'s own brand link both READ it when
+ * constructing a destination.
+ *
+ * `sessionStorage`, for the same reason `chatProjectMemory.ts` gives: this is tab-scoped knowledge
+ * about where the citizen was looking, not a record worth keeping past the tab. Storage access is
+ * wrapped because it genuinely throws rather than degrading — Safari's private mode on quota, or
+ * an embedding that blocks storage access — and the defined meaning of that failure is: no memory,
+ * so a route-back link falls back to the bare list it always went to before this existed.
+ */
+
+const KEY = 'projectsListSearch'
+
+/** The last `/projects` search string this tab saw (e.g. `?page=2&q=ramp`), or `''` when there is
+ *  none to remember — a route-back link appends this straight onto `/projects`. */
+export function recallProjectsSearch(): string {
+  try {
+    return sessionStorage.getItem(KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** Record the CURRENT `/projects` address's search string. Called only while the address bar is
+ *  actually `/projects` — see `Navbar`'s own effect. */
+export function rememberProjectsSearch(search: string): void {
+  try {
+    sessionStorage.setItem(KEY, search)
+  } catch {
+    // No memory this session. Route-back links fall back to the bare list, exactly as before.
+  }
+}

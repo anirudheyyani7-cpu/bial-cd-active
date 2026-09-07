@@ -134,6 +134,7 @@ from src.services.appdb.teardown import (
 from src.services.appserving.governance import nuke_app
 from src.services.attachments import AttachmentReclaimResult, reclaim_orphaned_attachments
 from src.services.audit.log import append_audit
+from src.services.audit.teardown import record_what_survived
 from src.services.auth.refresh import revoke_all_sessions
 from src.services.build_sessions.inventory import (
     FleetLister,
@@ -761,12 +762,25 @@ async def disable(
     project_id = app.project_id
     if not await _transition(db, app_id, AppStatus.DISABLED, previous_status=AppRegistry.status):
         raise AppApiError(409, _NOT_DISABLABLE)
-    await append_audit(
-        db, actor_id=admin.id, action="disable", resource_type="app", resource_id=str(app_id)
-    )
     # Scalars read pre-commit; an app from the era before per-project databases (or a
     # deployment with no substrate at all) simply has no row — a clean no-op, not an error.
     handles = await teardown_handles(db, project_id)
+    await append_audit(
+        db,
+        actor_id=admin.id,
+        action="disable",
+        resource_type="app",
+        resource_id=str(app_id),
+        # WHETHER THERE WAS A DATA KILL AT ALL, said out loud. `disable` is the only data kill
+        # for a deployed app, and a project with no `project_databases` row skips the sever AND
+        # the `db:revoke` row below — so an operator reading the log afterwards could not tell
+        # "the database was closed" from "there was no database to close" except by the absence
+        # of a second row, which is also what a half-written transaction looks like. #163 widened
+        # this lever to DRAFT and REJECTED apps, which are the population most likely to have no
+        # database, so the ambiguous case stopped being the rare one. Read BEFORE the audit
+        # append for this reason — the order is the point, not incidental.
+        detail={"databaseSevered": handles is not None},
+    )
     if handles is not None:
         try:
             severed = await sever(db_name=handles.db_name, role_name=handles.role_name)
@@ -1228,6 +1242,15 @@ async def hard_delete(
     = never provisioned, which is precisely what makes the next build re-provision a clean
     database instead of injecting a DSN to one that is about to stop existing.
 
+    WHAT SURVIVED IS ON THE RECORD (U22/R7), the citizen's own delete's discipline applied to
+    the harsher lever. Every post-commit arm here is best-effort by construction — the rows are
+    already gone, so a failed drop must not 500 a delete that succeeded — and this route used to
+    discard all of those answers, `salt_the_earth`'s included. So the one lever that destroys
+    somebody ELSE's work was the one that left no trace of what it failed to destroy, and
+    nothing automatic collects any of it (`appdb/reconcile.py` is operator-invoked and
+    report-only). The response is `{"ok": true}` either way: the delete did happen, and this
+    platform has no notification path with which to promise the citizen an operator was told.
+
     IT REQUIRES A REASON, in 5-50 words (R5). Destroying somebody else's work with no undo is
     the harshest lever on this router and was the only one that asked for nothing — the browser
     `window.confirm` behind it could not have collected an answer if it wanted to. The reason
@@ -1264,12 +1287,21 @@ async def hard_delete(
         await db.execute(
             sa.delete(ProjectDatabase).where(ProjectDatabase.project_id == project_id)
         )
-    await nuke_app(db, storage, app_id, container_store)
+    survivors = await nuke_app(db, storage, app_id, container_store)
     await db.commit()
     if handles is not None:
-        # Post-commit, never-raising, and its first step IS the sever. A failed drop leaves
-        # a logged orphan for the reconciler; it must never un-delete a committed registry.
-        await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name)
+        # Post-commit, never-raising, and its first step IS the sever. A failed drop leaves a
+        # logged orphan NOTHING automatic collects — `appdb/reconcile.py` is operator-invoked
+        # and report-only — so it must never un-delete a committed registry, and its answer
+        # must never be thrown away either. `False` here means a copy of the citizen's data is
+        # still on the cluster after an administrator destroyed their app.
+        if not await salt_the_earth(db_name=handles.db_name, role_name=handles.role_name):
+            survivors.append(("app_database", handles.db_name))
+    # WHAT SURVIVED IS ON THE RECORD (U22/R7), the citizen's own delete's discipline applied to
+    # the harsher lever. This path used to discard every sweep's answer, so the one delete that
+    # destroys somebody ELSE's work was the one that left no trace of what it failed to destroy.
+    # The project survives an app hard-delete, so its id is the handle the row hangs off.
+    await record_what_survived(db, actor_id=admin.id, project_id=project_id, survivors=survivors)
     return OkResponse(ok=True)
 
 

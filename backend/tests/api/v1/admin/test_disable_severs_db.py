@@ -308,6 +308,28 @@ async def test_disable_for_an_app_with_no_database_is_a_clean_no_op(
     assert resp.status_code == 200
     assert resp.json()["status"] == "disabled"
     assert await _audit_rows(db_session, "db:revoke") == []
+    # ★ AND THE ABSENCE IS SAID OUT LOUD, not left to be inferred from a missing row. `disable`
+    # is the only data kill there is for a deployed app, so "the database was closed" and "there
+    # was no database to close" must not read the same in the log — a missing second row is also
+    # what a half-written transaction looks like. #163 widened this lever to DRAFT and REJECTED
+    # apps, which are the population most likely to have no database at all.
+    disabled = await _audit_rows(db_session, "disable")
+    assert [event.detail for event in disabled] == [{"databaseSevered": False}]
+
+
+async def test_disable_that_does_sever_says_so_on_its_own_row(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The other half of the pair, so the flag is proved to VARY rather than to be a constant
+    somebody could delete without a test noticing."""
+    row, _record = await _with_database(db_session, **_approved())
+
+    resp = await client.post(f"/v1/admin/apps/{row.id}/disable", headers=await _admin(db_session))
+
+    assert resp.status_code == 200
+    disabled = await _audit_rows(db_session, "disable")
+    assert [event.detail for event in disabled] == [{"databaseSevered": True}]
+    assert await _audit_rows(db_session, "db:revoke") != []
 
 
 async def test_disable_with_a_row_but_no_substrate_is_503_and_writes_no_revoke(

@@ -59,6 +59,7 @@ from src.schemas import (
 from src.services.appdb.provision import ensure_project_database
 from src.services.appdb.teardown import salt_the_earth, teardown_handles
 from src.services.audit.log import append_audit
+from src.services.audit.teardown import record_what_survived
 from src.services.build_sessions import SessionManager, app_name_for, read_registry, reap_user
 from src.services.build_sessions.manager import restorable_presence
 from src.services.deploy.liveness import live_app_ids
@@ -454,6 +455,34 @@ _BUILD_LIVE_DELETE_MSG = (
 _SANDBOX_REAP_LOCK_WAIT_SECONDS = 2.0
 
 
+async def _registry_names_this_projects_container(
+    user_id: uuid.UUID, app_id: uuid.UUID
+) -> bool | None:
+    """Does the per-user sandbox registry name THIS project's container right now?
+
+    `True` = it does, so anything left standing is genuinely this project's. `False` = it
+    names nothing, or names a container the same citizen is running for a DIFFERENT project —
+    either way nothing of this project's survives. `None` = the question could not be ASKED
+    (Redis unreachable), which is the one answer a caller must never read as "nothing
+    survived".
+
+    THE REGISTRY KEY IS PER-USER, which is the whole reason this question exists: without it,
+    "the reap did not happen" and "this project had a container to reap" are the same sentence,
+    and the two are not the same fact.
+    """
+    try:
+        reg = await read_registry(get_redis(), user_id)
+    except Exception:  # noqa: BLE001 — an unanswerable question, not a failure to report
+        logger.warning(
+            "project_delete_sandbox_identity_unreadable",
+            app_id=str(app_id),
+            user_id=str(user_id),
+            exc_info=True,
+        )
+        return None
+    return reg is not None and reg.get(REGISTRY_FIELD_APP_NAME) == app_name_for(app_id)
+
+
 async def _reap_the_project_sandbox_or_shrug(
     manager: SessionManager,
     sandbox: SandboxClient | None,
@@ -536,11 +565,29 @@ async def _reap_the_project_sandbox_or_shrug(
         try:
             await asyncio.wait_for(lock.acquire(), _SANDBOX_REAP_LOCK_WAIT_SECONDS)
         except TimeoutError:
+            # ASK WHETHER THERE WAS ANYTHING TO REAP BEFORE CLAIMING ONE SURVIVED. The identity
+            # check below is on the far side of this lock, so this arm used to report a
+            # survivor purely from the fact that it could not get in — and the commonest way in
+            # to it is a citizen provisioning a workspace for ANOTHER project, whose 30-60s
+            # provision holds the lock for the whole wait. That filed a permanent
+            # `project:teardown-incomplete` row naming a container of this project's that was
+            # never running, and sent an operator after it. Reading the registry is a lock-free
+            # HGETALL and answers the same question the in-lock check asks, so the two arms now
+            # agree on the same evidence.
+            if await _registry_names_this_projects_container(user_id, app_id) is False:
+                logger.info(
+                    "project_delete_sandbox_reap_skipped_not_ours",
+                    app_id=str(app_id),
+                    user_id=str(user_id),
+                    reason="the lock wait timed out and nothing of this project's is registered",
+                )
+                return None
             # THE CONTAINER IS STILL UP AND STILL BILLING, and outside production nothing will
             # come for it — `may_destroy_on_this_control_plane` gates the scheduled reap on
             # `environment == "production"`. This line used to say "the scheduled sweep
             # reclaims this container", which was true of exactly one environment and read as
-            # true of all of them.
+            # true of all of them. An UNREADABLE registry lands here too, deliberately: not
+            # knowing is not the same as knowing there is nothing.
             logger.warning(
                 TEARDOWN_ARTEFACT_SURVIVED_EVENT,
                 artefact="sandbox_container",
@@ -553,8 +600,14 @@ async def _reap_the_project_sandbox_or_shrug(
             return app_name_for(app_id)
         try:
             redis = get_redis()
-            reg = await read_registry(redis, user_id)
-            if reg is None or reg.get(REGISTRY_FIELD_APP_NAME) != app_name_for(app_id):
+            registered = await _registry_names_this_projects_container(user_id, app_id)
+            if registered is None:
+                # THE QUESTION COULD NOT BE ASKED, which is not an answer. The reap's own first
+                # act is to read this same registry, so there is nothing to gain by pressing
+                # on; the broad arm below reports a survivor, which is the conservative
+                # direction when the platform cannot see.
+                raise RuntimeError("the sandbox registry could not be read")
+            if not registered:
                 # NOT A LEAK, so not an alarm: either nothing is registered, or what is
                 # registered is a container this citizen is running for a DIFFERENT project
                 # and must keep. Nothing of this project's survives.
@@ -587,6 +640,19 @@ async def _reap_the_project_sandbox_or_shrug(
         finally:
             lock.release()
     except Exception:  # noqa: BLE001 — post-commit: an alarm and a record, never a 500 (R3)
+        # SAME QUESTION AS THE TIMEOUT ARM, and for the same reason: a Redis blip on the way in
+        # is not evidence that this project had a container. If the registry can be read now
+        # and does not name ours, nothing of this project's survived and the record must not
+        # say otherwise. Unreadable or ours -> report, which is where an actual failed teardown
+        # lands.
+        if await _registry_names_this_projects_container(user_id, app_id) is False:
+            logger.info(
+                "project_delete_sandbox_reap_skipped_not_ours",
+                app_id=str(app_id),
+                user_id=str(user_id),
+                reason="the reap raised and nothing of this project's is registered",
+            )
+            return None
         logger.warning(
             TEARDOWN_ARTEFACT_SURVIVED_EVENT,
             artefact="sandbox_container",
@@ -598,57 +664,6 @@ async def _reap_the_project_sandbox_or_shrug(
         )
         return app_name_for(app_id)
     return None
-
-
-async def _record_what_survived(
-    db: DbSession,
-    *,
-    actor_id: uuid.UUID,
-    project_id: uuid.UUID,
-    survivors: list[tuple[str, str]],
-) -> None:
-    """File ONE audit row naming everything a delete failed to destroy (U22, R7/D18). Never raises.
-
-    THE AUDIT LOG, NOT THE TOMBSTONE'S `remark`. `deleted_projects.remark` is the citizen's own
-    words and nothing else — an operator note appended into it would need a delimiter
-    convention and a parser, and would corrupt the one field an administrator reads to learn
-    why somebody deleted something. The audit log already answers "what happened to this
-    project", already survives every row it references (no FK), and is already written twice on
-    this path.
-
-    AND THE CITIZEN IS NOT TOLD (D18). The owner's rule: if the code, the files and the database
-    are gone, the delete is done as far as they are concerned. The alternative was a banner
-    saying an operator had been notified, which this platform cannot make true — there is no
-    mail, no webhook and no metrics system in this deployment.
-
-    ITS OWN TRANSACTION, because the delete committed several sweeps ago. That is also why it
-    swallows: a delete that genuinely succeeded must not answer 500 because the accountability
-    row for a leaked blob could not be written. The leak is already on the log either way — the
-    alarm each arm raised is the notice, this row is the record."""
-    if not survivors:
-        return
-    try:
-        await append_audit(
-            db,
-            actor_id=actor_id,
-            action="project:teardown-incomplete",
-            resource_type="project",
-            resource_id=str(project_id),
-            # IDENTIFIERS ONLY (`.claude/rules/security.md`): a blob key, a container name, a
-            # database name, a repository — never a DSN, a credential or any of the content
-            # that survived. `count` is here so an operator can sort by severity without
-            # parsing the list.
-            detail={
-                "count": len(survivors),
-                "survived": [
-                    {"artefact": artefact, "id": identifier} for artefact, identifier in survivors
-                ],
-            },
-        )
-        await db.commit()
-    except Exception:  # noqa: BLE001 — post-commit: never 500 a delete that succeeded
-        await db.rollback()
-        logger.warning("project_teardown_record_failed", project_id=str(project_id), exc_info=True)
 
 
 @router.delete(
@@ -882,10 +897,15 @@ async def delete_project(
     # ...and the image the published container was built from. Deleting a project must not
     # leave the citizen's compiled source sitting in the registry under a name nothing in the
     # database points at any more (#184, R1/R6). Derived, never stored — see `registry_delete`.
+    #
+    # ONLY THE APPS THAT COULD HAVE ONE, captured pre-commit by the cascade: a registry that
+    # refuses the delete credential answers 401/403 for every id it is handed, so sweeping apps
+    # that were never built would name repositories that never existed as survivors on every
+    # delete — an operator sent looking for something that was never there.
     survivors.extend(
         ("registry_repository", repository)
         for repository in await sweep_app_repositories(
-            cleanup.app_container_ids, config=published_config
+            cleanup.built_app_ids, config=published_config
         )
     )
     # ...and LAST, the sandbox container, if the registry still says one of this project's is
@@ -896,7 +916,7 @@ async def delete_project(
     )
     if standing is not None:
         survivors.append(("sandbox_container", standing))
-    await _record_what_survived(db, actor_id=user.id, project_id=project_id, survivors=survivors)
+    await record_what_survived(db, actor_id=user.id, project_id=project_id, survivors=survivors)
     return OkResponse(ok=True)
 
 

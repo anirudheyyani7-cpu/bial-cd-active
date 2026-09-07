@@ -22,6 +22,7 @@ test or by the session-scoped hook in `tests/conftest.py`.
 
 from __future__ import annotations
 
+import importlib
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -39,6 +40,7 @@ from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
 from src.db.models.app_registry import AppRegistry
 from src.db.models.audit import AuditLog
 from src.db.models.deleted_project import DeletedProject
+from src.db.models.deployment import Deployment
 from src.db.models.project import Project
 from src.db.models.project_database import ProjectDatabase
 from src.services.appdb import teardown as appdb_teardown
@@ -874,6 +876,85 @@ async def test_a_racing_start_for_another_project_is_not_destroyed_by_the_reap(
     assert survivor.get(REGISTRY_FIELD_APP_NAME) == _named(app_b.id)
 
 
+async def test_a_lock_held_by_another_projects_start_does_not_invent_a_survivor(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    """★ THE REAP ASKS WHETHER THERE WAS ANYTHING TO REAP BEFORE SAYING SOMETHING SURVIVED.
+
+    The identity check sits on the far side of the per-user start lock, so a wait that times
+    out used to report a survivor purely from having failed to get in — and the commonest way
+    in is a citizen provisioning a workspace for ANOTHER project, whose provision holds that
+    lock for 30-60 seconds. That filed a permanent `project:teardown-incomplete` row naming a
+    container of THIS project's that was never running, and sent an operator after it. The
+    registry says plainly that what is up belongs to project B; the record must agree.
+
+    Mutation check: delete the `_registry_names_this_projects_container(...) is False` arm from
+    the timeout branch and both the alarm and the audit row come back."""
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project_a, app_a = await _project_with_app(db_session)
+    project_b = await ProjectFactory.create(db_session, user.id)
+    app_b = await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project_b.id)
+    await db_session.commit()
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    manager = _wire_manager(app)
+    # B's container is the one that is up, and B's start is the one holding the lock.
+    await _registry_names(fake_redis, user.id, app_b.id, "ready")
+
+    lock = manager._start_lock_for(user.id)  # noqa: SLF001 — the route's own lock, by design
+    await lock.acquire()
+    try:
+        with structlog.testing.capture_logs() as captured:
+            resp = await _delete(client, project_a.id, headers)
+    finally:
+        lock.release()
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project_a.id) is None
+    # LIVENESS FIRST: the skip was DECIDED here, so the two absences below mean the arm ran
+    # and answered "nothing of ours", not that the reap never happened at all.
+    assert any(
+        entry.get("event") == "project_delete_sandbox_reap_skipped_not_ours" for entry in captured
+    )
+    assert _survived(captured, artefact="sandbox_container") == []
+    assert await _teardown_record(db_session, project_a.id) is None
+    # And B is untouched — the lock was never taken, so nothing could have been.
+    assert sandbox.torn_down == []
+
+
+async def test_a_lock_held_while_our_own_container_is_up_still_reports_it(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    """The other direction, and the reason the check is not simply "stay quiet on a timeout".
+
+    When the registry names THIS project's container and the reap cannot get the lock, the
+    container really is standing, really is billing, and outside production nothing automatic
+    comes for it — `may_destroy_on_this_control_plane` gates the scheduled reap on production.
+    That is a genuine leak and it must still be alarmed and recorded."""
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    manager = _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_row.id, "ready")
+
+    lock = manager._start_lock_for(user.id)  # noqa: SLF001 — the route's own lock, by design
+    await lock.acquire()
+    try:
+        with structlog.testing.capture_logs() as captured:
+            resp = await _delete(client, project.id, headers)
+    finally:
+        lock.release()
+
+    assert resp.status_code == 200
+    assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
+    assert await _teardown_record(db_session, project.id) == [
+        {"artefact": "sandbox_container", "id": _named(app_row.id)}
+    ]
+
+
 async def test_an_unconfigured_sandbox_still_deletes_the_project(
     app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
 ) -> None:
@@ -1199,7 +1280,11 @@ async def test_the_delete_takes_the_apps_registry_repository_with_it(
     app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     projects_router = _the_router_module()
-    headers, _user, project, app_row = await _project_with_app(db_session)
+    headers, user, project, app_row = await _project_with_app(db_session)
+    # An app that was actually DEPLOYED — the only kind that can have an image in the registry,
+    # since `names.image_tag` composes the push tag from the deployment id.
+    db_session.add(Deployment(app_id=app_row.id, user_id=user.id))
+    await db_session.commit()
     seen: list[tuple[list[uuid.UUID], Any]] = []
 
     async def _record_repositories(app_ids: Any, *, config: Any) -> list[str]:
@@ -1217,6 +1302,37 @@ async def test_the_delete_takes_the_apps_registry_repository_with_it(
     # Nothing survived, so nothing is recorded: the record has to stay empty on an ordinary
     # delete or it is noise an operator learns to ignore.
     assert await _teardown_record(db_session, project.id) is None
+
+
+async def test_the_delete_does_not_ask_the_registry_about_an_app_never_deployed(
+    app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ AN APP THAT WAS NEVER DEPLOYED HAS NO REPOSITORY, so it is not in the sweep.
+
+    Asking anyway is not free. A registry that refuses the delete credential answers 401/403
+    for whatever it is handed, and every id in the sweep comes back a SURVIVOR — so on a
+    misconfigured deployment every project delete would file a `project:teardown-incomplete`
+    row naming a repository that never existed, and send an operator after it. The sibling
+    sweeps' own docstrings put it plainly: naming something that was in fact deleted is worse
+    than naming nothing.
+
+    Mutation check: hand `cleanup.app_container_ids` to the sweep again and this goes red."""
+    projects_router = _the_router_module()
+    headers, _user, project, _app_row = await _project_with_app(db_session)  # no Deployment row
+    seen: list[list[uuid.UUID]] = []
+
+    async def _record_repositories(app_ids: Any, *, config: Any) -> list[str]:
+        seen.append(list(app_ids))
+        return []
+
+    monkeypatch.setattr(projects_router, "sweep_app_repositories", _record_repositories)
+
+    resp = await _delete(client, project.id, headers)
+
+    assert resp.status_code == 200
+    # STILL CALLED — one code path with nothing in it, rather than a branch that can drift.
+    assert seen == [[]]
+    assert await db_session.get(Project, project.id) is None
 
 
 async def test_publishing_switched_off_still_deletes_the_project_and_records_nothing(
@@ -1302,7 +1418,12 @@ async def test_a_record_that_cannot_be_written_still_leaves_the_delete_successfu
     async def _refused(app_ids: Any, *, config: Any) -> list[str]:
         return ["citizen-apps/kept"]
 
-    real_append = projects_router.append_audit
+    # PATCHED WHERE THE RECORD ACTUALLY WRITES, not on the router. `record_what_survived` moved
+    # into `services/audit/teardown.py` when the admin hard-delete became its second caller, so
+    # it resolves `append_audit` through that module's own binding; patching the router's would
+    # silently miss and this test would pin nothing.
+    record_module = importlib.import_module("src.services.audit.teardown")
+    real_append = record_module.append_audit
 
     async def _explode_on_the_record(*args: Any, **kwargs: Any) -> Any:
         # ONLY the record's own write. The two pre-commit rows this path already writes must
@@ -1312,7 +1433,7 @@ async def test_a_record_that_cannot_be_written_still_leaves_the_delete_successfu
         return await real_append(*args, **kwargs)
 
     monkeypatch.setattr(projects_router, "sweep_app_repositories", _refused)
-    monkeypatch.setattr(projects_router, "append_audit", _explode_on_the_record)
+    monkeypatch.setattr(record_module, "append_audit", _explode_on_the_record)
 
     with structlog.testing.capture_logs() as captured:
         resp = await _delete(client, project.id, headers)

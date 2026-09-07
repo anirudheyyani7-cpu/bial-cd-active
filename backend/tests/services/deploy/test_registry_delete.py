@@ -50,9 +50,7 @@ def _config(**overrides: Any) -> DeployConfig:
     return DeployConfig(**{**base, **overrides})
 
 
-def _registry(
-    record: list[httpx.Request], *, delete_status: int = 202
-) -> httpx.MockTransport:
+def _registry(record: list[httpx.Request], *, delete_status: int = 202) -> httpx.MockTransport:
     """A registry that issues a token and answers the delete with `delete_status`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -85,9 +83,7 @@ async def test_the_token_is_scoped_to_the_one_repository_being_deleted() -> None
     app_id = uuid.uuid4()
     repository = repository_name(repository_prefix="citizen-apps", app_id=app_id)
 
-    assert await delete_repository(
-        repository, config=_config(), transport=_registry(record)
-    )
+    assert await delete_repository(repository, config=_config(), transport=_registry(record))
 
     token = _token_request(record)
     assert token.url.params["scope"] == f"repository:{repository}:delete"
@@ -113,9 +109,7 @@ async def test_the_delete_names_the_derived_repository_and_nothing_else() -> Non
     assert sent.url.params["api-version"] == "2021-07-01"
     assert sent.headers["authorization"] == f"Bearer {_TOKEN}"
     # ...and it is the same repository the push tag carries.
-    tag = image_tag(
-        repository_prefix="citizen-apps", app_id=app_id, deployment_id=deployment_id
-    )
+    tag = image_tag(repository_prefix="citizen-apps", app_id=app_id, deployment_id=deployment_id)
     assert tag.startswith(f"{repository}:")
 
 
@@ -189,9 +183,10 @@ async def test_the_sweep_reports_only_the_repositories_that_survived() -> None:
     )
 
     assert survived == [repository_name(repository_prefix="citizen-apps", app_id=kept)]
-    assert await sweep_app_repositories(
-        [uuid.uuid4()], config=_config(), transport=_registry([])
-    ) == []
+    assert (
+        await sweep_app_repositories([uuid.uuid4()], config=_config(), transport=_registry([]))
+        == []
+    )
 
 
 async def test_publishing_switched_off_skips_the_registry_entirely() -> None:

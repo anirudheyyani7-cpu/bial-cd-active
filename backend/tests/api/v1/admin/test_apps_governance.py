@@ -19,6 +19,8 @@ from src.api.deps import storage_dependency, storage_or_none_dependency
 from src.config import settings
 from src.db.models.app_registry import MAX_DEPLOYED_URL, AppRegistry, ApprovalRoute, AppStatus
 from src.db.models.audit import AuditLog
+from src.db.models.deployment import Deployment
+from src.db.models.project_database import ProjectDatabase
 from src.main import create_app
 from src.services.appserving.governance import nuke_app
 from src.services.auth.csrf import issue_csrf_token
@@ -1252,6 +1254,181 @@ async def test_nuke_app_sweeps_the_per_app_container(db_session) -> None:
     assert containers.deleted == [row.id]  # the per-app container was swept
     assert store.objects == {}  # the snapshot blob was swept
     assert await db_session.get(AppRegistry, row.id) is None  # registry row dropped
+
+
+async def test_nuke_app_sweeps_the_container_registry_repository(db_session, monkeypatch) -> None:
+    """★ THE IMAGE GOES WITH THE APP (U21/U23), and until now nothing said so.
+
+    `sweep_app_repositories` was wired into `nuke_app` and never asserted anywhere: delete the
+    call and every suite stayed green while the admin lever — the one whose dialog says
+    "destroyed permanently" — left the app's compiled tree sitting in the container registry,
+    which is exactly what the citizen's own softer delete removes."""
+    row = await _app(db_session, **_pending())
+    db_session.add(Deployment(app_id=row.id, user_id=row.user_id))
+    await db_session.flush()
+    swept: list[list[uuid.UUID]] = []
+
+    async def _recording(app_ids, *, config, transport=None) -> list[str]:
+        swept.append(list(app_ids))
+        return []
+
+    monkeypatch.setattr("src.services.appserving.governance.sweep_app_repositories", _recording)
+
+    await nuke_app(db_session, FakeStorage(), row.id, None)
+
+    assert swept == [[row.id]]
+    assert await db_session.get(AppRegistry, row.id) is None  # and the row still went
+
+
+async def test_nuke_app_does_not_ask_the_registry_about_an_app_never_built(
+    db_session, monkeypatch
+) -> None:
+    """An image reaches the registry only through a deploy — `names.image_tag` composes the push
+    tag from the DEPLOYMENT id — so an app with no deployment row has no repository to delete.
+
+    Asking anyway is not free: a registry that refuses the delete credential answers 401/403 for
+    whatever it is handed, and every id in the sweep comes back a survivor. That would put a
+    repository that never existed into the teardown record of every delete and send an operator
+    after it, which the sibling sweeps' own docstrings call worse than naming nothing."""
+    row = await _app(db_session, **_pending())  # no Deployment row
+    await db_session.flush()
+    swept: list[list[uuid.UUID]] = []
+
+    async def _recording(app_ids, *, config, transport=None) -> list[str]:
+        swept.append(list(app_ids))
+        return []
+
+    monkeypatch.setattr("src.services.appserving.governance.sweep_app_repositories", _recording)
+
+    await nuke_app(db_session, FakeStorage(), row.id, None)
+
+    # The sweep is still CALLED (one code path, no branch to drift) — with nothing in it.
+    assert swept == [[]]
+    assert await db_session.get(AppRegistry, row.id) is None
+
+
+async def test_nuke_app_names_every_artefact_that_outlived_it(db_session, monkeypatch) -> None:
+    """★ SURVIVORS ARE THE RETURN VALUE (U22), not a log line the caller cannot read.
+
+    All four sweeps already answer with what they could not destroy and `nuke_app` used to
+    throw all four answers away, which made the admin hard-delete the one destructive lever on
+    the platform that kept no record of a leak. Each is driven to its failing answer here so
+    the tagging is proved per artefact rather than in aggregate."""
+    row = await _app(db_session, **_pending())
+    await db_session.flush()
+
+    async def _blobs(storage, keys) -> list[str]:
+        return ["snapshots/left-behind"]
+
+    async def _containers(store, app_ids) -> list[uuid.UUID]:
+        return list(app_ids)
+
+    async def _published(app_ids, *, client=None) -> list[uuid.UUID]:
+        return list(app_ids)
+
+    async def _repos(app_ids, *, config, transport=None) -> list[str]:
+        return ["app-still-in-the-registry"]
+
+    for name, double in (
+        ("sweep_blobs", _blobs),
+        ("sweep_app_containers", _containers),
+        ("sweep_published_apps", _published),
+        ("sweep_app_repositories", _repos),
+    ):
+        monkeypatch.setattr(f"src.services.appserving.governance.{name}", double)
+
+    survivors = await nuke_app(db_session, FakeStorage(), row.id, None)
+
+    assert survivors == [
+        ("blob", "snapshots/left-behind"),
+        ("app_container", str(row.id)),
+        ("published_app", str(row.id)),
+        ("registry_repository", "app-still-in-the-registry"),
+    ]
+
+
+async def test_hard_delete_records_a_database_that_outlived_it(
+    client, db_session, app, monkeypatch
+) -> None:
+    """★ A SURVIVING DATABASE IS ON THE RECORD (U22/R7), on the harsher lever too.
+
+    `salt_the_earth` answers whether the earth is actually salted, and this route discarded
+    that answer — so an administrator could destroy somebody else's app, the drop could fail,
+    and a copy of the citizen's data would stay on the cluster with nothing written down.
+    Nothing automatic collects it either: `appdb/reconcile.py` is operator-invoked and, by its
+    own docstring, report-only. The route still answers `{"ok": true}` — the delete DID happen,
+    and the citizen has no notification path to be told otherwise (D18)."""
+    _wire_storage(app)
+    owner = await UserFactory.create(db_session)
+    project = await ProjectFactory.create(db_session, owner.id)
+    row = await AppRegistryFactory.create(
+        db_session, user_id=owner.id, project_id=project.id, **_pending()
+    )
+    db_session.add(
+        ProjectDatabase(
+            project_id=project.id,
+            db_name="bialdb_stubborn",
+            role_name="bialrole_stubborn",
+            password_encrypted="not-a-real-token",
+        )
+    )
+    await db_session.flush()
+    headers = await _admin(db_session)
+
+    async def _refuses_to_salt(*, db_name: str, role_name: str) -> bool:
+        return False
+
+    monkeypatch.setattr("src.api.v1.admin.router.salt_the_earth", _refuses_to_salt)
+
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={"reason": "Owner left the organisation and asked for the app to be destroyed"},
+    )
+
+    assert resp.json() == {"ok": True}  # the delete happened; the leak is not the citizen's news
+    recorded = (
+        await db_session.execute(
+            sa.select(AuditLog.detail).where(
+                AuditLog.action == "project:teardown-incomplete",
+                AuditLog.resource_id == str(project.id),
+            )
+        )
+    ).scalar_one()
+    assert recorded == {
+        "count": 1,
+        "survived": [{"artefact": "app_database", "id": "bialdb_stubborn"}],
+    }
+
+
+async def test_hard_delete_writes_no_teardown_row_when_nothing_survived(
+    client, db_session, app
+) -> None:
+    """The row exists to be read, so a clean delete must not file one. Paired with the test
+    above so `toBeNull`-shaped absence is never the only thing asserted: that one proves the
+    row appears, this one proves it is not filed unconditionally."""
+    _wire_storage(app)
+    row = await _app(db_session, **_pending())
+    await db_session.flush()
+    headers = await _admin(db_session)
+
+    resp = await client.request(
+        "DELETE",
+        f"/v1/admin/apps/{row.id}",
+        headers=headers,
+        json={"reason": "Duplicate app created in error during onboarding, owner asked for it"},
+    )
+
+    assert resp.json() == {"ok": True}
+    filed = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(AuditLog)
+            .where(AuditLog.action == "project:teardown-incomplete")
+        )
+    ).scalar_one()
+    assert filed == 0
 
 
 # --- The storage-off contract (FIX 9) ------------------------------------------

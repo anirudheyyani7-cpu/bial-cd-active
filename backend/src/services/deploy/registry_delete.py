@@ -51,9 +51,12 @@ from collections.abc import Iterable
 from typing import Final
 
 import httpx
+import sqlalchemy as sa
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.alarms import TEARDOWN_ARTEFACT_SURVIVED_EVENT
+from src.db.models.deployment import Deployment
 from src.services.deploy.config import DeployConfig
 from src.services.deploy.names import repository_name
 
@@ -135,6 +138,37 @@ async def delete_repository(
         return False
     _log.info(REPOSITORY_DELETED_EVENT, repository=repository)
     return True
+
+
+async def app_ids_that_could_have_an_image(
+    db: AsyncSession, app_ids: Iterable[uuid.UUID]
+) -> list[uuid.UUID]:
+    """The subset of `app_ids` that has ever had a deployment row — the only apps whose
+    repository can exist in the registry at all.
+
+    THE NAME IS ONLY EVER MINTED FROM A DEPLOYMENT. `names.image_tag` composes the push tag
+    from the DEPLOYMENT id, so an image cannot reach the registry without a row in
+    `deployments`; the row is therefore a NECESSARY condition for a repository, which is what
+    makes filtering on it safe rather than a guess that could strand an image.
+
+    WHY FILTER AT ALL, when a delete of an absent repository already answers 404 and 404 counts
+    as success: because a registry that REFUSES the credential answers 401/403, and every app in
+    the sweep then comes back as a survivor — including apps that were never built, whose
+    repositories never existed. That fills the teardown record with names an operator would go
+    looking for and not find, which the sibling sweeps' own docstrings call worse than naming
+    nothing. A misconfigured delete credential should read as "the published apps' images may
+    still be there", not as a leak per app in the account.
+
+    MUST BE CALLED BEFORE THE COMMIT that removes the app. `deployments` rows cascade with the
+    app row, so after the delete this answers an empty list for everything."""
+    ids = list(app_ids)
+    if not ids:
+        return []
+    query = sa.select(Deployment.app_id).where(Deployment.app_id.in_(ids)).distinct()
+    built = set((await db.execute(query)).scalars().all())
+    # Ordered by the CALLER's list, not by the database's, so the sweep and anything reading its
+    # survivors stay in a stable, explainable order.
+    return [app_id for app_id in ids if app_id in built]
 
 
 async def sweep_app_repositories(

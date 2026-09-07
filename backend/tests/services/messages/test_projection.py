@@ -20,6 +20,7 @@ from typing import get_args
 
 import sqlalchemy as sa
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -63,6 +64,9 @@ from tests.factories import ConversationFactory, ProjectFactory, UserFactory
 from tests.fakes import write_legacy_build_started
 
 PREVIEW = "https://sbx-abc.westeurope.azurecontainerapps.io/"
+# Matches `test_store_roundtrip.py`'s fixture — a real PNG magic prefix, so the store's own
+# byte checks see what they expect.
+_PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"fake-png-body"
 
 
 async def _thread(db_session):
@@ -1958,3 +1962,123 @@ async def test_a_first_slice_far_past_the_old_ceiling_renders_whole(db_session) 
     # leaves the citizen a list with nothing to answer.
     assert "These six are the reception desk's whole morning." in proposal.text
     assert proposal.text.endswith("Shall I start there?")
+
+
+# --- #214: the attachment fence never reaches the bubble ------------------------------------
+
+
+async def _user_turn(db_session, user, conversation, content) -> None:
+    """One citizen turn persisted in the U7 wire shape — content is whatever the caller
+    passes, so a test can store the LIST form (attachment items, typed prose last) that the
+    composer really produces."""
+    await append_batch(
+        db_session,
+        user_id=user.id,
+        conversation_id=conversation.id,
+        messages=[ModelRequest(parts=[UserPromptPart(content=content)])],
+        entry_kind=MessageEntryKind.TURN,
+        kind=ChatKind.PLAN,
+        meta={},
+    )
+
+
+async def _user_items(db_session, user, conversation) -> list[UserTextItem]:
+    rows = await _rows(db_session, user, conversation)
+    return [i for i in project_rows(rows) if isinstance(i, UserTextItem)]
+
+
+async def test_an_inlined_file_body_is_kept_out_of_the_user_bubble(db_session) -> None:
+    """★ THE GUARD THIS FILE EXISTS TO PIN (#214, ordering hazard 1).
+
+    `_is_attachment_fence` is the ONLY thing standing between a persisted file body and the
+    citizen's own message bubble, and until now nothing tested it — a grep for `fence` across
+    `backend/tests/` returned only build-prompt fixtures. #214 deletes the inline-text lane
+    that produces these blocks, and the fence check looks like part of that lane; it is not.
+    Every conversation already on disk that carried a CSV or a spreadsheet has that content
+    stored as a bare string inside a `user-prompt` content list, so deleting the check makes
+    those turns render the whole file, row by row, as if the citizen had typed it.
+
+    Driven through `append_batch` → `project_rows` rather than by calling the predicate,
+    deliberately: `test_zip_safety.py` is the cautionary example in this repo of a suite that
+    proves an algorithm works and never that anything calls it.
+
+    Mutation receipt: drop the `if not _is_attachment_fence(item)` guard in
+    `_user_text_and_refs` and this test goes red on the CSV rows appearing in `.text`.
+    """
+    user, _, conversation = await _thread(db_session)
+    await _user_turn(
+        db_session,
+        user,
+        conversation,
+        [
+            '<attachment name="roster.csv" type="text">\n'
+            "badge,name,terminal\n"
+            "1041,Asha Rao,T1\n"
+            "1042,Vikram Nair,T2\n"
+            "</attachment>",
+            "How many people are on this?",
+        ],
+    )
+
+    items = await _user_items(db_session, user, conversation)
+
+    assert len(items) == 1
+    # The prose survives whole — the bubble shows what the citizen typed.
+    assert items[0].text == "How many people are on this?"
+    # And nothing of the file does. Asserted on the row CONTENT, not on the fence tags: a
+    # future fence shape that still leaked the body would pass a tag-only assertion.
+    assert "badge,name,terminal" not in items[0].text
+    assert "Asha Rao" not in items[0].text
+    assert "1042" not in items[0].text
+
+
+async def test_a_plain_message_is_not_mistaken_for_a_fence(db_session) -> None:
+    """The companion case, so the guard cannot be satisfied by dropping everything. A citizen
+    who types the word `<attachment` mid-sentence still gets their sentence back."""
+    user, _, conversation = await _thread(db_session)
+    await _user_turn(
+        db_session, user, conversation, ["What does <attachment ...> mean in your logs?"]
+    )
+
+    items = await _user_items(db_session, user, conversation)
+
+    assert items[0].text == "What does <attachment ...> mean in your logs?"
+
+
+async def test_the_bare_string_shape_still_reaches_the_bubble(db_session) -> None:
+    """A text-only turn is persisted as a bare string, not a list (`prompt_content`'s fast
+    path). The filter must not touch that branch — pinned because #214 rewrites the producer
+    and the two shapes are easy to collapse into one."""
+    user, _, conversation = await _thread(db_session)
+    await _user_turn(db_session, user, conversation, "just a question, no files")
+
+    items = await _user_items(db_session, user, conversation)
+
+    assert items[0].text == "just a question, no files"
+
+
+async def test_an_attachment_reference_becomes_a_chip_id_not_prose(db_session) -> None:
+    """The other half of `_user_text_and_refs`: a `bial-attachment-ref` marker leaves the prose
+    and arrives as an id the UI draws a chip from. #214 R23a builds on this — the projection
+    already ships the ids and the reload path throws them away — so the producing side is
+    pinned here before that work moves it."""
+    user, _, conversation = await _thread(db_session)
+    # A REAL `BinaryContent`, not a hand-written marker dict. `_externalize_binaries` mints the
+    # `bial-attachment-ref` shape at persist time, so passing the marker directly would seed the
+    # POST-serialization form into the pre-serialization slot — a shape production never writes,
+    # and one pydantic-ai warns about because it matches no content type.
+    await _user_turn(
+        db_session,
+        user,
+        conversation,
+        [
+            BinaryContent(data=_PNG, media_type="image/png", identifier="att-7f3c"),
+            "what is in this file?",
+        ],
+    )
+
+    items = await _user_items(db_session, user, conversation)
+
+    assert items[0].attachment_ids == ["att-7f3c"]
+    assert items[0].text == "what is in this file?"
+    assert "att-7f3c" not in items[0].text

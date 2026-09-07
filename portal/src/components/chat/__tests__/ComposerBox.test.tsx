@@ -464,7 +464,10 @@ describe('★ the attachment pipeline stays ours', () => {
   it('refuses a format this platform does not accept, in our words', async () => {
     const onUrgent = vi.fn()
     draw({ onUrgent })
-    drop(new File(['x'], 'slides.pptx', { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }))
+    // A `.ppt`, not a `.pptx`: the modern deck is accepted now — code reads it in the sandbox —
+    // while the pre-2007 binary format stays refused, because opening one would mean hosting a
+    // converter, which is a standing scope boundary (#214).
+    drop(new File(['x'], 'slides.ppt', { type: 'application/vnd.ms-powerpoint' }))
     await waitFor(() => expect(onUrgent).toHaveBeenCalledTimes(1))
     expect(onUrgent.mock.calls[0]?.[0]).toMatch(/isn't supported|is not supported/i)
   })

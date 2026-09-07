@@ -12,16 +12,36 @@
  * deliberately out of scope here — a reachable-but-unreferenced path, unshipped not removed.
  */
 export const ALLOWED_MEDIA_TYPES = [
+  // The MODEL lane — it reads these bytes itself.
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf',
-  'text/csv', 'text/plain',
+  // The CODE lane — a reader in the workspace opens these and reports what it found (#214).
+  // `text/plain` is deliberately NOT here: it works today and stops, because no client
+  // requirement names it and every format costs a reader arm, refusal copy, a test and a line
+  // in the help page. Scope Boundaries records it as a withdrawal rather than a format never
+  // added.
+  'text/csv', 'text/tab-separated-values',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ]
 // Text media types are special-cased everywhere binary attachments are: inlined
 // as text blocks (sticky across turns), sized by bytes in the context estimate,
 // and previewed as a labelled icon (no thumbnail).
-export const TEXT_MEDIA_TYPES = new Set(['text/csv', 'text/plain'])
+// STILL INLINED, DELIBERATELY, AND ONLY UNTIL THE SERVER HALF SHIPS (#214, ordering hazard 9).
+// The inline lane is going: every attachment becomes an uploaded file with a stored identity,
+// which is what lets a chip be rebuilt on reload for every format by one fix. But the order
+// matters and only one direction is safe. A server that admits CSV uploads while this browser
+// still inlines them is harmless — the upload path simply goes unused. The reverse, a browser
+// that uploads CSVs against a server that still refuses `text/*`, breaks every CSV attach.
+// `text/plain` is dropped from the set with its removal from the allowlist above.
+export const TEXT_MEDIA_TYPES = new Set(['text/csv'])
 // Extension tokens let the OS picker show .csv/.txt even when the OS reports an
 // inconsistent or empty MIME (see resolveMediaType).
-export const ACCEPT_ATTR = [...ALLOWED_MEDIA_TYPES, '.csv', '.txt'].join(',')
+// Extension tokens let the OS picker show these even when it reports an inconsistent or empty
+// MIME — which it does constantly for Office and delimited files (see `resolveMediaType`).
+export const ACCEPT_ATTR = [
+  ...ALLOWED_MEDIA_TYPES, '.csv', '.tsv', '.xlsx', '.docx', '.pptx',
+].join(',')
 
 export const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4 MB on the original File.size (image/PDF)
 // Text files are inlined verbatim into the prompt, so they're capped far lower
@@ -53,8 +73,20 @@ export function unsupportedFileMessage(fileName: string): string {
  * a spreadsheet. Rather than let that path speak the library's words, it speaks this one:
  * one author for the advice, the file name the only thing that varies.
  */
+export const ATTACHMENT_LANES_SENTENCE =
+  "Attach a picture or a PDF and I'll look at it; attach a spreadsheet, document or slide deck " +
+  "and I'll open it with code."
+
+/**
+ * ONE SENTENCE, EVERYWHERE (#214 R21). The composer, the help page and every unsupported-format
+ * refusal say this and nothing else — three sentences that drift is how the removed rule failed.
+ *
+ * IT DESCRIBES WHAT HAPPENS, NOT WHICH EXTENSIONS ARE ON A LIST. A list of ten formats is the
+ * shape the old copy failed as: it goes stale the moment the allowlist moves, and it tells a
+ * citizen nothing about why a spreadsheet behaves differently from a photograph.
+ */
 export function unsupportedFormatMessage(): string {
-  return "isn't supported. Attach an image (PNG, JPEG, GIF, WebP), a PDF, or a text file (CSV, TXT)."
+  return `isn't supported. ${ATTACHMENT_LANES_SENTENCE}`
 }
 
 /**
@@ -68,7 +100,10 @@ export function unsupportedFormatMessage(): string {
 export function resolveMediaType(file: File): string {
   const name = file.name || ''
   if (/\.csv$/i.test(name)) return 'text/csv'
-  if (/\.txt$/i.test(name)) return 'text/plain'
+  if (/\.tsv$/i.test(name) || /\.tab$/i.test(name)) return 'text/tab-separated-values'
+  if (/\.xlsx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  if (/\.docx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  if (/\.pptx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
   return file.type
 }
 

@@ -42,11 +42,11 @@ from src.services.extract.deck import (
     deck_attachments_enabled,
 )
 from src.services.extract.office import (
-    OFFICE_MEDIA_TYPES,
     PPTX_MEDIA_TYPE,
     office_format_for,
 )
-from src.services.extract.zip_safety import FileParseError
+from src.services.extract.zip_safety import FileParseError, assert_zip_not_bomb
+from src.services.media.lanes import code_lane_refusal, is_code_lane
 from src.services.media.magic import ALLOWED_MEDIA, chip_kind_for, magic_matches
 from src.services.parse.governor import run_parse
 from src.services.ratelimit import rate_limit
@@ -91,6 +91,20 @@ ATTACHMENT_TOTAL_CAP = 50 * 1024 * 1024
 # `validateConversationAttachmentCap` tallies attachments by walking the messages the browser has
 # loaded, so it reset to zero on every page reload. A cap a refresh clears is not a cap.
 MAX_ATTACHMENTS_PER_CONVERSATION = 20
+
+
+ATTACHMENT_LANES_SENTENCE: Final = (
+    "Attach a picture or a PDF and I'll look at it; attach a spreadsheet, document or slide "
+    "deck and I'll open it with code."
+)
+"""ONE SENTENCE, EVERYWHERE (#214 R21). The composer, the help page and every unsupported-format
+refusal carry these exact words — three sentences that drift is how the removed rule failed. Its
+portal twin is `ATTACHMENT_LANES_SENTENCE` in `portal/src/utils/attachmentInput.ts`, and a test
+holds the two byte-identical.
+
+IT DESCRIBES WHAT HAPPENS TO A FILE, not which extensions are on a list. A list of ten formats
+goes stale the moment the allowlist moves, and tells a citizen nothing about why a spreadsheet
+behaves differently from a photograph."""
 
 
 MAX_PDF_PAGES: Final = 30
@@ -178,13 +192,21 @@ Storage = Annotated[ObjectStorage, Depends(storage_dependency)]
 
 
 def _validate_attachment_bytes(media_type: str, b64: Any) -> str | None:
-    """Validate an image/PDF upload against the allowlist + magic bytes (+ WebP form-type),
-    matching Express `validateAttachmentBytes`. Returns the error string, or None if valid."""
+    """Validate a MODEL-LANE upload (image/PDF) against the allowlist + magic bytes.
+
+    THE CODE LANE IS NOT CHECKED HERE, and that is the point rather than a gap. `ALLOWED_MEDIA` is
+    the magic-byte gate, and `bytes_match_declared` is applied on three paths that all end at the
+    model — this route, the store's rehydrator and `build_sessions/attachments.py`. Widening it to
+    admit Office would make every one of them answer True for a deck, and a spreadsheet would reach
+    the model as raw ZIP bytes on whichever path lost its refusal first. Office, CSV and TSV are
+    admitted by `code_lane_refusal` instead, which runs only where an attachment is stored, so the
+    three model-facing consumers keep refusing them without a line changing in any of them.
+    """
     if not isinstance(b64, str) or not b64:
         return "Invalid attachment: missing bytes."
     magic = ALLOWED_MEDIA.get(media_type)
     if magic is None:
-        return f"Unsupported attachment type: {media_type}. Allowed: PNG, JPEG, GIF, WebP, PDF."
+        return f"Unsupported attachment type: {media_type}. {ATTACHMENT_LANES_SENTENCE}"
     # 24 base64 chars → 18 bytes: enough for any magic prefix + the WebP form-type at offset 8.
     try:
         prefix = base64.b64decode(b64[:24])
@@ -520,26 +542,38 @@ async def upload_attachment(
     media_type = body.get("mediaType")
     if not isinstance(media_type, str):
         raise AppApiError(400, "mediaType is required.")
-    if media_type.startswith("text/"):
-        raise AppApiError(400, "Text attachments are sent inline, not uploaded.")
+    # THE `text/*` REFUSAL INVERTS FOR THE TWO DELIMITED FORMATS (#214). It used to refuse every
+    # text type, because text rode inside the prompt rather than being uploaded. That lane is
+    # gone: every attachment is now an uploaded file with a stored identity, which is what lets a
+    # chip be rebuilt on reload for every format by one fix. CSV and TSV are ordinary uploads.
+    #
+    # `text/plain` stays refused, and that is a WITHDRAWAL rather than an oversight — it works on
+    # the branch today and stops. The mechanism argument for refusing it died with the inline
+    # lane; the surviving reason is that no client requirement names it, and every format costs a
+    # reader arm, refusal copy, a test and a line in the help page.
+    if media_type.startswith("text/") and not is_code_lane(media_type):
+        raise AppApiError(400, f"That file type is not supported. {ATTACHMENT_LANES_SENTENCE}")
     # Parsed ONCE here, before the branch, so every upload kind shares the same contract. The
     # optional conversation link is resolved owner-scoped here too (a bad conversationId 404s
     # before any bytes are parsed or stored — no orphaned object on the reject path).
     name = _attachment_name(body.get("name"))
     conversation_id = await _resolve_conversation_link(db, user.id, body.get("conversationId"))
-    if media_type in OFFICE_MEDIA_TYPES:
-        return await _handle_office_upload(
-            db, storage, user, attachment_id, media_type, name, conversation_id, body
-        )
-    if media_type == PPTX_MEDIA_TYPE:
-        return await _handle_deck_upload(
-            db, storage, user, attachment_id, media_type, name, conversation_id, body
-        )
-
+    # THE THREE ADMISSION ARMS COLLAPSE INTO TWO (#214). Office and deck each had their own,
+    # because each ran a different server-side conversion before storing: docx/xlsx were extracted
+    # to Markdown, and a deck was rendered to PDF by a converter that was never deployed. Both are
+    # gone. A file is now stored as itself and read where it can actually be read, so what is left
+    # is the routing rule and nothing else — the model reads these bytes, or code does.
     b64 = body.get("base64")
-    err = _validate_attachment_bytes(media_type, b64)
-    if err is not None:
-        raise AppApiError(400, err)
+    # WHICH LANE, decided once. The model reads images and PDFs itself; code in the workspace
+    # reads everything else. Neither branch is a list of extensions the other has to stay in step
+    # with — `is_code_lane` is the single answer both use.
+    if is_code_lane(media_type):
+        if not isinstance(b64, str) or not b64:
+            raise AppApiError(400, "Invalid attachment: missing bytes.")
+    else:
+        err = _validate_attachment_bytes(media_type, b64)
+        if err is not None:
+            raise AppApiError(400, err)
     # Validation guarantees a non-empty str; this redundant narrow satisfies the type checker.
     if not isinstance(b64, str):
         raise AppApiError(400, "Invalid attachment: missing bytes.")
@@ -558,6 +592,26 @@ async def upload_attachment(
     # a real regression in the common path.
     if media_type == PDF_MEDIA_TYPE:
         await _assert_pdf_within_page_cap(data, name)
+    if is_code_lane(media_type):
+        # AFTER the size check and BEFORE the store, like the page cap above: a refused file
+        # leaves no object and no row. Password protection is checked in here too, for every
+        # format that can carry it — a locked workbook gets the same sentence a locked PDF does,
+        # rather than being stored, charged, and failing inside the sandbox several turns later.
+        refusal = code_lane_refusal(media_type, name, data)
+        if refusal is not None:
+            raise AppApiError(415, refusal)
+        # THE ARCHIVE BOUND, RE-POINTED ONTO THE LANE THAT NOW CARRIES ARCHIVES (R18b). Office
+        # files are ZIPs, and a 4 MB one can declare 300 MB uncompressed. Its previous three
+        # callers were all server-side extraction arms that this work deletes, and its own suite
+        # calls it directly — so it proves the algorithm and would never have told us it had gone
+        # unwired. This path is stricter than what it replaces, not looser: the old office lane
+        # extracted inside a killable, memory-capped subprocess and never stored a file it could
+        # not read, while this one stores the archive and hands it to a reader in the citizen's
+        # own sandbox, where neither that ceiling nor that deadline reaches.
+        try:
+            assert_zip_not_bomb(data)
+        except FileParseError as exc:
+            raise AppApiError(413, str(exc)) from None
 
     ref = await _store_attachment_bytes(
         db, storage, user.id, attachment_id, media_type, name, conversation_id, data

@@ -7,11 +7,14 @@ import {
   fileToBase64,
   ACCEPT_ATTR,
   MAX_FILE_SIZE,
-  MAX_TEXT_FILE_SIZE,
-  MAX_TEXT_BYTES_PER_CONVERSATION,
   MAX_FILES_PER_MESSAGE,
   MAX_ATTACHMENTS_PER_CONVERSATION,
 } from '../attachmentInput'
+
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
 
 // validateAttachmentFiles only reads name/type/size, so plain objects suffice
 // (and let us set an arbitrary size without allocating megabytes).
@@ -37,16 +40,32 @@ describe('validateAttachmentFiles', () => {
     expect(res.error).toMatch(new RegExp(`at most ${MAX_FILES_PER_MESSAGE} files`))
   })
 
+  it('accepts the code-lane formats as ordinary uploads', () => {
+    // THE INLINE-TEXT CAPS ARE GONE WITH THEIR LANE (#214). A CSV used to be read in the browser
+    // and inlined into the prompt, so it carried its own 256 KB per-file and 512 KB
+    // per-conversation budgets. Every attachment is an uploaded file now, governed by the one
+    // 4 MB cap — which is also what lets a chip be rebuilt on reload for every format.
+    expect(validateAttachmentFiles([file('rows.csv', 'text/csv')], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('rows.tsv', 'text/tab-separated-values')], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('book.xlsx', XLSX)], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('doc.docx', DOCX)], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('deck.pptx', PPTX)], 0)).toEqual({ ok: true })
+  })
+
+  it('refuses plain text, which is a withdrawal rather than a format never added', () => {
+    // It works on the branch today and stops. The mechanism argument died with the inline lane —
+    // under the routing rule a .txt is simply a file code reads, exactly like a .csv — so the
+    // refusal rests on the surviving reason: no client requirement names it, and every format
+    // costs a reader arm, refusal copy, a test and a line in the help page.
+    expect(validateAttachmentFiles([file('notes.txt', 'text/plain')], 0).error).toBeTruthy()
+  })
+
   it('accepts valid images and a PDF under the caps', () => {
     expect(validateAttachmentFiles([file('a.png', 'image/png')], 0)).toEqual({ ok: true })
     expect(validateAttachmentFiles([file('b.jpg', 'image/jpeg')], 0)).toEqual({ ok: true })
     expect(validateAttachmentFiles([file('c.pdf', 'application/pdf')], 0)).toEqual({ ok: true })
   })
 
-  it('accepts a .txt (text/plain) and a .csv under the text caps', () => {
-    expect(validateAttachmentFiles([file('notes.txt', 'text/plain')], 0)).toEqual({ ok: true })
-    expect(validateAttachmentFiles([file('rows.csv', 'text/csv')], 0)).toEqual({ ok: true })
-  })
 
   it('accepts an OS-mislabeled .csv (reported application/vnd.ms-excel or empty) via resolved type', () => {
     // Validation must run against the resolved type, not raw file.type — so a CSV
@@ -55,40 +74,28 @@ describe('validateAttachmentFiles', () => {
     expect(validateAttachmentFiles([file('data.csv', '')], 0)).toEqual({ ok: true })
   })
 
-  it('rejects a text file over the 256 KB per-file limit (binary 4 MB cap unchanged)', () => {
-    const res = validateAttachmentFiles([file('big.csv', 'text/csv', MAX_TEXT_FILE_SIZE + 1)], 0)
-    expect(res.error).toMatch(/256 KB/)
+  it('gives a CSV the same 4 MB file cap as every other upload, not the old inline-text one', () => {
+    // RE-POINTED, NOT DELETED (#214). This asserted the 256 KB cap on inlined text, and that cap
+    // existed because a CSV's BYTES rode in the prompt on every turn — 256 KB per file and
+    // 512 KB per conversation kept the accumulated text inside the context budget.
+    //
+    // Nothing is inlined now: a CSV is an uploaded file that code reads in the sandbox, so it is
+    // bounded by the same 4 MB size cap as an image or a PDF. `TEXT_MEDIA_TYPES` is empty, which
+    // is what makes `MAX_TEXT_FILE_SIZE` unreachable rather than merely unused — the constant
+    // stays because `AttachmentPreview` still asks what can be RENDERED as text, which is a
+    // different question.
+    //
+    // The half worth keeping is that a per-file cap is enforced at all, so that is what this
+    // asserts, on both sides of the boundary.
+    expect(validateAttachmentFiles([file('big.csv', 'text/csv', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
+    expect(validateAttachmentFiles([file('big.csv', 'text/csv', MAX_FILE_SIZE + 1)], 0).error).toMatch(/4 MB/)
     expect(validateAttachmentFiles([file('spec.pdf', 'application/pdf', MAX_FILE_SIZE)], 0)).toEqual({ ok: true })
   })
 
-  it('rejects a selection whose total text bytes exceed the per-conversation budget', () => {
-    // 5 × 256 KB text files pass the per-file cap but bust the 512 KB total.
-    const five = Array.from({ length: 5 }, (_, i) => file(`f${i}.txt`, 'text/plain', MAX_TEXT_FILE_SIZE))
-    const res = validateAttachmentFiles(five, 0)
-    expect(res.error).toMatch(new RegExp(`${MAX_TEXT_BYTES_PER_CONVERSATION / 1024} KB total`))
-  })
 
-  it('enforces the text budget CUMULATIVELY across pending picks (existingTextBytes)', () => {
-    // 400 KB already pending + a new 200 KB pick = 600 KB > 512 KB → rejected,
-    // even though the new pick alone is well under the budget.
-    const res = validateAttachmentFiles([file('more.csv', 'text/csv', 200 * 1024)], 2, 400 * 1024)
-    expect(res.error).toMatch(new RegExp(`${MAX_TEXT_BYTES_PER_CONVERSATION / 1024} KB total`))
-    // A pick that keeps the running total under budget still passes.
-    expect(validateAttachmentFiles([file('ok.csv', 'text/csv', 100 * 1024)], 1, 200 * 1024)).toEqual({ ok: true })
-  })
 })
 
 describe('textAttachmentBytes', () => {
-  it('sums the size of text refs only (ignores image/PDF)', () => {
-    expect(
-      textAttachmentBytes([
-        { mediaType: 'text/csv', size: 1000 },
-        { mediaType: 'image/png', size: 5000 },
-        { mediaType: 'application/pdf', size: 9000 },
-        { mediaType: 'text/plain', size: 200 },
-      ]),
-    ).toBe(1200)
-  })
 
   it('is 0 for empty / non-array inputs', () => {
     expect(textAttachmentBytes([])).toBe(0)
@@ -97,10 +104,17 @@ describe('textAttachmentBytes', () => {
 })
 
 describe('resolveMediaType', () => {
-  it('canonicalizes .csv → text/csv and .txt → text/plain by extension', () => {
+  it('canonicalizes every code-lane extension, which the OS reports inconsistently', () => {
+    // Browsers and operating systems report Office and delimited types inconsistently — a .csv
+    // arrives as `text/csv`, `application/vnd.ms-excel`, or nothing at all, and a .xlsx often
+    // with an empty MIME. The extension is the reliable signal, and every allowlist and cap
+    // decision runs against the resolved type rather than raw `file.type`.
     expect(resolveMediaType(file('data.csv', 'application/vnd.ms-excel'))).toBe('text/csv')
     expect(resolveMediaType(file('data.CSV', ''))).toBe('text/csv')
-    expect(resolveMediaType(file('notes.txt', ''))).toBe('text/plain')
+    expect(resolveMediaType(file('data.tsv', ''))).toBe('text/tab-separated-values')
+    expect(resolveMediaType(file('book.xlsx', ''))).toBe(XLSX)
+    expect(resolveMediaType(file('doc.docx', ''))).toBe(DOCX)
+    expect(resolveMediaType(file('deck.pptx', ''))).toBe(PPTX)
   })
 
 
@@ -115,13 +129,19 @@ describe('resolveMediaType', () => {
 // mocking the flag when the flag stopped existing — a removal's tests become guards, not gaps.
 
 describe('ACCEPT_ATTR', () => {
-  it('offers the text types and their extension tokens, and nothing needing conversion', () => {
-    expect(ACCEPT_ATTR).toContain('text/csv')
-    expect(ACCEPT_ATTR).toContain('text/plain')
-    expect(ACCEPT_ATTR).toContain('.csv')
-    expect(ACCEPT_ATTR).toContain('.txt')
-    expect(ACCEPT_ATTR).toContain('application/pdf')
+  it('offers both lanes and their extension tokens, and nothing needing conversion', () => {
     expect(ACCEPT_ATTR).toContain('image/png')
+    expect(ACCEPT_ATTR).toContain('application/pdf')
+    expect(ACCEPT_ATTR).toContain('text/csv')
+    expect(ACCEPT_ATTR).toContain(XLSX)
+    // Extension tokens matter more here than the MIME types: the OS picker shows a file only if
+    // one of the two matches, and it reports these MIMEs inconsistently or not at all.
+    for (const ext of ['.csv', '.tsv', '.xlsx', '.docx', '.pptx']) {
+      expect(ACCEPT_ATTR).toContain(ext)
+    }
+    // A withdrawal and two legacy formats: absent, so the picker never offers them.
+    expect(ACCEPT_ATTR).not.toContain('.txt')
+    expect(ACCEPT_ATTR).not.toContain('.doc,')
   })
 })
 

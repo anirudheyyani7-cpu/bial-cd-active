@@ -24,17 +24,20 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createElement } from 'react'
-import { screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
+import { act, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
 import {
   FakeEventSource, makeClient, primeClient, primeTurn, renderBuilderAt, withLiveBuildAnchor,
   statusResp, send, scriptBuildTurn, T_PREVIEW, T_BUILD_END, turnStreaming,
   T_DELTA, T_END, findStartAppControl, primeStandbyReattach,
 } from './_builderSession.jsx'
+import type { PreviewLifeState, PreviewState } from '../../utils/buildSessionApi'
 
-/** The three arms, given URLs that cannot be confused with one another. */
+/** The four arms, given URLs that cannot be confused with one another. */
 const SESSION_URL = 'https://session-app.example.azurecontainerapps.io/'
 const TURN_URL = 'https://turn-app.example.azurecontainerapps.io/'
 const RELAUNCH_URL = 'https://relaunched-app.example.azurecontainerapps.io/'
+/** The PROJECT arm's — the one a hard load arrives on, answered by the preview-state read. */
+const PROJECT_URL = 'https://project-app.example.azurecontainerapps.io/'
 
 const h = vi.hoisted(() => ({
   loadBuilds: vi.fn(), getBuild: vi.fn(),
@@ -43,6 +46,13 @@ const h = vi.hoisted(() => ({
   resolvePlanOptions: vi.fn(),
   relaunchPreview: vi.fn(), stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(),
   fetchPreviewState: vi.fn(), fetchSaveState: vi.fn(),
+  // THE TWO PROBES THAT RIDE THE PREVIEW TICK, mocked only so they cannot reach a real `fetch`.
+  // Neither was needed while every scenario here answered the read `unknown`: both are gated on a
+  // LIVE container, and the project arm's scenarios below are the first in this file to produce
+  // one. They never throw in production either (both swallow and answer a safe default), so
+  // leaving them real would not have failed a test — it would have made every one of those
+  // scenarios open a socket to nowhere and wait for it.
+  fetchCompileState: vi.fn(), checkWorkspace: vi.fn(),
 }))
 
 /** Every prop bag the pane has been handed, in order. */
@@ -83,6 +93,8 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
   ...(await orig<typeof import('../../utils/buildSessionApi')>()),
   fetchPreviewState: (...a: unknown[]) => h.fetchPreviewState(...a),
   fetchSaveState: (...a: unknown[]) => h.fetchSaveState(...a),
+  fetchCompileState: (...a: unknown[]) => h.fetchCompileState(...a),
+  checkWorkspace: (...a: unknown[]) => h.checkWorkspace(...a),
   // `StartAppControl.tsx` imports `relaunchPreview` DIRECTLY from this module rather than through
   // the injected client, so its call has to land on the same `h.relaunchPreview` the fixtures
   // below already prime.
@@ -118,6 +130,8 @@ beforeEach(() => {
     state: 'unknown', alive: false, previewUrl: null, occupyingProjectName: null, restorable: null,
   })
   h.fetchSaveState.mockResolvedValue({ dirty: null })
+  h.fetchCompileState.mockResolvedValue('unknown')
+  h.checkWorkspace.mockResolvedValue(false)
 })
 afterEach(() => cleanup())
 
@@ -334,6 +348,155 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
     view.moveTo({ chatId: 'chat-A', projectId: 'pA' })
     await waitFor(() => expect(framedUrl()).toBe(RELAUNCH_URL))
     expect(frame()).not.toBe(before)
+    view.unmount()
+  })
+})
+
+/**
+ * THE FOURTH ARM: the project's own live preview, on a CHAT route (#192, U11).
+ *
+ * WHAT WAS BROKEN. Reload a build chat whose app is up — a bookmark, an F5, a browser restart —
+ * and the headline said the app was running while the pane framed nothing. Two independent
+ * reasons, and fixing either alone changes nothing on screen:
+ *
+ *  1. this surface fed the resolver `projectPreviewUrl: null`, so the read it was already making
+ *     could not reach the address at all;
+ *  2. every project-scoped arm is gated by `sessionBelongsToOpenProject`, which this route supplies
+ *     as `sessionProjectMatches` — a ref stamped only by a reattach or by the start control. A hard
+ *     load has done neither, so it is `false` and the arm is closed whatever it is fed.
+ *
+ * The scenarios below pin the pair, and the LOOP GUARD pins the third part: with the address now
+ * downstream of the poll's own answer, keeping the framed URL in the poll effect's dependency list
+ * makes the effect tear itself down on every successful read — its first statement is
+ * `setPolledPreview(null)` — for an unbounded stream of requests and a flapping iframe `src`. The
+ * count is asserted, not "settled": a self-re-arming effect settles too, one request at a time,
+ * forever.
+ */
+describe('BuilderPage — the project arm, and the hard load it exists for', () => {
+  /** A whole preview-state body, in the shape `fetchPreviewState` parses one into. */
+  const polled = (state: PreviewLifeState, restorable: boolean | null = null): PreviewState => ({
+    state,
+    alive: state === 'alive',
+    previewUrl: state === 'alive' ? PROJECT_URL : null,
+    occupyingProjectName: null,
+    occupyingProjectId: null,
+    restorable,
+  })
+  const probeCount = () => h.fetchPreviewState.mock.calls.length
+  /** One task turn, inside act — no clock is moved, so nothing here is a poll TICK. A macrotask
+   *  rather than a microtask, so a deferred probe answer (the loop guard's) actually lands. */
+  const flush = () => act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0) }) })
+
+  it('a hard load with no session frames the app the poll says is running', async () => {
+    // The whole bug, in one scenario: no anchor, no session, no press — just the route and the
+    // read it already makes. Before the fix this rendered the running-app copy over an empty pane.
+    h.fetchPreviewState.mockResolvedValue(polled('alive'))
+
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+
+    await waitFor(() => expect(framedUrl()).toBe(PROJECT_URL))
+    expect(document.querySelectorAll('iframe')).toHaveLength(1)
+    view.unmount()
+  })
+
+  it('THE LOOP GUARD: a successful read does not re-arm the effect that made it', async () => {
+    // Parts 1 and 2 are individually harmless and JOINTLY are the bug: once the address is a
+    // function of the probe's own answer, an effect that also depends on the address tears itself
+    // down on every successful read — its first statement is `setPolledPreview(null)` — for an
+    // unbounded stream of requests and a flapping iframe `src`.
+    //
+    // ★ THE ANSWER MUST ARRIVE ON A LATER TASK, AND THAT IS THE WHOLE TEST. With
+    // `mockResolvedValue` the mutant is INERT: the answer lands in the same flush as the effect's
+    // own `setPolledPreview(null)`, React coalesces the two into one commit, the dependency never
+    // observes the flicker and the loop never starts — verified, the reverted fix passed at
+    // exactly two reads. A real network answers a task later, so the `null` commit lands FIRST and
+    // the effect re-runs on it. One `setTimeout` is the difference between this guard and a green
+    // test that proves nothing.
+    h.fetchPreviewState.mockImplementation(
+      () => new Promise<PreviewState>((resolve) => { setTimeout(() => resolve(polled('alive')), 0) }),
+    )
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+    await waitFor(() => expect(framedUrl()).toBe(PROJECT_URL))
+
+    // ONE read got us here — the mount's. Asserted as a number rather than as "it stopped",
+    // because a self-re-arming effect stops too, between one request and the next, forever.
+    const settled = probeCount()
+    expect(settled).toBe(1)
+
+    // Twelve renders at the same identity, each given a full task turn to fire anything it armed.
+    for (let i = 0; i < 12; i += 1) {
+      view.rerenderSame()
+      await flush()
+    }
+
+    expect(probeCount()).toBe(settled)
+    expect(framedUrl()).toBe(PROJECT_URL) // and the src never flapped
+    view.unmount()
+  })
+
+  it('an SPA move to a sibling chat keeps the SAME frame — the app does not reload', async () => {
+    // The path that works today, and the one this unit must not regress. The project arm is a fact
+    // about the project, so a move between its conversations is not an invalidation: the address is
+    // byte-identical, the iframe node is the same node, and the app inside it never reloads.
+    h.fetchPreviewState.mockResolvedValue(polled('alive'))
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+    await waitFor(() => expect(framedUrl()).toBe(PROJECT_URL))
+    const before = frame()
+
+    view.moveTo({ chatId: 'chat-B' }) // same project, sibling conversation
+
+    await waitFor(() => expect(framedUrl()).toBe(PROJECT_URL))
+    expect(frame()).toBe(before)
+    view.unmount()
+  })
+
+  it('a live turn\'s preview still outranks the project address', async () => {
+    // The precedence is unchanged: the new arm is ranked LAST, so it can never displace the turn
+    // the citizen is watching. (This is also the scenario that exercises the fold — the turn's
+    // `preview` frame is one of the two lifecycle signals now folded into the probe epoch.)
+    h.fetchPreviewState.mockResolvedValue(polled('alive'))
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+    await waitFor(() => expect(framedUrl()).toBe(PROJECT_URL))
+
+    h.readTurnStream.mockImplementation(turnFraming(TURN_URL))
+    await send('add a chart')
+
+    await waitFor(() => expect(framedUrl()).toBe(TURN_URL))
+    view.unmount()
+  })
+
+  it('a `slot_taken` answer frames NOTHING, and the held arm renders instead', async () => {
+    // The arm's contract is `alive` and nothing else. Another project is holding the one slot, so
+    // there is no framable URL — and the pane says so rather than framing a guess.
+    h.fetchPreviewState.mockResolvedValue(polled('slot_taken', true))
+
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+
+    await waitFor(() => expect(screen.queryByTestId('app-pane-empty')).not.toBeNull())
+    expect(screen.getByTestId('app-pane-empty').getAttribute('data-workspace-state'))
+      .toBe('held-unattributed')
+    expect(frame()).toBeNull()
+    view.unmount()
+  })
+
+  it('a move to another project never frames the project it just left, not for one commit', async () => {
+    // WHAT THE STAMP MADE POSSIBLE, AND WHAT THE LABEL TAKES BACK. One instance of this component
+    // survives a project switch, and the poll's answer is state — the effect that drops it runs
+    // AFTER the commit. So the first render at the new project holds the previous project's live
+    // URL while the stamp above already points at the project now on screen: one commit of
+    // somebody else's app in this pane. `paneProps` records every bag the pane was handed, so the
+    // window is visible here even though it closes before any `waitFor` could look.
+    h.fetchPreviewState.mockImplementation(async (id: string) =>
+      id === 'pA' ? polled('alive') : polled('asleep', true),
+    )
+    const view = renderBuilderAt({ chatId: 'chat-A', projectId: 'pA', deps: deps() })
+    await waitFor(() => expect(framedUrl()).toBe(PROJECT_URL))
+    const seen = paneProps.length
+
+    view.moveTo({ chatId: 'chat-B', projectId: 'pB' })
+
+    await waitFor(() => expect(frame()).toBeNull())
+    expect(paneProps.slice(seen).map((props) => props.previewUrl)).not.toContain(PROJECT_URL)
     view.unmount()
   })
 })

@@ -22,11 +22,29 @@ import type { ChatMessage } from './messageTypes'
 export const CHARS_PER_TOKEN = 4
 
 /**
- * Twin of `context_window.NOMINAL_BINARY_TOKENS`. An image or PDF is worth roughly a thousand
- * tokens however many megabytes it is, so it is charged flat. Its byte length is the wrong
- * number by orders of magnitude.
+ * Twin of `context_window.NOMINAL_BINARY_TOKENS`. An IMAGE is worth roughly a thousand tokens
+ * however many megabytes it is, so it is charged flat. Its byte length is the wrong number by
+ * orders of magnitude.
+ *
+ * It used to cover PDFs too, and that is what #194 measured going wrong: a 61-page document
+ * really cost 153,342 tokens against a 1,600 charge. Documents now have their own number below.
  */
 export const NOMINAL_BINARY_TOKENS = 1_600
+
+/**
+ * Twin of `context_window.NOMINAL_PDF_TOKENS`, and the two MUST move together — this file's own
+ * rule, stated at the top: they are two readings of one scale.
+ *
+ * A flat charge sized to the largest document the upload cap admits (30 pages at a measured
+ * ~2,514 tokens a page), so the browser's warning cannot sit further from the wall than the
+ * server's refusal does. Charging a document the image nominal put the browser 47x under the
+ * server: a citizen would watch a comfortable meter and then be refused mid-sentence, which is
+ * the exact failure the twin rule exists to prevent.
+ */
+export const NOMINAL_PDF_TOKENS = 75_000
+
+/** Twin of `context_window.PDF_MEDIA_TYPE` — the one media type charged as a document. */
+export const PDF_MEDIA_TYPE = 'application/pdf'
 
 /**
  * Twin of `limits.SYSTEM_PROMPT_RESERVE` — room for the per-run system prompt, which
@@ -78,7 +96,11 @@ export function estimateConversationTokens(messages: readonly ChatMessage[]): nu
       } else if (part?.type === 'file' && part.kind === 'office') {
         tokens += Math.ceil((part.text || '').length / CHARS_PER_TOKEN)
       } else if (part?.type === 'file') {
-        tokens += NOMINAL_BINARY_TOKENS
+        // SPLIT BY MEDIA TYPE, exactly as `_tokens_in` does on the server: a document costs
+        // orders of magnitude more than an image and the two must not share a number. Anything
+        // that is neither falls to the image nominal — the smaller and more common shape, and
+        // the same fallback the server takes.
+        tokens += part.mediaType === PDF_MEDIA_TYPE ? NOMINAL_PDF_TOKENS : NOMINAL_BINARY_TOKENS
       }
       // Everything else — plan cards, steps, build banners — is chrome the browser draws, not
       // content the model is sent. The server's own measurement never sees them either.

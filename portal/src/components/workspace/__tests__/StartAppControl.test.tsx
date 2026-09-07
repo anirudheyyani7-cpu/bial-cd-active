@@ -209,9 +209,59 @@ describe('marked unavailable, never disabled', () => {
 
     await waitFor(() => expect(button().getAttribute('aria-disabled')).toBe('true'))
     expect(button().hasAttribute('disabled')).toBe(false)
-    expect(button().getAttribute('aria-label')).toMatch(/Launch Application — Starting your app/)
+    // STILL NAMED, AND THE NAME IS NOW THE VISIBLE WORDS. The `aria-label` override that used to
+    // carry it is gone, so the accessible name is what a sighted citizen reads.
+    expect(button().getAttribute('aria-label')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Starting your app…' })).toBe(button())
     button().focus()
     expect(document.activeElement).toBe(button())
+  })
+
+  it('★ the WORDS change while a start is in flight, not just an attribute (#210)', async () => {
+    // WHY THIS EXISTS. `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, and
+    // the spinning glyph was the only part of this button that moved when it was pressed — the
+    // label read "Launch Application" pressed and unpressed alike. With motion off, a citizen
+    // pressed the button and nothing whatsoever changed on screen.
+    api.relaunchPreview.mockImplementation(() => new Promise(() => {}))
+    renderControl(START, reportSpy())
+    expect(button().textContent).toContain(LAUNCH_LABEL)
+
+    fireEvent.click(button())
+    await waitFor(() => expect(button().textContent).toContain('Starting your app…'))
+
+    // The old label is GONE, not merely joined — otherwise "Launch Application Starting your app…"
+    // would pass this and read as two states at once.
+    expect(button().textContent).not.toContain(LAUNCH_LABEL)
+    expect(button().getAttribute('aria-busy')).toBe('true')
+    // `aria-disabled` is RETAINED alongside it: busy is not the same claim as unavailable, and
+    // dropping either one is a different regression.
+    expect(button().getAttribute('aria-disabled')).toBe('true')
+    expect(button().hasAttribute('disabled')).toBe(false)
+  })
+
+  it('★ adds NO live region of its own — the pane already announces this start', () => {
+    // ASM5's other half. `LivePreview` keeps one permanent polite region that speaks for every
+    // state of the pane this button starts, including "Starting your app…". A region here would
+    // be the same situation announced twice, which is the duplicate `Announcer.tsx` records as
+    // having broken three tests.
+    api.relaunchPreview.mockImplementation(() => new Promise(() => {}))
+    const { container } = renderControl(START, reportSpy())
+    fireEvent.click(button())
+
+    expect(container.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).toHaveLength(0)
+    // Paired with a presence assertion, or a control that rendered nothing at all would pass.
+    expect(container.querySelectorAll('button')).toHaveLength(1)
+  })
+
+  it('★ the retry verb gets its own in-flight words, not the start verb\'s', async () => {
+    // One `pendingLabel` per action, so the button cannot say "Starting your app…" for a press
+    // that was actually a retry.
+    api.relaunchPreview.mockImplementation(() => new Promise(() => {}))
+    renderControl(RETRY, reportSpy())
+    fireEvent.click(button())
+
+    await waitFor(() => expect(button().textContent).toContain('Trying again…'))
+    expect(button().textContent).not.toContain('Starting your app')
   })
 })
 
@@ -248,7 +298,10 @@ describe('the other two verbs, and the one that does not exist', () => {
     for (const action of actions) {
       const { container } = renderControl(action, reportSpy())
       expect(container.textContent ?? '').not.toMatch(destructive)
-      expect(container.querySelector('button')?.getAttribute('aria-label') ?? '').not.toMatch(destructive)
+      // AND THERE IS NO SECOND NAME TO AUDIT. The `aria-label` override is gone (`#210`), so the
+      // visible words above ARE the accessible name — asserting its absence is what keeps this
+      // check total rather than leaving a channel that could say a dangerous word unexamined.
+      expect(container.querySelector('button')?.hasAttribute('aria-label')).toBe(false)
       cleanup()
     }
   })
@@ -258,9 +311,9 @@ describe('★ the URL a successful start produced reaches the surface that frame
   it('hands the preview URL back before it reports the outcome', async () => {
     // WITHOUT THIS THE CONTROL DID NOTHING VISIBLE INSIDE A BUILD CHAT. That surface feeds the
     // address resolver's project-scoped arm with `null` — its own poll only runs over an ALREADY
-    // framed URL, by design — and its `relaunchedUrl` arm was fed by a Relaunch button retired.
-    // So a fresh start had no arm left to populate: the app came up in a container
-    // nothing framed, and the citizen saw a sentence where their app should have been.
+    // framed URL, by design — and its `relaunchedUrl` arm was fed by a Relaunch button that has
+    // since been retired. So a fresh start had no arm left to populate: the app came up in a
+    // container nothing framed, and the citizen saw a sentence where their app should have been.
     const report = reportSpy()
     api.relaunchPreview.mockResolvedValue({
       appId: 'a1', previewUrl: 'https://app.example/', status: 'ready',

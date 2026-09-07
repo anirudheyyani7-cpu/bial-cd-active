@@ -208,18 +208,21 @@ describe('App — the auth guard sits ABOVE the shell', () => {
   // discriminates is `loading`: a guard nested inside the layout paints the workspace's navbar and
   // two-column frame around the auth spinner, so somebody who may not be signed in at all watches
   // the frame of a workspace assemble around a spinner first. (Mutation-checked both ways.)
-  const spinner = () => screen.queryByLabelText('Loading')
+  // THE WAIT IS FOUND BY ITS WORDS, not by a labelled glyph (`#210`). The spinner is
+  // `aria-hidden` now — `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, so
+  // a named-but-frozen circle was the whole of what this screen said — and the sentence carries it.
+  const wait = () => screen.queryByText(/Getting things ready/)
 
   it.each([
     ['/chat/abc', 'chat-route'],
     ['/projects/p1', 'project-home'],
-  ])('while the session is still resolving at %s, no workspace frame is painted around the spinner', (path, pageId) => {
+  ])('while the session is still resolving at %s, no workspace frame is painted around the wait', (path, pageId) => {
     h.authed = false
     h.bootstrap.mockReturnValue(new Promise(() => {})) // never settles: hold the guard undecided
 
     renderAt(path)
 
-    expect(spinner()).toBeTruthy()
+    expect(wait()).toBeTruthy()
     expect(shell()).toBeNull()
     expect(screen.queryByTestId('navbar')).toBeNull()
     expect(screen.queryByTestId(pageId)).toBeNull()
@@ -263,5 +266,66 @@ describe('App — addresses outside a project get no workspace frame', () => {
     renderAt(path)
     expect(screen.getByTestId(testId)).toBeTruthy()
     expect(shell()).toBeNull()
+  })
+})
+
+describe('the boot / silent-refresh wait keeps WORDS and a busy state (#210)', () => {
+  /**
+   * Every live region in the document that is currently SAYING the given thing.
+   *
+   * Counted rather than merely looked for, because the two failure modes this arm has are
+   * opposite: none at all (the region was never mounted, or the sentence was deleted) and two
+   * (an `sr-only` copy added beside the visible sentence, which is that sentence read twice —
+   * `Announcer.tsx` records exactly that mistake). Only a COUNT catches both.
+   */
+  const regionsSaying = (re) =>
+    Array.from(document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).filter(
+      (el) => re.test(el.textContent ?? ''),
+    )
+
+  it('★ says what it is doing, marks the box busy, and does it in exactly ONE region', () => {
+    // `index.css` suppresses `.animate-spin` under `prefers-reduced-motion`, so this full-bleed
+    // white screen used to be a stationary circle with no sentence anywhere on it.
+    h.authed = false
+    h.bootstrap.mockReturnValue(new Promise(() => {})) // never settles: hold the guard undecided
+
+    renderAt('/projects')
+
+    const sentence = screen.getByText('Getting things ready…')
+    expect(sentence).toBeTruthy()
+    // Said ONCE. Two nodes carrying it is one sentence rendered twice to anything reading the DOM.
+    expect(screen.getAllByText('Getting things ready…')).toHaveLength(1)
+    const regions = regionsSaying(/Getting things ready/)
+    expect(regions).toHaveLength(1)
+    expect(regions[0].contains(sentence)).toBe(true)
+    // A property, not a speech — it must not be the thing carrying the meaning.
+    expect(document.querySelector('[aria-busy="true"]')).toBeTruthy()
+  })
+
+  it('★ the region is already in the tree, EMPTY, before the text arrives — and it is the SAME node', () => {
+    // THE ARM ASM5 EXISTS FOR. A live region inserted together with its first text is missed
+    // entirely by several reader-and-browser combinations, so the region has to outlive the wait
+    // rather than arrive with it. Mount it together with its text — render it inside
+    // `AuthLoading`, or gate the whole `<div role="status">` on `status === 'loading'` — and the
+    // empty-region assertion below goes red. A leaf-component fix is precisely what breaks here.
+    renderAt('/projects/p1') // signed in: the guard is decided, no wait running
+
+    const before = screen.getByTestId('auth-wait')
+    expect(before.textContent).toBe('')
+    expect(regionsSaying(/Getting things ready/)).toHaveLength(0)
+    // Paired with a liveness assertion: a crashed render has an empty document, and "the region
+    // is empty" would pass against it.
+    expect(screen.getByTestId('project-home')).toBeTruthy()
+
+    // THE SILENT REFRESH: a later navigation finds the cached session gone. The guard is NOT
+    // remounted — both addresses are children of one pathless layout route — so this is the real
+    // product path in which a settled region flips back to waiting.
+    h.authed = false
+    h.bootstrap.mockReturnValue(new Promise(() => {}))
+    goTo('/chat/abc')
+
+    expect(screen.getByTestId('auth-wait')).toBe(before)
+    expect(before.textContent).toContain('Getting things ready…')
+    expect(regionsSaying(/Getting things ready/)).toHaveLength(1)
   })
 })

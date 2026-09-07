@@ -26,6 +26,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -170,10 +171,27 @@ export default function WorkspaceToolbar({
         </span>
       )}
 
-      {/* RENAME IS HERE ON PURPOSE. No board draws a rename control anywhere, but a shipped
-          capability is not deleted because a board omits it, so it lives next to the name it
-          edits, at the smallest weight the row has. */}
-      {!isChat && heading.projectId && (
+      {/* RENAME SURVIVES THE REBUILD, moved here from the rail's header once that header was
+          replaced by the board's three sections, none of which is a project name. No board draws
+          a rename control anywhere, but a shipped capability is not deleted because an older
+          board omits it, so it lives next to the name it edits, at the smallest weight the row
+          has.
+
+          WHAT GATES IT IS THE NAME, NOT THE ID. `projectId` is the route param — non-null even for
+          an address that never resolved to a project at all, including a mangled paste that 422s
+          at the boundary — so gating on it drew a pencil over a page with no project behind it,
+          whose press was a measured no-op (rename is nullable and optional at the call site). The
+          NAME is the only field on this heading that is an answer from the project's own fetch, so
+          it is the one that means "a project loaded", on both routes that publish a heading.
+          Explicitly against `null` rather than truthy: a name is a string, and `'' && …` renders a
+          stray text node instead of nothing.
+
+          IT MUST NOT SPREAD TO THE BACK CONTROL ABOVE. That control's whole job is to survive the
+          branch where nothing loaded — it is the way out of a dead address — and gating it on the
+          same fact would strand the citizen on the page. For the same reason the breadcrumb keeps
+          its "Your project" fallback: a missing name silences the pencil, and nothing else in the
+          row. */}
+      {!isChat && heading.projectName !== null && (
         <button
           type="button"
           onClick={() => readActions().rename?.()}
@@ -271,12 +289,14 @@ export default function WorkspaceToolbar({
 }
 
 /**
- * THE SAVE CONTROL, in three states. Clean is an outlined "Saved" chip; dirty is a teal outline on
- * pale teal with a 6px amber dot (not a filled button — a loud control gets ignored) — one of only
- * two accent-colour uses on the canvas. `dirty === null` means "could not tell" and renders
+ * THE SAVE CONTROL, in the board's three states. Clean is an outlined "Saved" chip; dirty is a
+ * teal outline on pale teal with a 6px amber dot, one of only two accent-colour uses on the
+ * canvas — a loud filled control gets ignored. `dirty === null` means "could not tell" and renders
  * nothing, never "Saved": the git check costs two executions, so a stopped project has no answer.
- * With no action published it renders a real `<span>`, not a button, so nothing invites a no-op
- * press — both surfaces publish `onSave` today, so this is only the fallback shape.
+ * With no action published it is a real `<span>`, not a button, so nothing invites a no-op press.
+ * While it works it now SHOWS that too, with `animate-spin` — one of the three utilities
+ * `index.css`'s reduced-motion block suppresses — asserted by class name because jsdom cannot
+ * evaluate a media query and a label-only assertion would pass whether or not anything moved.
  */
 function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () => WorkspaceActions }) {
   const { dirty, saving, error, canSave } = save
@@ -288,8 +308,21 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
   const shell = `inline-flex items-center gap-[7px] whitespace-nowrap rounded-[9px] border px-[13px] py-1.5 text-[12.5px] ${look}`
   const body = (
     <>
-      <Save size={14} />
-      {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+      {/* THE WAIT'S BOX — the spinner and the one sentence that describes it, together inside the
+          polite region. Wrapping the sentence is how it is announced; a second `sr-only` copy of a
+          sentence already on screen is that sentence read twice (`Announcer.tsx`). The region is a
+          PERMANENT child of the control — the glyph is always in it — so it is in the accessibility
+          tree before any text arrives, which is the order several reader-and-browser combinations
+          need (`TurnBanner.tsx`); only its TEXT appears and disappears.
+
+          "Save" and "Saved" stay outside it on purpose: they are the control's label, not the wait,
+          and `dirty` flips on its own while a turn edits files — announcing every flip would be
+          noise in the same region the wait needs to cut through. */}
+      <span role="status" aria-live="polite" className="inline-flex items-center gap-[7px]">
+        {saving ? <Loader2 data-testid="save-spinner" size={14} className="animate-spin" /> : <Save size={14} />}
+        {saving ? 'Saving…' : null}
+      </span>
+      {!saving && (dirty ? 'Save' : 'Saved')}
       {dirty && !saving && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" aria-hidden="true" />}
     </>
   )
@@ -310,6 +343,11 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
           data-testid="save-project"
           // `aria-disabled`, NEVER `disabled`: a disabled control throws focus to the document body.
           aria-disabled={saving || dirty === false}
+          // THE THIRD REGISTER, and a silent one: `aria-busy` is what a reader consults when asked
+          // rather than something it speaks, so it costs the wait's sentence nothing. `undefined`
+          // when idle — `aria-busy={false}` would ship a permanent `aria-busy="false"` on a control
+          // that is not waiting, which is a state where the honest answer is no answer.
+          aria-busy={saving || undefined}
           onClick={() => {
             if (saving || dirty === false) return
             readActions().save?.()
@@ -319,7 +357,7 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
           {body}
         </button>
       ) : (
-        <span data-testid="save-state" className={shell}>
+        <span data-testid="save-state" className={shell} aria-busy={saving || undefined}>
           {body}
         </span>
       )}

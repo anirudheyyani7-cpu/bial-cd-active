@@ -48,6 +48,19 @@ def _new_maintenance_engine(url: str | URL) -> AsyncEngine:
         url,
         isolation_level="AUTOCOMMIT",
         poolclass=NullPool,
+        # Same no-parameters-in-logs rule as `db/base.py` (#187). What it covers here is the
+        # BOUND values this engine's statements carry — the registry reads and writes that ride
+        # the same connection.
+        #
+        # IT DOES NOT COVER THE ROLE PASSWORD, AND MUST NOT BE READ AS COVERING IT. `CREATE ROLE
+        # ... PASSWORD` is DDL, so asyncpg cannot bind the password: `names.quote_password_literal`
+        # interpolates it into the statement TEXT, and `hide_parameters` hides the
+        # `[parameters: ...]` appendix, never the `[SQL: ...]` one. The guard that actually keeps
+        # that password out of the log is `provision._scrubbed_role_failure`, which replaces the
+        # exception with one carrying only the SQLSTATE and drops the original with `from None`.
+        # Said explicitly because an earlier version of this comment claimed the flag protected
+        # the password — and a reader who believed it could delete the guard that does.
+        hide_parameters=True,
         # Bound every hang the way every other external client here does (Foundry 10s
         # connect, Redis 2s). asyncpg spelling: `timeout` is the connect ceiling;
         # per-session `statement_timeout`/`lock_timeout` go through `server_settings`.

@@ -28,6 +28,80 @@ RECLAMATION_CRON: Final = "*/15 * * * *"
 FLEET_THRESHOLD_EVENT: Final = "sandbox_fleet_over_threshold"
 PASS_COMPLETED_EVENT: Final = "sandbox_reclamation_pass_completed"
 
+#: A THIRD NAME, because it answers a third question: WHICH FLEET was any of that about? The two
+#: events above describe a fleet without ever naming one, and a worker has been found configured
+#: against a subscription retired two rotations earlier — it would have reported an empty fleet,
+#: truthfully, about somebody else's subscription. Nothing in the platform said so. This is the
+#: line an operator greps to confirm the worker they are looking at is judging the containers
+#: they are looking at.
+FLEET_ENUMERATED_EVENT: Final = "sandbox_reclamation_fleet"
+
+
+#: How much of `WorkerPass.detail` the fleet note may take. The column is `String(512)`, and the
+#: reason a pass gives for itself matters more than the fleet it gave it about — so the note is
+#: what gets trimmed if the two together would overflow, never the reason.
+_DETAIL_LIMIT: Final = 512
+
+
+def _enumerated_fleet() -> str | None:
+    """The fleet this pass answers about — `resource_group/managed_environment` — or `None`.
+
+    NO SUBSCRIPTION ID, EVER. This string is written to `WorkerPass.detail`, which an admin
+    endpoint reads back into a response body; a subscription id is an Azure account identifier, so
+    it belongs in the server-side log beside it and never in a response. The resource group and the
+    managed environment are what distinguish one deployment's fleet from another's, which is the
+    question a bare count could not answer.
+    """
+    sandbox = settings.sandbox
+    if sandbox is None:
+        # Nothing was enumerated and nothing could have been: `unconfigured` is already the
+        # reason on the record, and inventing a fleet name here would be a claim nobody made.
+        return None
+    return f"fleet {sandbox.resource_group}/{sandbox.managed_environment_name}"
+
+
+def _detail_with_fleet(detail: str | None) -> str | None:
+    """The pass's own reason, plus the fleet it was a reason ABOUT.
+
+    `scanned: 0` READ WITHOUT A FLEET IS UNFALSIFIABLE. A pass that declined and a pass
+    that swept the wrong subscription both report zero, and an operator holding only the count
+    cannot tell which they are in — so every record says which fleet the number describes.
+    """
+    fleet = _enumerated_fleet()
+    joined = "; ".join(part for part in (detail, fleet) if part)
+    return joined[:_DETAIL_LIMIT] or None
+
+
+def _log_the_fleet() -> None:
+    """Name the fleet this tick is about, once, before anything decides whether to look at it.
+
+    BEFORE THE FLAG GATE, DELIBERATELY, and that ordering is the whole fix. The worker that
+    exposed this was misconfigured in both halves at once — the flag was off AND the subscription
+    was a dead one — so a line emitted only on a pass that RUNS would never have been emitted at
+    all, on the exact deployment that needed it. A declined pass is still a worker asserting an
+    opinion about a fleet; it should have to say which.
+
+    AND THE SUBSCRIPTION ID GOES HERE, WHICH IS THE OTHER HALF OF THE SPLIT. `_enumerated_fleet`
+    keeps it out of `WorkerPass.detail` because an admin endpoint reads that column back into a
+    response body; this is the server-side log, where an Azure account identifier belongs and
+    where it is the only field precise enough to settle "which subscription is this worker on".
+
+    Costs structlog and a settings read — nothing the flag gate was protecting the process from.
+    """
+    sandbox = settings.sandbox
+    if sandbox is None:
+        # Genuinely nothing to name: no ARM access at all. `_off_duty_because` is about to say
+        # `unconfigured`, which is the whole story, and a fleet line here would invent one.
+        return
+    _log.info(
+        FLEET_ENUMERATED_EVENT,
+        subscription_id=sandbox.subscription_id,
+        resource_group=sandbox.resource_group,
+        managed_environment=sandbox.managed_environment_name,
+        reclaim_enabled=sandbox.reclaim_enabled,
+        reclaim_destroy=sandbox.reclaim_destroy,
+    )
+
 
 def _off_duty_because() -> str | None:
     """Why this pass must not run, or `None` when it may.
@@ -49,7 +123,17 @@ def _off_duty_because() -> str | None:
     schedule=[{"cron": RECLAMATION_CRON, "schedule_id": RECLAMATION_SCHEDULE_ID}],
 )
 async def reclaim_abandoned_sandboxes() -> None:
-    """One reclamation pass. Reports; destroys nothing until the destroy flag is turned on."""
+    """One reclamation pass. Reports; destroys nothing until `reclaim_enabled` and
+    `reclaim_destroy` are both on. THE FLAG GATE COMES FIRST, before any heavy import — the same
+    contract `deploy_reconcile` set, so a disabled task costs only structlog, the broker and the
+    settings profile. NOTHING IS SWALLOWED: a raise is caught by the receiver, logged with a
+    traceback, recorded as a failed pass, and re-driven next tick — swallowing would hide the one
+    signal that tells a broken pass from an absent one."""
+    # FIRST, AND OUTSIDE THE GATE. A worker that declines every tick still has a fleet it is
+    # declining ABOUT — reporting nothing without naming it is what let a worker pointed at a
+    # retired subscription read as a healthy quiet fleet, with nothing on record to say which
+    # subscription it was judging.
+    _log_the_fleet()
     off_duty = _off_duty_because()
     if off_duty is not None:
         _log.info("sandbox_reclamation_pass_disabled", reason=off_duty)
@@ -249,11 +333,12 @@ def _threshold() -> int:
 async def _record_pass(*, outcome: str, counts: dict[str, int], detail: str | None) -> None:
     """Write the pass record. EVERY outcome, including the boring ones.
 
-    A zero-candidate pass still writes (quiet fleet vs. dead worker are otherwise the same
-    observation); a declined pass writes (so "off" is visible, not inferred from silence); a
-    failed pass writes (a pass that raises every tick must not look like one that never ran).
-    ITS OWN SESSION, not the caller's: runs outside any request and must land even when the
-    pass it describes has just failed."""
+    A zero-candidate pass still writes (quiet fleet vs. dead worker read the same); a declined pass
+    writes (so "off" is visible, not inferred); a failed pass writes (a pass that raises every tick
+    must not read as one that never ran). EVERY RECORD NAMES ITS FLEET too: `detail` says which
+    resource group and environment the counts describe, since omitting it would let a
+    wrong-subscription sweep read as a clean one. ITS OWN SESSION, not the caller's: runs outside
+    any request and must land even when the pass it describes has just failed."""
     from src.db.base import async_session_factory
     from src.db.models.worker_pass import PassOutcome, WorkerPass
 
@@ -265,7 +350,7 @@ async def _record_pass(*, outcome: str, counts: dict[str, int], detail: str | No
                     outcome=PassOutcome(outcome),
                     finished_at=dt.datetime.now(dt.UTC),
                     counts=counts,
-                    detail=detail,
+                    detail=_detail_with_fleet(detail),
                 )
             )
             await db.commit()

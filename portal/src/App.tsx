@@ -10,15 +10,29 @@ import ProjectPage from './pages/ProjectPage'
 import WorkspaceShell from './components/workspace/WorkspaceShell'
 import { isAuthenticated, bootstrapSession } from './utils/auth'
 
-// Full-screen silent-refresh spinner. Reuses the app's inline-SVG animate-spin
-// idiom (LoginPage) so we don't introduce a new shared component.
+/**
+ * The boot / silent-refresh wait — WORDS, not only a spinner (`#210`).
+ *
+ * `index.css`'s reduced-motion block suppresses `.animate-spin` outright, so for a citizen who
+ * asks for less motion this screen was a stationary circle and nothing else: a full-bleed white
+ * page with no sentence on it, at the one moment nothing else is on screen to explain the pause.
+ * The sentence is what carries the wait now and the glyph is decoration beside it — `aria-hidden`
+ * rather than `aria-label="Loading"`, because a named spinner next to a sentence saying the same
+ * thing is the wait announced twice.
+ *
+ * `aria-busy` sits on the box and announces nothing; the words are the announcement, read out of
+ * the permanent region in `RequireAuth` below.
+ */
 function AuthLoading() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
-      <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" aria-label="Loading">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-      </svg>
+    <div className="min-h-screen flex items-center justify-center bg-white" aria-busy="true">
+      <div className="flex flex-col items-center gap-3">
+        <svg className="animate-spin h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+        <p className="text-sm font-medium text-neutral">Getting things ready…</p>
+      </div>
     </div>
   )
 }
@@ -58,8 +72,28 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }, [location.key])
 
   if (status === 'redirect') return <Navigate to="/login" replace />
-  if (status === 'loading') return <AuthLoading />
-  return children
+
+  // THE POLITE REGION IS PERMANENT AND THE WAIT BOX IS WHAT APPEARS INSIDE IT (ASM5).
+  //
+  // A live region inserted together with its text is missed entirely by several reader-and-browser
+  // combinations — `TurnBanner` and `LivePreview` both record it — and this wait has no leaf of its
+  // own that outlives it, so the region cannot live in `AuthLoading`. It lives here, where the
+  // guard is mounted whichever way the session resolved, and only its contents change. That is
+  // what makes the SILENT REFRESH audible: a later navigation flips a decided guard back to
+  // `loading` against a region that has been sitting in the accessibility tree since the first
+  // paint.
+  //
+  // It WRAPS the visible sentence rather than adding an `sr-only` copy of it. Two elements
+  // carrying one sentence is that sentence read twice to anything reading the DOM, and
+  // `Announcer.tsx` records that writing it the other way broke three tests.
+  return (
+    <>
+      <div role="status" aria-live="polite" data-testid="auth-wait">
+        {status === 'loading' ? <AuthLoading /> : null}
+      </div>
+      {status === 'ok' ? children : null}
+    </>
+  )
 }
 
 export default function App() {

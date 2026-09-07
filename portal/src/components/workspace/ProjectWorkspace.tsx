@@ -38,6 +38,7 @@ import {
   useWorkspaceProject,
 } from './workspaceChannel'
 import type { ReclaimRequest } from './workspaceChannel'
+import { announceDeploymentChanged } from '../../hooks/usePublishState'
 import { resolvePreviewAddress } from '../../utils/previewAddress'
 import { handOverWorkspace, saveProject } from '../../utils/buildSessionApi'
 import type { HandoverStep, ReclaimBlocked } from '../../utils/buildSessionApi'
@@ -184,12 +185,12 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   /**
-   * PUSH THE WORKSPACE TO DURABLE STORAGE, from the project screen.
-   *
-   * The same call the conversation surface makes, deliberately not shared with it — only one
-   * of the two is ever mounted per address. Surfaced, never swallowed: a save that fails
-   * silently leaves the citizen believing their work is stored, so the server's own error
-   * copy is passed through rather than reworded.
+   * PUSH THE WORKSPACE TO DURABLE STORAGE from the project screen — the conversation surface's own
+   * call, unshared because only one is mounted per address. SURFACED, NEVER SWALLOWED: a silent
+   * failure leaves the citizen believing their work is stored, so the server's error copy is passed
+   * through. TWO READS GO STALE, NOT ONE — `workspace.refresh()` covers the save chip; the rail's
+   * last-saved row and the toolbar's publish chip come off the deployment read, whose `savedHead`
+   * and `savedAt` this save just changed — so it raises the shared nudge, never a second reader.
    */
   const save = useCallback(async () => {
     if (saving) return
@@ -198,6 +199,7 @@ export default function ProjectWorkspace(props: ProjectWorkspaceProps) {
     try {
       await saveProject(project.id)
       workspace.refresh()
+      announceDeploymentChanged(project.id)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Could not save your work. Try again.')
     } finally {

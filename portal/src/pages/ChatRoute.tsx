@@ -11,12 +11,16 @@
  *  2. 404 + `?projectId=` → a brand-new chat: its row is written inside the FIRST TURN's own
  *     transaction (no separate create round-trip), so it opens at
  *     `/chat/{clientId}?projectId=…&kind=…` and rewrites to the bare path once that turn commits.
- *  3. 404 + no query → the chat is gone (or never real). Back to /projects.
+ *  3. 404 + no query → the chat is gone (or never real). Back to /projects, saying so on arrival
+ *     — but only when the platform actually knows it is gone; see `goneNoticeFor`.
  *
  * The breadcrumb's project name never gates rendering — a chat whose project vanished still
  * shows its transcript, with `projectName: null`. Both pages keep their own hydration fetch, so
  * this route's `getConversation` is a deliberate second GET, cheap at pilot scale; collapsing it
  * would mean restructuring both pages' hydration effects, deferred past this phase.
+ *
+ * The one skipped request is the one guaranteed to fail: a freshly minted chat has no row yet.
+ * See `freshlyMinted` below for why the skip is keyed on router state, not the query.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
@@ -26,6 +30,8 @@ import { getConversation } from '../utils/conversationApi'
 import { getProject } from '../utils/projectApi'
 import { markChatOpened } from '../utils/observe'
 import { recallChatProject, rememberChatProject } from '../utils/chatProjectMemory'
+import { ApiError } from '../utils/apiError'
+import { PROJECT_GONE_NOTICE } from './ProjectsPage'
 import type { Project } from '../utils/projectApi'
 
 export type ChatKind = 'plan' | 'build'
@@ -43,7 +49,39 @@ function kindFromServer(raw: unknown): ChatKind {
 type Resolution =
   | { status: 'loading' }
   | { status: 'ready'; chatId: string; kind: ChatKind; projectId: string | null; title: string | null }
-  | { status: 'gone' }
+  // `notice` is what the bounce SAYS, and `null` is a real answer rather than a missing one — see
+  // `goneNoticeFor`. Carried on the resolution instead of decided at the redirect, because the
+  // redirect cannot see which of the three failures got it here.
+  | { status: 'gone'; notice: string | null }
+
+/**
+ * THE FAILURE THAT EARNS THE SENTENCE, AND THE TWO THAT DO NOT (`#206`).
+ *
+ * The catch below is reached by three different things and treats them alike, correctly: they all
+ * bounce, because leaving a citizen on a spinner with no answer is worse than moving them somewhere
+ * that works. What they do NOT share is whether the platform actually knows anything. A 400 is the
+ * server saying that id is not an id — the mangled-link case `#207` is about, and the one status
+ * this catch actually sees. A 500 is the server failing to look. A DROPPED CONNECTION never reached
+ * it at all — `fetch` rejects with a plain `TypeError`, which is not an `ApiError` and carries no
+ * status, and telling someone their chat is gone because their wifi blinked asserts a deletion that
+ * never happened.
+ *
+ * So the notice is narrowed to the arm that knows, and the other two bounce in silence.
+ *
+ * 400 IS THE ONE THAT REACHES HERE, and this predicate once named two statuses that could not.
+ * `GET /v1/conversations/{id}` validates the id by hand against `_ID_RE`
+ * (`backend/src/api/v1/conversations/router.py`) and answers a malformed token with **400**; it
+ * declares the path param as a plain `str`, so FastAPI never validates it and **422 is unreachable**.
+ * A **404** never arrives either — `getConversation` answers one with `null` (`conversationApi.ts`),
+ * which the arm above this catch handles. So the original `404 || 422` matched nothing a citizen
+ * could actually produce: a chat link a mail client had wrapped (a space, a `<`, a trailing `.`)
+ * bounced to the list in SILENCE, which is the exact failure `#207` names. 404 is kept beside 400
+ * because it is the same class of answer and costs nothing if that null-ing ever changes; the dead
+ * 422 is gone.
+ */
+function goneNoticeFor(err: unknown): string | null {
+  return err instanceof ApiError && (err.status === 400 || err.status === 404) ? PROJECT_GONE_NOTICE : null
+}
 
 export default function ChatRoute() {
   const { chatId } = useParams()
@@ -134,14 +172,16 @@ export default function ChatRoute() {
           ready(kindFromQuery(queryKind), queryProjectId)
           return
         }
-        setResolution({ status: 'gone' })
-      } catch {
+        // The row is genuinely absent — `getConversation` answers a 404 with `null` rather than by
+        // throwing, so this arm, not the catch below, is the ordinary dead-bookmark case.
+        setResolution({ status: 'gone', notice: PROJECT_GONE_NOTICE })
+      } catch (err) {
         // A genuine load failure (401 is handled by the auth gate, 403-suspended by the
         // interceptor). Fall back to the query if we have one, rather than stranding
         // the user on a spinner.
         if (!alive) return
         if (queryProjectId) ready(kindFromQuery(queryKind), queryProjectId)
-        else setResolution({ status: 'gone' })
+        else setResolution({ status: 'gone', notice: goneNoticeFor(err) })
       }
     })()
 
@@ -194,7 +234,17 @@ export default function ChatRoute() {
     }
   }, [projectId])
 
-  if (resolution.status === 'gone') return <Navigate to="/projects" replace />
+  // The bounce is unconditional; only the sentence it carries is not. `undefined` leaves the
+  // history entry stateless, which is what a silent arrival looks like on the other side.
+  if (resolution.status === 'gone') {
+    return (
+      <Navigate
+        to="/projects"
+        replace
+        state={resolution.notice === null ? undefined : { notice: resolution.notice }}
+      />
+    )
+  }
 
   if (resolution.status === 'loading') {
     // `flex-1 min-h-0`, NOT `min-h-screen`. This arm renders inside the workspace shell's outlet
@@ -202,16 +252,35 @@ export default function ChatRoute() {
     // viewport height cannot shrink into it, so it overflows and the spinner is clipped low by the
     // navbar's height on every cold chat open. The shell owns the one height model now — surfaces
     // fill the column they are given.
+    // AND IT SAYS SO IN WORDS (#210, R11). The three dots are `animate-bounce`, which the
+    // reduce-motion block now freezes — so for a citizen who asked their operating system to stop
+    // motion this arm was three static dots and nothing to read. D3 enumerated four wordless waits
+    // and gave them all sentences; this is a fifth, in a file that unit did not reach.
+    //
+    // The sentence IS the announcement: `role="status"` wraps it rather than an `sr-only` copy
+    // sitting beside it, because two elements carrying one sentence is that sentence read twice
+    // (`Announcer.tsx` records it breaking three tests). The old `aria-label` is gone with it —
+    // a label on a region whose text says the same thing is the same duplication in another
+    // spelling, and the visible words are what a reader should get.
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center bg-bial-bg">
-        <div className="flex gap-1.5" role="status" aria-label="Loading chat">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="w-2 h-2 bg-primary/60 rounded-full animate-bounce"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
+        <div
+          className="flex flex-col items-center gap-3"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          data-testid="chat-wait"
+        >
+          <div className="flex gap-1.5" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-2 h-2 bg-primary/60 rounded-full animate-bounce"
+                style={{ animationDelay: `${i * 0.15}s` }}
+              />
+            ))}
+          </div>
+          <p className="text-sm font-medium text-neutral">Loading this chat…</p>
         </div>
       </div>
     )

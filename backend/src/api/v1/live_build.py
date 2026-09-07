@@ -7,12 +7,19 @@ SCOPE. The lock is keyed on the USER, not the app — a bare `lock_is_held` answ
 building ANYTHING?", the wrong question when one user has several projects. Pass `app_id` for the
 narrow per-app answer; every current caller does. Omitting it is a decision to justify.
 
-WHY THIS EXISTS — A GAP STILL OPEN. A passing guard is not "no container is serving this app": a
-relaunched preview holds no lock, so `lock_is_held` is False while a container still serves it,
-and a delete proceeds with that container left running a deleted project's UI. Closing it needs
-the preview's stay of execution and a sandbox teardown call the delete path has no `SandboxDep`
-for. Pinned by `test_a_relaunched_preview_does_not_block_the_delete_and_is_not_torn_down` — do
-not mark it closed because this guard shipped.
+WHY THIS EXISTS — do not read a passing guard as "no container is serving this app". A
+relaunched preview holds no lock by design (`manager.py::relaunch_preview` releases the
+per-user lock on exit; the container's lifetime is owned by an explicit stay of execution on
+the registry hash instead, `locks.py::grant_stay_of_execution`), so the container-still-serving
+state is precisely the state where `lock_is_held` is False — this guard returns without
+refusing, and it is the CALLER's job to deal with whatever is still running.
+
+CLOSED ON THE DELETE PATH, AND ONLY THERE. `projects.delete_project` reaps the container
+itself: post-commit it asks the registry whether it still names this project's app and, if
+so, hands it to `reap_user` under the per-user start lock — best-effort, so a busy start lock,
+an unconfigured sandbox, or a Redis blip still leave the container to the scheduled sweep.
+Submit and deploy still only want the refusal, so the gap stays open for them. Pinned by
+`test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`.
 """
 
 from __future__ import annotations
@@ -68,11 +75,11 @@ def reclaim_blocked_response(exc: SandboxReclaimBlockedError) -> JSONResponse:
     """Format the blocked-reclaim 409. Every entry point that can raise it comes through here,
     so they cannot drift into differently-worded answers.
 
-    `dirty=None` (the container would not answer) reads as unsaved on purpose — the copy hedges
-    rather than promising, since claiming work is safe when nobody could check is the one wrong
-    answer here. Two message shapes because only one situation is about saving: a project whose
-    agent is mid-build cannot be released until the build stops, so "has unsaved changes" would
-    point the user at a Save button the server will refuse."""
+    Names the PROJECT, not the mechanism. `dirty=None` (the container would not answer) reads
+    as unsaved on purpose: claiming work is safe when nobody could check is the one wrong answer
+    here. Two message shapes because only one situation is about saving — a project whose agent
+    is mid-build cannot be released until the build stops, so "has unsaved changes" would point
+    at a Save button the server will refuse."""
     if exc.building:
         message = f"“{exc.project_name}” is still being built."
     else:

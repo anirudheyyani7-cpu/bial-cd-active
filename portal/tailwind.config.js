@@ -185,12 +185,23 @@ export default {
       },
       animation: {
         /**
-         * THE APP PANE LEAVING AND RETURNING — `T2Sliding`'s whole board is this movement ("the
-         * app card is sliding out to the right and fading as it goes"), annotated to say it is
-         * the MOVEMENT, not a broken screen: "nothing about the app is stopped or reloaded — it
-         * is only taken off the screen." A TRANSITION, NOT A LIBRARY: the pane is one element
-         * whose visibility the shell already toggles, so a keyframe pair is the whole mechanism —
-         * suppressed under `prefers-reduced-motion` in `index.css`, like every other one here.
+         * THE APP PANE LEAVING AND RETURNING. `T2Sliding` is a whole board about this one
+         * movement — "the app card is sliding out to the right and fading as it goes" — and its
+         * annotation is the point: it is the MOVEMENT, not a broken screen, and "nothing about
+         * the app is stopped or reloaded — it is only taken off the screen."
+         *
+         * A KEYFRAME PAIR, NOT A MOTION RUNTIME. The pane is one element whose visibility the
+         * shell already toggles, so two keyframes are the whole mechanism and nothing imperative
+         * animates it. (`tailwindcss-animate`, in `plugins` below, is present only for the Radix
+         * overlays' `animate-in` / `animate-out` enter-and-exit utilities; it does not drive this.)
+         *
+         * REDUCED MOTION — WHAT IS ACTUALLY TRUE. Both keyframe animations are suppressed by the
+         * `@media (prefers-reduced-motion: reduce)` block in `index.css`, which ALSO suppresses
+         * `.animate-spin`, `.animate-pulse` and `.animate-bounce`. That block and
+         * `usePrefersReducedMotion()` — used by `ToolActivityLine`, `OfferStrip` and
+         * `StopTurnControl` — are the portal's only two mechanisms; there is no third, and
+         * `src/__tests__/reducedMotion.test.ts` pins that fact so it cannot again be claimed
+         * universal while dozens of other spinners quietly ignore the preference.
          */
         'pane-leave': 'pane-leave 0.24s ease-in forwards',
         'pane-return': 'pane-return 0.24s ease-out',

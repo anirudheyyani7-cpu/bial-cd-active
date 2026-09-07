@@ -19,20 +19,25 @@
  * `checkWorkspace` are not called from here at all — they belong to a surface with a live turn
  * behind it, and both cost a container exec.
  *
- * Two consequences of the timer, worth stating because features depend on them: `starting`
- * reaches `running` with no user gesture, since the server holds the state and the pane arrives
- * at the running app on its own; and the thirty-minute stay can lapse unnoticed, because
- * `RELAUNCH_PREVIEW_STAY_SECONDS` is granted at relaunch and renewed only by a turn's own
- * deadline writers, so a reader on the start-then-read path can outlast it — the next read
- * returns `asleep` and the pane offers the start again, one press to recover, nothing lost.
+ * `starting`'s successor arrives with no user gesture, so it is polled faster, at
+ * {@link STARTING_PROBE_MS} rather than {@link PREVIEW_PROBE_MS} — and `nextProbeCadence` owns
+ * that window and its bound. A read that throws still spends from it (`spendProbeCadence`), and an
+ * accelerated tick skips `fetchSaveState` even on `alive`, since a container seconds old is still
+ * booting. The thirty-minute stay can still lapse unnoticed, since `RELAUNCH_PREVIEW_STAY_SECONDS`
+ * is renewed only by a turn's own deadline writers — the next read returns `asleep`, one press to
+ * recover, nothing lost.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchPreviewState, fetchSaveState, samePreviewState, sameSaveState } from '../../utils/buildSessionApi'
 import type { PreviewState, SaveState } from '../../utils/buildSessionApi'
 import {
-  PREVIEW_PROBE_MS,
+  BACKGROUND_CADENCE,
+  STARTING_PROBE_MS,
   isTerminalReading,
+  nextProbeCadence,
   resolveWorkspaceState,
+  spendProbeCadence,
+  type ProbeCadence,
   type StartOutcome,
   type WorkspaceState,
 } from './workspaceState'
@@ -112,15 +117,33 @@ export function useWorkspaceState({
     // the reading they already had.
     let latest = 0
     let timer: ReturnType<typeof setInterval> | null = null
+    // WHAT THE ANSWERS SO FAR HAVE DECIDED ABOUT THE CADENCE, and what the running timer was
+    // actually armed with. Two variables because they answer different questions: `cadence` is
+    // the decision, `armed` is the fact — and re-arming an interval that already runs at the
+    // right delay would reset its phase on every tick, which is a poll that never fires.
+    let cadence: ProbeCadence = BACKGROUND_CADENCE
+    let armed: number | null = null
     const stopAsking = () => {
       if (timer !== null) clearInterval(timer)
       timer = null
+      armed = null
     }
     const keepAsking = () => {
-      timer ??= setInterval(() => void read(), PREVIEW_PROBE_MS)
+      if (timer !== null && armed === cadence.delayMs) return
+      if (timer !== null) clearInterval(timer)
+      armed = cadence.delayMs
+      // The tick carries HOW IT WAS SCHEDULED, decided here rather than read from `cadence` when
+      // it fires: the answer that closes an accelerated window is the one that changes `cadence`,
+      // so a tick reading it at fire time would call itself a background read on the strength of
+      // a decision it had not made yet.
+      const accelerated = armed === STARTING_PROBE_MS
+      timer = setInterval(() => void read(accelerated), armed)
     }
 
-    const read = async () => {
+    // `accelerated` is false for the mount read and for both visibility handlers. Those are a
+    // fresh surface and a deliberate human act — neither is the 3-second timer, and neither
+    // should be denied the container read a background tick makes.
+    const read = async (accelerated = false) => {
       if (!live || document.visibilityState !== 'visible') return
       const generation = ++latest
       try {
@@ -148,9 +171,19 @@ export function useWorkspaceState({
           // reason in the docblock. Its failure is silent on purpose: a save state we could not
           // read is `null`, which is the tri-state's "no claim", and every consumer already
           // treats that as "could not tell" rather than as "clean".
-          const state = await fetchSaveState(projectId).catch(() => null)
-          if (!live || generation !== latest || projectRef.current !== projectId) return
-          setSave((prev) => (sameSaveState(prev, state) ? prev : state))
+          //
+          // AND ON A BACKGROUND TICK. An accelerated read is the 3-second timer that watches a
+          // start land, so the container it would ask has been alive for seconds and is still
+          // restoring and booting — two `git` executions are the last thing it needs, and the
+          // answer is the one the next background tick gives for free. The acceleration must cost
+          // cheap reads and nothing else (#203). SKIPPED, NOT RETURNED FROM: this read still owes
+          // the timer below its cadence decision, and an early exit here would leave the 3-second
+          // interval running over an app that is already up.
+          if (!accelerated) {
+            const state = await fetchSaveState(projectId).catch(() => null)
+            if (!live || generation !== latest || projectRef.current !== projectId) return
+            setSave((prev) => (sameSaveState(prev, state) ? prev : state))
+          }
         } else {
           // Not alive, so nothing to compare and nothing that could still be true. Holding a save
           // state from a container that has since stopped would arm the unsaved-work guard against
@@ -158,12 +191,30 @@ export function useWorkspaceState({
           setSave(null)
         }
 
+        // THE RESCHEDULE, MADE FROM THE ANSWER (#203) — see `nextProbeCadence`. It sits here, with
+        // the stopping rule, because both are the same question asked of the same reading: what
+        // this answer means for when we ask next.
+        cadence = nextProbeCadence(next.state, cadence)
         if (isTerminalReading(next)) stopAsking()
         else keepAsking()
       } catch {
         // A read that could not answer SAYS NOTHING. Painting "gone" on a network blip is the
         // over-claiming this whole shape exists to remove, and the timer is left running so the
         // next tick can correct it.
+        //
+        // BUT IT STILL SPENDS FROM THE ACCELERATED WINDOW. Until it did, the 120-second bound was
+        // a ceiling on SUCCESSFUL reads only, so a workspace that reached `starting` and then began
+        // erroring was asked every three seconds for the life of the tab — the exact hang the bound
+        // exists to prevent, reachable by a 500. See `spendProbeCadence` for why it may spend
+        // without deciding anything.
+        //
+        // GUARDED THE SAME WAY THE SUCCESS PATH IS, plus one of its own. A superseded read must not
+        // move the cadence a newer one already set, and `timer === null` is a poll a settled answer
+        // already stopped — re-arming it here would let a failing endpoint resurrect a poll that
+        // had correctly given up. `keepAsking` and nothing else: a failure is never terminal.
+        if (!live || generation !== latest || timer === null) return
+        cadence = spendProbeCadence(cadence)
+        keepAsking()
       }
     }
 

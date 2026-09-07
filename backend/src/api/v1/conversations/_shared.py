@@ -77,6 +77,37 @@ BUILD_IN_FLIGHT_MSG = (
 VISION_MEDIA_PREFIX = "image/"
 PDF_MEDIA_TYPE = "application/pdf"
 
+# --- the document limit ---------------------------------------------------------------------
+#
+# HOW MANY DOCUMENTS MAY RIDE ONE MESSAGE, and why it is a SEPARATE limit from
+# `MAX_ATTACHMENT_BLOCKS` rather than a smaller value of it.
+#
+# It falls out of arithmetic that is already fixed elsewhere (D4). `usage/context_window` charges
+# an admitted PDF `NOMINAL_PDF_TOKENS` (75,000 — what the longest document the upload cap admits
+# actually costs), and `occupied_window` adds the 8,000-token system-prompt reserve before it
+# counts a word. So three documents is 233,000 against a 200,000 ceiling and cannot be sent, even
+# if all three are two-page memos.
+#
+# THE POINT IS THE SENTENCE, NOT THE NUMBER. Left to the token gate, that message is refused with
+# `CHAT_TOO_LONG_TEXT` — "start a new chat" — which is wrong advice here: the new chat refuses the
+# identical message, and the citizen is sent round a loop with nothing that works. So the count is
+# checked FIRST, and answered with a sentence naming the limit they actually hit.
+#
+# Images are deliberately not counted: eight screenshots is 12,800 tokens and has never been the
+# problem. `MAX_ATTACHMENT_BLOCKS` stays at 8 and still means what it says for them.
+MAX_PDF_BLOCKS = 2
+
+TOO_MANY_DOCUMENTS_MSG = (
+    f"You can send up to {MAX_PDF_BLOCKS} documents in one message. Take one out and send again."
+)
+"""Citizen copy — verbatim in a 413 body. It names the DOCUMENT limit, not the token limit, and
+the action it gives works. See `MAX_PDF_BLOCKS` for why the two refusals must not be one."""
+
+TOO_MANY_DOCUMENTS_CODE = "too_many_documents"
+"""Beside `TOO_MANY_DOCUMENTS_MSG`. It shares its 413 status with the too-long refusal, so a
+client that read only the status would give the two the same (wrong) remedy — which is the
+reason each of this route's refusals carries a code of its own."""
+
 
 # --- dependencies -------------------------------------------------------------------------
 
@@ -190,7 +221,13 @@ async def resolve_binaries(
     re-check, authoritative media type — then gates on WHAT may enter the prompt: only
     image/PDF vision content. Office originals and anything else are a 400 (their content
     travels as `attachmentTexts`), and an unknown/foreign id fails the same typed way the
-    rehydrator words it."""
+    rehydrator words it.
+
+    It also gates on HOW MANY DOCUMENTS: past `MAX_PDF_BLOCKS` the message is refused here
+    rather than by the token gate downstream, which would answer the same refusal with advice
+    that does not work. The check lives at this seam because this is where a reference becomes a
+    known media type — the route above holds only opaque ids, and the browser's word for a file
+    is not evidence."""
     if not attachment_ids:
         return []
     if storage is None:
@@ -201,6 +238,7 @@ async def resolve_binaries(
     except AttachmentRehydrationError as exc:
         raise AppApiError(400, str(exc)) from None
     binaries: list[BinaryContent] = []
+    documents = 0
     for attachment_id in attachment_ids:
         data_b64, media_type = resolved[attachment_id]
         if not (media_type.startswith(VISION_MEDIA_PREFIX) or media_type == PDF_MEDIA_TYPE):
@@ -209,6 +247,14 @@ async def resolve_binaries(
                 "an attached file of this type cannot be sent to the assistant as a file; "
                 "its extracted text travels with the message instead",
             )
+        if media_type == PDF_MEDIA_TYPE:
+            documents += 1
+            # Refused HERE, before the token gate downstream reaches the same conclusion with
+            # the wrong sentence (see `MAX_PDF_BLOCKS`). The media type comes from the store's
+            # own rehydrator, which re-checks the magic bytes — so this counts what will really
+            # be sent, not what the client called it.
+            if documents > MAX_PDF_BLOCKS:
+                raise AppApiError(413, TOO_MANY_DOCUMENTS_MSG, code=TOO_MANY_DOCUMENTS_CODE)
         binaries.append(
             BinaryContent(
                 data=base64.b64decode(data_b64), media_type=media_type, identifier=attachment_id

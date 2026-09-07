@@ -106,10 +106,16 @@ def _the_lock_engine() -> AsyncEngine:
             settings.DATABASE_URL.get_secret_value(),
             isolation_level="AUTOCOMMIT",
             poolclass=NullPool,
+            # Same no-parameters-in-logs rule as `db/base.py` (#187). This engine runs the
+            # reclamation pass unattended, so anything it renders into an exception goes
+            # straight to an operator log with nobody reading the response.
+            hide_parameters=True,
         )
-        # Mirrors `db/base.py` exactly: a deployment authenticating with an Entra token needs
-        # this engine to get one too, or single-flight would fail closed on connect and every
-        # pass would report itself locked out by a lock nobody holds.
+        # MIRRORS `db/base.py` ON THE CREDENTIAL, NOT ON THE WHOLE CONFIGURATION — the rest
+        # of this engine is deliberately different (AUTOCOMMIT, `NullPool`), for the reasons
+        # above. What it copies is the token attach: a deployment authenticating with an
+        # Entra token needs this engine to get one too, or single-flight would fail closed on
+        # connect and every pass would report itself locked out by a lock nobody holds.
         if settings.DB_AUTH_MODE == "entra":
             attach_entra_token(_lock_engine)
     return _lock_engine

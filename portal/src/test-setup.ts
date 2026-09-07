@@ -20,7 +20,8 @@
 // No `jest-dom` import: the suite asserts with plain vitest matchers throughout, and adding the
 // package here would put a new dependency in front of every one of the 103 existing test files
 // to serve none of them.
-import { beforeEach, vi } from 'vitest'
+import { afterEach, beforeEach, vi } from 'vitest'
+import { cleanup } from '@testing-library/react'
 
 // ── Observers ────────────────────────────────────────────────────────────────────────────────
 // jsdom implements neither. assistant-ui's thread viewport uses IntersectionObserver for its
@@ -112,4 +113,24 @@ beforeEach(() => {
       readText: vi.fn<() => Promise<string>>().mockResolvedValue(''),
     },
   })
+})
+
+// UNMOUNT EVERY TREE BETWEEN TESTS, because nothing else does.
+//
+// React Testing Library auto-registers its own `afterEach(cleanup)` ONLY when it can see a
+// global `afterEach` — that is, under `globals: true`. This project deliberately does not set
+// that key, so the auto-cleanup never registered and every `render`/`renderHook` that a test
+// did not tear down by hand stayed MOUNTED for the rest of the file.
+//
+// It is not a tidiness problem. A leaked hook is still subscribed: one
+// `document.dispatchEvent(new Event('visibilitychange'))` reaches every tree a previous test
+// left standing, so a poll-counting assertion measures its own file's history rather than its
+// own scenario. It was measured at 18 reads where 2 were intended (#203's cadence work), and
+// it silently inflates any exact-count assertion in a multi-render file.
+//
+// Registered here rather than in each file for the reason `setupFiles` exists at all: seventeen
+// files once hand-stubbed `scrollIntoView`. `cleanup()` is idempotent, so the many files that
+// already call it in their own `afterEach` are unaffected.
+afterEach(() => {
+  cleanup()
 })

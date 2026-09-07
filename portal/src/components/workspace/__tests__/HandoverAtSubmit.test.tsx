@@ -10,7 +10,7 @@
  * mounted alone could not see any of it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import type { Project } from '../../../utils/projectApi'
 import { ApiError } from '../../../utils/apiError'
@@ -499,5 +499,80 @@ describe('transferring', () => {
       expect(screen.getByTestId('reclaim-step').textContent).toMatch(/closing the other app/i),
     )
     releaseHandover?.()
+  })
+})
+
+/**
+ * ★ AND THE SAME QUESTION, REACHED WITHOUT SENDING ANYTHING (`#196`, U13).
+ *
+ * ═══ WHY THIS BLOCK IS HERE AND NOT IN `AppPane.test.tsx` ═══
+ *
+ * `#196` is the citizen who does NOT want to send a message: they want their own app open, and
+ * until now the only thing on the screen that could get it for them was a composer send. This file
+ * is the one that mounts the whole of that — the real shell, the real `ProjectWorkspace`, the real
+ * rail composer, and a route that records what a navigation carried — so it is the only place the
+ * guarantee can be stated as what it actually is: THE ADDRESS DOES NOT MOVE AND THE MESSAGE IS NOT
+ * SENT. A pane-level suite has no composer and no router to be wrong about.
+ *
+ * The trap it is written against is D1's: `resolveReclaim` awaits `retry()`, which on this surface
+ * is the rail's own "open the chat with what they typed". A take-back routed through that slot
+ * would post the citizen's held message as a build instruction — the exact thing the owner forbade.
+ */
+describe('★ taking the workspace back, with nothing sent (#196)', () => {
+  const held = {
+    state: 'slot_taken' as const, alive: false, previewUrl: null,
+    occupyingProjectName: 'Car pool', occupyingProjectId: 'pA', restorable: true,
+  }
+  const takeBack = () => screen.getByRole('button', { name: /^Stop “Car pool” and open this app instead$/ })
+  const started = { appId: 'app-1', previewUrl: 'https://app/', status: 'ready', ready: true, restoredFromFailedBuild: false }
+
+  it('★ brings this app up without opening a chat or sending the held message', async () => {
+    api.fetchPreviewState.mockResolvedValue(held)
+    api.relaunchPreview.mockRejectedValueOnce(heldBy({ dirty: true })).mockResolvedValue(started)
+    render(<Workspace />)
+    // The message is in the composer and stays there — this citizen never pressed send.
+    type('add an out-time column')
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Stop “Car pool” and open this app instead$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Stop “Car pool” without saving$/ }))
+
+    await waitFor(() => expect(api.handOverWorkspace).toHaveBeenCalledWith('pA', false, {}, expect.any(Function)))
+    // LIVENESS: the app really came up, so the absences below are a take-back that worked.
+    await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(2))
+    // ★ THE GUARANTEE. Reuse the rail's own retry closure here and all three go red.
+    expect(where()).toBe('/projects/pB')
+    expect(screen.queryByTestId('chat-opened')).toBeNull()
+    expect((composer() as HTMLTextAreaElement).value).toBe('add an out-time column')
+  })
+
+  it('★ and does none of it through the slot a refused send already holds', async () => {
+    // FIRST REFUSAL WINS is that slot's rule. A take-back sharing it would have its own refusal
+    // discarded and would resolve the SEND — which is a navigation with the message attached.
+    api.fetchPreviewState.mockResolvedValue(held)
+    api.relaunchPreview.mockRejectedValue(heldBy({ dirty: true }))
+    render(<Workspace />)
+    type('add an out-time column')
+    fireEvent.click(send())
+    await screen.findByRole('dialog')
+
+    api.relaunchPreview.mockReset()
+    api.relaunchPreview.mockRejectedValueOnce(heldBy({ dirty: true })).mockResolvedValue(started)
+    fireEvent.click(takeBack())
+    // Wait for the take-back's own ask to have landed and been dealt with, WHICHEVER WAY the code
+    // chose — then press the last question on screen, which is the take-back's when it has one and
+    // the send's when it does not. Waiting for two dialogs instead would fail first under the very
+    // mutant this scenario exists to catch, and the assertions that matter would never run.
+    await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(1))
+    await act(async () => { await Promise.resolve() })
+    const stop = screen.getAllByRole('button', { name: /^Stop “Car pool” without saving$/ })
+    fireEvent.click(stop[stop.length - 1])
+    await waitFor(() => expect(api.handOverWorkspace).toHaveBeenCalled())
+
+    // ★ Share the slot and the confirm resolves the SEND, which is a navigation with the message
+    // attached — both of these then go red.
+    expect(where()).toBe('/projects/pB')
+    expect(screen.queryByTestId('chat-opened')).toBeNull()
+    // LIVENESS: this app came up.
+    await waitFor(() => expect(api.relaunchPreview).toHaveBeenCalledTimes(2))
   })
 })

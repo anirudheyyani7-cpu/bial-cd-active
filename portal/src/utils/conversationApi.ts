@@ -12,7 +12,8 @@ import { authFetch } from './api'
 import type { AuthFetchDeps } from './api'
 import { readApiError } from './apiError'
 import { toPlanOptionsItem, toStepItem } from './turnStreamApi'
-import type { ChatMessage, MessagePart } from './messageTypes'
+import { outcomeSummary } from './messageTypes'
+import type { BuildOutcomeStatus, ChatMessage, MessagePart } from './messageTypes'
 
 /** The in-memory header shape pages expect, normalized from the server's raw doc.
  *
@@ -63,35 +64,34 @@ function normalizeHeader(doc: unknown): ConversationHeader | null {
 
 /**
  * Server projection items → the in-memory message shape the pages render
- * ({id, role, parts, seq}), derived server-side from the native transcript. All six
- * projection item types are rendered:
+ * ({id, role, parts, seq}). The reload read returns DISPLAY ITEMS derived
+ * server-side from the native transcript, not raw message docs.
+ *
+ * Every projection item type is rendered, including the turn terminal's arm, which draws
+ * conditionally rather than always:
  *   - `user_text` / `assistant_text` — plain chat bubbles;
  *   - `banner` — the build outcome (stored sentence + the `type:'build'` part the
  *     builder page's renderer draws);
  *   - `step` — a stored friendly agent step (hidden steps skipped, as the live feed does);
  *   - `build_in_progress` — the durable anchor for a build with no recorded outcome;
- *   - `plan_options` — the Build it / Keep refining card, with its STORED resolution
- *     state so live and reload agree.
+ *   - `plan_options` — the Build it / Keep refining card, carried with its STORED
+ *     resolution state so live and reload agree;
+ *   - `turn_terminal` — the durable record of HOW a turn ended, rendered as the outcome
+ *     sentence when the ending needs explaining and silent when it does not (see its arm).
  */
 /** The raw projection item shapes read here — one union discriminated on `type`, kept LOCAL
  * (not exported) since this is the server-projection wire shape, not the message-parts shape
  * (`messageTypes.ts`) it maps into. UNCHECKED (pre-migration behavior): asserted per
  * `item.type`, not validated.
  *
- * THE SERVER SENDS ONE MORE KIND THAN THIS MAPS, deliberately: `turn_terminal` is a durable
- * record of HOW a turn ended (no prose, draws nothing) — what a surface makes of it is an
- * undecided design question, not a bug. An unrecognised type pushes no message at all, costing
- * an empty bubble rather than rendering one. */
+ * EVERY KIND THE SERVER SENDS HAS AN ARM NOW, and `turn_terminal`'s is the one that draws
+ * conditionally rather than always. It is the durable record of HOW a turn ended, written so a
+ * transcript rebuilt without the live stream can tell a finished turn from a running one; a
+ * NON-COMPLETED one is now the reload half of the outcome sentence, and a completed one
+ * still draws nothing at all — see the arm itself for why that asymmetry is the whole design and
+ * not an omission. An unrecognised type pushes no message at all, so it costs an empty bubble
+ * rather than rendering one. */
 type RawProjectionItem = { type: string; seq: number } & Record<string, unknown>
-
-/**
- * Projection types that are KNOWN and deliberately render nothing.
- *
- * `turn_terminal` is a durable record of HOW a turn ended — no prose, no element; its silence
- * is a decision. An item type nobody has heard of is not a decision, it is a client that has
- * fallen behind its server, and the two must not look the same from here.
- */
-const KNOWN_UNRENDERED = new Set(['turn_terminal'])
 
 /**
  * What happens when the projection carries a type this client does not know.
@@ -109,6 +109,28 @@ export function reportUnknownProjectionItem(item: RawProjectionItem): void {
       `every reader of a reloaded transcript.`,
     item,
   )
+}
+
+/**
+ * A stored banner kind → the build part's terminal.
+ *
+ * FOUR KINDS IN, THREE OUT, and the pairing is the point: `stopped` and `quota` both mean the
+ * build ended without anything going wrong, so both land on `stopped` rather than on the
+ * "everything finished" value. Anything unrecognised reads as `ended`, matching this module's
+ * standing rule that a client behind its server degrades quietly rather than inventing a
+ * failure — an unknown banner is a deployment order, not a broken build.
+ *
+ * TWO CALLERS, ONE VOCABULARY, and the name still says "banner" on purpose. `TurnTerminalItem`
+ * does not own a second enum: its `terminal` field is `_banner_kind`'s output, by the server's
+ * own design ("`terminal` REUSES `_banner_kind`'s vocabulary rather than inventing a parallel
+ * one"). So the banner arm and the turn-terminal arm below read the same four words through
+ * this one function — because the moment they each grow their own, a stop means one thing on a
+ * legacy build session and another on a turn, for one fact.
+ */
+function bannerStatus(banner: unknown): BuildOutcomeStatus {
+  if (banner === 'failed') return 'failed'
+  if (banner === 'stopped' || banner === 'quota') return 'stopped'
+  return 'ended'
 }
 
 /**
@@ -184,7 +206,13 @@ export function messagesFromProjection(
           {
             type: 'build',
             sessionId: item.sessionId as string,
-            status: item.banner === 'failed' ? 'failed' : 'ended',
+            // THE RELOAD HALF OF #204. The projection's banner vocabulary is four-valued —
+            // `completed` / `failed` / `stopped` / `quota` (`projection.py::_banner_kind`) — and
+            // this mapping used to throw two of those away, landing `stopped` and `quota` on
+            // `ended`. That put a part claiming the build ended normally directly beside the
+            // stored sentence "You stopped this build before it finished." A quota stop is a stop
+            // for the same reason the live path treats it as one: nothing broke, the day ran out.
+            status: bannerStatus(item.banner),
             reason: item.banner as string,
             previewUrl: (item.previewUrl as string | null) ?? null,
           },
@@ -246,15 +274,71 @@ export function messagesFromProjection(
         parts: [{ type: 'build_in_progress', sessionId: item.sessionId as string }],
         seq: item.seq,
       })
-    } else if (!KNOWN_UNRENDERED.has(item.type)) {
+    } else if (item.type === 'turn_terminal') {
+      // THE RELOAD HALF OF THE OUTCOME SENTENCE (#186).
+      //
+      // A stopped turn used to say NOTHING after a refresh. Live, the surface draws a sentence
+      // the moment the turn ends (`announceTerminal` → `showBuildOutcome`); this row is the only
+      // durable record of that ending — `finish_turn_sandbox` deliberately writes no
+      // build-outcome part for a turn, "so writing a build-outcome part as well would render the
+      // same ending twice" — and it drew nothing at all. So a citizen who came back to a build
+      // they had stopped found a transcript that simply trailed off, with no account of why.
+      //
+      // THE SENTENCE COMES FROM `outcomeSummary`, THE SAME FUNCTION THE LIVE PATH CALLS, and
+      // that shared call is the entire point rather than a convenience. Two authors for one
+      // sentence is a documented failure of this codebase
+      // (`docs/solutions/logic-errors/prompt-only-plain-language-guarantee-leak-2026-08-24.md`),
+      // where fixing one emitter only changed WHEN the wrong text appeared. The server's own
+      // contract says the same thing from its end: the terminal is "derived from the same
+      // mapping of the same stored meta".
+      //
+      // A COMPLETED TERMINAL STILL DRAWS NOTHING, and the narrowing stops exactly there. Every
+      // turn writes one of these rows — `_write_turn_terminal` runs for BOTH kinds,
+      // unconditionally — so rendering the completed ones would stamp "Build finished." after
+      // every single exchange in every chat, including a Plan conversation that never built
+      // anything. The endings worth a sentence are the ones a citizen cannot otherwise explain.
+      // An unrecognised terminal is silent for the same reason an unknown banner reads as
+      // `ended`: a client behind its server says less, never something invented.
+      const terminal = item.terminal
+      if (terminal === 'failed' || terminal === 'stopped' || terminal === 'quota') {
+        seal()
+        messages.push({
+          id: `srv_${item.seq}_t_${index}`,
+          role: 'assistant',
+          parts: [
+            {
+              type: 'text',
+              // THE REASON IS THE STORED TOKEN, not the banner kind — this is what the server
+              // had been withholding until it started exposing `reason` beside `terminal`.
+              // `outcomeSummary` reads it FIRST (see its docblock), so `quota_exceeded` on a
+              // `failed` terminal renders "you reached your daily limit" here exactly as it
+              // does live, instead of the generic failure the terminal alone would produce.
+              text: outcomeSummary({
+                status: bannerStatus(terminal),
+                reason: typeof item.reason === 'string' ? item.reason : null,
+              }),
+            },
+          ],
+          seq: item.seq,
+        })
+      }
+      // NO `build` PART BESIDE THE TEXT, unlike the banner arm above, and the omission is
+      // deliberate. A `build` part draws no element of its own; what it does is claim "an app
+      // was built in this chat" to the preview pane (`transcriptHasBuildOutcome`) and carry a
+      // `snapshotCommitted` warning. A turn terminal knows neither — it has no preview URL and
+      // no snapshot verdict — so synthesising one would answer the pane's question with a guess,
+      // on every stopped Plan turn as well. What #186 is missing is the SENTENCE.
+    } else {
       // THE LOUD FALLBACK ARM (L4). Until this existed the chain simply ended, so an item type
       // this client did not recognise vanished with no error, no warning and no trace — on the
       // one path a reloaded transcript is rebuilt from. That is the four-edit change no compiler
       // enforces, on the path that is load-bearing for BOTH kinds of chat.
       //
-      // A known-and-deliberately-silent type (`turn_terminal`) takes neither branch and stays
-      // silent, because "we decided this draws nothing" and "we have never heard of this" are
-      // different facts and only the second is a bug.
+      // A KNOWN TYPE THAT DRAWS NOTHING NOW HAS ITS OWN ARM rather than a membership set: the
+      // completed `turn_terminal` above falls out of that arm having rendered nothing, and never
+      // reaches here. "We decided this draws nothing" and "we have never heard of this" are
+      // different facts, and only the second is a bug — the arm the item lands in is what says
+      // which, and a type with no arm at all is the definition of the second.
       onUnknown(item)
     }
   }

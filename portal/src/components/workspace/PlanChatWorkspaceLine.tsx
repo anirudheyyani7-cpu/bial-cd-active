@@ -6,9 +6,24 @@
  * and be holding. Its second clause holds for its own reason: a plan turn is handed no mutating tools.
  *
  * THE WORKSPACE LINE below it is the value the pane renders, as text — one computed state, two
- * renderers, never a second wording. `StartAppControl` carries no surface predicate, so the gate
- * lives here and lets one action through: go to the project holding the workspace. START would put
- * an app on the one screen that deliberately does not; RETRY has no pane here to land in.
+ * renderers, never a second wording.
+ *
+ * WHY THIS EXISTS
+ *
+ * `StartAppControl` carries no surface predicate of its own, so the gate lives here and lets
+ * exactly one of its four members through: go to the project holding the workspace. START never
+ * renders — a Plan chat is the surface that deliberately keeps the app off screen. RETRY never
+ * renders either, for the same reason: a second author for a state the pane already owns. GO-TO
+ * does render: it is the remedy for a taken workspace, and the asking has to happen in the chat
+ * the person is actually in. TAKE-BACK never renders, for START's reason and its own — its wait
+ * is a modal narrating a stop, a save and a start over a screen with no pane to show the result in.
+ *
+ * Nothing here has to gate that fourth member explicitly, because two mechanisms already do: the
+ * narrowing below reads `state.action`, never `state.secondAction`, the only slot a take-back
+ * ever occupies, and `StartAppControl` only draws one for a caller that hands it the sequence —
+ * `AppPane`, and nothing else. Widening this line to read both slots would still render no verb,
+ * so failure here stays a missing button, never a modal stopping an app from a surface that
+ * cannot report what happened.
  */
 import StartAppControl from './StartAppControl'
 import { useWorkspaceReport } from './workspaceChannel'
@@ -32,8 +47,10 @@ export default function PlanChatWorkspaceLine() {
   const report = useWorkspaceReport()
   const state = report?.state
   const speak = state !== undefined && SPOKEN_HERE.has(state.name)
-  // The ONE action member this surface may render. Read before the early return below so the rule
-  // is visible beside the states it applies to rather than buried in a branch.
+  // The ONE action member this surface may render, narrowed off the slot the map LEADS with —
+  // never off `secondAction`, which is where `#196`'s take-back lives and which this surface has
+  // no business drawing. Read before the early return below so the rule is visible beside the
+  // states it applies to rather than buried in a branch.
   const remedy = state?.action?.kind === 'go-to-project' ? state.action : null
 
   return (

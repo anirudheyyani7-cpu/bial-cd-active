@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   startTurn: vi.fn(), readTurnStream: vi.fn(), buildFromPlan: vi.fn(), stopTurn: vi.fn(),
   resolvePlanOptions: vi.fn(),
   stop: vi.fn(), getStatus: vi.fn(), forceEnd: vi.fn(), relaunchPreview: vi.fn(),
-  fetchSaveState: vi.fn(), fetchPreviewState: vi.fn(),
+  fetchSaveState: vi.fn(), fetchPreviewState: vi.fn(), saveProject: vi.fn(),
 }))
 
 vi.mock('../../utils/builderHistory', () => ({
@@ -50,6 +50,9 @@ vi.mock('../../utils/buildSessionApi', async (orig) => ({
   // drives, and leaving either real would put this suite on the network.
   fetchPreviewState: (...a) => h.fetchPreviewState(...a),
   relaunchPreview: (...a) => h.relaunchPreview(...a),
+  // The WRITER of the bundle. It is the subject of the deployment-nudge scenario at the
+  // bottom, and leaving it real would put this suite on the network there too.
+  saveProject: (...a) => h.saveProject(...a),
 }))
 
 import {
@@ -73,6 +76,7 @@ beforeEach(() => {
   h.listProjectConversations.mockResolvedValue([])
   h.buildUserParts.mockImplementation(async (t) => [{ type: 'text', text: t }])
   h.fetchSaveState.mockResolvedValue({ dirty: false })
+  h.saveProject.mockResolvedValue({ appId: 'a1', headSha: 'ccc' })
   // Neither the workspace read nor the start is this file's subject by default: answered so
   // nothing reaches a real `fetch`, and re-primed by the two scenarios that are about them.
   h.fetchPreviewState.mockResolvedValue({
@@ -315,5 +319,50 @@ describe('a failed launch INSIDE a chat says why', () => {
     // THE SERVER'S OWN WORDS, carried verbatim — the specific half, and the only thing that tells
     // the citizen what to do differently.
     expect(screen.getByText('Your app could not be brought back just now.')).toBeTruthy()
+  })
+})
+
+/**
+ * ★ A SAVE FROM THE CHAT RAISES THE DEPLOYMENT NUDGE (#205) — the other half of the seam.
+ *
+ * `savedHead` and `savedAt` are fields of the DEPLOYMENT read, and a Save is what changes them.
+ * The surface performing the save holds no such read: the row is drawn by `AppStatusPanel` and
+ * the state by the toolbar's publish chip, each with its own `usePublishState`. So the save's only
+ * way to correct them is the `bial:deployment-changed` nudge both already listen for.
+ *
+ * THE PROJECT SCREEN'S SAVE RAISES IT AND THE CHAT'S DID NOT, which is exactly the kind of gap
+ * neither side's unit tests can see: `announceDeploymentChanged` is exported and tested, the hook's
+ * listener is tested, and the chip stayed one read behind anyway because the one line joining them
+ * was missing on this surface. Delete `announceDeploymentChanged(activeProjectId)` from
+ * `handleSave` and this is what goes red.
+ */
+describe('★ a Save from the chat raises the deployment nudge (#205)', () => {
+  /** Every nudge the window saw, in order. A CustomEvent is the whole mechanism, so listening for
+   *  it is watching the real wire rather than a spy standing in for one. */
+  const nudges = []
+  const record = (event) => nudges.push(event.detail)
+  beforeEach(() => {
+    nudges.length = 0
+    window.addEventListener('bial:deployment-changed', record)
+  })
+  afterEach(() => window.removeEventListener('bial:deployment-changed', record))
+
+  it('names the project it saved, and the save itself goes through', async () => {
+    // Dirty, or the toolbar's Save is a chip rather than a button and the press does nothing.
+    h.fetchSaveState.mockResolvedValue({ dirty: true })
+    renderBuilder({ deps: deps().deps })
+
+    fireEvent.click(await screen.findByTestId('save-project'))
+
+    // LIVENESS FIRST: the save actually happened. Without this the nudge assertion below would
+    // stay green over a Save that never wrote anything — an event about nothing.
+    await waitFor(() => expect(h.saveProject).toHaveBeenCalledWith('p1'))
+    // …and the toolbar has taken the answer, so the press ran to completion rather than throwing.
+    expect(await screen.findByText('Saved')).toBeTruthy()
+
+    // THE NUDGE, ONCE, NAMING THIS PROJECT. The id is the whole payload a listener acts on: a
+    // nudge for someone else's project is one every mount here correctly ignores.
+    await waitFor(() => expect(nudges).toHaveLength(1))
+    expect(nudges[0].projectId).toBe('p1')
   })
 })

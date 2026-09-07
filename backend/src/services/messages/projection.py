@@ -188,19 +188,20 @@ class StepItem(CamelModel):
 
 
 class TurnTerminalItem(CamelModel):
-    """One turn ended, said durably — the row a transcript rebuilt WITHOUT the live stream
-    reads to know a turn is over.
-
-    A STORED ROW, NOT THE LIVE FRAME: a reloaded tab or restarted process has no frame to
-    read and cannot tell "finished" from "still going" from the last reply alone. `terminal`
-    reuses `_banner_kind`'s vocabulary so reload and live never disagree on the word.
-    NO `unknown` MEMBER: a killed turn writes no row at all — that absence is a stronger
-    signal than a value a future writer could forget to set."""
+    """One turn ended — the row a transcript rebuilds with no live stream to read. A STORED ROW,
+    NOT THE LIVE FRAME: a reload or restart has no frame and can't tell "finished" from "still
+    going" from the last reply. `terminal` reuses `_banner_kind`'s vocabulary so reload and live
+    agree. `reason` travels beside it: `_banner_kind` reads status before reason and collapses
+    named graceful ends into `failed`; the client picks its sentence from `reason`, a MACHINE TOKEN
+    (`stopped_by_user`, `quota_exceeded`) never prose, and `None` when nothing was named, so the
+    client falls back to the neutral sentence. NO `unknown` MEMBER: a killed turn writes no row at
+    all — that absence is a stronger signal than a value a future writer could forget to set."""
 
     type: Literal["turn_terminal"] = "turn_terminal"
     seq: int
     turn_id: str
     terminal: Literal["completed", "failed", "stopped", "quota"]
+    reason: str | None = None
 
 
 class BannerItem(CamelModel):
@@ -989,8 +990,18 @@ def project_rows(rows: Sequence[Message]) -> list[DisplayItem]:
                 # that reason.
                 turn_id = meta.get("turnId")
                 if isinstance(turn_id, str):
+                    # THE REASON COMES OUT WITH THE TERMINAL, from the same meta, in one
+                    # construction — see the item's docstring for why withholding it left a
+                    # reloaded stop unreadable. Narrowed rather than cast: `meta` is
+                    # untyped JSON, and a non-string reason is no reason at all.
+                    reason = meta.get("reason")
                     items.append(
-                        TurnTerminalItem(seq=row.seq, turn_id=turn_id, terminal=_banner_kind(meta))
+                        TurnTerminalItem(
+                            seq=row.seq,
+                            turn_id=turn_id,
+                            terminal=_banner_kind(meta),
+                            reason=reason if isinstance(reason, str) else None,
+                        )
                     )
                 continue
             if row.visibility is MessageVisibility.HIDDEN:

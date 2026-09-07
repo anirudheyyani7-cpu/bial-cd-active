@@ -49,14 +49,25 @@ class BuildSessionStatus(enum.StrEnum):
 
 
 # --- Frozen lock TTL + cadence constants -------------------------------------
-# The server is the only renewer, in-process, via `locks.py`/`manager.py`/`reaper.py`.
+# There is no portal keep-alive loop anymore and no HTTP surface to renew them from a browser
+# (the `lock/renew` / `heartbeat` routes were retired) — the server itself is the only renewer
+# now, in-process, via `locks.py`/`manager.py`/`turns/engine.py`/`reaper.py`.
 
-LOCK_TTL_SECONDS = 900  # 15 min — lock auto-expires if not renewed.
-# THE TWO CADENCES BELOW HAVE NO RUNTIME READER: nothing renews on a clock. `manager.on_progress`
-# renews on every non-terminal progress envelope instead, so a build in flight renews as fast as
-# it produces frames. They stay as the frozen HEAD-ROOM RATIOS the live TTLs are sized against —
-# each is ⅓ of the TTL beside it, so two renewals may be missed before anything lapses, and
-# `test_locks.py::test_lock_ttl_has_renew_headroom` pins the lock half of that inequality.
+LOCK_TTL_SECONDS = 900  # 15 min — lock auto-expires if not renewed (the reaper reconciles).
+# THE TWO CADENCES BELOW HAVE NO RUNTIME READER LEFT, and saying so is the point: they were
+# written for the browser that renewed on a timer, and that caller is gone. TWO server-side
+# renewers replaced it, and neither reads these numbers. `manager.on_progress` calls
+# `renew_lock` + `write_heartbeat` on every non-terminal progress envelope — frame-driven, so a
+# build renews as fast as it produces frames. That is not enough on its own: a build that spends
+# longer than `HEARTBEAT_TTL_SECONDS` inside one tool call emits no frame, so the frame-driven
+# renewer alone lets the heartbeat expire under a live build. So the turn engine's
+# liveness-lease loop (`turns/engine.py::_hold_liveness_lease`) calls the same pair once per
+# `LIVENESS_LEASE_RENEW_CADENCE_SECONDS` — 30 s, comfortably inside the 90 s heartbeat TTL below,
+# and that is where the real wall-clock cadence lives.
+# They stay as the frozen HEAD-ROOM RATIOS the live TTLs are sized against — each is ⅓ of
+# the TTL beside it, so two renewals may be missed before anything lapses. `test_locks.py::
+# test_lock_ttl_has_renew_headroom` pins the lock half of that inequality; the seconds
+# themselves are pinned by `test_schemas.py::test_cadence_constants_are_the_frozen_values`.
 LOCK_RENEW_CADENCE_SECONDS = 300  # 5 min — ⅓ TTL, i.e. two renews of head-room.
 HEARTBEAT_CADENCE_SECONDS = 30  # ⅓ of the heartbeat TTL below, on the same ratio.
 HEARTBEAT_TTL_SECONDS = 90  # 3× cadence → tolerate 2 missed beats before idle-teardown.

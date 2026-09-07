@@ -107,7 +107,12 @@ from src.services.build_sessions.integrity import (
     has_ever_been_built,
     stamp_the_watermark,
 )
-from src.services.build_sessions.locks import release_liveness_lease, renew_liveness_lease
+from src.services.build_sessions.locks import (
+    release_liveness_lease,
+    renew_liveness_lease,
+    renew_lock,
+    write_heartbeat,
+)
 from src.services.build_sessions.manager import (
     BuildSession,
     BuildSessionConflictError,
@@ -287,6 +292,15 @@ PENDING_META_KIND = META_PENDING
 # anything protecting live builds right now?"), and an alert cannot be written against a
 # string that exists in two spellings. The reason is a field, not part of the event name.
 LEASE_RENEW_FAILED_EVENT = "liveness_lease_renew_failed"
+
+# The lock + heartbeat half of the same loop, spelled with the SAME two log events
+# `SessionManager.on_progress` already writes for this exact pair of calls. Identical strings on
+# purpose: the lock now has two renewers, and "did a live build lose its lock?" is one
+# operational question that must not need two alerts to answer. Named here rather than inlined
+# for the reason `LEASE_RENEW_FAILED_EVENT` is — an alert cannot be written against a string
+# that exists in two spellings.
+LOCK_LOST_EVENT = "build session lock lost during an active build"
+LOCK_RENEW_FAILED_EVENT = "liveness renew/heartbeat failed during build"
 
 
 def _deferred_call(output: object) -> ToolCallPart | None:
@@ -2439,14 +2453,14 @@ class TurnEngine:
             )
 
     async def _hold_liveness_lease(self, state: _TurnState) -> None:
-        """Publish, on a wall clock, that a build is happening inside this user's container —
-        for a reader that is not this process. Seeded ONCE per turn against a 90-second TTL;
-        past that, only `sweep_all`'s in-process `live_users` set keeps the reconciliation
-        sweep off a live container, empty in every other process — so nothing capable of
-        destroying a container may run outside the API process until this loop exists. Wall
-        clock, never `time.monotonic()`: readability from another process IS the feature, and
-        the TTL means a lease abandoned mid-renewal expires rather than pinning it forever.
-        Best-effort but never silent: both failure shapes are logged under one greppable event."""
+        """Publishes that a build is live in this user's container. The heartbeat seeds once a turn
+        on a 90s TTL; past that only `sweep_all`'s in-process `live_users` set keeps the sweep off
+        it — empty in every other process — so nothing that can destroy a container may run outside
+        the API process until this exists. Wall clock, never `time.monotonic()`: cross-process
+        readable, and its TTL expires an abandoned lease rather than pinning the container. ALSO
+        RENEWS THE LOCK AND HEARTBEAT, their only clock: `on_progress` renews both per frame, so a
+        tool call past the TTL silently drops the lock. Best-effort, never silent: both failures
+        logged, lock arm caught apart from lease so one store error costs only its own renewal."""
         if state.sandbox is None:
             # NO CONTAINER, NOTHING TO VOUCH FOR — the same guard, for the same reason, as
             # `_watch_preview`'s. The lease is keyed by USER, not by turn, so a turn that
@@ -2471,6 +2485,39 @@ class TurnEngine:
                     turn_id=str(state.turn_id),
                     reason="store_unavailable",
                 )
+            write_session = state.write_session
+            if write_session is not None:
+                # GUARDED FOR THE REASON THE LEASE IS. The lock and the heartbeat are keyed by
+                # USER, not by turn, so a turn that took no container of its own would renew —
+                # and vouch for the liveness of — whatever this user's slot is actually holding
+                # somewhere else. Read fresh each tick rather than closed over: the attach that
+                # sets it runs before this task starts today, and re-reading is what keeps that
+                # an implementation detail rather than a precondition.
+                try:
+                    redis = get_redis()
+                    if not await renew_lock(redis, state.user_id, write_session.lock_token):
+                        # The lock lapsed under an active build (reaped / expired / taken), so
+                        # the slot may now be double-allocated. Best-effort still — ending the
+                        # turn here would destroy the work the lock was protecting — but never
+                        # invisible. Same sentence `on_progress` logs, for one alert.
+                        _log.warning(
+                            LOCK_LOST_EVENT,
+                            session_id=str(write_session.session_id),
+                            user_id=str(state.user_id),
+                            conversation_id=str(state.conversation_id),
+                            turn_id=str(state.turn_id),
+                        )
+                    # Written even when the renewal above said no: the heartbeat answers a
+                    # different question (is anyone working in there?) and the reaper reads it
+                    # on its own, so withholding it would add an idle-teardown to a lost lock.
+                    await write_heartbeat(redis, state.user_id)
+                except Exception:
+                    _log.exception(
+                        LOCK_RENEW_FAILED_EVENT,
+                        session_id=str(write_session.session_id),
+                        conversation_id=str(state.conversation_id),
+                        turn_id=str(state.turn_id),
+                    )
             await asyncio.sleep(LIVENESS_LEASE_RENEW_CADENCE_SECONDS)
 
     async def _stop_liveness_lease(self, state: _TurnState) -> None:

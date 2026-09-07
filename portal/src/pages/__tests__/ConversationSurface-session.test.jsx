@@ -295,7 +295,13 @@ describe('BuilderPage — the build-turn flow', () => {
     expect(glyphs().getAllByText(/^failed$/i).length).toBe(1)
   })
 
-  it('a quota breach ends gracefully and shows the daily-limit banner', async () => {
+  it('a quota breach ends gracefully and shows the daily-limit banner (C7 §8)', async () => {
+    // The resolver's PROJECT arm on the chat route outranks
+    // `transcriptHasBuildOutcome ? 'ended'`. The shared fixture answers `alive` for EVERY
+    // project id as scenery; under it the pane now correctly frames the serving container
+    // instead of saying the preview is gone. This test is about the banner, not about a
+    // live container, so it says so.
+    h.fetchPreviewState.mockResolvedValue(previewState('unknown'))
     const turn = scriptedBuild()
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
@@ -325,6 +331,12 @@ describe('BuilderPage — the transition\'s refusals are typed HTTP statuses now
     // the fetch layer raises on (429/409/503), so `buildFromPlan` THROWS and the catch arm puts
     // the server's sentence on the card — the old 200-with-a-reason looked just like a quota refusal.
     h.buildFromPlan.mockRejectedValue(new Error('Another build is already running for your workspace.'))
+    // #192 fed the resolver's PROJECT arm on the chat route, and that arm outranks
+    // `transcriptHasBuildOutcome ? 'ended'`. The shared fixture answers `alive` for EVERY
+    // project id as scenery; under it the pane now correctly frames the serving container
+    // instead of saying the preview is gone. This test is about the banner, not about a
+    // live container, so it says so.
+    h.fetchPreviewState.mockResolvedValue(previewState('unknown'))
     renderBuilder({ deps: deps().deps })
     await sendPrompt()
 
@@ -632,6 +644,12 @@ describe('BuilderPage — ONE gate: the composer is shut while the agent works',
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
 
     // Navigate the SAME instance to project B's builder chat.
+    // #192: project B must answer for ITSELF. The blanket `alive` fixture would have B's
+    // pane frame project A's container — the cross-project frame the resolver's project
+    // label exists to prevent — so each id now answers its own truth.
+    h.fetchPreviewState.mockImplementation(async (id) =>
+      previewState(id === 'pA' ? 'alive' : 'unknown'),
+    )
     h.buildFromPlan.mockClear()
     h.stop.mockClear()
     h.readTurnStream.mockImplementation(turnStreaming(planReply('Build B, please.', 'opt-B')))

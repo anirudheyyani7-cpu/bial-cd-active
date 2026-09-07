@@ -7,14 +7,20 @@
  * (the builder, pre-submit) can show nothing else.
  *
  * WHY THIS EXISTS
- * Two refresh triggers besides the poll. The visibility/focus listeners are the cross-TAB
+ * Two refresh triggers besides the poll. The visibility/focus listeners are the cross-tab
  * story — a publish started elsewhere is picked up when this tab is looked at. The
- * `bial:deployment-changed` CustomEvent is the cross-MOUNT story on one document: the chip
- * (`WorkspaceToolbar`) and `AppStatusPanel` (`WorkspaceRail`) now mount together on the
- * workspace screen holding separate reads, and without the nudge a withdrawal in one leaves
- * the other saying "waiting for review" — the exact bug this closes. Its test renders two
- * hooks explicitly and pins the contract; deleting the nudge as apparently-dead code would
- * reintroduce that bug on a screen where both surfaces are visible at once.
+ * `bial:deployment-changed` CustomEvent is the cross-mount story on one document: the chip
+ * (`WorkspaceToolbar`) and `AppStatusPanel` (`WorkspaceRail`) mount together on the workspace
+ * screen holding separate reads, and without the nudge a withdrawal in one leaves the other
+ * saying "waiting for review" — the bug this closes. Its test renders two hooks explicitly
+ * and pins the contract; deleting the nudge as apparently-dead code would reintroduce that
+ * bug on a screen where both surfaces are visible at once.
+ *
+ * The nudge is also raised from outside this hook, by `announceDeploymentChanged`: a publish
+ * is no longer the only thing that changes what this read returns — the last-saved row is
+ * `savedHead`/`savedAt` off this same response, and the surface that writes them holds no
+ * publish read of its own, so it raises the same nudge the chip and the status panel already
+ * listen to.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -46,6 +52,34 @@ interface DeploymentChanged {
 }
 
 let mountCounter = 0
+
+/** The origin carried by a nudge raised from OUTSIDE any mount of this hook. Mount ids come
+ *  from `++mountCounter`, so they begin at 1 and this can never be one of them — which is the
+ *  whole property: a nudge nobody here owns has no mount to skip, so every mount on the
+ *  project re-reads. */
+const NO_MOUNT = 0
+
+function dispatchDeploymentChanged(projectId: string, origin: number): void {
+  window.dispatchEvent(
+    new CustomEvent<DeploymentChanged>(DEPLOYMENT_CHANGED, { detail: { projectId, origin } }),
+  )
+}
+
+/**
+ * SOMETHING OUTSIDE THIS HOOK CHANGED WHAT THIS READ WOULD RETURN (#205).
+ *
+ * The project screen's Save writes a new bundle, and the LAST SAVED row is `savedHead` and
+ * `savedAt` — two fields of THIS read and of no other. The surface that performs the save holds
+ * no publish read at all: the row is drawn by `AppStatusPanel` and the state by the toolbar's
+ * chip, each with its own. So the save raises the nudge those two already listen to and both
+ * reconcile off one dispatch, which is exactly the case the nudge was kept alive for.
+ *
+ * The alternative — a second deployment fetch inside the workspace's own refresh epoch — would
+ * duplicate a reader and still leave the chip naming the previous version.
+ */
+export function announceDeploymentChanged(projectId: string): void {
+  dispatchDeploymentChanged(projectId, NO_MOUNT)
+}
 
 /**
  * NOTHING HERE MAY GROW A PREDICATE BACK. `running`, `waitingForReview`, `routed` — derived
@@ -103,6 +137,10 @@ export function usePublishState(projectId: string): UsePublishState {
   // project the user has already navigated away from can never paint over the current one —
   // React Router reuses component instances across a projectId change.
   const generation = useRef(0)
+  // Whether this mount has ever read THIS project's row. A ref rather than derived from
+  // `deployment`, because reading that state here would put it in `refresh`'s dependencies and
+  // re-run the mount effect — re-subscribing the listeners and re-reading — on every response.
+  const everRead = useRef(false)
   // Stable for the life of the mount — identifies whose nudge is whose.
   const mountId = useRef(++mountCounter)
 
@@ -112,14 +150,27 @@ export function usePublishState(projectId: string): UsePublishState {
       const next = await getDeployment(projectId)
       if (generation.current !== mine) return
       setDeployment(next)
+      everRead.current = true
       setLoadError(null)
     } catch (err) {
       if (generation.current !== mine) return
-      // EVERY FAILED READ LANDS IN ONE PLACE — blanking the surface and reporting nothing
-      // is not an option here. This is the ONLY publishing surface the citizen has, so a
-      // chip that renders nothing is indistinguishable from a broken page. The server no
-      // longer 503s on a storage blip either: it degrades that to the explicit unknown
-      // state and answers 200, so special-casing 503 would not even catch it.
+      // A re-read that fails keeps the row it already has. `loadError` is rendered first by
+      // both surfaces and replaces everything — the pill, every provenance row and the action
+      // become one line — so a failed read that follows a save would blank the whole panel on
+      // a screen that has just said "Saved". A row naming the previous version is worse than
+      // one naming the current one and better than no panel at all, and the citizen still has
+      // the state, the dates and the action they had a moment ago.
+      //
+      // The first read is the exception: a mount that has never had an answer has nothing
+      // better to show than the failure, and a blank section there really would be
+      // indistinguishable from a broken page.
+      if (everRead.current) return
+      // Every failed read lands in one place — blanking the surface and reporting nothing is
+      // not an option here. This is the only publishing surface the citizen has, so a chip
+      // that renders nothing is indistinguishable from a broken page. The server no longer
+      // 503s on a storage blip either: it degrades that to the explicit unknown state and
+      // answers 200, so special-casing 503 would not catch it, and this read no longer
+      // requires a deploy pipeline to exist at all.
       setLoadError(err instanceof ApiError ? err.message : 'Could not read the publish status.')
     }
   }, [projectId])
@@ -132,6 +183,7 @@ export function usePublishState(projectId: string): UsePublishState {
   // a timer open forever. An idle finished deploy costs nothing here.
   useEffect(() => {
     generation.current += 1
+    everRead.current = false
     setDeployment(null)
     setUnsaved(null)
     setWithdrawError(null)
@@ -160,11 +212,7 @@ export function usePublishState(projectId: string): UsePublishState {
   }, [refresh, projectId])
 
   const announce = useCallback((): void => {
-    window.dispatchEvent(
-      new CustomEvent<DeploymentChanged>(DEPLOYMENT_CHANGED, {
-        detail: { projectId, origin: mountId.current },
-      }),
-    )
+    dispatchDeploymentChanged(projectId, mountId.current)
   }, [projectId])
 
   const approval = deployment?.approval ?? null

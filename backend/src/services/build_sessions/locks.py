@@ -160,13 +160,14 @@ async def lock_is_held(redis: aioredis.Redis, user_uuid: uuid.UUID) -> bool:
 
 
 async def write_heartbeat(redis: aioredis.Redis, user_uuid: uuid.UUID) -> datetime:
-    """`SET heartbeat <iso8601> EX HEARTBEAT_TTL` — presence = active, expiry = idle
-    (reaper-eligible). Returns the UTC instant the reaper considers the session idle.
-
-    BARE per the module's REDIS-ERROR POLICY, like `release_lock_as_holder`. The in-build
-    renewal (`SessionManager.on_progress`) already guards its own call; at both the relaunch
-    and start heartbeat seeds, the raise is what tears the container down — each sits inside
-    `_holding_user_lock`'s compensated region, before the scope adopts the lock."""
+    """`SET heartbeat <iso8601> EX HEARTBEAT_TTL` — presence = active, expiry = idle and
+    reaper-eligible; returns the UTC instant the reaper treats the session idle. BARE, like
+    `release_lock_as_holder` (module's REDIS-ERROR POLICY). TWO IN-BUILD RENEWERS run on different
+    clocks — `SessionManager.on_progress` per frame, and the turn engine's liveness-lease loop on a
+    wall clock inside the TTL, because a tool call longer than `HEARTBEAT_TTL_SECONDS` emits no
+    frame and the frame-driven one alone let the heartbeat expire under a live build. Both guard
+    their own call; at the relaunch and start seeds the raise tears the container down, each
+    sitting inside `_holding_user_lock`'s compensated region before the scope adopts the lock."""
     now = datetime.now(UTC)
     await redis.set(heartbeat_key(user_uuid), now.isoformat(), ex=HEARTBEAT_TTL_SECONDS)
     return now + timedelta(seconds=HEARTBEAT_TTL_SECONDS)

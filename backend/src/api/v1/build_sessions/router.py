@@ -317,7 +317,12 @@ async def internal_reap(
         (403, ErrorEnvelope, "CSRF check failed"),
         AUTH_401,
         (404, ErrorEnvelope, "Project or conversation not found"),
-        (409, ConflictEnvelope, "A build session is already active"),
+        (
+            409,
+            BuildConflictEnvelope,
+            "A build session is already active, or another project holds the workspace "
+            "with unsaved work",
+        ),
         (422, ErrorEnvelope, "An attached file could not be used in the build"),
         (
             503,
@@ -375,6 +380,17 @@ async def start_build(
             # same signal, so this 409 always describes a session that genuinely holds the
             # one-per-user lock.
             return _conflict_response(exc)
+        except SandboxReclaimBlockedError as exc:
+            # #83 — a DIFFERENT 409 from the one above, and the reason this route now declares
+            # `BuildConflictEnvelope`: not "you already have a build running" but "another
+            # project holds your one workspace and taking it would destroy work". Uncaught, it
+            # was a 500 (#183) — a door into the hand-over dialog that crashed instead of
+            # asking, while `reclaim_blocked_response` was documenting that every door answers
+            # identically. NOT a subclass-ordering hazard with the arm above: both derive from
+            # `Exception` directly and describe unrelated conditions, so neither can shadow the
+            # other. Same helper as relaunch and the turn route, which is what makes the answer
+            # identical rather than merely intended to be.
+            return reclaim_blocked_response(exc)
         except SnapshotUnavailableError as exc:
             # The restore could not be completed and the snapshot is not confirmed absent,
             # so the manager refused to provision a blank template over the user's work. Their

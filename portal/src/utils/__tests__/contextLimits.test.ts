@@ -13,6 +13,7 @@ import {
   DEFAULT_CONTEXT_HARD,
   DEFAULT_CONTEXT_SOFT,
   NOMINAL_BINARY_TOKENS,
+  NOMINAL_PDF_TOKENS,
   SYSTEM_PROMPT_RESERVE,
   contextState,
   estimateConversationTokens,
@@ -122,6 +123,55 @@ describe('estimateConversationTokens', () => {
     expect(estimateConversationTokens(withPhotos)).toBe(
       SYSTEM_PROMPT_RESERVE + NOMINAL_BINARY_TOKENS * 2 + 1,
     )
+  })
+
+  it('★ charges a DOCUMENT the document nominal, not the image one (#194)', () => {
+    // THE TWIN RULE, AND THIS FILE'S HEADER STATES IT: these constants are two readings of one
+    // scale with the server's, and changing one means changing the other. #194 split the
+    // server's binary charge by media type and this side was outside that unit's file list, so
+    // for a while the browser charged a PDF 1,600 against the server's 75,000 — a 47x gap. The
+    // citizen would watch a comfortable meter, keep attaching, and be refused mid-sentence.
+    const doc: ChatMessage = {
+      id: 'd',
+      role: 'user',
+      parts: [
+        {
+          type: 'file',
+          kind: 'document',
+          attachmentId: 'att_pdf',
+          key: 'k',
+          name: 'ops.pdf',
+          mediaType: 'application/pdf',
+          size: 81_000,
+        },
+      ],
+    }
+    expect(estimateConversationTokens([doc])).toBe(SYSTEM_PROMPT_RESERVE + NOMINAL_PDF_TOKENS)
+    // And the two really are different numbers — a fix that collapsed them again would satisfy
+    // the assertion above if both constants happened to be equal.
+    expect(NOMINAL_PDF_TOKENS).toBeGreaterThan(NOMINAL_BINARY_TOKENS)
+  })
+
+  it('★ an image is still charged the image nominal — the split cuts both ways', () => {
+    // Paired with the document case on purpose: charging EVERY binary the document nominal
+    // would pass the test above and put the browser 47x over the server in the other direction,
+    // warning a citizen off a conversation the server would have accepted.
+    const photo: ChatMessage = {
+      id: 'p',
+      role: 'user',
+      parts: [
+        {
+          type: 'file',
+          kind: 'image',
+          attachmentId: 'att_img',
+          key: 'k',
+          name: 'gate.png',
+          mediaType: 'image/png',
+          size: 81_000,
+        },
+      ],
+    }
+    expect(estimateConversationTokens([photo])).toBe(SYSTEM_PROMPT_RESERVE + NOMINAL_BINARY_TOKENS)
   })
 
   it('counts an office attachment by its extracted text, not the flat nominal', () => {

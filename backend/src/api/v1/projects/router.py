@@ -12,6 +12,7 @@ the shared `error_responses(...)` + `AUTH_401` builders (KD-7).
 from __future__ import annotations
 
 import asyncio
+import enum
 import math
 import uuid
 from typing import Annotated
@@ -72,7 +73,7 @@ from src.services.projects import (
     owned_project_or_404,
     resweep_submission_prefixes,
 )
-from src.services.ratelimit import rate_limit
+from src.services.ratelimit import InProcessRateLimiter, RateLimitExceededError
 from src.services.redis import get_redis
 from src.services.redis.keys import REGISTRY_FIELD_APP_NAME
 from src.services.sandbox import SandboxClient
@@ -455,16 +456,35 @@ _BUILD_LIVE_DELETE_MSG = (
 _SANDBOX_REAP_LOCK_WAIT_SECONDS = 2.0
 
 
-async def _registry_names_this_projects_container(
-    user_id: uuid.UUID, app_id: uuid.UUID
-) -> bool | None:
-    """Does the per-user sandbox registry name THIS project's container right now?
+class _WhoseContainer(enum.Enum):
+    """Whose container the per-user sandbox registry currently names — THREE answers, because
+    two of them are not the same fact and reading them as one silences a real leak.
 
-    `True` = it does, so anything left standing is genuinely this project's. `False` = it
-    names nothing, or names a container the same citizen is running for a DIFFERENT project —
-    either way nothing of this project's survives. `None` = the question could not be ASKED
-    (Redis unreachable), which is the one answer a caller must never read as "nothing
-    survived".
+    `OURS` — this project's; anything left standing is genuinely ours.
+    `SOMEONE_ELSES` — the same citizen's container for a DIFFERENT project.
+    `NOTHING_REGISTERED` — the registry was read and holds nothing.
+    `UNREADABLE` — the question could not be asked at all.
+
+    THE EMPTY REGISTRY MEANS DIFFERENT THINGS ON THE TWO SIDES OF THE LOCK, which is why it is
+    its own value rather than being folded into either neighbour. `SandboxClient._write_registry`
+    hydrates the hash for a JUST-CREATED container, at the END of a 30-60s provision and under
+    the per-user start lock. So OUTSIDE the lock, "empty" is exactly the shape of a provision in
+    flight — quite possibly for the very project being deleted — and reading it as "nothing of
+    ours survives" would silence the record for a container that is coming up holding that
+    project's database credential, with nothing written down and nothing automatic coming for it
+    outside production. INSIDE the lock, no provision can be in flight, so "empty" really does
+    mean nothing is standing, and treating it as a survivor would file a teardown-incomplete row
+    on every ordinary delete of a project whose app is not currently running.
+    """
+
+    OURS = "ours"
+    SOMEONE_ELSES = "someone_elses"
+    NOTHING_REGISTERED = "nothing_registered"
+    UNREADABLE = "unreadable"
+
+
+async def _whose_container_is_registered(user_id: uuid.UUID, app_id: uuid.UUID) -> _WhoseContainer:
+    """Read the per-user sandbox registry and say whose container it names.
 
     THE REGISTRY KEY IS PER-USER, which is the whole reason this question exists: without it,
     "the reap did not happen" and "this project had a container to reap" are the same sentence,
@@ -479,8 +499,14 @@ async def _registry_names_this_projects_container(
             user_id=str(user_id),
             exc_info=True,
         )
-        return None
-    return reg is not None and reg.get(REGISTRY_FIELD_APP_NAME) == app_name_for(app_id)
+        return _WhoseContainer.UNREADABLE
+    if reg is None:
+        return _WhoseContainer.NOTHING_REGISTERED
+    return (
+        _WhoseContainer.OURS
+        if reg.get(REGISTRY_FIELD_APP_NAME) == app_name_for(app_id)
+        else _WhoseContainer.SOMEONE_ELSES
+    )
 
 
 async def _reap_the_project_sandbox_or_shrug(
@@ -574,12 +600,17 @@ async def _reap_the_project_sandbox_or_shrug(
             # never running, and sent an operator after it. Reading the registry is a lock-free
             # HGETALL and answers the same question the in-lock check asks, so the two arms now
             # agree on the same evidence.
-            if await _registry_names_this_projects_container(user_id, app_id) is False:
+            # ONLY POSITIVE EVIDENCE SUPPRESSES THE RECORD. Out here an EMPTY registry is not
+            # "nothing of ours" — it is precisely what a provision in flight looks like, and a
+            # provision is the commonest holder of the lock we just failed to take. Naming
+            # another project's container is the only reading that actually rules ours out.
+            whose = await _whose_container_is_registered(user_id, app_id)
+            if whose is _WhoseContainer.SOMEONE_ELSES:
                 logger.info(
                     "project_delete_sandbox_reap_skipped_not_ours",
                     app_id=str(app_id),
                     user_id=str(user_id),
-                    reason="the lock wait timed out and nothing of this project's is registered",
+                    reason="the lock wait timed out and another project's container is registered",
                 )
                 return None
             # THE CONTAINER IS STILL UP AND STILL BILLING, and outside production nothing will
@@ -600,15 +631,35 @@ async def _reap_the_project_sandbox_or_shrug(
             return app_name_for(app_id)
         try:
             redis = get_redis()
-            registered = await _registry_names_this_projects_container(user_id, app_id)
-            if registered is None:
+            # IN HERE, EMPTY REALLY DOES MEAN NOTHING SURVIVED, and that asymmetry with the
+            # two lock-free arms is the point rather than an oversight: holding the per-user
+            # start lock excludes the concurrent provision that makes an empty registry
+            # ambiguous out there.
+            registered = await _whose_container_is_registered(user_id, app_id)
+            if registered is _WhoseContainer.UNREADABLE:
                 # THE QUESTION COULD NOT BE ASKED, which is not an answer. The reap's own first
                 # act is to read this same registry, so there is nothing to gain by pressing
-                # on; the broad arm below reports a survivor, which is the conservative
-                # direction when the platform cannot see.
-                raise RuntimeError("the sandbox registry could not be read")
-            if not registered:
-                # NOT A LEAK, so not an alarm: either nothing is registered, or what is
+                # on, and reporting a survivor is the conservative direction when the platform
+                # cannot see.
+                #
+                # ANSWERED HERE RATHER THAN BY RAISING INTO THE BROAD ARM. It used to raise a
+                # `RuntimeError` purely to reach that handler — which hardcodes
+                # `reason="the reap raised"`, a sentence that is false (`reap_user` was never
+                # called) and would send an operator reading the alarm looking for a teardown
+                # failure that did not happen. It also cost a second Redis round trip, because
+                # that handler asks the same unanswerable question again.
+                logger.warning(
+                    TEARDOWN_ARTEFACT_SURVIVED_EVENT,
+                    artefact="sandbox_container",
+                    artefact_id=app_name_for(app_id),
+                    reason="the sandbox registry could not be read, so nothing could be checked",
+                    app_id=str(app_id),
+                    user_id=str(user_id),
+                )
+                return app_name_for(app_id)
+            if registered is not _WhoseContainer.OURS:
+                # NOT A LEAK, so not an alarm: either nothing is registered — and under this
+                # lock that really does mean nothing is coming up either — or what is
                 # registered is a container this citizen is running for a DIFFERENT project
                 # and must keep. Nothing of this project's survives.
                 logger.info(
@@ -645,12 +696,15 @@ async def _reap_the_project_sandbox_or_shrug(
         # and does not name ours, nothing of this project's survived and the record must not
         # say otherwise. Unreadable or ours -> report, which is where an actual failed teardown
         # lands.
-        if await _registry_names_this_projects_container(user_id, app_id) is False:
+        # Same rule as the timeout arm, and for the same reason: a Redis blip on the way in is
+        # not evidence about what is standing, and neither is an empty hash while a provision
+        # may be mid-flight. Only another project's name rules ours out.
+        if await _whose_container_is_registered(user_id, app_id) is _WhoseContainer.SOMEONE_ELSES:
             logger.info(
                 "project_delete_sandbox_reap_skipped_not_ours",
                 app_id=str(app_id),
                 user_id=str(user_id),
-                reason="the reap raised and nothing of this project's is registered",
+                reason="the reap raised and the registry names another project's container",
             )
             return None
         logger.warning(
@@ -936,28 +990,25 @@ DESCRIPTION_RATE_LIMIT = 6
 DESCRIPTION_RATE_WINDOW_SECONDS = 15 * 60
 
 
-async def _description_rate_key(user: CurrentUser) -> str:
-    # Per-user bucket, matching the review/feedback/attachment limiters. Declaring
-    # `CurrentUser` here resolves identity BEFORE the limiter runs — the "limiter after
-    # key" ordering, so an unauthenticated request is a 401 rather than a counted hit.
-    return f"project-description:{user.id}"
+# THE BUCKET IS CHARGED AT THE POINT OF SPEND, not at the door, which is why this is a plain
+# limiter object rather than the `rate_limit(...)` dependency its siblings use. A dependency
+# runs before the route body, so it would count every refusal too — and this route's commonest
+# refusal is a 409 for a project with nothing built yet, which spends nothing at all. Six of
+# those and a citizen who then builds their app finds the button locked for a quarter of an
+# hour over requests that never reached the model. The route hits this AFTER the 409/503/429
+# guards, so what is bounded is generations, which is what the bound is for.
+_description_limiter = InProcessRateLimiter(
+    limit=DESCRIPTION_RATE_LIMIT, window_seconds=DESCRIPTION_RATE_WINDOW_SECONDS
+)
 
-
-_description_limiter = rate_limit(
-    _description_rate_key,
-    limit=DESCRIPTION_RATE_LIMIT,
-    window_seconds=DESCRIPTION_RATE_WINDOW_SECONDS,
-    message=(
-        "Too many description generations in a short time. "
-        "Please wait a few minutes and try again."
-    ),
+_DESCRIPTION_RATE_MESSAGE = (
+    "Too many description generations in a short time. Please wait a few minutes and try again."
 )
 
 
 @router.post(
     "/{project_id}/description:generate",
     response_model=ProjectResponse,
-    dependencies=[Depends(_description_limiter)],
     responses={
         # TWO DIFFERENT 429 BODIES REACH THIS ROUTE and `error_responses` refuses a
         # duplicated code, so this one is written out: the daily gate answers its 5-key
@@ -1013,6 +1064,14 @@ async def generate_description(
         await enforce_daily_limit(db, user.id)
     except DailyTokenLimitExceededError as exc:
         return exc.as_response()
+
+    # LAST GUARD BEFORE THE MODEL, deliberately. Everything above can refuse without spending
+    # anything — no app, no code, no client, or a citizen already out of daily budget — and a
+    # bound charged for those would take the button away over requests that cost nothing. From
+    # here on, a request that passes is a request that generates. Per-user bucket; the key is
+    # built from the validated session, never from anything the caller sends.
+    if not _description_limiter.hit(f"project-description:{user.id}"):
+        raise RateLimitExceededError(_DESCRIPTION_RATE_MESSAGE)
 
     try:
         project.description = await generate_project_description(

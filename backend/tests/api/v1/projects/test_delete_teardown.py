@@ -923,6 +923,88 @@ async def test_a_lock_held_by_another_projects_start_does_not_invent_a_survivor(
     assert sandbox.torn_down == []
 
 
+async def test_a_lock_held_over_an_empty_registry_still_reports(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
+) -> None:
+    """★ AN EMPTY REGISTRY IS NOT EVIDENCE — outside the lock it is the shape of a provision.
+
+    `SandboxClient._write_registry` hydrates the hash for a JUST-CREATED container, at the END
+    of a 30-60 second provision, under this same per-user lock. So "the lock is held AND the
+    registry is empty" is exactly what a start in flight looks like from out here — quite
+    possibly a start for the very project being deleted, whose container will come up holding
+    that project's database credential and serving its tree.
+
+    Reading that as "nothing of ours survives" would silence the record for the one case it
+    exists to catch, and nothing automatic collects it outside production. Only a registry that
+    names ANOTHER project's container rules ours out.
+
+    Mutation check: collapse `NOTHING_REGISTERED` back into the suppressing arm and this goes
+    red on both the alarm and the audit row."""
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project, app_row = await _project_with_app(db_session)
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    manager = _wire_manager(app)
+    # NOTHING registered — the provision under the lock has not written its entry yet.
+    assert await fake_redis.exists(_registry(user.id)) == 0
+
+    lock = manager._start_lock_for(user.id)  # noqa: SLF001 — the route's own lock, by design
+    await lock.acquire()
+    try:
+        with structlog.testing.capture_logs() as captured:
+            resp = await _delete(client, project.id, headers)
+    finally:
+        lock.release()
+
+    assert resp.status_code == 200
+    assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
+    assert await _teardown_record(db_session, project.id) == [
+        {"artefact": "sandbox_container", "id": _named(app_row.id)}
+    ]
+
+
+async def test_a_reap_that_raises_over_another_projects_container_invents_nothing(
+    app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any, monkeypatch: Any
+) -> None:
+    """The broad arm answers the same question as the timeout arm, and must answer it the same
+    way: a Redis blip on the way in is not evidence that this project had a container.
+
+    Mutation check: delete the `SOMEONE_ELSES` skip from the `except Exception` arm and this
+    goes red — B's name appears in a record about A."""
+    from tests.fakes import FakeSandboxClient
+
+    headers, user, project_a, app_a = await _project_with_app(db_session)
+    project_b = await ProjectFactory.create(db_session, user.id)
+    app_b = await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project_b.id)
+    await db_session.commit()
+    sandbox = FakeSandboxClient()
+    _wire_sandbox(app, sandbox)
+    _wire_manager(app)
+    await _registry_names(fake_redis, user.id, app_b.id, "ready")
+
+    projects_router = _the_router_module()
+    real = projects_router.reap_user
+
+    async def _explodes(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("redis went away mid-reap")
+
+    monkeypatch.setattr(projects_router, "reap_user", _explodes)
+
+    with structlog.testing.capture_logs() as captured:
+        resp = await _delete(client, project_a.id, headers)
+
+    assert resp.status_code == 200
+    assert await db_session.get(Project, project_a.id) is None
+    # LIVENESS: the arm really ran — the skip line is what it logged.
+    assert any(
+        entry.get("event") == "project_delete_sandbox_reap_skipped_not_ours" for entry in captured
+    )
+    assert _survived(captured, artefact="sandbox_container") == []
+    assert await _teardown_record(db_session, project_a.id) is None
+    assert real is not None  # the real function is still importable; only the binding moved
+
+
 async def test_a_lock_held_while_our_own_container_is_up_still_reports_it(
     app: Any, client: AsyncClient, db_session: AsyncSession, fake_redis: Any
 ) -> None:

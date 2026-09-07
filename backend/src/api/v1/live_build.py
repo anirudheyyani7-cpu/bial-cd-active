@@ -58,7 +58,11 @@ the fix were wrong and are worth correcting rather than deleting: it needs no
 needs no `SandboxDep` — `delete_project` takes `OptionalSandbox`, so a sandbox-off
 deployment still deletes instead of 500ing at dependency-solve time. The reap stays
 best-effort, so a busy start lock, an unconfigured sandbox or a Redis blip still leave the
-container to the scheduled sweep. Pinned by
+container standing — and NOTHING AUTOMATIC COMES FOR IT. This used to say "the scheduled
+sweep", which is true of exactly one environment: `may_destroy_on_this_control_plane` gates
+that sweep's destroy half on `environment == "production"`. Everywhere else the container
+runs on, which is why the delete path alarms and files a `project:teardown-incomplete` audit
+row naming what survived rather than trusting a sweeper that will not run. Pinned by
 `test_a_relaunched_preview_is_torn_down_with_the_project_it_was_serving`.
 """
 

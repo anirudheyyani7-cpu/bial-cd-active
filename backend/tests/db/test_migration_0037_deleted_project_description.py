@@ -25,12 +25,16 @@ the table with the real budget problem.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import uuid
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
@@ -41,7 +45,9 @@ from src.config import settings
 pytestmark = pytest.mark.destructive_migration
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
-_PRE_DESCRIPTION_REVISION = "0036_deleted_projects"
+_MIGRATION_PATH = (
+    _BACKEND_ROOT / "alembic" / "versions" / "2026_09_07_0037_deleted_project_description.py"
+)
 _TABLE = "deleted_projects"
 _COLUMN = "project_description"
 
@@ -92,16 +98,61 @@ def _shape() -> Any:
     return _run_sql(_read)
 
 
+def _toggle_0037(direction: str) -> None:
+    """Run 0037's OWN `upgrade()` / `downgrade()` and nothing else.
+
+    ★ WHY NOT `command.downgrade(config, "0036_deleted_projects")`. That is what this used to
+    do, and it was correct until `0038_app_previous_status` chained onto 0037. Alembic steps
+    down the whole linear chain, so the walk now runs 0038's downgrade too — dropping and
+    re-adding `app_registry.previous_status` on every run of this test.
+
+    That silently defeats 0038's own stated decision. Its docstring skips a round trip
+    precisely because `app_registry` is the table already close to its ~1600-attnum budget,
+    and a dropped column never frees its attnum. This test was burning two slots a run on the
+    one table the project cannot afford to burn.
+
+    So the DDL is driven directly against the connection through alembic's own `Operations`,
+    which is the same shape 0038's test uses to run its backfill statement: the migration's
+    real code, none of its neighbours'.
+    """
+    module = _migration_0037()
+
+    async def _go() -> None:
+        engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), poolclass=NullPool)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(lambda sync_conn: _run_op(sync_conn, module, direction))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_go())
+
+
+def _run_op(sync_conn: Any, module: ModuleType, direction: str) -> None:
+    ctx = MigrationContext.configure(sync_conn)
+    with Operations.context(ctx):
+        (module.upgrade if direction == "up" else module.downgrade)()
+
+
+def _migration_0037() -> ModuleType:
+    """Import 0037 BY PATH (the versions dir is not a package), so the round trip exercises the
+    migration's real DDL rather than a copy of it that could drift."""
+    spec = importlib.util.spec_from_file_location("migration_0037", _MIGRATION_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_the_description_column_round_trips() -> None:
-    config = _alembic_config()
-    command.upgrade(config, "head")
+    command.upgrade(_alembic_config(), "head")
     assert _COLUMN in _columns()
 
     try:
-        command.downgrade(config, _PRE_DESCRIPTION_REVISION)
+        _toggle_0037("down")
         assert _COLUMN not in _columns()
     finally:
-        command.upgrade(config, "head")
+        _toggle_0037("up")
 
     assert _COLUMN in _columns()
 
@@ -132,9 +183,8 @@ def test_a_tombstone_written_before_this_shipped_upgrades_to_an_empty_descriptio
     a description from. `''` is what it gets, and an administrator reading it cannot tell it
     apart from a project that genuinely had no description. That is the accepted loss.
     """
-    config = _alembic_config()
-    command.upgrade(config, "head")
-    command.downgrade(config, _PRE_DESCRIPTION_REVISION)
+    command.upgrade(_alembic_config(), "head")
+    _toggle_0037("down")
 
     project_id, owner_id = uuid.uuid4(), uuid.uuid4()
 
@@ -166,8 +216,14 @@ def test_a_tombstone_written_before_this_shipped_upgrades_to_an_empty_descriptio
 
     _run_sql(_seed)
     try:
-        command.upgrade(config, "head")
+        # The upgrade is the thing under test, so it runs inside the try — and it is what puts
+        # the column back, which is why the `finally` below must not run it a second time.
+        _toggle_0037("up")
         assert _run_sql(_read) == ""
     finally:
+        # Restore the database whichever way the assertion went: put the column back only if
+        # the upgrade above did not get that far, then drop the seeded tombstone (which needs
+        # the column present to be addressable by the ordinary delete).
+        if _COLUMN not in _columns():
+            _toggle_0037("up")
         _run_sql(_cleanup)
-        command.upgrade(config, "head")

@@ -613,6 +613,19 @@ async def delete_project(
     the rows are already gone, so a failed drop is a logged orphan for the reconciler, never a
     500 on a delete that in fact succeeded."""
     project = await owned_project_or_404(db, user.id, project_id)
+    # READ FIRST, BEFORE ANYTHING ELSE IN THIS FUNCTION RUNS (#184). This is the only copy of
+    # the description that will exist after the cascade: it lives on the `projects` row
+    # `delete_project_cascade` deletes, and `description_tsv` is a lossy `to_tsvector` of it
+    # rather than a second copy. The tombstone insert below is only PENDING until the
+    # cascade's autoflush, so binding the value into a local HERE — rather than reaching for
+    # `project.description` down there — is what makes the read's ordering explicit instead of
+    # incidental: a later change that moves the insert past the cascade (to get an exact
+    # count, say) would silently record an empty description otherwise, and there is no source
+    # to repair it from. Coalesced because `projects.description` is NULL when there is none
+    # and the column that keeps it is NOT NULL — the explicit half of a bridge the model's two
+    # defaults also make; see there for why that asymmetry is deliberate and why none of the
+    # three is load-bearing alone.
+    doomed_description = project.description or ""
     # THE TOMBSTONE, written before the cascade removes what it describes (#158 §13.3).
     # Inside the caller's transaction, so a rolled-back delete leaves no record of a
     # deletion that did not happen — and a committed one always has its reason.
@@ -651,6 +664,8 @@ async def delete_project(
         DeletedProject(
             project_id=project.id,
             project_name=project.name,
+            # Captured at the top of the function, not read here — see `doomed_description`.
+            project_description=doomed_description,
             owner_id=project.user_id,
             owner_email=user.email,
             deleted_by=user.id,

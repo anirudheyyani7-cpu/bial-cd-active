@@ -86,6 +86,31 @@ class DeletedProject(UUIDv7PrimaryKeyMixin, Base):
     )
     # COPIED, not joined. The name is what makes this row legible to a human a month later.
     project_name: Mapped[str] = mapped_column(sa.String(120), nullable=False)
+    # ...and the description is what makes it INFORMATIVE (#184). A name alone says "Visitor
+    # Log"; the description is the sentence saying what the app did, which is the question an
+    # administrator reviewing a deletion is actually asking.
+    #
+    # THE ONLY COPY. It lives on the `projects` row `delete_project_cascade` deletes in the
+    # same transaction that writes this one, and nothing else holds the text —
+    # `projects.description_tsv` is a lossy `to_tsvector`, not a second copy. So the route
+    # reads it BEFORE the cascade (see `delete_project`); a record written afterwards has
+    # nothing left to read, permanently.
+    #
+    # NOT NULL, empty when there was none, for `chats_deleted`'s reason: "there was no
+    # description" and "we did not record one" are different facts to the person reading this,
+    # and a NULL cannot tell them apart. `projects.description` IS nullable (NULL = none,
+    # normalized at the write boundary), so something has to bridge the two — the route
+    # coalesces at the read site, and BOTH defaults below make the same choice underneath it
+    # (SQLAlchemy omits a `None` from the INSERT when the column carries a default, so the
+    # bridge holds even for a caller that passes one). Belt and braces on purpose, and worth
+    # saying plainly: no single one of the three is load-bearing on its own.
+    #
+    # Unbounded `Text` like the source column — the 2000-character cap is enforced at the
+    # write boundary there, and a tombstone must be able to hold whatever that boundary let
+    # through, including rows written before the cap existed.
+    project_description: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, default="", server_default=""
+    )
     owner_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
     owner_email: Mapped[str] = mapped_column(sa.String(320), nullable=False)
     # WHO DELETED IT, authoritatively. Taken from the authenticated session, never from the

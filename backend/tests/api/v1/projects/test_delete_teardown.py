@@ -45,7 +45,12 @@ from src.services.appdb.provision import control_plane_dsn, ensure_project_datab
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.storage import AppContainerStore
 from tests.api.v1.projects.conftest import DELETE_BODY
-from tests.factories import AppRegistryFactory, ProjectFactory, UserFactory
+from tests.factories import (
+    AppRegistryFactory,
+    ConversationFactory,
+    ProjectFactory,
+    UserFactory,
+)
 from tests.services.appdb.helpers import scalar_on
 
 _TTL = settings.auth.access_ttl_seconds
@@ -183,6 +188,179 @@ async def test_an_app_less_project_still_has_its_database_dropped(
     )
     assert dropped is not None and dropped.detail is not None
     assert "appId" not in dropped.detail  # there is no app to file it under
+
+
+# --- #184: what the app WAS survives the cascade ------------------------------------------
+#
+# The record already named the project and said who deleted it and why. It did not say what
+# the thing DID, so an administrator reading "Visitor Log" three months later had a name and
+# nothing else. The description is the sentence that answers it.
+#
+# WHY THESE TESTS LIVE HERE rather than beside the other tombstone tests in
+# `test_delete_remark.py`: the claim is about ORDERING against a real cascade. The description
+# is on the `projects` row `delete_project_cascade` deletes, and `projects.description_tsv` is
+# a lossy `to_tsvector` of it rather than a second copy — so the value has to be read into the
+# record BEFORE the cascade runs, and a record written afterwards loses it permanently. Only a
+# test that runs the real cascade against real Postgres can tell a correct implementation from
+# one that reads the description a line too late; a mocked cascade would pass either.
+
+
+async def test_the_description_survives_the_cascade_that_destroys_its_only_copy(
+    app: Any, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """AE1. The whole record, read back after the cascade committed.
+
+    Every field is asserted, not just the new one: a record that gained the description by
+    losing the count, the owner or the reason would be a worse record than the one before it.
+    """
+    containers = _RecordingContainerStore()
+    _override_container_store(app, containers)
+    headers, user, project, app_row, record = await _project_with_database(db_session)
+    user.display_name = "Asha Rao"
+    project.description = "Logs every visitor to the terminal and flags anyone without a pass."
+    await ConversationFactory.create(db_session, user.id, project_id=project.id)
+    await db_session.commit()
+
+    resp = await client.request(
+        "DELETE", f"/v1/projects/{project.id}", headers=headers, json=DELETE_BODY
+    )
+
+    assert resp.status_code == 200
+    # The source is gone — this is what makes the read below a durability claim rather than a
+    # round-trip through an object that happens to still be in memory.
+    assert await db_session.get(Project, project.id) is None
+
+    tombstone = (
+        await db_session.execute(
+            sa.select(DeletedProject).where(DeletedProject.project_id == project.id)
+        )
+    ).scalar_one()  # ONE record, not two: `scalar_one` is the double-delete assertion too.
+    assert tombstone.project_description == (
+        "Logs every visitor to the terminal and flags anyone without a pass."
+    )
+    # ...and every field that was already there.
+    assert tombstone.project_name == project.name
+    assert tombstone.owner_id == user.id
+    assert tombstone.owner_email == user.email
+    assert tombstone.deleted_by == user.id
+    assert tombstone.deleted_by_name == "Asha Rao"
+    assert tombstone.remark == DELETE_BODY["remark"]
+    assert tombstone.chats_deleted == 1
+    assert tombstone.had_app is True
+    assert tombstone.had_database is True
+    assert tombstone.deleted_at is not None
+
+
+async def test_a_project_with_no_description_records_an_empty_value(
+    app: Any, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The description is optional on `projects` (NULL = none) and the column that keeps it is
+    NOT NULL, so the two have to be bridged somewhere. What is pinned here is the OUTCOME —
+    empty, never null, never a refusal — not which of the three bridges produced it.
+
+    Stated because it was measured rather than assumed. Dropping the route's coalesce does NOT
+    fail this test, and neither does dropping the model's Python-side default on top of it:
+    SQLAlchemy leaves a `None` out of the INSERT when the column carries a server default, so
+    the row still lands as `''`. What this DOES kill is a route that writes something else —
+    `str(project.description)` storing the literal `"None"` is the slip it was mutation-checked
+    against, and `or project.name` is the other shape of it. The nullable-vs-NOT-NULL decision
+    underneath is pinned at the DDL instead, by
+    `tests/db/test_migration_0037_deleted_project_description.py`, which goes red for it.
+    """
+    user = await UserFactory.create(db_session)
+    headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
+    project = await ProjectFactory.create(db_session, user.id)
+    assert project.description is None  # the state under test, stated rather than assumed
+    await db_session.commit()
+
+    resp = await client.request(
+        "DELETE", f"/v1/projects/{project.id}", headers=headers, json=DELETE_BODY
+    )
+
+    assert resp.status_code == 200, resp.text
+    tombstone = (
+        await db_session.execute(
+            sa.select(DeletedProject).where(DeletedProject.project_id == project.id)
+        )
+    ).scalar_one()
+    assert tombstone.project_description == ""  # empty, and NOT null
+
+
+async def test_the_description_is_read_before_the_cascade_that_deletes_its_only_row(
+    app: Any, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """THE ORDERING, pinned directly. An implementation that reads `project.description` after
+    `delete_project_cascade` has run records an empty string, and every assertion above except
+    the first would still pass.
+
+    Read as a bare COLUMN, not through the mapped entity: the tombstone instance the route
+    constructed is still in this session's identity map, so `select(DeletedProject)` can answer
+    from memory. A column select goes to the database, which is where the value has to be.
+    """
+    user = await UserFactory.create(db_session)
+    headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
+    described = "Tracks bay allocation for turnarounds under forty minutes."
+    project = await ProjectFactory.create(db_session, user.id, description=described)
+    await db_session.commit()
+
+    resp = await client.request(
+        "DELETE", f"/v1/projects/{project.id}", headers=headers, json=DELETE_BODY
+    )
+
+    assert resp.status_code == 200
+    stored = await db_session.scalar(
+        sa.select(DeletedProject.project_description).where(
+            DeletedProject.project_id == project.id
+        )
+    )
+    assert stored == described
+    # ...and there is nowhere left it could have been re-read from. Not just "this project's
+    # row is gone" — NO row in `projects` holds this text any more, so the value on the
+    # tombstone can only have come from a read that happened before the cascade.
+    assert (
+        await db_session.scalar(
+            sa.select(sa.func.count()).select_from(Project).where(Project.description == described)
+        )
+    ) == 0
+
+
+async def test_the_double_delete_race_still_fails_closed_on_the_records_unique_index(
+    app: Any, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The new column does not loosen the guard that makes one deletion one record.
+
+    A NOT NULL column added to this table is exactly the kind of change that quietly turns the
+    loser of the race from a clean 404 into a 500 — the insert would now fail on a null before
+    it ever reached the unique index, from a different exception class the route does not
+    catch. Staged the way `test_delete_remark.py` stages it: two overlapping requests are not
+    expressible against a single bound `db_session`, so the winner's row is seeded as if it had
+    already committed and the client's own DELETE runs the real cascade into it.
+    """
+    user = await UserFactory.create(db_session)
+    headers = {"Cookie": f"session={mint_session_jwt(user.id, user.token_version, _TTL)}"}
+    project = await ProjectFactory.create(
+        db_session, user.id, description="Bay allocation for short turnarounds."
+    )
+    db_session.add(
+        DeletedProject(
+            project_id=project.id,
+            project_name=project.name,
+            project_description="Recorded by the request that won the race.",
+            owner_id=user.id,
+            owner_email=user.email,
+            deleted_by=user.id,
+            deleted_by_name="Someone Else",
+            remark=DELETE_BODY["remark"],
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.request(
+        "DELETE", f"/v1/projects/{project.id}", headers=headers, json=DELETE_BODY
+    )
+
+    assert resp.status_code == 404, resp.text
+    assert "Internal server error" not in resp.text  # a NOT NULL slip would land here
 
 
 # --- the guard gap: a live preview connection ---------------------------------------------

@@ -11,6 +11,17 @@ still does its job:
 
 The pardon itself (no teardown, registry kept, stay granted, lock released) is asserted
 on the happy path in `test_manager.py`; this module covers what happens NEXT.
+
+HOW THE SESSIONS GET HERE. `SessionManager.start` is deleted, so a session is allocated by
+`ensure_sandbox` — the door production uses — and driven into the end sequence by `_finalize`,
+which is the exact call the deleted `_run_and_finalize` made when a run ended. `_finalize` with
+`"completed"` reaches `_do_finalize` with the inputs a naturally-completed build reached it with
+(that reason, a derived status of ENDED, `force_ended=False`, a live handle), which is precisely
+what the pardon decision reads; `"build_failed"` derives FAILED and takes the teardown arm.
+
+NOT `stop`, deliberately: `stop` goes through `_end`, which marks the registry `ending` first.
+That is right for a user-driven stop and wrong for a completion — it would leave a pardoned
+container behind an `ending` registry, a pair production never produces.
 """
 
 from __future__ import annotations
@@ -37,12 +48,17 @@ from src.services.redis import heartbeat_key, registry_key
 from src.services.redis.keys import REGISTRY_FIELD_PREVIEW_STAY_UNTIL
 from src.services.sandbox.config import SandboxConfig
 from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain, FakeSandboxClient, FakeStorage
+from tests.fakes import FakeSandboxClient, FakeStorage
+
+# The end reasons `_do_finalize` branches on, spelled here because the manager's own constants
+# are private. "completed" is the ONLY one that earns a pardon; anything else tears down.
+COMPLETED = "completed"
+BUILD_FAILED = "build_failed"
 
 
 @pytest.fixture(autouse=True)
 def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Mirrors `test_manager.py`: `start()` builds the app env, which needs a configured
+    # Mirrors `test_manager.py`: `ensure_sandbox` builds the app env, which needs a configured
     # sandbox block even though every container here is a FakeSandboxClient.
     monkeypatch.setattr(
         settings,
@@ -63,17 +79,16 @@ def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _completed_build(
     db: AsyncSession, email: str, client: FakeSandboxClient
 ) -> tuple[User, SessionManager, uuid.UUID]:
-    """Run one build to natural completion and hand back the pardoned state."""
+    """Take one session all the way to a COMPLETED end, and hand back the pardoned state."""
     user = await UserFactory.create(db, email=email)
     project = await ProjectFactory.create(db, user.id)
     manager = SessionManager()
-    session = await manager.start(
-        db, user, project.id, "build me a CRUD app", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db, user, project.id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await manager._finalize(session, COMPLETED, client)
     assert isinstance(session.envelopes[-1], EndedEvent)
-    assert session.envelopes[-1].reason == "completed"
+    assert session.envelopes[-1].reason == COMPLETED
     return user, manager, session.app_id
 
 
@@ -124,13 +139,11 @@ async def test_failed_build_still_tears_down_immediately(
     project = await ProjectFactory.create(db_session, user.id)
     manager = SessionManager()
     client = FakeSandboxClient()
-    brain = FakeBrain(status=BuildSessionStatus.FAILED, reason="build_failed")
 
-    session = await manager.start(
-        db_session, user, project.id, "p", run_build=brain, sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project.id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await manager._finalize(session, BUILD_FAILED, client)
 
     assert session.status == BuildSessionStatus.FAILED
     assert app_name_for(session.app_id) in client.torn_down

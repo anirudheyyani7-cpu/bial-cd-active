@@ -8,6 +8,11 @@ born with — `FakeSandboxClient.provision_env` / `.restore_env`.
 Nothing here fakes the substrate: `.env.test` configures a real `APP_DB__*`, so these
 create actual databases and roles. Every test that provisions registers with `salted`
 first — the `db_session` rollback cannot undo work done on the AUTOCOMMIT engine.
+
+The birth arms are driven through `ensure_sandbox` + `stop`, which is the pair production
+uses — `SessionManager.start` is deleted. A `stop` ends the session the way the Stop button
+does: the step-1 snapshot is written, the container is torn down and the registry deleted, so
+the NEXT `ensure_sandbox` finds no registry and takes the restore arm off that bundle.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ from src.services.build_sessions.manager import SessionManager, app_name_for
 from src.services.sandbox.config import SandboxConfig
 from src.services.storage import snapshot_key
 from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain, FakeSandboxClient, FakeStorage
+from tests.fakes import FakeSandboxClient, FakeStorage
 
 _BASE_ENV = ("BIAL_APP_ID", "BIAL_PORTAL_ORIGIN")
 
@@ -154,11 +159,9 @@ async def test_the_fresh_provision_arm_injects_the_dsn_alongside_the_base_env(
     manager = SessionManager()
     client = FakeSandboxClient()
 
-    session = await manager.start(
-        db_session, user, project_id, "build it", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
 
     assert client.provisioned == [app_name_for(session.app_id)]
     assert client.provision_env is not None
@@ -179,24 +182,16 @@ async def test_the_restore_arm_reinjects_the_dsn(
     salted.append(project_id)
     manager = SessionManager()
     client = FakeSandboxClient()
-    first = await manager.start(
-        db_session, user, project_id, "build it", run_build=FakeBrain(), sandbox_client=client
+    first = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert first.task is not None
-    await first.task
+    await manager.stop(first, client)
     assert snapshot_key(first.app_id) in fake_storage.objects  # finalize wrote the bundle
 
     second_client = FakeSandboxClient()
-    second = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "refine it",
-        run_build=FakeBrain(),
-        sandbox_client=second_client,
+    second = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=second_client, may_write=True
     )
-    assert second.task is not None
-    await second.task
 
     assert second_client.restored == [app_name_for(second.app_id)]  # restored, not re-provisioned
     assert second_client.restore_env is not None
@@ -215,16 +210,11 @@ async def test_relaunch_preview_reinjects_the_dsn(
     user, project_id = await _mk(db_session, "u3relaunch@rvaiglobal.com")
     salted.append(project_id)
     manager = SessionManager()
-    built = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "build it",
-        run_build=FakeBrain(),
-        sandbox_client=FakeSandboxClient(),
+    first_client = FakeSandboxClient()
+    built = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=first_client, may_write=True
     )
-    assert built.task is not None
-    await built.task
+    await manager.stop(built, first_client)
 
     client = FakeSandboxClient()
     await manager.relaunch_preview(db_session, user, project_id, client)
@@ -263,17 +253,12 @@ async def test_a_legacy_project_is_provisioned_lazily_and_exactly_once(
     monkeypatch.setattr(provision_module, "_create_role", _counting_create_role)
 
     manager = SessionManager()
-    for prompt in ("build it", "refine it"):
-        session = await manager.start(
-            db_session,
-            user,
-            project_id,
-            prompt,
-            run_build=FakeBrain(),
-            sandbox_client=FakeSandboxClient(),
+    for _turn in ("the first turn", "the second turn"):
+        client = FakeSandboxClient()
+        session = await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
         )
-        assert session.task is not None
-        await session.task
+        await manager.stop(session, client)
 
     assert role_creations == [role_name(project_id)]  # the external sequence ran ONCE
     row = await db_session.scalar(

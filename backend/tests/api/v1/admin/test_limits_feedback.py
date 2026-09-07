@@ -18,6 +18,7 @@ from src.services.auth.session_jwt import mint_session_jwt
 from src.services.usage.gate import effective_daily_limit
 from src.services.usage.limits import (
     CONTEXT_HARD_FLOOR,
+    MODEL_CONTEXT_WINDOW,
     SYSTEM_PROMPT_RESERVE,
     effective_context,
 )
@@ -78,7 +79,7 @@ async def test_list_users_with_effective_limits(client, db_session) -> None:
     # No override → raw limits are null; effective falls back to the defaults.
     assert row["limits"]["dailyTokenLimit"] is None
     assert row["effectiveLimits"]["dailyTokenLimit"] == settings.DAILY_TOKEN_LIMIT
-    assert row["effectiveLimits"]["contextHardLimit"] == 200000
+    assert row["effectiveLimits"]["contextHardLimit"] == 500000
 
 
 # --- set / clear override, live agreement --------------------------------------
@@ -132,9 +133,12 @@ async def test_set_limit_is_audited(client, db_session) -> None:
 async def test_limit_validation(client, db_session) -> None:
     target = await UserFactory.create(db_session, email="bad@rvaiglobal.com")
     headers = await _admin(db_session)
+    # DERIVED FROM THE WINDOW, not typed out: this used to be a literal 999,999, which stopped
+    # being "over the window" the moment the window was corrected to what the deployment really
+    # serves — the assertion passed for years and then silently asserted nothing.
     over_window = await client.patch(
         f"/v1/admin/users/{target.id}/limits",
-        json={"contextHardLimit": 999999},
+        json={"contextHardLimit": MODEL_CONTEXT_WINDOW + 1},
         headers=headers,
     )
     assert over_window.status_code == 400

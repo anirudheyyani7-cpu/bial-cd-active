@@ -6,6 +6,10 @@ conversation delete-sweeps, and the C4 snapshot round-trip run without Azurite.
 `FakeSandboxClient` is a canned C2 `SandboxClient` (the mock helper C1) and `FakeBrain`
 is a scripted mock C7 `run_build` — together they let SESSION-API's reaper + SessionManager
 + router tests run without a live container, real ACA, or Track BRAIN.
+
+`ToolDeps` and `write_legacy_build_started` at the foot of the file are re-hosted from `src/`:
+both were harness-only in production and were deleted with it, and both were the driver for
+tests of code that is STILL LIVE. See the section comment there.
 """
 
 from __future__ import annotations
@@ -13,8 +17,11 @@ from __future__ import annotations
 import base64
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions.schemas import (
     BuildResult,
@@ -23,6 +30,11 @@ from src.api.v1.build_sessions.schemas import (
     ProgressEnvelope,
     StepEvent,
 )
+from src.db.models.conversation import ChatKind
+from src.db.models.message import MessageEntryKind, MessageVisibility
+from src.services.messages.store import SeqContentionError, append_batch
+from src.services.orchestrator.deps import SandboxSession
+from src.services.orchestrator.progress import ProgressEmitter
 from src.services.redis import (
     REGISTRY_STATE_ENDING,
     REGISTRY_STATE_READY,
@@ -480,3 +492,64 @@ class FakeBrain:
             last_seq=2,
             snapshot_committed=False,
         )
+
+
+# ── The deleted harness's leftovers, re-hosted in the test tree ───────────────
+#
+# `BuildDeps` and `write_build_started` lived in `src/` until the standalone build stack was
+# deleted. Both were harness-only in production, and both were the DRIVER for tests of code that
+# is still live — the sandbox toolset and the transcript projection respectively. Re-homed here
+# rather than deleted with their production twins, so that coverage does not quietly go with them.
+
+
+@dataclass
+class ToolDeps:
+    """A run's dependencies as far as `orchestrator.tools` is concerned — which is: whatever the
+    `sandbox_of` accessor closes over. The tool bodies never touch `ctx.deps` directly, so any
+    object will do; this is the minimal one, and it is the shape the deleted `BuildDeps` had.
+
+    A Write chat turn's real deps are `ChatDeps` (`services/agent/agent.py`), which carries a
+    great deal this has no business modelling. Tests that want the tool surface and nothing else
+    take this instead."""
+
+    sandbox: SandboxSession
+    emitter: ProgressEmitter | None = None
+    user_id: uuid.UUID = field(default_factory=uuid.uuid4)
+
+
+async def write_legacy_build_started(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    session_id: uuid.UUID,
+    started_seq: int,
+) -> bool:
+    """Append a `build_started` lifecycle row exactly as `outcome.write_build_started` did.
+
+    THE PRODUCTION WRITER IS DELETED and this is deliberately not a re-implementation for its own
+    sake: rows of this shape are PERMANENT in the production transcript, the projection still
+    reads them (`BuildInProgressItem`), and `newest_build_outcome_status` still has to skip them.
+    Those readers are live and must stay tested against a faithful row rather than a hand-built
+    dict that can drift from what is actually in the database.
+
+    Kept byte-identical to the writer it replaces: hidden `system_event`, EMPTY native payload,
+    `meta = {kind, sessionId, startedSeq}`."""
+    try:
+        await append_batch(
+            db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            messages=[],
+            entry_kind=MessageEntryKind.SYSTEM_EVENT,
+            kind=ChatKind.BUILD,
+            visibility=MessageVisibility.HIDDEN,
+            meta={
+                "kind": "build_started",
+                "sessionId": str(session_id),
+                "startedSeq": started_seq,
+            },
+        )
+    except SeqContentionError:
+        return False
+    return True

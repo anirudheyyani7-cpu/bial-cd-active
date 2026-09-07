@@ -275,7 +275,7 @@ export function presentationFor(state: PublishState): Presentation {
       //
       // The second sentence is the true one and it is deliberately the WIDER claim: the
       // workspace refuses to start, and every turn of every kind is refused with it, at
-      // `resolve_app_for_project` — the one site all three doors run through. Save is the
+      // `resolve_app_for_project` — the one site both doors run through. Save is the
       // documented exception and is NOT refused, because refusing it would destroy unsaved
       // work in a live container; that is a deliberate trade rather than a gap in the
       // sentence, and nothing consumes the snapshot it lets advance.

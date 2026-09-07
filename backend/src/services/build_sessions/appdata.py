@@ -82,7 +82,8 @@ async def resolve_app_for_project(
     `ensure_sandbox`, which `services/turns/engine.py` routes EVERY turn kind through, Ask,
     Plan and Build alike. So one status check closes both, and there is no second enforcement
     point to keep in step with this one. (There was a third, `_start_locked`, behind the
-    orphaned `POST /v1/build-sessions`; the legacy build stack was deleted, taking it with it.
+    orphaned bare `POST` on the build-sessions collection; the legacy build stack was deleted,
+    taking both with it.
     Grep `await resolve_app_for_project` before adding a caller — a new one inherits this
     refusal, which is the point, and must not be written to route around it.)
 

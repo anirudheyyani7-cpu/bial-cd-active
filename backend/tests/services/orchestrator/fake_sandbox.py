@@ -7,9 +7,10 @@ flat dict, LF-normalizes writes, enforces the `str_replace` exactly-once rule (0
 returns a non-zero command `exit` as a NORMAL `ExecResult` (never an exception), keeps `dev_start`
 idempotent, and tails `dev_logs` from a cursor.
 
-Programmable hooks let a test drive the self-heal loop: `queue_commands` scripts the harness-driven
-`tsc` results (fail then pass), `become_ready_after` delays dev readiness, `push_dev_logs` injects
-a crash into the tail, and `attach_error` makes `attach_existing` raise. It also records
+Programmable hooks let a test drive the self-heal loop: `queue_commands` scripts the results of
+the between-turn `tsc` (`selfheal.verify`'s, fail then pass), `become_ready_after` delays dev
+readiness, `push_dev_logs` injects a crash into the tail, and `attach_error` makes
+`attach_existing` raise. It also records
 `command_calls` / `dev_start_calls` / `teardown_calls` so a test can assert BRAIN never ran `git`,
 never restarted the dev server, and never tore down (KD-9/KD-11).
 
@@ -131,7 +132,7 @@ class FakeSandbox(SandboxClient):
         # before U9 silently starts paying for a second verify pass.
         self.changed_since_watermark = False
         self.watermark_stamps = 0
-        # A container that cannot answer the harness's own `sh -c` probes at all — an image with
+        # A container that cannot answer `selfheal`'s own `sh -c` probes at all — an image with
         # no `find`, a shell that is not there. Every probe returns a non-zero exit, which each
         # of them reads as "we could not find out" rather than as a fact about the workspace.
         self.probes_fail = False
@@ -153,7 +154,7 @@ class FakeSandbox(SandboxClient):
     # --- programmable hooks --------------------------------------------------
 
     def queue_commands(self, *results: ExecResult) -> None:
-        """Script the FIFO results the harness-driven `tsc` reads (fail then pass)."""
+        """Script the FIFO results the between-turn `tsc` reads (fail then pass)."""
         self._command_queue.extend(results)
 
     def become_ready_after(self, polls: int) -> None:
@@ -181,8 +182,8 @@ class FakeSandbox(SandboxClient):
         self.warm_status = 500
 
     def push_dev_logs(self, *lines: str) -> None:
-        """Append lines to the dev-server tail (a crash line is just stderr text the harness
-        recognizes)."""
+        """Append lines to the dev-server tail (a crash line is just stderr text
+        `selfheal.detect_server_crash` recognizes)."""
         self._dev_log_lines.extend(lines)
 
     def kill_dev(self, *, exit_code: int = 1) -> None:
@@ -256,8 +257,8 @@ class FakeSandbox(SandboxClient):
         # A non-zero exit is a NORMAL return (C1), never an exception.
         self.command_calls.append(list(cmd))
         self.command_timeouts.append(timeout_s)
-        # THE HARNESS'S OWN `sh -c` PROBES ANSWER FROM THEIR OWN FIELDS, ahead of both queues.
-        # `queue_commands` and `queue_exec_errors` script the harness-driven `tsc` run — that is
+        # `selfheal`'s OWN `sh -c` PROBES ANSWER FROM THEIR OWN FIELDS, ahead of both queues.
+        # `queue_commands` and `queue_exec_errors` script the between-turn `tsc` run — that is
         # what every caller means by them — and they are FIFO, so a probe consuming a queued entry
         # would hand the type-check the wrong answer while looking like it did nothing. A test that
         # wants a probe to fail says so with `exec_handler`, which still sees everything.
@@ -271,7 +272,7 @@ class FakeSandbox(SandboxClient):
         return self.default_result
 
     def _answer_a_probe(self, cmd: list[str]) -> ExecResult | None:
-        """One of the harness's own container probes, or `None` for an ordinary command."""
+        """One of `selfheal`'s own container probes, or `None` for an ordinary command."""
         if len(cmd) != 3 or cmd[0] != "sh":
             return None
         script = cmd[2]
@@ -364,7 +365,7 @@ class FakeSandbox(SandboxClient):
             raise self.dev_start_error
         if self.dev_exit_code is not None:
             # A restart after a death mirrors C1: `/dev/start` resets the log ring, so old
-            # cursors point past it (the harness re-reads from 0).
+            # cursors point past it (`verify` re-reads from 0).
             self._dev_log_lines = []
             self.dev_exit_code = None
         self.dev_running = True

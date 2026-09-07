@@ -209,8 +209,17 @@ def test_the_app_still_builds_with_its_full_route_surface() -> None:
     # outcome needs a reader. Holding a request open for the length of a stop was a dependency
     # nobody could satisfy — the budget had to sit under the request timeout of a gateway owned by
     # the client's network — and the outcome it was hiding is three states, not a boolean.
-    assert len(build_session_paths) == 18, (
-        f"the C3 build-session route surface changed: expected 18 paths, found "
+    # 16 since the standalone build stack was deleted (18 - 2), and both routes went for the same
+    # reason the four lock ops went in U28 — no caller left. The bare collection `POST` on
+    # `/v1/build-sessions` was the start route; PR #182 moved the workspace onto the chat turn and
+    # took away its only browser client, so it was removed together with the harness, the
+    # module-level build agent and the run-build dependency it was the sole door into.
+    # `lock/force-end` had had no UI since the block banner's Force-end button was removed, and it
+    # was the last of the lock ops U28 left standing on the strength of that button. The service
+    # method behind it (`SessionManager.force_end`) is untouched and still has its own tests —
+    # only the HTTP door closed.
+    assert len(build_session_paths) == 16, (
+        f"the C3 build-session route surface changed: expected 16 paths, found "
         f"{len(build_session_paths)}. If a route was deliberately added or removed, amend C3 "
         f"and update this number in the same change.\n{sorted(build_session_paths)}"
     )

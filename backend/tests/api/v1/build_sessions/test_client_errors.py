@@ -292,25 +292,22 @@ async def test_a_late_report_does_not_resurrect_a_finished_turn(
 ) -> None:
     """A preview outlives its build session — the frame keeps rendering (and keeps crashing) long
     after the turn ended. The report must be receivable then, and must change nothing about the
-    finished turn: this store is drained by the NEXT verify, and never pushes into anything."""
-    from src.api.v1.build_sessions.deps import run_build_dependency
-    from tests.api.v1.build_sessions.conftest import drain
+    finished turn: this store is drained by the NEXT verify, and never pushes into anything.
+
+    Re-fixtured onto `a_live_session` (the `ensure_sandbox` door) now that the start route is
+    gone; `manager.stop` drives the same end sequence a completion drove, so what this asserts
+    against is still a genuinely terminal session rather than a hand-built one."""
+    from tests.api.v1.build_sessions.conftest import a_live_session
     from tests.factories import ProjectFactory
-    from tests.fakes import FakeBrain
 
     user = await UserFactory.create(db_session, email="u13-late@rvaiglobal.com")
     project = await ProjectFactory.create(db_session, user.id)
     app = await AppRegistryFactory.create(db_session, user_id=user.id, project_id=project.id)
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain(app_id=app.id)
 
-    started = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "build it"},
-        headers=auth_headers(user),
-    )
-    assert started.status_code == 201
-    session_id = started.json()["sessionId"]
-    await drain(wire.manager, session_id)
+    session = await a_live_session(wire, db_session, user, project.id)
+    assert session.app_id == app.id  # the session really is holding THIS app's container
+    await wire.manager.stop(session, wire.sbx, reason="completed")
+    session_id = session.session_id
 
     finished = await client.get(f"/v1/build-sessions/{session_id}", headers=auth_headers(user))
     ended_status, ended_seq = finished.json()["status"], finished.json()["lastSeq"]

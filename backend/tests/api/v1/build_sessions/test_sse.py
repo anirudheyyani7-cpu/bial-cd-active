@@ -15,16 +15,19 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions import sse as sse_module
-from src.api.v1.build_sessions.deps import run_build_dependency
-from src.api.v1.build_sessions.schemas import BuildSessionStatus, EndedEvent, StepEvent
+from src.api.v1.build_sessions.schemas import (
+    BuildSessionStatus,
+    EndedEvent,
+    PreviewReadyEvent,
+    StepEvent,
+)
 from src.api.v1.build_sessions.sse import build_sse_response
 from src.config import settings
 from src.services.auth.session_jwt import mint_session_jwt
 from src.services.build_sessions import BuildSession
 from src.services.sandbox.base import SandboxHandle
-from tests.api.v1.build_sessions.conftest import auth_headers, drain
+from tests.api.v1.build_sessions.conftest import a_live_session
 from tests.factories import ProjectFactory, UserFactory
-from tests.fakes import FakeBrain
 
 _TTL = settings.auth.access_ttl_seconds
 
@@ -56,16 +59,25 @@ async def _user_project(db: AsyncSession, email: str):
 
 
 async def _completed_session(client, db, wire, email):
-    wire.app.dependency_overrides[run_build_dependency] = lambda: FakeBrain()
+    """A session that ran to its terminal, with the exact three-frame story the feed replays.
+
+    Re-fixtured off the deleted start route. What produced these frames was a `run_build` task
+    emitting seq 1-2 and the manager synthesizing the terminal seq 3; the task is gone, so the
+    two progress frames are handed to `manager.on_progress` directly (the generic C7 sink,
+    which documents that it must derive correct state from envelopes pushed by tests) and the
+    terminal comes from `manager.stop` — still the single emitter of the `ended` frame, still
+    downstream of the finalize snapshot. `_bare_session()` below is the same technique with no
+    manager at all; this one keeps the manager because the feed is reached over HTTP."""
     user, project = await _user_project(db, email)
-    r = await client.post(
-        "/v1/build-sessions",
-        json={"projectId": str(project.id), "prompt": "p"},
-        headers=auth_headers(user),
+    session = await a_live_session(wire, db, user, project.id)
+    await wire.manager.on_progress(
+        session, StepEvent(seq=1, name="scaffold", label="Scaffolding the app", state="started")
     )
-    sid = r.json()["sessionId"]
-    await drain(wire.manager, sid)  # run the fast brain to the terminal ended
-    return user, sid
+    await wire.manager.on_progress(
+        session, PreviewReadyEvent(seq=2, preview_url="https://preview.example/")
+    )
+    await wire.manager.stop(session, wire.sbx, reason="completed")
+    return user, str(session.session_id)
 
 
 async def test_full_replay_carries_id_lines_snake_case_and_done(
@@ -104,7 +116,8 @@ async def test_replay_of_a_finished_session_has_exactly_one_truthful_terminal(
     terminals = [e for e in events if e["type"] == "ended"]
     assert len(terminals) == 1
     assert events[-1] is terminals[0]  # terminal is last
-    assert terminals[0]["snapshot_committed"] is True  # the truth, not BRAIN's stale `false`
+    # The truth settled by the end sequence's own snapshot step, never a claim that predates it.
+    assert terminals[0]["snapshot_committed"] is True
     assert terminals[0]["reason"] == "completed"
     assert terminals[0]["status"] == "ended"
     assert terminals[0]["seq"] == 3  # continues the run's stream — no gap at the handoff

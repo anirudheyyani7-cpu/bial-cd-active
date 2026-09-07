@@ -9,7 +9,8 @@
  * never `any`. Every non-2xx becomes an `ApiError` (via `readApiError`) so callers
  * branch on `.status` / `.code` (409 / 403) instead of re-parsing envelopes.
  *
- * CSRF (KTD-2): `relaunchPreview` / `stop` / `forceEnd` are mutating POSTs and carry the
+ * CSRF (KTD-2): `relaunchPreview` / `stop` (and the project-scoped save / release / stop-active
+ * calls below) are mutating POSTs and carry the
  * signed double-submit token (`X-CSRF-Token`, reusing `auth.js` `getCsrfToken()`);
  * `getStatus` GET and the SSE GET (a separate transport, `buildSessionEvents.ts`)
  * are safe methods and carry NO token. This is net-new: no prior business route in
@@ -23,7 +24,6 @@ import { getCsrfToken } from './auth'
 import type {
   BuildSessionStatus,
   BuildSessionStatusResponse,
-  ForceEndResponse,
   RelaunchPreviewRequest,
   RelaunchPreviewResponse,
   StopBuildRequest,
@@ -156,11 +156,6 @@ function toStopBuildResponse(value: unknown): StopBuildResponse {
   return { sessionId: requireSessionId(value), status: toBuildSessionStatus(value.status) }
 }
 
-function toForceEndResponse(value: unknown): ForceEndResponse {
-  if (!isRecord(value)) throw new ApiError('The server returned a build session we could not read.', 500)
-  return { sessionId: requireSessionId(value), status: toBuildSessionStatus(value.status) }
-}
-
 // ─── request plumbing ────────────────────────────────────────────────────────
 
 /** The double-submit CSRF header for a mutating POST, or `{}` when no csrf cookie is readable (parity with `auth.js`). */
@@ -198,8 +193,9 @@ async function getJson(
 }
 
 /**
- * A mutating POST with CSRF. `body === undefined` sends no JSON body (`forceEnd` — the one
- * surviving lock op — takes none, C3 §3). A non-2xx becomes an `ApiError`, EXCEPT a
+ * A mutating POST with CSRF. `body === undefined` sends no JSON body — the project-scoped
+ * commands (`saveProject` / `releaseProject` / `stopActiveBuild`) name the target in the path
+ * and carry nothing else. A non-2xx becomes an `ApiError`, EXCEPT a
  * `409 build_session_already_active` which becomes the richer
  * `BuildSessionAlreadyActiveError` carrying the existing session id.
  */
@@ -266,23 +262,18 @@ export async function getStatus(sessionId: string, deps: AuthFetchDeps = {}): Pr
   return toBuildSessionStatusResponse(await res.json())
 }
 
-// ─── lock operations (C3 §3) ─────────────────────────────────────────────────
+// ─── lock operations (C3 §3) — THERE ARE NONE LEFT ──────────────────────────
 //
-// `acquireLock` and `releaseLock` are GONE (U28): nothing called them — the portal's blind
+// `acquireLock` and `releaseLock` went in U28: nothing called them — the portal's blind
 // keep-alive loop that was their only caller was itself deleted back in U13, same as
 // `renewLock` and `heartbeat` before them (see the note above).
 //
-// `forceEnd` HAS NO UI LEFT EITHER, and is kept anyway. Its one control was the block banner's
-// Force-end button, deleted with the banner. It stays because it is the owner-only kill switch for
-// the case the whole lock op exists for — a session stuck mid-`building` that never emits a
-// terminal `ended` (C3 §3.4) — and retiring the portal's only client for that route is the stop
-// lineage's call to make, not this sweep's.
-
-/** `force-end` — the owner-only kill switch (`kill_switch()`), regardless of in-flight state. A non-owner → `403 build_session_forbidden`. */
-export async function forceEnd(sessionId: string, deps: AuthFetchDeps = {}): Promise<ForceEndResponse> {
-  const body = await postJson(`${BASE}/${encodeURIComponent(sessionId)}/lock/force-end`, undefined, 'Failed to force-end the build session', deps)
-  return toForceEndResponse(body)
-}
+// `forceEnd` went in U33, and so did the ROUTE it spoke to. It was the owner-only kill switch for
+// a session stuck mid-`building` that never emits a terminal `ended` (C3 §3.4), but its one
+// control was the block banner's Force-end button, deleted with the banner — so no surface had
+// been able to reach it for two units, and keeping a client for it only advertised a way to end a
+// build that a citizen could not actually take. What a live build offers now is `stop` (graceful,
+// the whole interrupt vocabulary of a turn) and, project-scoped, `stopActiveBuild`.
 
 /**
  * The dependency bag the C3 client + event feed accept, so U4's hook and U5's page
@@ -294,7 +285,6 @@ export interface BuildSessionClient {
   relaunchPreview: typeof relaunchPreview
   stop: typeof stop
   getStatus: typeof getStatus
-  forceEnd: typeof forceEnd
 }
 
 /** The real, wired-by-default client (this track merges after SESSION-API, so no swap is needed at merge — KTD-6). */
@@ -302,7 +292,6 @@ export const buildSessionClient: BuildSessionClient = {
   relaunchPreview,
   stop,
   getStatus,
-  forceEnd,
 }
 
 // --- the save model (U5b / KTD-5e) ---------------------------------------------------------

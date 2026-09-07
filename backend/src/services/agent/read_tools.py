@@ -26,9 +26,9 @@ Containment model for `run_command`, layered fail-closed:
   explicit allowlist carrying no DSN and no tokens. The POLICY above is identical either
   way; the surroundings are not, and the richer one is now the normal case. Output on both
   is capped → de-escaped → secret-redacted → de-noised → cut to HEAD AND TAIL with the loss
-  stated (U22/R28; mirrors `orchestrator/tools._redact_command_output`, reimplemented here
-  so this module never imports the build agent's tool module, whose import registers tools
-  on `build_agent` — one table-driven test runs both copies and pins them identical).
+  stated (U22/R28; mirrors `orchestrator/tools._redact_command_output`, reimplemented here so
+  this module never imports the sandbox tool module — one table-driven test runs both copies
+  and pins them identical).
 
 THE FOUR TOOL DOCSTRINGS IN `read_only_toolset` ARE PROMPT COPY (U20 / R26). pydantic-ai
 sends each as the tool's description at registration, and `list_files`/`search_files` are
@@ -965,7 +965,7 @@ def read_only_toolset[DepsT](
     run's deps. Generic over the deps type so the SAME surface serves every consumer over
     its own deps — a Plan chat (`ReadDeps`), the classification review agent (`ReviewDeps`),
     and the Build chat's borrowed structured reads. Note: `read_file` and `run_command`
-    already exist on `build_agent`, so the Build composition must add ONLY
+    already exist on the sandbox toolset, so the Build composition must add ONLY
     `list_files`/`search_files` (tool names are unique per run).
 
     The inner tools annotate `RunContext[Any]`: pydantic-ai resolves tool annotations with

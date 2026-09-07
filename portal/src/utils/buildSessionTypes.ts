@@ -104,18 +104,13 @@ export interface BuildSessionStatusResponse {
   updatedAt: string
 }
 
-// ─── C3: lock operations — force-end (§3) ─────────────────────────────────────
+// ─── C3: lock operations (§3) — THE WHOLE RESPONSE SURFACE IS GONE ───────────
 //
-// `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` are GONE (U28): they typed
+// `LockStateResponse` / `LockReleaseResponse` / `HeartbeatResponse` went in U28: they typed
 // `acquire` / `renew` / `release` / `heartbeat`, and nothing called those routes — the portal's
 // keep-alive loop that was their only caller was itself deleted back in U13. `ForceEndResponse`
-// is the one lock-op response shape still live.
-
-/** `…/lock/force-end` → 200. The owner-only kill switch; `status` is `ended`. */
-export interface ForceEndResponse {
-  sessionId: string
-  status: BuildSessionStatus
-}
+// was the last one standing, and it went with the `force-end` ROUTE itself (U33), which had had
+// no UI call site since the block banner's Force-end button was deleted with the banner.
 
 // ─── C7: the tagged-union progress envelope (snake_case surface) ─────────────
 

@@ -1,7 +1,17 @@
-"""U5 — the SessionManager lifecycle: start (provision/attach/restore + launch), the
-progress channel, the single-owner end sequence, stop/force-end, and start compensation.
-Driven by FakeSandboxClient (mock C1) + FakeBrain (mock C7) + fakeredis + fake storage +
-the `:5432` test DB.
+"""U5 — the SessionManager lifecycle: allocation (provision/attach/restore), the progress
+channel, the single-owner end sequence, stop/force-end, and allocation compensation.
+Driven by FakeSandboxClient (mock C1) + fakeredis + fake storage + the `:5432` test DB.
+
+HOW A LIVE SESSION IS CONJURED HERE, because it used to be one call and is now two.
+`SessionManager.start` was deleted with the build-start route, and with it went the
+`run_build` task, the in-process build feed and the `FakeBrain` that drove them. What is
+left is the pair production uses: `ensure_sandbox` allocates (the identical skeleton —
+slot claim, reconcile, lock, app row, env, resolve, heartbeat, adopt), `on_progress` is
+the same C7 sink the feed always went through, and `stop` / `force_end` run the same end
+sequence. So a test that needed "a live session with a step buffered" pushes the step
+into `on_progress` itself, and a test that needed "a build that ended" calls `stop` with
+the reason that ending carried — `stop`'s `reason` is a real parameter, and `_do_finalize`
+branches on nothing else (`completed` pardons, everything else tears down).
 """
 
 from __future__ import annotations
@@ -14,13 +24,11 @@ import pytest
 import redis.asyncio as aioredis
 import sqlalchemy as sa
 from pydantic import SecretStr
-from pydantic_ai import BinaryContent
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.v1.build_sessions.schemas import (
     RELAUNCH_PREVIEW_STAY_SECONDS,
-    BuildResult,
     BuildSessionStatus,
     EndedEvent,
     PreviewReadyEvent,
@@ -32,7 +40,6 @@ from src.api.v1.build_sessions.schemas import (
 from src.config import settings
 from src.core.errors import AppApiError
 from src.db.models.app_registry import AppRegistry, AppStatus
-from src.db.models.attachment import Attachment
 from src.db.models.conversation import ChatKind
 from src.db.models.user import User
 from src.services.build_sessions.appdata import (
@@ -40,7 +47,6 @@ from src.services.build_sessions.appdata import (
     build_app_env,
     resolve_app_for_project,
 )
-from src.services.build_sessions.attachments import BuildAttachmentError
 from src.services.build_sessions.locks import (
     LockUnavailableError,
     heartbeat_is_alive,
@@ -91,13 +97,8 @@ from src.services.storage import (
     StorageNotFoundError,
     snapshot_key,
 )
-from tests.factories import (
-    ConversationFactory,
-    MessageFactory,
-    ProjectFactory,
-    UserFactory,
-)
-from tests.fakes import FakeBrain, FakeSandboxClient, FakeStorage, a_sandbox_name
+from tests.factories import ConversationFactory, ProjectFactory, UserFactory
+from tests.fakes import FakeSandboxClient, FakeStorage, a_sandbox_name
 
 
 @pytest.fixture(autouse=True)
@@ -118,31 +119,34 @@ def _sandbox_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-class BlockingBrain:
-    """A brain that emits one step, then blocks until `release()` — keeps a session live
-    so concurrency / stop tests aren't racing a fast completion. `stepped` fires AFTER the
-    step is buffered, so a test can deterministically stop with a known `last_seq`.
-    Emits no terminal `ended`: that frame is SESSION-API's alone (R7)."""
+# The end reasons `_do_finalize` branches on, spelled out because the manager's own constants
+# are private. `COMPLETED` is the ONLY one that earns the #13 pardon; every other reason takes
+# the teardown arm, and `BUILD_FAILED` is additionally the only one `_terminal_status` derives
+# a FAILED status from.
+COMPLETED = "completed"
+BUILD_FAILED = "build_failed"
 
-    def __init__(self) -> None:
-        self._gate = asyncio.Event()
-        self.stepped = asyncio.Event()
+A_STEP = StepEvent(seq=1, name="scaffold", label="Scaffolding", state="started")
 
-    def release(self) -> None:
-        self._gate.set()
 
-    async def __call__(self, session_id, user_id, sandbox_client, on_progress) -> BuildResult:
-        await on_progress(StepEvent(seq=1, name="scaffold", label="Scaffolding", state="started"))
-        self.stepped.set()
-        await self._gate.wait()
-        return BuildResult(
-            status=BuildSessionStatus.ENDED,
-            reason="completed",
-            app_id=uuid.uuid4(),
-            preview_url=None,
-            last_seq=1,
-            snapshot_committed=False,
-        )
+async def _ends_with(
+    manager: SessionManager, session: BuildSession, client: SandboxClient, reason: str
+) -> None:
+    """Run the end sequence the way a RUN'S OWN ENDING ran it: `_finalize`, with the reason the
+    run carried.
+
+    NOT `stop`, and the difference is observable rather than stylistic. `stop` goes through
+    `_end`, which marks the registry `ending` before it finalizes — correct for a user-driven
+    stop, and something a natural ending never did: the deleted `_run_and_finalize` called
+    `_finalize` directly with the run's verdict and nothing touched the registry state. Ending a
+    COMPLETED session through `stop` therefore leaves a pardoned container sitting behind an
+    `ending` registry, a pair production has never produced, and the next allocation refuses to
+    attach to it (`_the_live_sandbox_is_already_the_one_we_want` requires READY). Tests that go
+    on to allocate again would then assert a teardown-and-restore the code does not really do.
+
+    So: this is the completion door, `manager.stop` / `manager.force_end` are the user's doors,
+    and each test uses the one whose behaviour it is about."""
+    await manager._finalize(session, reason, client)
 
 
 async def _mk(db: AsyncSession, email: str) -> tuple[User, uuid.UUID]:
@@ -171,41 +175,6 @@ async def _seed_live_sandbox_state(redis: aioredis.Redis, user_id: uuid.UUID) ->
     await write_heartbeat(redis, user_id)
 
 
-async def test_happy_start_provisions_launches_and_ends(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    user, project_id = await _mk(db_session, "m1@rvaiglobal.com")
-    manager = SessionManager()
-    client = FakeSandboxClient()
-
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "build me a CRUD app",
-        run_build=FakeBrain(),
-        sandbox_client=client,
-    )
-    assert session.status.value == "provisioning"
-    assert client.provisioned == [app_name_for(session.app_id)]  # fresh project -> provision
-
-    assert session.task is not None
-    await session.task  # let the background build run to completion
-
-    assert session.status == BuildSessionStatus.ENDED
-    assert session.preview_url == "https://preview.example/"
-    assert session.snapshot_committed is True  # C4 snapshot ran in _finalize
-    assert snapshot_key(session.app_id) in fake_storage.objects
-    # #13/R2 — the completed build's container is PARDONED, not executed: it stays up under
-    # the idle lease (registry kept, stay granted) so the user sees what they just built.
-    assert app_name_for(session.app_id) not in client.torn_down
-    assert await read_registry(fake_redis, user.id) is not None  # the sweep can still find it
-    assert await stay_of_execution_is_current(fake_redis, user.id) is True
-    assert await lock_is_held(fake_redis, user.id) is False  # the build slot is free
-    assert session.last_seq == 3
-    assert [e.seq for e in session.envelopes] == [1, 2, 3]  # gap-free
-
-
 async def test_finalize_runs_the_liveness_detector_while_the_container_is_up(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
@@ -221,45 +190,27 @@ async def test_finalize_runs_the_liveness_detector_while_the_container_is_up(
         return ExecResult(stdout="", stderr="", exit=0)
 
     client.exec_handler = record
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await _ends_with(manager, session, client, COMPLETED)
 
     # The collect script (find over *.tsx/*.jsx/…) ran through the sandbox exec seam.
     assert any("*.tsx" in part for cmd in cmds for part in cmd)
 
 
-async def test_second_start_while_live_is_409_with_existing_session_id(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    user, project_id = await _mk(db_session, "m2@rvaiglobal.com")
-    manager = SessionManager()
-    client = FakeSandboxClient()
-    brain = BlockingBrain()
-
-    first = await manager.start(
-        db_session, user, project_id, "p", run_build=brain, sandbox_client=client
-    )
-    # A second start for the same user while the first is live -> 409 carrying the id.
-    with pytest.raises(BuildSessionConflictError) as exc:
-        await manager.start(
-            db_session, user, project_id, "p2", run_build=FakeBrain(), sandbox_client=client
-        )
-    assert exc.value.session_id == first.session_id
-    assert client.provisioned == [app_name_for(first.app_id)]  # no second sandbox
-
-    brain.release()
-    assert first.task is not None
-    await first.task
-
-
-# The one-per-user rehydrate resolution (`_resolve_sandbox`): via `start()` on a single
-# replica the reconcile-then-acquire gate means attach/restore aren't reached (a live
+# The one-per-user rehydrate resolution (`_resolve_sandbox`): through `ensure_sandbox` on a
+# single replica the reconcile-then-acquire gate means attach/restore aren't reached (a live
 # registry is either reaped as stale → provision, or 409s on a held lock), so the attach
 # and restore branches are exercised directly here. Fresh-provision + reap-then-provision
-# ARE reachable via start and covered above / below.
+# ARE reachable through the allocator and covered below.
+#
+# THE SLOT CONFLICT ITSELF used to be pinned here twice — a second start refused while one was
+# live, and its mirror in `test_write_turn_sandbox.py`. `_claim_the_one_build_slot` had exactly
+# two callers and one of them (`_start_locked`) is deleted, so the two tests collapsed into
+# one: `test_write_turn_sandbox.py::test_a_second_write_attach_while_one_is_live_is_a_conflict`
+# is now the whole of that claim, and it carries the same 409-with-the-live-session-id
+# assertion this one did.
 
 
 async def test_resolve_sandbox_attaches_when_registry_is_live(
@@ -325,12 +276,11 @@ async def test_graceful_stop_snapshots_tears_down_and_is_idempotent(
     user, project_id = await _mk(db_session, "m5@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    brain = BlockingBrain()
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=brain, sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()  # the step (seq 1) is buffered before we stop
+    await manager.on_progress(session, A_STEP)  # the step (seq 1) is buffered before we stop
     ended = await manager.stop(session, client)
     assert ended.status == BuildSessionStatus.ENDED
     assert ended.terminal_committed is True
@@ -372,13 +322,8 @@ async def test_start_raises_lock_unavailable_not_conflict_when_the_acquire_hits_
     monkeypatch_set.setattr(fake_redis, "set", only_the_acquire_is_down)
     try:
         with pytest.raises(LockUnavailableError):
-            await manager.start(
-                db_session,
-                user,
-                project_id,
-                "p",
-                run_build=FakeBrain(),
-                sandbox_client=client,
+            await manager.ensure_sandbox(
+                db_session, user, project_id, sandbox_client=client, may_write=True
             )
     finally:
         monkeypatch_set.undo()
@@ -396,20 +341,20 @@ async def test_start_reaps_through_a_dead_sessions_lingering_lock(
     `certified_dead=True`, so the walkthrough's back-to-back 409 is gone — a dead session's
     lingering registry+lock+heartbeat is reaped on the way in and the start SUCCEEDS. The
     ghost's container is torn down (never orphaned) before the new one is provisioned; a
-    GENUINELY live build still 409s via `_active_by_user`
-    (test_second_start_while_live_is_409_with_existing_session_id)."""
+    GENUINELY live session still 409s via `_active_by_user`
+    (`test_write_turn_sandbox.py::test_a_second_write_attach_while_one_is_live_is_a_conflict`)."""
     user, project_id = await _mk(db_session, "m-lockheld@rvaiglobal.com")
     manager = SessionManager()
     await _seed_live_sandbox_state(fake_redis, user.id)
     client = FakeSandboxClient()
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
     assert a_sandbox_name("someone-elses") in client.torn_down  # the ghost was executed first
-    assert session.task is not None
-    await session.task
-    assert session.status == BuildSessionStatus.ENDED
+    # ...and the allocation SUCCEEDED over it rather than 409ing on the phantom.
+    assert client.provisioned == [app_name_for(session.app_id)]
+    assert manager.active_session_for(user.id) is session
 
 
 async def test_start_keeps_the_409_when_the_ghosts_teardown_fails(
@@ -427,8 +372,8 @@ async def test_start_keeps_the_409_when_the_ghosts_teardown_fails(
     client.teardown_error = SandboxError("ACA delete wedged")
 
     with pytest.raises(BuildSessionConflictError):
-        await manager.start(
-            db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
         )
     assert await lock_is_held(fake_redis, user.id) is True  # kept for the sweep's retry
     assert await read_registry(fake_redis, user.id) is not None
@@ -445,25 +390,19 @@ async def test_start_compensates_a_provision_failure_no_leaked_lock(
             raise SandboxError("provision blew up")
 
     with pytest.raises(SandboxError):
-        await manager.start(
-            db_session,
-            user,
-            project_id,
-            "p",
-            run_build=FakeBrain(),
-            sandbox_client=FailingProvision(),
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=FailingProvision(), may_write=True
         )
-    # No leaked lock, no session registered — the immediate next start succeeds.
+    # No leaked lock, no session registered — the immediate next allocation succeeds.
     assert await lock_is_held(fake_redis, user.id) is False
     assert manager.active_session_for(user.id) is None
 
     good = FakeSandboxClient()
-    session = await manager.start(
-        db_session, user, project_id, "retry", run_build=FakeBrain(), sandbox_client=good
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=good, may_write=True
     )
     assert session.status == BuildSessionStatus.PROVISIONING
-    assert session.task is not None
-    await session.task
+    assert good.provisioned == [app_name_for(session.app_id)]
 
 
 async def test_a_failed_starting_marker_write_leaks_no_lock(
@@ -489,13 +428,8 @@ async def test_a_failed_starting_marker_write_leaks_no_lock(
 
     monkeypatch.setattr("src.services.build_sessions.manager.write_starting_marker", _boom)
     with pytest.raises(RedisError):
-        await manager.start(
-            db_session,
-            user,
-            project_id,
-            "p",
-            run_build=FakeBrain(),
-            sandbox_client=FakeSandboxClient(),
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=FakeSandboxClient(), may_write=True
         )
 
     assert await lock_is_held(fake_redis, user.id) is False
@@ -505,20 +439,25 @@ async def test_a_failed_starting_marker_write_leaks_no_lock(
 async def test_abnormal_completion_synthesizes_failed_ended(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
+    """An ending that carries `build_failed` is the one reason `_terminal_status` derives a
+    FAILED status from, and the terminal frame is synthesized entirely by the manager.
+
+    The abnormal completion USED TO BE a `run_build` task raising — the agent breaking its
+    never-raise invariant — and `_run_and_finalize` caught it and finalized with this reason.
+    That task is deleted; the reason, the derivation and the synthesis are not, and this drives
+    them through the same `_finalize` call the task's own ending made."""
     user, project_id = await _mk(db_session, "m7@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
 
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "p",
-        run_build=FakeBrain(raise_before_ended=True),
-        sandbox_client=client,
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task  # the brain raises after preview_ready (seq 2)
+    # Two envelopes first, so the synthetic terminal's seq is a claim about arithmetic rather
+    # than about an empty buffer: it must be `last_seq + 1`, not a hardcoded 1.
+    await manager.on_progress(session, A_STEP)
+    await manager.on_progress(session, PreviewReadyEvent(seq=2, preview_url="https://p/"))
+    await _ends_with(manager, session, client, BUILD_FAILED)
 
     assert session.status == BuildSessionStatus.FAILED  # derived from the synthetic ended
     terminal = session.envelopes[-1]
@@ -625,38 +564,38 @@ async def test_reconcile_on_start_unblocks_a_crashed_user(
     )
     await fake_redis.set(lock_key(user.id), "crashed-token", ex=900)
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert a_sandbox_name("stale") in client.torn_down  # the orphan was reaped on start
-    assert session.status == BuildSessionStatus.PROVISIONING  # the fresh start acquired
-    assert session.task is not None
-    await session.task
+    assert a_sandbox_name("stale") in client.torn_down  # the orphan was reaped on the way in
+    assert session.status == BuildSessionStatus.PROVISIONING  # the fresh allocation acquired
+    assert client.provisioned == [app_name_for(session.app_id)]
 
 
 async def test_concurrent_same_user_starts_never_double_allocate(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # FIX-1 (critical): two concurrent starts for one user must NOT both provision — the
-    # per-user start lock serializes them so the second sees the first's held lock → 409.
+    # FIX-1 (critical): two concurrent allocations for one user must NOT both provision — the
+    # per-user start lock serializes them so the second sees the first's held lock → 409. The
+    # SEQUENTIAL version of this refusal lives in `test_write_turn_sandbox.py`; what is only
+    # observable here is the race, where a missing `_start_lock_for` lets both through.
     user, project_id = await _mk(db_session, "m9@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    b1, b2 = BlockingBrain(), BlockingBrain()
     results = await asyncio.gather(
-        manager.start(db_session, user, project_id, "p1", run_build=b1, sandbox_client=client),
-        manager.start(db_session, user, project_id, "p2", run_build=b2, sandbox_client=client),
+        manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
+        ),
+        manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
+        ),
         return_exceptions=True,
     )
     sessions = [r for r in results if isinstance(r, BuildSession)]
     conflicts = [r for r in results if isinstance(r, BuildSessionConflictError)]
-    assert len(sessions) == 1  # exactly one start won
+    assert len(sessions) == 1  # exactly one allocation won
     assert len(conflicts) == 1  # the other 409'd
     assert len(client.provisioned) == 1  # only ONE sandbox — no double-allocation
-    b1.release()
-    b2.release()
-    if sessions[0].task is not None:
-        await sessions[0].task
 
 
 # --- FIX-3/6: the four best-effort error branches of `_do_finalize` -----------------
@@ -666,14 +605,20 @@ async def test_concurrent_same_user_starts_never_double_allocate(
 
 async def _live_session_stepped(
     manager: SessionManager, db_session: AsyncSession, email: str, client: FakeSandboxClient
-) -> tuple[User, BuildSession, BlockingBrain]:
+) -> tuple[User, BuildSession]:
+    """A live session with one envelope already buffered, ready to be stopped.
+
+    Two doors, both the ones production uses. `ensure_sandbox` allocates — the same skeleton
+    the deleted `start` ran — and `on_progress` is the C7 sink every envelope always went
+    through, so pushing a step straight into it is what a running agent did, minus the agent.
+    THE BUFFERED SEQ IS LOAD-BEARING: the synthetic terminal is `last_seq + 1`, and a session
+    with an empty buffer could not tell a gap-free terminal from a hardcoded 1."""
     user, project_id = await _mk(db_session, email)
-    brain = BlockingBrain()
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=brain, sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()  # step (seq 1) buffered before we stop
-    return user, session, brain
+    await manager.on_progress(session, A_STEP)  # step (seq 1) buffered before we stop
+    return user, session
 
 
 async def test_finalize_survives_a_snapshot_write_failure(
@@ -688,9 +633,7 @@ async def test_finalize_survives_a_snapshot_write_failure(
     monkeypatch.setattr("src.services.build_sessions.manager.write_snapshot", boom_snapshot)
     manager = SessionManager()
     client = FakeSandboxClient()
-    user, session, _ = await _live_session_stepped(
-        manager, db_session, "m11@rvaiglobal.com", client
-    )
+    user, session = await _live_session_stepped(manager, db_session, "m11@rvaiglobal.com", client)
 
     ended = await manager.stop(session, client)
     # Snapshot raised, but teardown + release + terminal synthesis still ran.
@@ -709,9 +652,7 @@ async def test_finalize_teardown_failure_keeps_lock_and_registry_but_still_synth
     manager = SessionManager()
     client = FakeSandboxClient()
     client.teardown_error = SandboxError("teardown boom")  # the container may still be live
-    user, session, _ = await _live_session_stepped(
-        manager, db_session, "m12@rvaiglobal.com", client
-    )
+    user, session = await _live_session_stepped(manager, db_session, "m12@rvaiglobal.com", client)
     # Seed a registry row so we can assert it is KEPT for the reaper (the fake provisions
     # without writing one).
     await fake_redis.hset(
@@ -750,7 +691,7 @@ async def test_finalize_survives_a_lock_release_failure(
     monkeypatch.setattr("src.services.build_sessions.manager.release_lock_as_holder", boom_release)
     manager = SessionManager()
     client = FakeSandboxClient()
-    _, session, _ = await _live_session_stepped(manager, db_session, "m13@rvaiglobal.com", client)
+    _, session = await _live_session_stepped(manager, db_session, "m13@rvaiglobal.com", client)
 
     ended = await manager.stop(session, client)
     # The release raised, but teardown + registry-delete + terminal synthesis still ran.
@@ -773,9 +714,7 @@ async def test_finalize_survives_a_registry_delete_failure(
     monkeypatch.setattr("src.services.build_sessions.manager.delete_registry", boom_delete)
     manager = SessionManager()
     client = FakeSandboxClient()
-    user, session, _ = await _live_session_stepped(
-        manager, db_session, "m14@rvaiglobal.com", client
-    )
+    user, session = await _live_session_stepped(manager, db_session, "m14@rvaiglobal.com", client)
 
     ended = await manager.stop(session, client)
     # The registry delete raised, but teardown + release + terminal synthesis still ran.
@@ -794,10 +733,10 @@ async def test_clean_end_then_start_restores_from_snapshot_not_fresh(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
     # A COMPLETED end PARDONS the container (#13): registry kept under the lease. The next
-    # start must RESTORE the C4 snapshot the finalize just wrote — provisioning fresh would
-    # wipe the user's work onto a blank template.
+    # allocation must RESTORE the C4 snapshot the finalize just wrote — provisioning fresh
+    # would wipe the user's work onto a blank template.
     #
-    # It must ALSO not destroy the pardoned container on the way. `start` used to pass no
+    # It must ALSO not destroy the pardoned container on the way. The allocator used to pass no
     # `spare_app`, so `_the_live_sandbox_is_already_the_one_we_want` answered False
     # unconditionally and reconcile-on-start reaped every incumbent — including, as here, one
     # already serving this very app. That is the same destroy-and-rebuild 1.6.5 removed from
@@ -805,26 +744,28 @@ async def test_clean_end_then_start_restores_from_snapshot_not_fresh(
     # `attach_handle` is unset, so the attach arm raises `SandboxGoneError` and the restore
     # happens either way; on a REACHABLE container it cost the user everything since their
     # last Save (see the sibling below).
+    #
+    # THE END SEQUENCE IS THE POINT OF ENTRY, not `finish_turn_sandbox`: a `stop` carrying
+    # `completed` is the only door left that runs `_do_finalize`'s step-1 snapshot AND its
+    # pardon, which is the pair this loop depends on.
     user, project_id = await _mk(db_session, "m15@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    first = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    first = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert first.task is not None
-    await first.task  # clean end: snapshot written, container pardoned, lock released
+    # clean end: snapshot written, container pardoned, lock released
+    await _ends_with(manager, first, client, COMPLETED)
     assert first.snapshot_committed is True
     assert await fake_redis.hgetall(registry_key(user.id)) != {}  # pardoned: registry stays
 
-    second = await manager.start(
-        db_session, user, project_id, "refine it", run_build=FakeBrain(), sandbox_client=client
+    second = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
     assert second.app_id == first.app_id  # same project -> same app
     assert client.torn_down == []  # the pardoned container was SPARED, not reaped
     assert client.restored == [app_name_for(second.app_id)]  # RESTORED, not re-provisioned
-    assert client.provisioned == [app_name_for(first.app_id)]  # only the very first start
-    assert second.task is not None
-    await second.task
+    assert client.provisioned == [app_name_for(first.app_id)]  # only the very first allocation
 
 
 async def test_a_start_on_the_same_project_reuses_the_pardoned_container(
@@ -833,30 +774,30 @@ async def test_a_start_on_the_same_project_reuses_the_pardoned_container(
     """The sibling above with a REACHABLE container, which is where the old behaviour was
     destructive rather than merely wasteful.
 
-    Drop `spare_app` from `_start_locked` and this goes red: `torn_down` gains the first
-    container and `restored` gains an entry — the build restarts from the last SAVED bundle,
-    silently discarding everything the user had not saved. Mirrors
-    `test_write_turn_sandbox.py::test_a_second_message_attaches_instead_of_rebuilding_the_container`,
-    which pins the identical rule on the Write-turn path."""
+    Drop `spare_app` from `ensure_sandbox` — it is the method that carries it now — and this
+    goes red: `torn_down` gains the first container and `restored` gains an entry, so the next
+    turn restarts from the last SAVED bundle, silently discarding everything the user had not
+    saved. Its twin
+    `test_write_turn_sandbox.py::test_a_second_message_attaches_instead_of_rebuilding_the_container`
+    pins the identical rule, and the two are NOT duplicates: that one pardons through
+    `finish_turn_sandbox`, this one through the END SEQUENCE's pardon in `_do_finalize`. Two
+    different pardon sites leave a container up, and the spare has to spare both."""
     user, project_id = await _mk(db_session, "m15b@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    first = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    first = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert first.task is not None
-    await first.task
+    await _ends_with(manager, first, client, COMPLETED)
     client.attach_handle = first.handle  # the pardoned container answers
 
-    second = await manager.start(
-        db_session, user, project_id, "refine it", run_build=FakeBrain(), sandbox_client=client
+    second = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
     assert second.app_id == first.app_id
     assert client.torn_down == []  # nothing destroyed
     assert client.restored == []  # nothing rebuilt from the snapshot
-    assert client.provisioned == [app_name_for(first.app_id)]  # only the very first start
-    assert second.task is not None
-    await second.task
+    assert client.provisioned == [app_name_for(first.app_id)]  # only the very first allocation
 
 
 async def test_restore_falls_back_to_fresh_when_snapshot_vanishes_mid_restore(
@@ -978,13 +919,8 @@ async def test_persistent_head_failure_fails_the_start_closed_and_releases_the_l
         app_id, _ = await _seed_app_with_bundle(db_session, user, project_id, store)
 
         with pytest.raises(SnapshotUnavailableError) as caught:
-            await manager.start(
-                db_session,
-                user,
-                project_id,
-                "refine it",
-                run_build=FakeBrain(),
-                sandbox_client=client,
+            await manager.ensure_sandbox(
+                db_session, user, project_id, sandbox_client=client, may_write=True
             )
 
         assert caught.value.app_id == app_id
@@ -1058,8 +994,8 @@ async def test_persistent_restore_failure_fails_closed_and_never_provisions_fres
     app_id, _ = await _seed_app_with_bundle(db_session, user, project_id, fake_storage)
 
     with pytest.raises(SnapshotUnavailableError) as caught:
-        await manager.start(
-            db_session, user, project_id, "refine it", run_build=FakeBrain(), sandbox_client=client
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
         )
 
     assert caught.value.app_id == app_id
@@ -1096,8 +1032,8 @@ async def test_restore_retries_a_transient_storage_error_then_fails_closed(
     app_id, _ = await _seed_app_with_bundle(db_session, user, project_id, fake_storage)
 
     with pytest.raises(SnapshotUnavailableError) as caught:  # a 503, NOT a 500
-        await manager.start(
-            db_session, user, project_id, "refine it", run_build=FakeBrain(), sandbox_client=client
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
         )
 
     assert caught.value.app_id == app_id
@@ -1113,7 +1049,7 @@ async def test_start_with_object_storage_unconfigured_provisions_fresh_instead_o
     # NO `fake_storage` fixture, deliberately: this is the storage-OFF deployment `src.config`
     # explicitly supports outside production (`provision_app_storage` returns {} for the same
     # reason). `get_storage()` raises there — and folding that into the fail-closed arm would
-    # 503 EVERY build start on such a deployment. With no store there is no bundle, so a fresh
+    # 503 EVERY allocation on such a deployment. With no store there is no bundle, so a fresh
     # provision destroys nothing: it is a CONFIRMED absent, not an unknown.
     from src.services.storage import accessor as storage_accessor
 
@@ -1122,19 +1058,15 @@ async def test_start_with_object_storage_unconfigured_provisions_fresh_instead_o
     manager = SessionManager()
     client = FakeSandboxClient()
 
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "build me a CRUD app",
-        run_build=FakeBrain(),
-        sandbox_client=client,
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
 
     assert client.provisioned == [app_name_for(session.app_id)]  # started, and started fresh
     assert no_sleep == []  # never retried what is a permanent config fact, not a blip
-    assert session.task is not None
-    await session.task  # the finalize snapshot is a no-op here; the build still ends cleanly
+    # ...and the END still runs cleanly with no store: the finalize snapshot is a no-op here.
+    await _ends_with(manager, session, client, COMPLETED)
+    assert session.status == BuildSessionStatus.ENDED
 
 
 # --- the ended-session retention window --------------------------------------------
@@ -1146,11 +1078,11 @@ async def test_ended_session_kept_inside_retention_window_evicted_after(
     user, project_id = await _mk(db_session, "m17@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await manager.on_progress(session, A_STEP)  # something in the replay buffer to retain
+    await _ends_with(manager, session, client, COMPLETED)
     assert session.ended_at is not None  # the retention clock started at finalize
 
     # INSIDE the window: kept, with the full envelope buffer intact — a late SSE reconnect
@@ -1169,25 +1101,24 @@ async def test_ended_session_kept_inside_retention_window_evicted_after(
 async def test_next_start_sweeps_an_expired_ended_session(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The opportunistic sweep at the top of start() is the guaranteed-recurring seam — an
-    # expired ended session must be gone once the next start (any user) runs.
+    # The opportunistic sweep at the top of `ensure_sandbox` is the guaranteed-recurring seam
+    # — an expired ended session must be gone once the next allocation (any user) runs. It is
+    # also the ONLY recurring seam left now that `start` is deleted: nothing evicts on a timer,
+    # so a workspace that only ever chats would otherwise accumulate ended sessions forever.
     user, project_id = await _mk(db_session, "m18@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    first = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    first = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert first.task is not None
-    await first.task
+    await _ends_with(manager, first, client, COMPLETED)
     first.ended_at = datetime.now(UTC) - timedelta(seconds=_ENDED_RETENTION_SECONDS + 1)
 
-    second = await manager.start(
-        db_session, user, project_id, "again", run_build=FakeBrain(), sandbox_client=client
+    second = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
     assert manager.get(first.session_id) is None  # swept on entry
     assert manager.get(second.session_id) is second
-    assert second.task is not None
-    await second.task
 
 
 # --- start-after-terminal-finalize: a refine on the heels of completion is not a 409 --
@@ -1204,8 +1135,14 @@ async def test_start_awaits_a_still_finalizing_terminal_session_then_starts_fres
 
     # Block _do_finalize inside its step-1 SNAPSHOT so the session sits terminal_committed
     # but still finalizing (the exact window a fast refine lands in). The snapshot step is
-    # the gate because it runs on EVERY end path — a completed build no longer tears down
+    # the gate because it runs on EVERY end path — a completed end no longer tears down
     # (#13), so a teardown gate would never be entered.
+    #
+    # THE ENDING IS DETACHED, not awaited, and that is the whole fixture. `_finalize` awaits
+    # the shielded end sequence, so calling it inline would hand back an already-finished
+    # session and there would be no window at all. The ending that used to open this window ran
+    # in the deleted `run_build` task; a detached call to the same door is the same shape — a
+    # caller elsewhere holding the end sequence open while this one arrives.
     entered = asyncio.Event()
     gate = asyncio.Event()
 
@@ -1225,30 +1162,26 @@ async def test_start_awaits_a_still_finalizing_terminal_session_then_starts_fres
     monkeypatch.setattr("src.services.build_sessions.manager.write_snapshot", gated_snapshot)
 
     client = FakeSandboxClient()
-    first = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    first = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
+    ending = asyncio.create_task(_ends_with(manager, first, client, COMPLETED))
     await entered.wait()  # finalize is mid-snapshot: terminal committed, not done
     assert first.terminal_committed is True
     assert first.finalize_task is not None and not first.finalize_task.done()
 
     starter = asyncio.create_task(
-        manager.start(
-            db_session, user, project_id, "refine", run_build=FakeBrain(), sandbox_client=client
-        )
+        manager.ensure_sandbox(db_session, user, project_id, sandbox_client=client, may_write=True)
     )
-    for _ in range(20):  # the second start WAITS on the finalize instead of 409ing
+    for _ in range(20):  # the second allocation WAITS on the finalize instead of 409ing
         await asyncio.sleep(0)
     assert not starter.done()
 
-    gate.set()  # finalize completes -> the waiting start proceeds FRESH
+    gate.set()  # finalize completes -> the waiting allocation proceeds FRESH
     second = await starter
     assert second.session_id != first.session_id
     assert client.restored == [app_name_for(second.app_id)]  # picked up the C4 snapshot
-    assert first.task is not None
-    await first.task
-    assert second.task is not None
-    await second.task
+    await ending
 
 
 # --- best-effort mark_registry_ending in _end (the kill switch must never 500) --------
@@ -1266,9 +1199,7 @@ async def test_stop_survives_a_mark_registry_ending_failure(
     monkeypatch.setattr("src.services.build_sessions.manager.mark_registry_ending", boom_mark)
     manager = SessionManager()
     client = FakeSandboxClient()
-    user, session, _ = await _live_session_stepped(
-        manager, db_session, "m20@rvaiglobal.com", client
-    )
+    user, session = await _live_session_stepped(manager, db_session, "m20@rvaiglobal.com", client)
 
     ended = await manager.stop(session, client)  # no raise -> no 500 path
     assert ended.status == BuildSessionStatus.ENDED
@@ -1297,9 +1228,7 @@ async def test_force_end_survives_a_mark_registry_ending_failure_without_poisoni
     monkeypatch.setattr("src.services.build_sessions.manager.mark_registry_ending", boom_mark)
     manager = SessionManager()
     client = FakeSandboxClient()
-    user, session, _ = await _live_session_stepped(
-        manager, db_session, "m21@rvaiglobal.com", client
-    )
+    user, session = await _live_session_stepped(manager, db_session, "m21@rvaiglobal.com", client)
 
     ended = await manager.force_end(session, client)  # no raise -> no 500 path
     assert ended.status == BuildSessionStatus.ENDED
@@ -1312,62 +1241,44 @@ async def test_force_end_survives_a_mark_registry_ending_failure_without_poisoni
     assert manager.active_session_for(user.id) is None
 
 
-class _CompletesOnCue:
-    """A brain that steps, then completes the instant `cue` is set — and announces the
-    completion (`completing`) in the same event-loop step in which it commits its terminal.
-    That is what makes the TOCTOU window below deterministic rather than a hopeful sleep."""
-
-    def __init__(self) -> None:
-        self.stepped = asyncio.Event()
-        self.cue = asyncio.Event()
-        self.completing = asyncio.Event()
-
-    async def __call__(self, session_id, user_id, sandbox_client, on_progress) -> BuildResult:
-        await on_progress(StepEvent(seq=1, name="scaffold", label="Scaffolding", state="started"))
-        self.stepped.set()
-        await self.cue.wait()
-        # Wake `_end` (parked in mark-registry-ending), THEN return — so `_finalize` commits the
-        # terminal in this same step and `_end` resumes with a stale `terminal_committed=False`.
-        self.completing.set()
-        return BuildResult(
-            status=BuildSessionStatus.ENDED,
-            reason="completed",
-            app_id=uuid.uuid4(),
-            preview_url=None,
-            last_seq=1,
-            snapshot_committed=False,
-        )
-
-
 async def test_force_end_landing_inside_mark_ending_never_steals_a_completed_snapshot(
     db_session: AsyncSession,
     fake_redis: aioredis.Redis,
     fake_storage: FakeStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The TOCTOU `_end` guards against: the build COMPLETES while `_end` is suspended inside
+    # The TOCTOU `_end` guards against: the work COMPLETES while `_end` is suspended inside
     # `mark_registry_ending`. `_end`'s entry check said "not terminal" and is now stale, so a
     # blind `force_ended = True` would land BEHIND the terminal commit — finalize would then skip
-    # the snapshot of a finished build whose terminal already says `completed`. The user's work
+    # the snapshot of a finished session whose terminal already says `completed`. The user's work
     # would be gone with nothing anywhere admitting it. The loser of this race writes NOTHING.
+    #
+    # THE RACER IS `_finalize` ITSELF, called directly. The completion that used to win this race
+    # was the `run_build` task returning its verdict, and `_run_and_finalize` handed that straight
+    # to `_finalize`; the task is deleted, `_finalize` is not, so the race is staged at the exact
+    # door the completion went through. What makes the window deterministic is that `_finalize`
+    # commits `terminal_committed` SYNCHRONOUSLY before it creates the shielded task — so by the
+    # time this returns, `_end` is guaranteed to resume with a stale entry check.
     manager = SessionManager()
     client = FakeSandboxClient()
     user, project_id = await _mk(db_session, "m32@rvaiglobal.com")
-    brain = _CompletesOnCue()
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=brain, sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()
+    await manager.on_progress(session, A_STEP)
+    completion: list[asyncio.Task[None]] = []
 
     async def complete_inside_the_await(*_a: object, **_k: object) -> None:
-        brain.cue.set()
-        await brain.completing.wait()
+        completion.append(asyncio.ensure_future(_ends_with(manager, session, client, COMPLETED)))
+        while not session.terminal_committed:
+            await asyncio.sleep(0)
 
     monkeypatch.setattr(
         "src.services.build_sessions.manager.mark_registry_ending", complete_inside_the_await
     )
 
     ended = await manager.force_end(session, client)
+    await completion[0]
 
     assert session.force_ended is False  # the late kill-switch flag was NOT written
     assert session.snapshot_committed is True  # …so the completed build's work was saved
@@ -1390,16 +1301,22 @@ async def test_force_end_landing_inside_mark_ending_never_steals_a_completed_sna
 async def test_stop_racing_completion_finalizes_exactly_once(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # FIX-2: a stop racing the task's own normal completion+finalize must not tear the end
-    # sequence in half (the shielded _do_finalize runs to completion exactly once).
+    # FIX-2: two endings racing each other must not tear the end sequence in half (the shielded
+    # _do_finalize runs to completion exactly once). One of them carries `completed` and one the
+    # ordinary user stop, because the two take OPPOSITE arms of `_do_finalize` — pardon versus
+    # teardown — so a torn sequence would show up as both, or neither, rather than as one.
     user, project_id = await _mk(db_session, "m10@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await asyncio.gather(manager.stop(session, client), session.task, return_exceptions=True)
+    await manager.on_progress(session, A_STEP)
+    await asyncio.gather(
+        _ends_with(manager, session, client, COMPLETED),
+        manager.stop(session, client),
+        return_exceptions=True,
+    )
     # Fully finalized, no leak, ONE end sequence — whichever racer won it. A completion win
     # pardons the container (#13: zero teardowns, lease granted); a stop win tears it down
     # exactly once. Either way the lock is released and exactly one terminal is emitted.
@@ -1447,11 +1364,9 @@ async def test_provision_injects_both_blob_vars_alongside_the_base_env(
     manager = SessionManager()
     client = FakeSandboxClient()
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
 
     assert calls == [session.app_id]  # storage provisioned once, for this app
     assert client.provision_env is not None
@@ -1544,8 +1459,8 @@ async def test_birth_path_storage_failure_compensates_no_leaked_lock(
     client = FakeSandboxClient()
 
     with pytest.raises(StorageError):
-        await manager.start(
-            db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+        await manager.ensure_sandbox(
+            db_session, user, project_id, sandbox_client=client, may_write=True
         )
     # Compensation ran: lock released, no session registered, and we never reached provision
     # (storage failed first, so no sandbox handle exists to tear down).
@@ -1557,10 +1472,18 @@ async def test_birth_path_storage_failure_compensates_no_leaked_lock(
 # --- R7: the single authoritative terminal `ended` ----------------------------
 #
 # The unit's whole point, stated as an invariant: NO end path may emit two `ended` frames or a
-# false `snapshot_committed`. BRAIN emits none at all (see tests/services/orchestrator/); the
-# manager emits exactly one, from `_do_finalize`, AFTER the C4 snapshot — the only moment the
-# flag can be told truthfully. These tests enumerate every end path there is:
-#   completed · quota_exceeded · escalated · stop · idle_teardown · force_end · run_build raised
+# false `snapshot_committed`. The manager emits exactly one, from `_do_finalize`, AFTER the C4
+# snapshot — the only moment the flag can be told truthfully. These tests enumerate every end
+# REASON the surviving door can carry:
+#   completed · quota_exceeded · stopped_by_user · idle_teardown · force_ended · build_failed
+#
+# ONE REASON LOST ITS DOOR. `escalated` was the case that proved a verdict's own `status` must
+# win over deriving one from the reason string (an escalated end is FAILED, yet "escalated" is
+# not `build_failed`), and the only thing that ever carried a verdict was the deleted
+# `run_build` task handing a `BuildResult` to `_finalize`. `_do_finalize` still takes that
+# `result` argument and still prefers it, but nothing live passes one, so the rule is no longer
+# reachable from any door a test can knock on — see the note where the escalated test used to
+# be. Every reason listed above reaches `_do_finalize` through `stop` / `force_end`.
 
 
 def _endeds(session: BuildSession) -> list[EndedEvent]:
@@ -1627,18 +1550,21 @@ async def test_completed_build_emits_one_ended_after_the_snapshot_with_the_true_
     client = _OrderRecordingSandboxClient(order)
     user, project_id = await _mk(db_session, "r7a@rvaiglobal.com")
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await manager.on_progress(session, A_STEP)
+    await manager.on_progress(
+        session, PreviewReadyEvent(seq=2, preview_url="https://preview.example/")
+    )
+    await _ends_with(manager, session, client, COMPLETED)
 
     ended = _endeds(session)
     assert len(ended) == 1  # exactly ONE terminal
     assert ended[0].snapshot_committed is True  # …and it is TRUE (the lie R7 kills)
     assert ended[0].status == BuildSessionStatus.ENDED
     assert ended[0].reason == "completed"
-    assert ended[0].preview_url == "https://preview.example/"  # carried off the verdict
+    assert ended[0].preview_url == "https://preview.example/"  # the last preview_ready seen
     assert ended[0] is session.envelopes[-1]  # always last
     # The snapshot really is committed, and the frame really is emitted after it. No
     # teardown in between: the completed build's container is pardoned (#13), so the frame's
@@ -1646,7 +1572,7 @@ async def test_completed_build_emits_one_ended_after_the_snapshot_with_the_true_
     assert snapshot_key(session.app_id) in fake_storage.objects
     assert order == ["snapshot", "ended"]
     assert app_name_for(session.app_id) not in client.torn_down
-    # seq continues BRAIN's stream at last_seq + 1 — gap-free across the handoff.
+    # seq continues the agent's stream at last_seq + 1 — gap-free across the handoff.
     assert ended[0].seq == 3
     assert [e.seq for e in session.envelopes] == [1, 2, 3]
     assert session.last_seq == 3
@@ -1667,11 +1593,10 @@ async def test_snapshot_failure_emits_one_ended_that_admits_the_work_was_not_sav
     client = _OrderRecordingSandboxClient(order)
     user, project_id = await _mk(db_session, "r7b@rvaiglobal.com")
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await _ends_with(manager, session, client, COMPLETED)
 
     ended = _endeds(session)
     assert len(ended) == 1
@@ -1680,7 +1605,7 @@ async def test_snapshot_failure_emits_one_ended_that_admits_the_work_was_not_sav
     assert session.snapshot_committed is False
     assert snapshot_key(session.app_id) not in fake_storage.objects
     # A failed snapshot must not disturb the ordering invariant — and it must not cost the
-    # user the live preview either: the BUILD completed, so the pardon (#13) still applies.
+    # user the live preview either: the WORK completed, so the pardon (#13) still applies.
     # Durability and visibility are separate questions with separate answers.
     assert order == ["snapshot", "ended"]
     assert app_name_for(session.app_id) not in client.torn_down
@@ -1691,32 +1616,22 @@ async def test_snapshot_failure_emits_one_ended_that_admits_the_work_was_not_sav
 async def test_quota_run_emits_the_quota_envelope_then_exactly_one_ended(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The quota path composed end-to-end: BRAIN keeps its informational `quota_exceeded`
-    # envelope and hands the END home on the verdict. The portal must see quota_exceeded
-    # followed by ONE terminal — and a graceful ENDED, never FAILED.
-    class QuotaBrain:
-        async def __call__(self, session_id, user_id, sandbox_client, on_progress) -> BuildResult:
-            await on_progress(
-                QuotaExceededEvent(seq=1, limit=50, used=50, resets_at="2026-07-17T00:00:00Z")
-            )
-            return BuildResult(
-                status=BuildSessionStatus.ENDED,
-                reason="quota_exceeded",
-                app_id=uuid.uuid4(),
-                preview_url=None,
-                last_seq=1,
-                snapshot_committed=False,
-            )
-
+    # The quota path composed end-to-end: the informational `quota_exceeded` envelope goes out
+    # on the feed, then the end is asked for with that reason. The portal must see
+    # quota_exceeded followed by ONE terminal — and a graceful ENDED, never FAILED, which is a
+    # claim about `_terminal_status`: only `build_failed` derives FAILED, so a reason that reads
+    # like bad news must still end gracefully.
     manager = SessionManager()
     client = FakeSandboxClient()
     user, project_id = await _mk(db_session, "r7c@rvaiglobal.com")
 
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=QuotaBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    await manager.on_progress(
+        session, QuotaExceededEvent(seq=1, limit=50, used=50, resets_at="2026-07-17T00:00:00Z")
+    )
+    await _ends_with(manager, session, client, "quota_exceeded")
 
     assert [e.type for e in session.envelopes] == ["quota_exceeded", "ended"]
     ended = _endeds(session)
@@ -1727,30 +1642,15 @@ async def test_quota_run_emits_the_quota_envelope_then_exactly_one_ended(
     assert ended[0].seq == 2  # last_seq + 1
 
 
-async def test_escalated_verdict_ends_failed_even_though_its_reason_is_not_build_failed(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    # The trap this unit had to dodge: `status` CANNOT be re-derived from `reason` on BRAIN's
-    # paths. An `escalated` end is FAILED, yet "escalated" != _BUILD_FAILED — deriving it would
-    # silently downgrade every escalated build to a graceful ENDED. So the verdict's own
-    # `status` wins whenever there is a verdict.
-    manager = SessionManager()
-    client = FakeSandboxClient()
-    user, project_id = await _mk(db_session, "r7d@rvaiglobal.com")
-    brain = FakeBrain(status=BuildSessionStatus.FAILED, reason="escalated")
-
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=brain, sandbox_client=client
-    )
-    assert session.task is not None
-    await session.task
-
-    ended = _endeds(session)
-    assert len(ended) == 1
-    assert ended[0].status == BuildSessionStatus.FAILED  # NOT downgraded to ENDED
-    assert ended[0].reason == "escalated"
-    assert ended[0].snapshot_committed is True  # a failed build's work is still saved
-    assert session.status == BuildSessionStatus.FAILED
+# HERE STOOD `test_escalated_verdict_ends_failed_even_though_its_reason_is_not_build_failed`,
+# and it is worth knowing why it is not here any more rather than assuming it was redundant.
+# It pinned the trap this unit had to dodge: `status` cannot be re-derived from `reason` when
+# there is a verdict, because an `escalated` end is FAILED while "escalated" is not
+# `build_failed`, so deriving it downgrades every escalated run to a graceful ENDED. The only
+# producer of a verdict was the `run_build` task, which handed a `BuildResult` to `_finalize`;
+# it is deleted, and `_do_finalize`'s `result` parameter now has no live caller at all. Every
+# reachable ending derives its status from the reason, which is exactly what the surrounding
+# tests assert. If a verdict-carrying caller is ever reintroduced, this test comes back with it.
 
 
 @pytest.mark.parametrize("reason", ["stopped_by_user", "idle_teardown"])
@@ -1762,12 +1662,12 @@ async def test_stop_paths_emit_exactly_one_ended(
     reason: str,
 ) -> None:
     # The manager-originated ends (a user stop, and the idle reap that stops with its own
-    # reason). BRAIN is cancelled and emits nothing, so the terminal here is entirely the
+    # reason). Nothing else emits on this path, so the terminal here is entirely the
     # manager's — one frame, post-snapshot, carrying the caller's reason.
     manager = SessionManager()
     order = _spy_order(manager, monkeypatch)
     client = _OrderRecordingSandboxClient(order)
-    user, session, _ = await _live_session_stepped(
+    user, session = await _live_session_stepped(
         manager, db_session, f"r7-{reason}@rvaiglobal.com", client
     )
 
@@ -1779,7 +1679,7 @@ async def test_stop_paths_emit_exactly_one_ended(
     assert ended[0].status == BuildSessionStatus.ENDED  # a stop is graceful
     assert ended[0].snapshot_committed is True  # the user's work IS saved on a stop
     assert order == ["snapshot", "teardown", "ended"]
-    assert ended[0].seq == 2  # BlockingBrain's step (seq 1) + 1
+    assert ended[0].seq == 2  # the buffered step (seq 1) + 1
     assert [e.seq for e in session.envelopes] == [1, 2]
 
 
@@ -1794,9 +1694,7 @@ async def test_force_end_emits_one_ended_reporting_the_deliberately_skipped_snap
     manager = SessionManager()
     order = _spy_order(manager, monkeypatch)
     client = _OrderRecordingSandboxClient(order)
-    user, session, _ = await _live_session_stepped(
-        manager, db_session, "r7f@rvaiglobal.com", client
-    )
+    user, session = await _live_session_stepped(manager, db_session, "r7f@rvaiglobal.com", client)
 
     await manager.force_end(session, client)
 
@@ -1808,57 +1706,32 @@ async def test_force_end_emits_one_ended_reporting_the_deliberately_skipped_snap
     assert snapshot_key(session.app_id) not in fake_storage.objects
 
 
-async def test_a_raised_run_build_still_emits_exactly_one_failed_ended(
-    db_session: AsyncSession,
-    fake_redis: aioredis.Redis,
-    fake_storage: FakeStorage,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # BRAIN breaking its never-raise invariant leaves NO verdict. The manager must still
-    # terminate the feed itself — deriving `build_failed`/FAILED — or the SSE feed hangs
-    # forever. The snapshot still runs first, so the frame's flag is still earned.
-    manager = SessionManager()
-    order = _spy_order(manager, monkeypatch)
-    client = _OrderRecordingSandboxClient(order)
-    user, project_id = await _mk(db_session, "r7g@rvaiglobal.com")
-
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "p",
-        run_build=FakeBrain(raise_before_ended=True),
-        sandbox_client=client,
-    )
-    assert session.task is not None
-    await session.task
-
-    ended = _endeds(session)
-    assert len(ended) == 1
-    assert ended[0].status == BuildSessionStatus.FAILED
-    assert ended[0].reason == "build_failed"
-    assert ended[0].snapshot_committed is True  # crashed, but the work was still saved
-    assert order == ["snapshot", "teardown", "ended"]
-    assert ended[0].seq == 3  # the 2 envelopes it emitted before dying, + 1
+# HERE STOOD `test_a_raised_run_build_still_emits_exactly_one_failed_ended`. Its premise was
+# BRAIN breaking its never-raise invariant, which `_run_and_finalize` caught and turned into a
+# derived `build_failed` ending; both the task and that except arm are deleted. The `build_failed`
+# reason itself is very much alive — `_terminal_status` still derives FAILED from it and nothing
+# else — and `test_abnormal_completion_synthesizes_failed_ended` above drives it through `stop`,
+# asserting the same one-terminal, FAILED, gap-free-seq claims this did.
 
 
 async def test_stop_racing_a_natural_completion_still_emits_exactly_one_ended(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # The double-emission danger zone: a stop landing while the task's own completion is
-    # already finalizing. The single-owner `finalize_task` guard means _do_finalize — and so
-    # the terminal emit — happens exactly once, no matter who calls or how many times.
+    # The double-emission danger zone: a stop landing while another ending is already
+    # finalizing. The single-owner `finalize_task` guard means _do_finalize — and so the
+    # terminal emit — happens exactly once, no matter who calls or how many times.
     manager = SessionManager()
     client = FakeSandboxClient()
     user, project_id = await _mk(db_session, "r7h@rvaiglobal.com")
-    session = await manager.start(
-        db_session, user, project_id, "p", run_build=FakeBrain(), sandbox_client=client
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
+    await manager.on_progress(session, A_STEP)
+    await manager.on_progress(session, PreviewReadyEvent(seq=2, preview_url="https://p/"))
 
-    # Race the natural completion against a stop AND a redundant second stop.
+    # Race a completion against a stop AND a redundant second stop.
     await asyncio.gather(
-        session.task,
+        _ends_with(manager, session, client, COMPLETED),
         manager.stop(session, client),
         manager.stop(session, client),
     )
@@ -1869,151 +1742,15 @@ async def test_stop_racing_a_natural_completion_still_emits_exactly_one_ended(
     assert [e.seq for e in session.envelopes] == [1, 2, 3]  # still gap-free
 
 
-# --- R3: the attachment resolution the manager performs at start ------------
-
-
-async def test_start_carries_resolved_attachments_onto_the_session(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    """R3 — `conversationId` at start → the thread's attachments land on the session, which is
-    where `_live_session_spec` reads them to build BRAIN's multimodal prompt."""
-    user, project_id = await _mk(db_session, "m-att1@rvaiglobal.com")
-    conv = await ConversationFactory.create(
-        db_session, user.id, project_id=project_id, kind=ChatKind.BUILD
-    )
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-    from src.services.messages.store import dump_for_row
-    from src.services.storage import attachment_key
-
-    png = bytes([0x89, 0x50, 0x4E, 0x47]) + b" body"
-    key = attachment_key(user.id, uuid.uuid7())
-    await fake_storage.put(key, png, content_type="image/png")
-    db_session.add(
-        Attachment(
-            user_id=user.id,
-            attachment_id="a-img",
-            media_type="image/png",
-            name="chart.png",
-            size=len(png),
-            storage_key=key,
-        )
-    )
-    await db_session.flush()
-    await MessageFactory.create(
-        db_session,
-        user.id,
-        conv.id,
-        seq=0,
-        payload=dump_for_row(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content=[
-                                "use this",
-                                BinaryContent(
-                                    data=png, media_type="image/png", identifier="a-img"
-                                ),
-                            ]
-                        )
-                    ]
-                )
-            ]
-        ),
-    )
-    manager = SessionManager()
-    client = FakeSandboxClient()
-
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "build me a dashboard",
-        conversation_id=conv.id,
-        run_build=FakeBrain(),
-        sandbox_client=client,
-    )
-
-    assert len(session.attachments) == 1
-    binary = session.attachments[0]
-    assert isinstance(binary, BinaryContent) and binary.data == png
-    assert session.task is not None
-    await session.task
-
-
-async def test_start_without_conversation_resolves_no_attachments(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    user, project_id = await _mk(db_session, "m-att2@rvaiglobal.com")
-    manager = SessionManager()
-
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "build me a CRUD app",
-        run_build=FakeBrain(),
-        sandbox_client=FakeSandboxClient(),
-    )
-
-    assert session.attachments == []
-    assert session.task is not None
-    await session.task
-
-
-async def test_unusable_attachment_aborts_start_before_any_sandbox(
-    db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
-) -> None:
-    """Fail-first, cheaply: the resolution runs BEFORE the lock and the container, so a rejected
-    attachment leaves nothing to compensate — no sandbox, no held lock, no registered session."""
-    user, project_id = await _mk(db_session, "m-att3@rvaiglobal.com")
-    conv = await ConversationFactory.create(
-        db_session, user.id, project_id=project_id, kind=ChatKind.BUILD
-    )
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-    from src.services.messages.store import dump_for_row
-
-    await MessageFactory.create(
-        db_session,
-        user.id,
-        conv.id,
-        seq=0,
-        payload=dump_for_row(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content=[
-                                BinaryContent(
-                                    data=b"\x89PNGx", media_type="image/png", identifier="gone"
-                                )
-                            ]
-                        )
-                    ]
-                )
-            ]
-        ),
-    )
-    manager = SessionManager()
-    client = FakeSandboxClient()
-
-    with pytest.raises(BuildAttachmentError, match="no longer available"):
-        await manager.start(
-            db_session,
-            user,
-            project_id,
-            "build it",
-            conversation_id=conv.id,
-            run_build=FakeBrain(),
-            sandbox_client=client,
-        )
-
-    assert client.provisioned == []
-    assert client.torn_down == []
-    assert not await lock_is_held(fake_redis, user.id)
-    assert manager.active_session_for(user.id) is None
+# --- R3: the attachment resolution the manager performed at start ------------
+#
+# THREE TESTS STOOD HERE and all three are gone with their subject. They pinned
+# `resolve_build_attachments` — the thread scan that turned `bial-attachment-ref` markers into
+# `BinaryContent` and hung the result on `BuildSession.attachments` for the build prompt. The
+# module, the function and the dataclass field are all deleted: a turn's attachments reach the
+# sandbox now, not a build's prompt, so there is nothing on this path left to resolve. The
+# module-level suite that covered the scan itself
+# (`tests/services/build_sessions/test_attachments.py`) went with it.
 
 
 # --- #43: relaunch a torn-down preview from its snapshot (Decision 6) ----------------
@@ -2078,17 +1815,12 @@ async def test_relaunch_does_not_occupy_the_build_slot(
     assert manager._active_by_user == {}
     assert await lock_is_held(fake_redis, user.id) is False
 
-    # A real build for the same user now starts cleanly (no BuildSessionConflictError).
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "refine it",
-        run_build=FakeBrain(),
-        sandbox_client=FakeSandboxClient(),
+    # A real turn for the same user now allocates cleanly (no BuildSessionConflictError).
+    client = FakeSandboxClient()
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    assert session.task is not None
-    await session.task
+    assert manager.active_session_for(user.id) is session
 
 
 async def test_relaunch_with_no_snapshot_is_a_dead_end_404(
@@ -2249,30 +1981,22 @@ async def test_relaunch_spares_the_container_when_the_heartbeat_seed_hits_a_redi
 async def test_relaunch_while_a_build_is_live_is_409(
     db_session: AsyncSession, fake_redis: aioredis.Redis, fake_storage: FakeStorage
 ) -> None:
-    # A live build owns the one-per-user slot; relaunch never pre-empts it. It 409s
+    # A live session owns the one-per-user slot; relaunch never pre-empts it. It 409s
     # (BuildSessionConflictError), carrying the live session's id.
     user, project_id = await _mk(db_session, "r6@rvaiglobal.com")
     manager = SessionManager()
-    brain = BlockingBrain()
+    client = FakeSandboxClient()
     await _seed_app_with_bundle(db_session, user, project_id, fake_storage)
 
-    session = await manager.start(
-        db_session,
-        user,
-        project_id,
-        "build it",
-        run_build=brain,
-        sandbox_client=FakeSandboxClient(),
+    # Allocated and NOT ended — the session holds the slot for as long as the test wants it,
+    # which is what the blocking agent used to buy.
+    session = await manager.ensure_sandbox(
+        db_session, user, project_id, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()  # the build is now live and holds the slot
-    try:
-        with pytest.raises(BuildSessionConflictError) as caught:
-            await manager.relaunch_preview(db_session, user, project_id, FakeSandboxClient())
-        assert caught.value.session_id == session.session_id
-    finally:
-        brain.release()
-        assert session.task is not None
-        await session.task
+
+    with pytest.raises(BuildSessionConflictError) as caught:
+        await manager.relaunch_preview(db_session, user, project_id, FakeSandboxClient())
+    assert caught.value.session_id == session.session_id
 
 
 async def test_relaunch_404_leaves_no_committed_app_row_and_provisions_no_storage(
@@ -2479,11 +2203,11 @@ async def test_the_next_real_start_reaps_a_relaunched_preview_through_its_stay(
     # the function BY VALUE.)
     #
     # So drive the real thing end to end: relaunch a preview of project A (which grants a
-    # live 30-minute lease), then start a real build on project B for the SAME user. The
-    # build needs the one-per-user sandbox slot, so reconcile-on-start must reap THROUGH
-    # the unexpired stay. Sparing it would leave A's container running while B registers
-    # its own over that hash — the container orphaned, invisible to the registry-only sweep
-    # forever after.
+    # live 30-minute lease), then allocate for project B for the SAME user. The new session
+    # needs the one-per-user sandbox slot, so reconcile-on-start must reap THROUGH the
+    # unexpired stay. Sparing it would leave A's container running while B registers its own
+    # over that hash — the container orphaned, invisible to the registry-only sweep forever
+    # after.
     user, project_a = await _mk(db_session, "r12@rvaiglobal.com")
     project_b = (await ProjectFactory.create(db_session, user.id)).id
     manager = SessionManager()
@@ -2501,34 +2225,26 @@ async def test_the_next_real_start_reaps_a_relaunched_preview_through_its_stay(
     assert await stay_of_execution_is_current(fake_redis, user.id) is True
     assert (await sweep_all(fake_redis, FakeSandboxClient())).reaped == 0  # ...proven, not assumed
 
-    # A blocking brain keeps the build LIVE, so the registry can be read while it is still
-    # the build's — a completed build's finalize deletes the hash outright.
-    brain = BlockingBrain()
-    session = await manager.start(
-        db_session,
-        user,
-        project_b,
-        "build me something else",
-        run_build=brain,
-        sandbox_client=client,
+    # The session is left LIVE (never ended), so the registry can be read while it is still
+    # B's — an ended session's finalize deletes the hash outright.
+    session = await manager.ensure_sandbox(
+        db_session, user, project_b, sandbox_client=client, may_write=True
     )
-    await brain.stepped.wait()
 
     # (a) the PREVIEW's container was actually torn down — reaped, never orphaned.
     assert preview_app_name in client.torn_down
-    # (b) ...and the registry now names the NEW BUILD's app. Project B is a different app,
+    # (b) ...and the registry now names the NEW SESSION's app. Project B is a different app,
     #     so this is a real assertion and not a tautology about a shared app_name.
     build_app_name = app_name_for(session.app_id)
     assert build_app_name != preview_app_name
     reg_after = await read_registry(fake_redis, user.id)
     assert reg_after is not None
     assert reg_after[REGISTRY_FIELD_APP_NAME] == build_app_name
-    # The build inherited NO lease from the preview it displaced (see the C2 client's
+    # The new session inherited NO lease from the preview it displaced (see the C2 client's
     # `_write_registry`): its container is reapable the moment its own liveness lapses.
     assert REGISTRY_FIELD_PREVIEW_STAY_UNTIL not in reg_after
     assert await stay_of_execution_is_current(fake_redis, user.id) is False
 
-    brain.release()
     await manager.stop(session, client)
 
 

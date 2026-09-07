@@ -1,26 +1,30 @@
 """The in-process build-session lifecycle: `SessionManager` + `BuildSession`.
 
-KTD-1 — the non-serializable core of a session (the `SandboxHandle` holding the raw
-bearer, the progress `asyncio.Queue` subscribers, the in-process envelope buffer, the
-background `run_build` task) lives in memory, NOT Postgres. On a single replica the
-whole session is in-process; the frozen Redis keys (lock/heartbeat/registry) are the
-durable cross-restart coordination.
+THIS FILE NO LONGER STARTS BUILDS. `start` / `_start_locked` / `_run_and_finalize` — the
+standalone build path behind the deleted start route — are gone, and with them the only place
+that ever assigned `BuildSession.task` or called a `run_build`. What allocates a workspace now is
+`ensure_sandbox`, on behalf of a Write chat turn whose agent runs in `services/turns/engine.py`.
+The end sequence below is unchanged and still live: `stop` (the take-back) and `force_end` both
+reach it, and it is the reader for build sessions the transcript still points at.
 
-KTD-2 — teardown + lock-release is SESSION-API-owned; BRAIN signals end by RETURNING a
-`BuildResult`, never touching Redis and never emitting a terminal frame. `_finalize` runs
-the authoritative end sequence exactly once (guarded by `terminal_committed`): snapshot →
-teardown-or-pardon → holder release → emit THE terminal `ended`. A COMPLETED build's
-container is PARDONED, not executed (#13/R2): it stays up under the bounded stay-of-
-execution lease (registry kept, lock released) so the user can use what they just built;
-every other end path — quota / escalated / stop / force_end / idle-reap / a raised
-run_build — still tears down and clears the registry.
+KTD-1 — the non-serializable core of a session (the `SandboxHandle` holding the raw
+bearer, the progress `asyncio.Queue` subscribers, the in-process envelope buffer) lives in memory,
+NOT Postgres. On a single replica the whole session is in-process; the frozen Redis keys
+(lock/heartbeat/registry) are the durable cross-restart coordination.
+
+KTD-2 — teardown + lock-release is SESSION-API-owned. `_finalize` runs the authoritative end
+sequence exactly once (guarded by `terminal_committed`): snapshot → teardown-or-pardon → holder
+release → emit THE terminal `ended`. A COMPLETED build's container is PARDONED, not executed
+(#13/R2): it stays up under the bounded stay-of-execution lease (registry kept, lock released) so
+the user can use what they just built; every other end path — quota / escalated / stop /
+force_end / idle-reap — still tears down and clears the registry.
 
 That order is the whole point of R7: the `ended` is emitted AFTER the step-1 snapshot, so
 its `snapshot_committed` is the real post-commit value. Every end path converges on this
 one emission, so the feed carries exactly one terminal, always truthful.
 
-KTD-9 — the brain + sandbox client are threaded IN from the router's `Depends`, never
-resolved inline, so `app.dependency_overrides` reach them in tests.
+KTD-9 — the sandbox client is threaded IN from the router's `Depends`, never resolved inline, so
+`app.dependency_overrides` reach it in tests.
 """
 
 from __future__ import annotations
@@ -39,7 +43,6 @@ from typing import Final, Literal
 import redis.asyncio as aioredis
 import sqlalchemy as sa
 import structlog
-from pydantic_ai import BinaryContent
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +54,6 @@ from src.api.v1.build_sessions.schemas import (
     PreviewReadyEvent,
     PreviewReconnectingEvent,
     ProgressEnvelope,
-    RunBuild,
 )
 from src.config import settings
 from src.db.base import async_session_factory
@@ -66,7 +68,6 @@ from src.services.build_sessions.alarms import (
 from src.services.build_sessions.appdata import build_app_env, resolve_app_for_project
 from src.services.build_sessions.appdb_env import provision_app_database
 from src.services.build_sessions.appstorage import provision_app_storage
-from src.services.build_sessions.attachments import resolve_build_attachments
 from src.services.build_sessions.counters import count
 from src.services.build_sessions.integrity import (
     IntegrityVerdict,
@@ -95,9 +96,7 @@ from src.services.build_sessions.outcome import (
     FORCE_ENDED,
     STOPPED_BY_USER,
     newest_build_outcome_status,
-    transcript_head_seq,
     write_build_outcome,
-    write_build_started,
 )
 from src.services.build_sessions.reaper import reap_user, reconcile_user
 from src.services.build_sessions.snapshot import (
@@ -399,7 +398,7 @@ class SnapshotUnavailableError(Exception):
     work — is the exact outcome R6 forbids, because it is not a degraded start but a
     DESTRUCTIVE one: `_do_finalize`'s step-1 snapshot would write the blank workspace OVER
     the user's good bundle, permanently. Aborting leaves the bundle byte-for-byte intact for
-    the next start. Raised from `_resolve_sandbox`, so it lands inside `_start_locked`'s
+    the next start. Raised from `_resolve_sandbox`, so it lands inside `ensure_sandbox`'s
     compensation block (lock released, any container torn down); the router maps it to a 503.
     """
 
@@ -517,7 +516,7 @@ class _StopRecord:
 
     THE TASK REFERENCE IS LOAD-BEARING, not bookkeeping. Nothing else holds it, and a task the
     loop can garbage-collect is a stop that silently never happens — the same reason
-    `SessionManager._tasks` exists for `run_build`.
+    `SessionManager._tasks` holds its compensation tasks.
 
     `requested_at` is used for ONE thing: pruning a settled record. It is never consulted to
     decide whether the stop finished, which is read from the session map instead."""
@@ -1074,22 +1073,17 @@ class BuildSession:
     # durable: the next message asks the question again.
     news: RecoveryNews | None = None
     restored: bool = False
-    # The thread this build belongs to, carried past `start` so `_do_finalize` can record the
-    # outcome in it (003-U5). None when the start named no conversation — an API-only caller,
-    # which has no transcript to write to.
+    # The thread this build belonged to, so `_do_finalize` could record the outcome in it
+    # (003-U5). ALWAYS `None` NOW: `_start_locked` was the one place that ever set it, and it is
+    # deleted. `ensure_sandbox` builds its session without it, which is why
+    # `live_session_for_conversation` can no longer match anything — see that method.
     conversation_id: uuid.UUID | None = None
-    # The thread's high-water seq the moment this build STARTED — recorded on the outcome part as
-    # `startedSeq` so the NEXT build can tell the turns that arrived while this one ran from the
-    # ones it already consumed (R3). None when the start named no conversation. Captured at start
-    # because it is unrecoverable later: at the terminal, a turn sent mid-build looks exactly like
-    # one sent before it.
+    # The thread's high-water seq the moment a build STARTED — recorded on the outcome row as
+    # `startedSeq` so the NEXT build could tell the turns that arrived while this one ran from
+    # the ones it already consumed (R3). ALWAYS `None` NOW, for the same reason as
+    # `conversation_id`: only the deleted start path captured it. `_record_outcome` still reads
+    # it and still passes it on, so a row written today simply carries no marker.
     started_seq: int | None = None
-    # R3 — the conversation's attachments, already materialized (blob bytes rehydrated, office
-    # text fenced) at start. Empty when the start carried no `conversationId` or the thread has
-    # no attachments since its last build outcome. Resolved BEFORE the lock (see `start`), so by
-    # the time a session exists these are pure in-memory content; `_live_session_spec` appends
-    # them to the prompt when BRAIN resolves its run context.
-    attachments: list[str | BinaryContent] = field(default_factory=list)
     #: WHICH ARM produced the container, forwarded from `_ResolvedSandbox` (U15/R103). `True`
     #: means it was already up and serving and this turn merely joined it; `False` means this
     #: turn BROUGHT ONE UP — a fresh provision or a restore. Without it, "did this turn start
@@ -1131,8 +1125,9 @@ class SessionManager:
         self._session_factory: SessionFactory = session_factory or async_session_factory
         self._sessions: dict[uuid.UUID, BuildSession] = {}
         self._active_by_user: dict[uuid.UUID, uuid.UUID] = {}
-        # Strong refs to background run_build tasks so a client disconnect (which cancels
-        # only the SSE generator) can't let the loop GC a still-running build.
+        # Strong refs to detached background tasks so the loop cannot garbage-collect one
+        # mid-flight. It held the `run_build` tasks too until the build path was deleted; the
+        # compensation teardowns in `_holding_user_lock` are what live here now.
         self._tasks: set[asyncio.Task[None]] = set()
         # One serialization lock per user, held across the WHOLE of start() — closes the
         # window where a concurrent same-user start would reconcile-away the first start's
@@ -1206,8 +1201,22 @@ class SessionManager:
 
         Reads `_active_by_user` rather than `_sessions` so an ended-but-retained session (kept
         5 minutes for a late SSE reconnect) never reads as live. Inherits this registry's
-        single-replica invariant — see `_start_locked` — and goes blind across a restart, which
-        is why it is a gate BESIDE the mode check, never a replacement for it.
+        single-replica invariant — see `_claim_the_one_build_slot` — and goes blind across a
+        restart, which is why it is a gate BESIDE the mode check, never a replacement for it.
+
+        ★ IT CAN NO LONGER MATCH ANYTHING, AND THAT IS NOT NEW — THE DELETION ONLY MADE IT
+        PROVABLE. `BuildSession.conversation_id` was passed at exactly one construction site,
+        inside `_start_locked`; `ensure_sandbox`, the live producer, has never passed it, so the
+        field defaults to `None` and the comparison below is unconditionally true for any real
+        conversation id. The gate at `conversations/turns.py` that calls this has therefore been
+        inert in production since the start route lost its client. IT IS LEFT IN PLACE
+        DELIBERATELY, as a redesign seam rather than a deletion: `ensure_sandbox` has the turn
+        state in scope at its caller (`turns/engine.py`) and threading one argument through would
+        make the gate live for the first time. NOTHING IS UNGUARDED MEANWHILE — `turns.py` also
+        asks `conversation_is_mid_reply` (the same-conversation case) and `active_session_for`
+        (the cross-conversation case). Do not read the green tests around that gate as evidence it
+        works: `tests/api/v1/conftest.py`'s `building` fixture hand-builds a session WITH a
+        `conversation_id`, a shape production cannot produce, and says so in its own docstring.
         """
         for session_id in self._active_by_user.values():
             session = self._sessions.get(session_id)
@@ -1268,8 +1277,9 @@ class SessionManager:
         spare_app: str | None = None,
     ) -> AsyncIterator[_LockScope]:
         """Reconcile stale state → acquire the one-per-user Redis lock → run the body
-        compensated. The ONE skeleton behind `_start_locked`, `relaunch_preview` and
-        `ensure_sandbox` (their pre-checks deliberately differ — see each call site) — and,
+        compensated. The ONE skeleton behind `relaunch_preview` and `ensure_sandbox` (their
+        pre-checks deliberately differ — see each call site; it was three doors until
+        `_start_locked` was deleted with the standalone build stack) — and,
         as of U13, the single writer of the `starting` marker (R4c): every door into a
         container goes through here, so a start in flight is reported identically to every
         tab, every session and a page reloaded mid-start, never something a browser has to
@@ -1452,11 +1462,11 @@ class SessionManager:
         lock is the ONLY cross-process backstop, and it is deliberately not trusted as the
         sole guard here. One replica is a deploy-time invariant, not a runtime check.
 
-        Shared by `_start_locked` and `ensure_sandbox` because they are the same claim
-        on the same slot: a Write turn attaching a sandbox and a build starting one are
-        indistinguishable to the reaper, the Redis lock and the container budget, so they
-        must be indistinguishable here too. Both callers hold `_start_lock_for(user_id)`,
-        which is what makes the check-then-allocate below atomic per user.
+        Written to be shared by `_start_locked` and `ensure_sandbox`, because they were the same
+        claim on the same slot: a Write turn attaching a sandbox and a build starting one are
+        indistinguishable to the reaper, the Redis lock and the container budget. Only
+        `ensure_sandbox` is left, and it holds `_start_lock_for(user_id)` across the call, which
+        is what makes the check-then-allocate below atomic per user.
         """
         if user_id not in self._active_by_user:
             return
@@ -1468,66 +1478,22 @@ class SessionManager:
                 user_id, blocking, blocking_id, db, requested_project_id
             )
         # The blocking session has already COMMITTED its terminal — it is ended but still
-        # finalizing (a refine sent right on the heels of natural completion). Wait (bounded)
-        # for the shielded end sequence instead of 409ing the user's own finished build, then
-        # fall through to a fresh start; on a timeout or a finalize error, keep the 409.
+        # finalizing. Wait (bounded) for the shielded end sequence instead of 409ing the user's
+        # own finished build, then fall through to a fresh allocation; on a timeout or a finalize
+        # error, keep the 409.
+        #
+        # ONLY A STOP CAN PUT US HERE NOW. `finalize_task` is assigned in exactly one place,
+        # `_finalize`, and with `_run_and_finalize` deleted the only caller left is `_end` — i.e.
+        # `stop` / `force_end`. The case this was written for ("a refine sent right on the heels
+        # of natural completion") needed a build that finalized itself on completion, which no
+        # longer exists. The guard stays because it still reads correctly and fails closed: on a
+        # session that never finalizes, `finalize` is None and the 409 above is taken.
         try:
             await asyncio.wait_for(asyncio.shield(finalize), timeout=_FINALIZE_GRACE_SECONDS)
         except Exception:
             raise await self._slot_conflict_for(
                 user_id, blocking, blocking_id, db, requested_project_id
             ) from None
-
-    # --- start ---------------------------------------------------------------
-
-    async def start(
-        self,
-        db: AsyncSession,
-        user: User,
-        project_id: uuid.UUID,
-        prompt: str,
-        *,
-        conversation_id: uuid.UUID | None = None,
-        run_build: RunBuild,
-        sandbox_client: SandboxClient,
-    ) -> BuildSession:
-        # Opportunistic retention sweep — the only guaranteed-recurring seam for this
-        # in-process map (nothing evicts it on a timer), so ended sessions never accumulate
-        # unboundedly. Narrowed 2026-08-11: scoped to this map, not a claim about the repo.
-        self.evict_ended_sessions()
-        # R3 — materialize the conversation's attachments FIRST: before the per-user start lock,
-        # before the Redis lock, before any container. A `ConversationNotFoundError` (404) or a
-        # `BuildAttachmentError` (422) therefore aborts a start that has allocated NOTHING — no
-        # lock to release, no sandbox to tear down, no quota burnt. That ordering is the whole
-        # point of the fail-first rule here: a build that silently ignores the user's spreadsheet
-        # is the bug R3 deletes, and the only honest alternative is refusing to start at all.
-        # (Outside the start lock deliberately: blob rehydration is I/O, and it needs no
-        # mutual exclusion — it reads the caller's own committed rows.)
-        attachments: list[str | BinaryContent] = []
-        started_seq: int | None = None
-        if conversation_id is not None:
-            attachments = await resolve_build_attachments(db, user.id, project_id, conversation_id)
-            # The START marker, read in the same breath as the attachments this build consumes —
-            # so the two can never disagree about which turns this build saw. `resolve_build_
-            # attachments` has just proven the thread is the caller's, which is what earns this
-            # unscoped read of its seq space.
-            started_seq = await transcript_head_seq(db, conversation_id)
-        # Serialize concurrent same-user starts: the whole start (reconcile → acquire →
-        # provision → register) runs under one per-user lock, so a second start can't
-        # reconcile-away the first start's in-flight lock (held but registry-not-yet-written)
-        # and double-allocate a sandbox (the critical reap_lock/fresh-acquire race).
-        async with self._start_lock_for(user.id):
-            return await self._start_locked(
-                db,
-                user,
-                project_id,
-                prompt,
-                attachments=attachments,
-                conversation_id=conversation_id,
-                started_seq=started_seq,
-                run_build=run_build,
-                sandbox_client=sandbox_client,
-            )
 
     async def save_project_snapshot(
         self,
@@ -2153,51 +2119,43 @@ class SessionManager:
         `request_stop_of_active_work` starts cannot outlive a request's `get_db` and read from a
         closed connection.
 
-        TWO KINDS OF LIVE, one door. `_start_locked` registers a build session carrying a
-        `run_build` task and the whole terminal-commit machinery; `ensure_sandbox` registers a
-        Write turn's workspace with no task at all, because the work is running in the turn
-        engine instead. From the container's point of view an agent is working either way, so
-        the caller should not have to know which — the branch is here.
+        `sandbox_client` IS CURRENTLY UNREAD, and that is a consequence of the branch below
+        collapsing, not an oversight. It fed `self.stop(session, sandbox_client)` on the deleted
+        build arm. It stays because retiring it would have to walk back through `stop_active_work`
+        and `request_stop_of_active_work` — the live take-back path — and out to the route's
+        `SandboxDep`, changing when a sandbox-off deployment fails; that is a separate change.
 
-        WHERE THE DANGLING TOOL CALL COMES FROM (#189, known and accepted). Both branches cut
-        the run wherever it stands, which is routinely between a tool call and its result. The
-        replay is kept valid by `_INTERRUPTED_RESULT` in `messages/store.py` — read the decision
-        recorded beside it before shipping chat history, because landing this stop on a
-        tool-result boundary is what has to change once a past conversation can be reopened."""
+        ONE KIND OF LIVE NOW, and this used to branch on two. `_start_locked` registered a build
+        session carrying a `run_build` task and the whole terminal-commit machinery, and that
+        branch cancelled the task through `self.stop(...)`; it is deleted with the start route.
+        `session.task` was assigned at exactly one place in this file, inside `_start_locked`, so
+        every session production can build now carries none — `ensure_sandbox` registers a Write
+        turn's workspace with no task at all, because the work is running in the turn engine
+        instead. What is left is that second arm, unconditionally.
+
+        WHERE THE DANGLING TOOL CALL COMES FROM (#189, known and accepted). The stop cuts the run
+        wherever it stands, which is routinely between a tool call and its result. The replay is
+        kept valid by `_INTERRUPTED_RESULT` in `messages/store.py` — read the decision recorded
+        beside it before shipping chat history, because landing this stop on a tool-result
+        boundary is what has to change once a past conversation can be reopened."""
         if not self._live_session_holds(user_id, app_id):
             return StopOutcome.NOTHING_WAS_RUNNING
         session_id = self._active_by_user.get(user_id)
         session = self._sessions.get(session_id) if session_id is not None else None
         if session is None:
             return StopOutcome.NOTHING_WAS_RUNNING
-        if session.task is not None:
-            # A BUILD session. `stop` runs the graceful end sequence and awaits the shielded
-            # finalize, so when it returns the terminal is committed and the slot is free.
-            #
-            # BOUNDED HERE, because `stop` takes no timeout of its own: `_end` awaits the
-            # cancelled task and `_await_end_sequence` awaits `finalize_task` unbounded, and a
-            # finalize does real work (a snapshot bundle over the supervisor) that a wedged
-            # container can stall indefinitely. `shield` so expiring does not cancel the end
-            # sequence — it is mid-teardown and killing it there is how containers get
-            # orphaned; we stop WAITING, we do not stop the stop.
-            with suppress(TimeoutError):
-                await asyncio.wait_for(
-                    asyncio.shield(asyncio.ensure_future(self.stop(session, sandbox_client))),
-                    timeout=timeout_s,
-                )
-        else:
-            # A WRITE TURN's workspace. The work is the engine's; the manager session is only
-            # holding the container for it. Imported lazily — `turns.engine` imports this
-            # module, so a module-level import is a cycle (the reason `live_build.py`
-            # documents). Its own answer is deliberately not the verdict: the engine can only
-            # speak for its turn, while the fact that decides whether the container may be
-            # taken is whether the MANAGER still has the slot, which the read below asks.
-            from src.services.turns.engine import get_turn_engine
+        # A WRITE TURN's workspace. The work is the engine's; the manager session is only
+        # holding the container for it. Imported lazily — `turns.engine` imports this
+        # module, so a module-level import is a cycle (the reason `live_build.py`
+        # documents). Its own answer is deliberately not the verdict: the engine can only
+        # speak for its turn, while the fact that decides whether the container may be
+        # taken is whether the MANAGER still has the slot, which the read below asks.
+        from src.services.turns.engine import get_turn_engine
 
-            await get_turn_engine().stop_user_turn_and_wait(user_id, timeout_s=timeout_s)
-        # THE ONE READ THAT SETTLES IT, for both branches. A session still holding the app means
-        # the release that follows would refuse, so "still running" is not a hedge here — it is
-        # an accurate prediction of the next step. Nothing about elapsed time enters this.
+        await get_turn_engine().stop_user_turn_and_wait(user_id, timeout_s=timeout_s)
+        # THE ONE READ THAT SETTLES IT. A session still holding the app means the release that
+        # follows would refuse, so "still running" is not a hedge here — it is an accurate
+        # prediction of the next step. Nothing about elapsed time enters this.
         if self._live_session_holds(user_id, app_id):
             return StopOutcome.STILL_RUNNING
         return StopOutcome.STOPPED
@@ -2515,9 +2473,10 @@ class SessionManager:
         `_claim_the_one_build_slot`); a second replica needs the shared lease the idle-suspend
         spike calls a prerequisite, not a second guard bolted on here.
 
-        Covers BOTH kinds of session, which is why it asks about the app rather than the task:
-        `_start_locked` registers a build with a `run_build` task, `ensure_sandbox` registers a
-        turn's workspace with no task at all."""
+        ASKS ABOUT THE APP RATHER THAN THE TASK, which is what let it cover both kinds of
+        session while there were two: `_start_locked` registered a build carrying a `run_build`
+        task, `ensure_sandbox` registers a turn's workspace with none. Only the second kind
+        exists now, and the question is still the right one to ask."""
         session_id = self._active_by_user.get(user_id)
         if session_id is None:
             return None
@@ -2614,10 +2573,10 @@ class SessionManager:
         (Trade-off recorded, not buried: an attached container keeps its BIRTH env, so a
         relaunch no longer rotates the Blob SAS.)
 
-        Deliberately NOT a build (Decision 6): it runs under `_holding_user_lock` (the same
-        skeleton as `_start_locked`) but never adopts the lock, never enters `_active_by_user`
-        and never spawns a `run_and_finalize` task, so it does NOT occupy the one-per-user
-        build slot — the user's next real build never 409s on a relaunched preview. It
+        Deliberately NOT a build (Decision 6): it runs under `_holding_user_lock` — the same
+        skeleton the deleted `_start_locked` ran under — but never adopts the lock, never enters
+        `_active_by_user` and never spawns a background task, so it does NOT occupy the
+        one-per-user build slot — the user's next real build never 409s on a relaunched preview. It
         registers a READY handle in Redis (a side effect of `restore_from_snapshot` via
         `_write_registry`), seeds a heartbeat, then the scope RELEASES the per-user lock on
         exit. Nothing here re-snapshots: the workspace is served read-only (an edit is a new
@@ -2630,10 +2589,11 @@ class SessionManager:
         immediately regardless of the lease — that build needs the one-per-user slot, and
         sparing the preview there would orphan its container under the new registry entry.
 
-        Diverges from `_start_locked` in two deliberate ways:
+        Diverged from the deleted `_start_locked` in two deliberate ways, and both still hold
+        against `_claim_the_one_build_slot`, which is where that logic lives:
         - No finalize-grace wait on a terminal-committed session: the snapshot relaunch would
           restore is written only by that session's finalize, so 409ing until it settles is
-          correct — never unify this with start's `_FINALIZE_GRACE_SECONDS` arm.
+          correct — never unify this with the `_FINALIZE_GRACE_SECONDS` arm.
         - It must NOT reuse `_restore_or_provision`, whose confirmed-absent arm provisions a
           BLANK template — the wrong answer for relaunch, where an empty app is not a preview
           of the user's work. Instead it checks the snapshot itself and restores directly:
@@ -3010,132 +2970,6 @@ class SessionManager:
             await count(HarnessCounter.APP_COLD_START_MS, value=cold_elapsed_ms, app_id=app_id)
         return relaunched
 
-    async def _start_locked(
-        self,
-        db: AsyncSession,
-        user: User,
-        project_id: uuid.UUID,
-        prompt: str,
-        *,
-        attachments: list[str | BinaryContent],
-        conversation_id: uuid.UUID | None,
-        started_seq: int | None,
-        run_build: RunBuild,
-        sandbox_client: SandboxClient,
-    ) -> BuildSession:
-        redis = get_redis()
-        user_id = user.id
-        await self._claim_the_one_build_slot(user_id, db=db, requested_project_id=project_id)
-        # Not live: reconcile the user's OWN stale state before acquiring (KTD-3 — closes the
-        # crashed-tab lockout at the exact moment it matters), then run the provision steps
-        # compensated: any failure — a cancelled request included — tears down any container
-        # that was created and holder-releases the lock (`_holding_user_lock`).
-        # WHICH container would satisfy this build? Read-only, and passed for the same reason
-        # the two turn paths pass it — without it `_the_live_sandbox_is_already_the_one_we_want`
-        # answers False unconditionally, so EVERY start reaped the live container, including one
-        # already serving this very app: a Write turn's pardoned container was torn down and
-        # rebuilt from the last SAVED bundle, losing everything since the user's last Save.
-        # The SPA no longer calls this route (`BuilderPage.jsx` stopped calling `session.start()`),
-        # so this is a landmine rather than a live bug — which is exactly why it gets defused now
-        # instead of at whatever future moment the route is re-enabled.
-        spare_app = await _sandbox_name_for_existing_app(db, user_id, project_id)
-        await self._refuse_if_reclaim_would_destroy_work(
-            db, user, spare_app=spare_app, sandbox_client=sandbox_client
-        )
-        async with self._holding_user_lock(
-            redis, user_id, sandbox_client, project_id, spare_app=spare_app
-        ) as scope:
-            app_id = await resolve_app_for_project(db, user_id, project_id)
-            await db.commit()
-            # The DSN merge lives HERE and not beside the storage merge in
-            # `_restore_or_provision`, which has neither `db` nor `project_id` in scope —
-            # the database is PROJECT-keyed while everything on that seam is app-keyed.
-            # It must also follow the commit above: `ensure_project_database` commits its
-            # own claim and its own terminal marker, so calling it earlier would commit a
-            # half-built request transaction (the speculative DRAFT app row included).
-            # This is also the LAZY ensure: a project created before the feature existed,
-            # or while the substrate was unconfigured, is provisioned on its next build.
-            env = {
-                **build_app_env(app_id),
-                **await provision_app_database(db, project_id),
-            }
-            # `take` records the handle AND spares it when this was the attach arm — a
-            # container that was already serving is not this request's to roll back.
-            handle = scope.take(await self._resolve_sandbox(sandbox_client, user_id, app_id, env))
-            # Seed the heartbeat INSIDE the protected region, BEFORE adopt (mirroring
-            # relaunch_preview's seed) so an immediate reconcile can't reap the fresh session.
-            # The placement is load-bearing: under the new retry policy a `write_heartbeat`
-            # RedisError is a multi-second window, and out here — after adopt, after the block
-            # exited — it propagated uncaught, orphaning `_active_by_user[user_id]` forever and
-            # leaking the container. Inside the region (scope not yet adopted) its raise is caught
-            # by `_holding_user_lock`'s `except BaseException`, which tears the container down and
-            # releases the lock, exactly as a failing lock acquire does.
-            await write_heartbeat(redis, user_id)
-            # The session ADOPTS the lock + container: from here `_do_finalize` owns their
-            # release/teardown, so the scope must not release on exit.
-            scope.adopt()
-
-        session = BuildSession(
-            session_id=uuid.uuid7(),
-            user_id=user_id,
-            project_id=project_id,
-            app_id=app_id,
-            prompt=prompt,
-            lock_token=scope.token,
-            handle=handle,
-            # A build is a Write run by definition — `_run_write` builds its agent with
-            # `toolsets_for_kind(ChatKind.BUILD, ...)`, so the sandbox toolset is
-            # always present and the tree is always in play.
-            may_write=True,
-            attachments=attachments,
-            conversation_id=conversation_id,
-            started_seq=started_seq,
-        )
-        self._sessions[session.session_id] = session
-        self._active_by_user[user_id] = session.session_id
-
-        # U5 — the hidden `build_started` lifecycle row, BEFORE the run task so it precedes
-        # every step row. Best-effort past this point by necessity: the lock + container are
-        # adopted and the session is registered, so a raise here would strand them — a build
-        # missing its start marker is the strictly smaller failure.
-        if session.conversation_id is not None and session.started_seq is not None:
-            try:
-                await write_build_started(
-                    db,
-                    user_id=user_id,
-                    conversation_id=session.conversation_id,
-                    session_id=session.session_id,
-                    started_seq=session.started_seq,
-                )
-            except Exception:
-                _log.exception(
-                    "build_started marker write failed; continuing",
-                    session_id=str(session.session_id),
-                )
-
-        task = asyncio.create_task(self._run_and_finalize(session, run_build, sandbox_client))
-        session.task = task
-        self._tasks.add(task)
-
-        def _on_done(finished: asyncio.Task[None]) -> None:
-            # Drop the strong ref, then surface any exception that escaped
-            # `_run_and_finalize` — a clean run or a stop/force-end cancellation is silent,
-            # but a real bug must never die invisibly in a detached background task.
-            self._tasks.discard(finished)
-            if finished.cancelled():
-                return
-            exc = finished.exception()
-            if exc is not None and not isinstance(exc, asyncio.CancelledError):
-                _log.error(
-                    "build task exited with an unhandled exception",
-                    exc_info=exc,
-                    session_id=str(session.session_id),
-                    user_id=str(session.user_id),
-                )
-
-        task.add_done_callback(_on_done)
-        return session
-
     # --- the Write turn's sandbox (U5) ---------------------------------------
 
     async def ensure_sandbox(
@@ -3148,8 +2982,8 @@ class SessionManager:
         may_write: bool,
         announce: RecoveryAnnouncer | None = None,
     ) -> BuildSession:
-        """Attach a live sandbox for a turn — everything `start` allocates, minus the build
-        (U5's convergence).
+        """Attach a live sandbox for a turn — everything the deleted `start` allocated, minus
+        the build (U5's convergence).
 
         `may_write` is REQUIRED and has no default, because the caller is the only thing that
         knows and a wrong guess is user-visible in both directions. It is not "is this Write
@@ -3160,17 +2994,19 @@ class SessionManager:
         commit where the name stopped carrying it.
 
         A Write turn is an ordinary chat turn that happens to hold the sandbox eight, so it
-        needs the same container, the same one-per-user lock and the same registry entry as a
-        build — but no `run_build` task, no `build_started` marker, no attachments and no
-        `started_seq`. Those four belong to the C7 build feed, which the turn engine replaces:
-        the turn's own frames are the narrative now, and the turn's own rows are the record.
+        needs the same container, the same one-per-user lock and the same registry entry a
+        build needed — but no `run_build` task, no `build_started` marker, no attachments and
+        no `started_seq`. Those four belonged to the C7 build feed, which the turn engine
+        replaces: the turn's own frames are the narrative now, and the turn's own rows are the
+        record. This is now the ONLY allocator; `_start_locked`, whose skeleton this is, is
+        deleted.
 
-        The claim/allocate skeleton is `_start_locked`'s, deliberately and completely:
-        slot claim → reconcile → lock → mint the app row → commit → env → resolve the
-        sandbox → heartbeat → adopt. Every one of those steps exists because a build without
-        it broke in a way someone had to debug, and a Write turn is allocating exactly the
-        same resources against exactly the same reaper. `_resolve_sandbox` keeps all three of
-        its arms, `SnapshotUnavailableError` included — refusing to substitute a blank
+        That skeleton, deliberately and completely: slot claim → reconcile → lock → mint the app
+        row → commit → env → resolve the sandbox → heartbeat → adopt. Every one of those steps
+        exists because a build without it broke in a way someone had to debug, and a Write turn
+        is allocating exactly the same resources against exactly the same reaper.
+        `_resolve_sandbox` keeps all three of its arms, `SnapshotUnavailableError` included —
+        refusing to substitute a blank
         template for a snapshot it cannot read is even more important here than on a build,
         because a Write turn would happily start editing the empty template and commit the
         result over the user's real app.
@@ -3185,8 +3021,9 @@ class SessionManager:
         `active_session_for` must see this exactly as they see a build's session. The two
         empty fields are the honest answer: there is no build prompt and no mode to restore.
         """
-        # Same opportunistic retention sweep `start` runs — this is now a second recurring
-        # seam, and ended sessions must not accumulate on a workspace that only ever chats.
+        # The opportunistic retention sweep, and since `start` was deleted this is the ONLY
+        # recurring seam for the in-process map — nothing evicts it on a timer, so ended
+        # sessions must not be allowed to accumulate on a workspace that only ever chats.
         self.evict_ended_sessions()
         async with self._start_lock_for(user.id):
             redis = get_redis()
@@ -3207,8 +3044,8 @@ class SessionManager:
             ) as scope:
                 app_id = await resolve_app_for_project(db, user_id, project_id)
                 await db.commit()
-                # The DSN merge follows the commit for `_start_locked`'s reason:
-                # `ensure_project_database` commits its own claim and its own terminal
+                # The DSN merge follows the commit for the reason the deleted `_start_locked`
+                # documented: `ensure_project_database` commits its own claim and its own terminal
                 # marker, so calling it earlier would commit a half-built request
                 # transaction (the speculative DRAFT app row included).
                 env = {
@@ -3597,7 +3434,13 @@ class SessionManager:
 
     async def on_progress(self, session: BuildSession, env: ProgressEnvelope) -> None:
         """The C7 `ProgressSink`: buffer the envelope, derive status, refresh liveness,
-        and fan out to every live SSE subscriber (no Redis — this IS the transport)."""
+        and fan out to every live SSE subscriber (no Redis — this IS the transport).
+
+        ONE PRODUCER LEFT. The build harness that emitted the six BRAIN members is deleted, so in
+        production the only envelope that reaches here is the terminal `ended` that `_do_finalize`
+        emits. The generic derivation below is kept deliberately: this is a SINK, and it has to
+        derive correct state from any envelope handed to it — including the ones tests push
+        directly — without reaching back into who emitted them."""
         session.envelopes.append(env)
         session.last_seq = env.seq
         session.updated_at = datetime.now(UTC)
@@ -3651,7 +3494,7 @@ class SessionManager:
                 )
 
         # Fan out with per-subscriber failure isolation — a slow/dead subscriber is dropped,
-        # never allowed to raise QueueFull back into run_build.
+        # never allowed to raise QueueFull back at whatever is emitting.
         for queue in list(session.subscribers):
             try:
                 queue.put_nowait(env)
@@ -3659,35 +3502,6 @@ class SessionManager:
                 session.subscribers.discard(queue)
 
     # --- completion + the single-owner end sequence --------------------------
-
-    async def _run_and_finalize(
-        self, session: BuildSession, run_build: RunBuild, sandbox_client: SandboxClient
-    ) -> None:
-        """Await the opaque BRAIN task and finalize on a NORMAL or FAILED completion. A
-        CANCELLATION is re-raised WITHOUT finalizing here — `stop`/`force_end` own the end
-        sequence in that case, running it OUTSIDE the cancelled task so `_finalize`'s awaits
-        actually complete (a cancelled task's `finally` awaits would themselves be cancelled,
-        leaving the session half-finalized). `_finalize`'s `terminal_committed` guard keeps
-        it single-owner across the two paths (KTD-2).
-
-        The `BuildResult` is BRAIN's whole verdict and is threaded into the end sequence: it
-        is the ONLY carrier of the outcome (BRAIN emits no terminal frame), so dropping it
-        would cost the real `reason`/`status`/`preview_url` of every completed build (R7)."""
-
-        async def sink(env: ProgressEnvelope) -> None:
-            await self.on_progress(session, env)
-
-        try:
-            result = await run_build(session.session_id, session.user_id, sandbox_client, sink)
-        except asyncio.CancelledError:
-            raise  # stop/force_end finalizes; just unwind
-        except Exception:
-            # BRAIN broke its own never-raise invariant (KD-12) — no verdict exists, so the end
-            # sequence derives a `build_failed` terminal itself rather than stranding the feed.
-            _log.exception("run_build raised", session_id=str(session.session_id))
-            await self._finalize(session, _BUILD_FAILED, sandbox_client)
-            return
-        await self._finalize(session, result.reason, sandbox_client, result=result)
 
     async def _finalize(
         self,

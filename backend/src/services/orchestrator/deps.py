@@ -1,13 +1,13 @@
-"""The per-run dependency bundles the sandbox tools and the build harness receive (KD-4 / KD-9 /
-KD-13).
+"""The per-run dependency bundle the sandbox tools receive (KD-4 / KD-9 / KD-13).
 
-Two dataclasses, split along the seam U5 needs:
+ONE dataclass now. `SandboxSession` holds EVERYTHING the eight sandbox tools touch, and nothing
+else; a Write chat turn carries it on its own `ChatDeps.sandbox`, so one tool body serves the
+whole surface (`tools.sandbox_toolset`).
 
-* `SandboxSession` — EVERYTHING the eight sandbox tools touch, and nothing else. It is held by
-  `BuildDeps.sandbox` (the legacy `/build-sessions` harness) and, from U5, by a Write chat turn's
-  own deps, so ONE tool body serves both consumers (`tools.sandbox_toolset`).
-* `BuildDeps` — the harness-only surround: the owner `user_id`, the single `ProgressEmitter` (so
-  tools and the harness share ONE seq source, KD-12), and the claim-once preview-frame guard.
+`BuildDeps` — the harness-only surround (owner `user_id`, the single `ProgressEmitter`, the
+claim-once preview-frame guard) — was deleted with the standalone build harness. The turn engine
+keeps its own equivalents on the turn state (`turns/engine.py::claim_preview_frame`); they were
+never shared with this file, only mirrored.
 
 There are deliberately NO caches (KD-10): an uncached `view` is always correct; a cache without
 invalidation risks stale content mid-self-heal.
@@ -92,8 +92,10 @@ class SandboxSession:
     # (U22). Redacted, not raw, for the same reason `HeldOutput.lines` is: an argv token can carry
     # a credential, and this lives on the session for the whole turn.
     commands_seen: set[str] = field(default_factory=set)
-    # The legacy C7 build feed. `None` on a chat turn, where the turn ENGINE emits the step frames
-    # from the run's own tool events — see `tools._step` for why emitting both would double-render.
+    # The legacy C7 build feed, and NOTHING IN PRODUCTION SETS IT ANY MORE: the only constructor
+    # of a `ProgressEmitter` was the deleted harness, so on every live turn this is `None` and
+    # `tools._step` takes its early return. It stays because `tools._step` still has to handle
+    # both shapes and the tool tests drive the emitting arm; treat a non-None value as test-only.
     emitter: ProgressEmitter | None = None
 
     def hold_output(self, handle: str, held: HeldOutput) -> None:
@@ -121,39 +123,3 @@ class SandboxSession:
         if not repeated and len(self.commands_seen) < REPEATED_COMMAND_MEMORY:
             self.commands_seen.add(redacted_command)
         return repeated
-
-
-@dataclass
-class BuildDeps:
-    """The legacy build harness's per-run agent dependencies: the sandbox session the tools resolve
-    through, plus the harness-only surround (owner scope, the C7 emitter, the preview-frame
-    guard)."""
-
-    sandbox: SandboxSession
-    emitter: ProgressEmitter
-    user_id: uuid.UUID
-    # F8/U5 — the SHARED "preview is framed" guard, hoisted out of the `_run_loop` local it used to
-    # be so ALL THREE initial-frame emit sites consult ONE flag: (a) the warm-resume immediate
-    # emit, (b) the decoupled early readiness watcher, (c) the between-steps verify. Seeded from
-    # `handle.ready` in `__post_init__` so a warm/resumed sandbox that emits `preview_ready`
-    # immediately never double-fires with the watcher's first poll. The watcher exclusively owns
-    # the later crash→reconnect→reframe cycle (verify never re-claims), so this is claim-once.
-    preview_framed: bool = False
-
-    def __post_init__(self) -> None:
-        # A warm/resumed sandbox is already serving — treat the frame as claimed at construction so
-        # the warm-resume emit (gated on `handle.ready`) fires once and the watcher/verify see it
-        # taken. A cold sandbox starts unframed; the watcher or verify claims it on first serve.
-        if self.sandbox.handle.ready:
-            self.preview_framed = True
-
-    def claim_preview_frame(self) -> bool:
-        """Synchronously claim the one-time preview-framed transition — True for EXACTLY ONE caller
-        across the initial-frame emit sites. The test-and-set has NO `await` between the "is it
-        set?" check and the "set it" write, so the early watcher and the between-steps loop can
-        never both see it unset and both emit `preview_ready` with two different seqs (a
-        double-frame). This is what makes a second concurrent emitter safe (KD-12)."""
-        if self.preview_framed:
-            return False
-        self.preview_framed = True
-        return True

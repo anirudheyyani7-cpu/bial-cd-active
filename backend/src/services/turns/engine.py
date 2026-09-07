@@ -2118,8 +2118,8 @@ class TurnEngine:
         ) as run:
             # ANNOTATED, AND WALKED WITH `isinstance` RATHER THAN `Agent.is_end_node` — the
             # classmethod's `TypeIs` binds its type-var to `Unknown` on the bare class, so the
-            # NEGATIVE branch this loop needs does not narrow. `orchestrator/harness.py` writes
-            # the reasoning out in full at the one other place the graph is walked this way.
+            # NEGATIVE branch this loop needs does not narrow. This is the only place the
+            # graph is walked this way now; the deleted harness was the other one.
             node: AgentNode[ChatDeps, str] | End[FinalResult[str]] = run.next_node
             cut_short = False
             pending_answers: ModelRequest | None = None
@@ -2664,10 +2664,11 @@ class TurnEngine:
         ask, and only the server holds the supervisor token. Every failure is swallowed — a
         watcher that raised would take the build down with it over a polling blip.
 
-        The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` — see that constant, and
-        keep `orchestrator/harness.py::_watch_preview` in step with it: the two emit the same
-        signal to the same pane, so a debounce on one of them only would make the crash edge
-        depend on which code path built the app."""
+        The crash arm is DEBOUNCED over `CRASH_EDGE_CONSECUTIVE_POLLS` — see that constant. This
+        is the only watcher left (the harness had a second one), and any future second watcher
+        must read that same constant: two watchers emit the same signal to the same pane, so a
+        debounce on one of them only would make the crash edge depend on which code path built
+        the app."""
         sandbox = state.sandbox
         if sandbox is None:
             return

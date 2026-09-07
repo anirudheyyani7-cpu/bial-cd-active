@@ -44,15 +44,17 @@ through `/exec`, which the supervisor's child env cannot tell from the real one)
 round-trip withholds its closing message from `summary`, and there is no reply to put it in).
 
 They are built as a `FunctionToolset` FACTORY over a `sandbox_of` accessor — mirroring
-`agent/read_tools.read_only_toolset` — rather than `@build_agent.tool` decorators. ONE tool body,
-two consumers: the legacy `/build-sessions` harness (`BuildDeps.sandbox`) and a Write chat turn.
-The accessor closure is the only thing that knows the run's deps type.
+`agent/read_tools.read_only_toolset` — rather than decorators on a module-level agent. That
+shape was chosen when there were TWO consumers, the standalone `/build-sessions` harness and a
+Write chat turn; the harness is deleted and the chat turn is the one left. The factory stays,
+because the accessor closure is still what lets one tool body serve whatever deps type a run
+carries, and the tool tests drive it over their own.
 
-THE TWO CONSUMERS DO NOT COMPOSE THE SAME SURFACE, and the generated prompt block does not say
-so. `build_agent` takes THIS toolset and nothing else — eight tools. A Write chat turn takes it
-plus `list_files`/`search_files` off `read_only_toolset` and the two `CONVERSATION_TOOLSET` tools
-— twelve. `WRITE_TOOL_SURFACE` is a snapshot of the twelve and ships in BOTH prompts, so the
-harness is told about four tools it cannot call. Recorded, not fixed, at
+ONE SURFACE NOW, AND THE PROMPT FINALLY MATCHES IT. The harness took THIS toolset and nothing
+else — eight tools — while `WRITE_TOOL_SURFACE` described the Write chat arm's twelve and shipped
+in both prompts, so the harness was told about four tools it could not call. A Write chat turn
+takes this toolset plus `list_files`/`search_files` off `read_only_toolset` and the two
+`CONVERSATION_TOOLSET` tools — twelve, exactly what the snapshot names. Recorded at
 `core/prompt_blocks.WRITE_TOOL_SURFACE`; guarded by
 `test_prompt.py::test_the_harness_arm_is_told_about_four_tools_it_does_not_register`.
 """
@@ -765,8 +767,9 @@ def sandbox_toolset[DepsT](
     sandbox_of: Callable[[RunContext[DepsT]], SandboxSession],
 ) -> FunctionToolset[DepsT]:
     """The eight sandbox tools over whatever deps `sandbox_of` resolves the session from. Generic
-    on the deps type for the same reason `read_only_toolset` is: ONE tool body, two consumers (the
-    legacy harness's `BuildDeps`, a Write chat turn's own deps).
+    on the deps type for the same reason `read_only_toolset` is: ONE tool body, composed over
+    whatever deps its consumer carries (a Write chat turn's `ChatDeps`; the tool tests' own).
+    It served the deleted harness's `BuildDeps` the same way.
 
     The inner tools annotate `RunContext[Any]`: pydantic-ai resolves tool annotations with
     `get_type_hints` at registration, and a PEP-695 type param of the ENCLOSING function is not in

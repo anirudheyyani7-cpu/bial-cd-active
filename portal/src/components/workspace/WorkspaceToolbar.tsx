@@ -122,7 +122,21 @@ export default function WorkspaceToolbar({
   return (
     <div
       data-testid="workspace-toolbar"
-      className="flex h-[54px] flex-shrink-0 items-center gap-2.5 border-b border-bial-border bg-white px-5"
+      /* THE ROW SCROLLS SIDEWAYS RATHER THAN BEING CLIPPED (`#201`, plan 001 D22).
+         Nine occupants do not fit in 360px and never will. The shell's root is `overflow-hidden`
+         — a deliberate scroll-containment choice for the rail and the pane, unrelated to narrow
+         screens — so what overflowed this row was not merely off to the right, it was CLIPPED,
+         with nothing anywhere to bring it back. The right-hand cluster goes first, which puts Save
+         itself outside the viewport and outside reach.
+         `/projects`, `/marketplace` and `/help` overflow 360px too and a finger drags to the rest;
+         the workspace was the one route where that was not true.
+         SCOPED TO THE ROW, NOT TO THE ROOT, because the row's own box never exceeds the root's
+         width — only its CONTENTS do — so this is the narrowest element that can own the scroll,
+         and the root keeps the containment the two columns depend on.
+         `overflow-y-hidden` is not decoration: `overflow-x: auto` alone computes `overflow-y` to
+         `auto` as well, which would put a vertical scrollbar in a 54px row the moment a horizontal
+         one stole height from it. */
+      className="flex h-[54px] flex-shrink-0 items-center gap-2.5 overflow-x-auto overflow-y-hidden border-b border-bial-border bg-white px-5"
     >
       <button
         type="button"
@@ -132,7 +146,11 @@ export default function WorkspaceToolbar({
         // projects list, and must say so rather than promising a project it cannot reach.
         aria-label={backToProject ? 'Back to project' : 'Back to projects'}
         title={backToProject ? 'Back to project' : 'Back to projects'}
-        className="inline-flex flex-shrink-0 items-center rounded-lg p-0.5 text-neutral transition hover:text-primary"
+        /* THE SMALLEST TARGET IN THE ROW, at 20×20 — a 16px chevron in 2px of padding. Below the
+           stacking threshold it presents 44×44 (R38a). The GLYPH does not move: `min-h`/`min-w`
+           grow the box around it and `justify-center` keeps it in the middle, so nothing about the
+           row's drawn weight changes — only the area a finger can land on. */
+        className="inline-flex flex-shrink-0 items-center justify-center rounded-lg p-0.5 text-neutral transition hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
       >
         <ChevronLeft size={16} />
       </button>
@@ -164,7 +182,19 @@ export default function WorkspaceToolbar({
           )}
           <h1
             data-testid="toolbar-title"
-            className="min-w-0 truncate text-[15px] font-extrabold tracking-[-0.25px] text-primary-900"
+            /* THE TITLE STOPS COLLAPSING TO NOTHING (R40, `#201`).
+               Every other occupant of this row is `flex-shrink-0`, and this one carried `min-w-0`
+               with no floor — so it was the ONLY flexible participant and 100% of any width
+               deficit landed on it, all the way to a measured zero. At 360px the heading a citizen
+               needs in order to know where they are simply was not on screen.
+               144px is about ten characters and the ellipsis: enough to tell two projects apart.
+               Past that the deficit goes to the row's scroller, which is what D22 gave it.
+               WHY IT IS GATED AT `narrow:` AND NOT UNCONDITIONAL. `min-width` in flex does not
+               only stop shrinking — it also GROWS an item whose content is narrower than the
+               floor. Ungated, a short name would be padded out to 144px at every width and shove
+               the chip and the rename pencil away from the name they belong to. The floor lives
+               where the squeeze does. */
+            className="min-w-0 truncate text-[15px] font-extrabold tracking-[-0.25px] text-primary-900 narrow:min-w-[9rem]"
           >
             {/* A CHAT WITH NO TITLE YET IS THE ORDINARY CASE, not an error: the row is created by
                 the first send and its title is derived from that message. Naming the kind is more
@@ -180,7 +210,8 @@ export default function WorkspaceToolbar({
       ) : (
         <h1
           data-testid="toolbar-title"
-          className="min-w-0 truncate text-[15.5px] font-extrabold tracking-[-0.3px] text-primary-900"
+          /* The same floor as the chat shape's heading, for the same reason — see above. */
+          className="min-w-0 truncate text-[15.5px] font-extrabold tracking-[-0.3px] text-primary-900 narrow:min-w-[9rem]"
         >
           {projectName}
         </h1>
@@ -228,7 +259,11 @@ export default function WorkspaceToolbar({
           onClick={() => readActions().rename?.()}
           aria-label="Rename project"
           title="Rename project"
-          className="flex-shrink-0 rounded-lg p-1 text-neutral transition hover:bg-surface-muted hover:text-primary"
+          /* 21×21 — a 13px pencil in 4px of padding — and the second-smallest thing in the row.
+             `inline-flex` centres the glyph once the box grows past it below the threshold; on a
+             plain `<button>` the 44px box would have left the pencil hard against its top-left.
+             Above the threshold this is byte-identical geometry: 13 + 4 + 4, laid out the same. */
+          className="inline-flex flex-shrink-0 items-center justify-center rounded-lg p-1 text-neutral transition hover:bg-surface-muted hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
         >
           <Pencil size={13} />
         </button>
@@ -252,7 +287,11 @@ export default function WorkspaceToolbar({
                       aria-label={label}
                       title={label}
                       onClick={() => onDevice(label)}
-                      className={`inline-flex h-7 w-8 items-center justify-center transition ${
+                      /* 28×32 each, the biggest targets in the row and still short of a finger.
+                         `min-h`/`min-w` rather than a bigger `h`/`w` so the 14px icon and the
+                         hairline dividers between the three keep the exact look the canvas drew;
+                         the segmented group simply grows around them below the threshold. */
+                      className={`inline-flex h-7 w-8 items-center justify-center transition narrow:min-h-[44px] narrow:min-w-[44px] ${
                         device === label ? 'bg-bial-bg text-primary-900' : 'text-canvas-placeholder hover:text-primary-900'
                       }`}
                     >
@@ -274,7 +313,9 @@ export default function WorkspaceToolbar({
               onClick={onReload}
               aria-label="Reload your app"
               title="Reload your app"
-              className="inline-flex items-center text-neutral transition hover:text-primary"
+              /* NO PADDING CLASS AT ALL: this was a bare 15×15 glyph, a third of a finger, and so
+                 was the new-tab link beside it. They are the two worst targets in the row. */
+              className="inline-flex items-center justify-center text-neutral transition hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
             >
               <RotateCcw size={15} />
             </button>
@@ -285,7 +326,8 @@ export default function WorkspaceToolbar({
               rel="noopener noreferrer"
               aria-label="Open your app in a new tab"
               title="Open your app in a new tab"
-              className="inline-flex items-center text-neutral transition hover:text-primary"
+              /* An anchor, not a button — and just as pressable, so it carries the same floor. */
+              className="inline-flex items-center justify-center text-neutral transition hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
             >
               <ExternalLink size={15} />
             </a>
@@ -310,7 +352,9 @@ export default function WorkspaceToolbar({
             aria-controls={WORKSPACE_RAIL_ID}
             aria-label={collapsed ? 'Show details' : 'Hide details'}
             title={collapsed ? 'Show details' : 'Hide details'}
-            className="inline-flex h-7 w-[30px] items-center justify-center rounded-lg text-neutral transition hover:bg-bial-bg hover:text-primary"
+            /* 28×30, and the one control that undoes a collapse — a target too small to hit is a
+               one-way door for exactly the citizen who least wants one. */
+            className="inline-flex h-7 w-[30px] items-center justify-center rounded-lg text-neutral transition hover:bg-bial-bg hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
           >
             {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
           </button>
@@ -359,7 +403,11 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
   const look = dirty
     ? 'border-primary bg-canvas-savedirty text-primary font-bold'
     : 'border-bial-border bg-white text-neutral font-semibold'
-  const shell = `inline-flex items-center gap-[7px] whitespace-nowrap rounded-[9px] border px-[13px] py-1.5 text-[12.5px] ${look}`
+  // ~31px tall and comfortably past 44px wide on its own words, so only the HEIGHT needs a floor
+  // below the stacking threshold (R38a). The floor is on the shared shell rather than on the
+  // button alone: the pressable and the unpressable rendering of this control are meant to be the
+  // same object in two states, and one of them quietly changing height would say otherwise.
+  const shell = `inline-flex items-center gap-[7px] whitespace-nowrap rounded-[9px] border px-[13px] py-1.5 text-[12.5px] narrow:min-h-[44px] ${look}`
   const body = (
     <>
       {/* THE WAIT'S BOX — the spinner and the one sentence that describes it, together inside the

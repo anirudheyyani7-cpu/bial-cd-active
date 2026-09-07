@@ -1031,4 +1031,44 @@ describe('guarantees carried over from the controls this chip replaces', () => {
 
     expect(pop.innerHTML).not.toContain('review-status')
   })
+
+  /**
+   * THE CHIP IS A PRESS, SO IT CARRIES THE TOOLBAR'S TOUCH FLOOR (plan 001, U17 — R38a, `#201`).
+   *
+   * It is the third of the workspace row's nine occupants and the only one that lives in another
+   * file, which is exactly how a sweep over `WorkspaceToolbar.tsx` would have left ~26px of pill
+   * as the one target below the floor.
+   *
+   * STRUCTURAL, LIKE EVERY OTHER SIZE ASSERTION IN THIS FILE: jsdom computes no Tailwind, so what
+   * is checked is which class each state resolves to. The rectangle belongs to the browser suite.
+   */
+  it('★ every state\'s chip declares the 44px touch floor below the stacking threshold', () => {
+    for (const [state] of LABELS) {
+      wire(view(state, { status: 'running' }))
+      mount()
+      const chip = screen.getByTestId('publish-chip')
+      // A HEIGHT ONLY: every one of the thirteen words is already wider than 44px inside the
+      // pill's padding, and `min-h` leaves the 999px radius, the dot and the chevron exactly as
+      // the board draws them at every width above the threshold.
+      expect(chip.className).toContain('narrow:min-h-[44px]')
+      expect(chip.className).not.toContain('narrow:min-w-')
+      // Above the threshold nothing changed: strip the variant and the pill's own geometry is
+      // untouched, so the desktop chip is the one that shipped.
+      const desktop = chip.className.split(/\s+/).filter((token) => !token.startsWith('narrow:'))
+      expect(desktop.join(' ')).not.toMatch(/min-[hw]-/)
+      expect(desktop.join(' ')).toContain('py-[5px]')
+      cleanup()
+    }
+  })
+
+  it('★ …and so does the chip the read-failure branch draws, which is the only way to retry', () => {
+    // The branch a walk over the thirteen states cannot reach: `loadError` replaces the pill
+    // entirely, and the button it replaces it with is the only route to "Check again".
+    wire(null, { loadError: 'The publish status could not be read.' })
+    mount()
+
+    const chip = screen.getByTestId('publish-chip')
+    expect(chip.textContent).toContain('Status unavailable')
+    expect(chip.className).toContain('narrow:min-h-[44px]')
+  })
 })

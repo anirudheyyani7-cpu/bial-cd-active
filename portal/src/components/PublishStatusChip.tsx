@@ -225,7 +225,10 @@ export default function PublishStatusChip({
               type="button"
               data-testid="publish-chip"
               aria-label="Publish status: unavailable"
-              className="inline-flex items-center gap-1 rounded-md border border-bial-border bg-surface-muted px-2 py-0.5 text-xs font-semibold text-neutral transition hover:bg-white"
+              // The same 44px touch floor every other pressable occupant of the workspace toolbar
+              // carries below the stacking threshold (R38a) — this chip is a press, not a label,
+              // and in this branch it is the only way to reach "Check again".
+              className="inline-flex items-center gap-1 rounded-md border border-bial-border bg-surface-muted px-2 py-0.5 text-xs font-semibold text-neutral transition hover:bg-white narrow:min-h-[44px]"
             >
               Status unavailable
               <ChevronDown size={12} aria-hidden />
@@ -291,7 +294,11 @@ export default function PublishStatusChip({
             // thirteen states: the word changed and nothing else did, so "Draft" looked
             // identical to "Changes requested" and to "Didn't start". The colour is the
             // signal a citizen reads before they read anything.
-            className={`inline-flex items-center gap-[7px] rounded-full border border-[rgba(15,23,42,.07)] px-[11px] py-[5px] text-[11.5px] font-bold whitespace-nowrap transition hover:brightness-[.97] ${look.pill}`}
+            // ~26px tall, and wider than 44px on every one of the thirteen state words — so the
+            // touch floor below the stacking threshold is a HEIGHT only (R38a). `min-h` rather
+            // than padding, so the 999px pill, its dot and its chevron keep the exact proportions
+            // the board draws at every width above it.
+            className={`inline-flex items-center gap-[7px] rounded-full border border-[rgba(15,23,42,.07)] px-[11px] py-[5px] text-[11.5px] font-bold whitespace-nowrap transition hover:brightness-[.97] narrow:min-h-[44px] ${look.pill}`}
           >
             <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${look.dot}`} aria-hidden />
             {presentation.label}

@@ -990,3 +990,43 @@ describe('★ taking the workspace back (#196)', () => {
     })
   })
 })
+
+describe('★ the wait counter measures the wait, it does not count its own ticks', () => {
+  // This line is the ONLY thing the pane can say truthfully about how long a start has taken —
+  // R28 rules out a bar, so honesty is the whole feature. `setSeconds(was => was + 1)` counted
+  // how many times the interval FIRED, and a browser throttles a hidden tab's timers (to 1/s,
+  // and to 1/MINUTE after ~5 minutes hidden). A citizen who switches tabs during a two-minute
+  // start and comes back was told a number minutes short of the truth.
+  const starting = () => reportFor(reading(), null, true)
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('starts at zero and advances with the clock', () => {
+    renderPane((c) => c.workspace.set(starting()))
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('0s so far')
+
+    act(() => { vi.advanceTimersByTime(3_000) })
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('3s so far')
+  })
+
+  it('★ tells the truth after a throttled tab has swallowed most of the ticks', () => {
+    renderPane((c) => c.workspace.set(starting()))
+    act(() => { vi.advanceTimersByTime(3_000) })
+
+    // The tab goes to the background: real time keeps passing, the interval does not fire.
+    // Then it comes forward and gets ONE tick.
+    act(() => { vi.setSystemTime(Date.now() + 117_000) })
+    act(() => { vi.advanceTimersByTime(1_000) })
+
+    // 121 seconds of wall clock, 5 firings. The number is the wait, not the firings.
+    expect(screen.getByTestId('app-pane-elapsed').textContent).toBe('2m 01s so far')
+  })
+
+  it('is not announced — it sits inside the pane`s polite region', () => {
+    // A counter that ticks inside a live region is a screen reader reading a number every
+    // second for two minutes.
+    renderPane((c) => c.workspace.set(starting()))
+    expect(screen.getByTestId('app-pane-elapsed').getAttribute('aria-live')).toBe('off')
+  })
+})

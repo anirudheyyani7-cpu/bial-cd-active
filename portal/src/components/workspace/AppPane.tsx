@@ -476,7 +476,15 @@ function NoFrame({
 function ElapsedSinceTheWaitBegan() {
   const [seconds, setSeconds] = useState(0)
   useEffect(() => {
-    const tick = setInterval(() => setSeconds((was) => was + 1), 1_000)
+    // MEASURED AGAINST THE CLOCK, NEVER COUNTED IN TICKS. `setSeconds(was => was + 1)` counts
+    // how many times the interval FIRED, and a browser throttles a hidden tab's timers — to
+    // once a second, and to once a MINUTE after about five minutes hidden. A citizen who
+    // switches away during a two-minute start and comes back would be told "40s so far" for a
+    // wait that really took two minutes, which is the single thing this line exists to be
+    // honest about. Reading the clock makes the throttling a refresh-rate question instead of
+    // an accuracy one: the number may be stale by up to a tick, but it is never wrong.
+    const began = Date.now()
+    const tick = setInterval(() => setSeconds(Math.floor((Date.now() - began) / 1_000)), 1_000)
     return () => clearInterval(tick)
   }, [])
   return (

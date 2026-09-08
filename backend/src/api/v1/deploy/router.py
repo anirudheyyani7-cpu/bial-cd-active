@@ -190,8 +190,8 @@ _TEARDOWN_UNCONFIRMED = "The takedown could not be confirmed. Retrying is safe a
                 503,
                 ErrorEnvelope,
                 "Object storage is unavailable (`storage_unavailable` — and so is "
-                "publishing, ASM21), or deploying is unconfigured — checked only once a "
-                "branch actually needs the pipeline, so routing works without it (ASM10)",
+                "publishing), or deploying is unconfigured — checked only once a "
+                "branch actually needs the pipeline, so routing works without it",
             ),
         ),
     },

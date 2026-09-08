@@ -242,7 +242,7 @@ describe('the per-conversation guardrail reaches the composer', () => {
   // the composer. Delete the `contextWarning` prop pass in `ConversationSurface.tsx`, or the
   // `useMemo` that feeds it, and this is what goes red.
   //
-  // ══ WHAT "A LONG CONVERSATION" MEANS CHANGED, AND SO DID THIS FIXTURE (#194) ══
+  // WHAT "A LONG CONVERSATION" MEANS, AND WHY THIS FIXTURE IS SHAPED THIS WAY
   //
   // It used to be a pile of characters: 600,000 of them, priced at four to the token by an
   // estimator this browser ran. That estimator is deleted on both sides — it read a 61-page

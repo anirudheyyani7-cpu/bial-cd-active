@@ -92,7 +92,7 @@ function RailComposerBody({ projectId }: RailComposerProps) {
   const railRef = useRef<HTMLDivElement>(null)
 
   /**
-   * CLOSING THE GUARDRAIL PUTS THE CARET BACK IN THE MESSAGE (R43, #187).
+   * CLOSING THE GUARDRAIL PUTS THE CARET BACK IN THE MESSAGE.
    *
    * This dialog is hand-rolled — no Radix `DialogContent`, so no `FocusScope`, so nothing
    * captures the element that had focus and nothing restores it. Dismissing it dropped focus on

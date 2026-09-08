@@ -411,7 +411,7 @@ async def test_the_catalog_lists_by_app_status(
 async def test_an_admin_can_switch_off_the_ordinary_catalog_member(
     app, client, db_session
 ) -> None:
-    """#163, end to end and across two routers: the kill switch now reaches a DRAFT.
+    """End to end and across two routers: the kill switch now reaches a DRAFT.
 
     The case above pins the PREDICATE (a seeded DISABLED row is not listed). This pins the
     LEVER, which is the half that was broken: the ordinary entry in this catalog is a

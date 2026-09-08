@@ -242,7 +242,7 @@ describe('ProjectDeleteDialog — the irreversible warning', () => {
   })
 })
 
-describe('★ the reason field says what it wants, and how close you are (R44b/AE9b)', () => {
+describe('★ the reason field says what it wants, and how close you are', () => {
   it('describes the textarea with the rule AND the running count', async () => {
     // The field carried only `aria-label`, so a reader heard the question and neither of the
     // two facts printed directly under the box: the 5-50 word bound, and how many words they

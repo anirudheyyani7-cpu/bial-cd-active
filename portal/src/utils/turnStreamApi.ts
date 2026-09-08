@@ -586,7 +586,7 @@ export interface NewConversationParentage {
  * `contextTokens` IS THE NUMBER THE SERVER JUST ADMITTED ON — the same expression, on this same
  * request, that would have refused the turn one token higher. The meter and the wall are
  * therefore one number rather than two readings of one scale, which is what the deleted
- * estimator was (#194). Nothing is sized BEFORE a send: the figure is measured from turns the
+ * estimator was. Nothing is sized BEFORE a send: the figure is measured from turns the
  * provider has already served, and it arrives on the send the citizen was making anyway.
  *
  * `null` means nobody has measured this chat yet — unmeasured, not empty.

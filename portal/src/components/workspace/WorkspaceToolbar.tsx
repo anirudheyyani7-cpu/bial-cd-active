@@ -95,7 +95,7 @@ export default function WorkspaceToolbar({
   return (
     <div
       data-testid="workspace-toolbar"
-      /* THE ROW SCROLLS SIDEWAYS RATHER THAN BEING CLIPPED (`#201`, plan 001 D22).
+      /* THE ROW SCROLLS SIDEWAYS RATHER THAN BEING CLIPPED.
          Nine occupants do not fit in 360px and never will. The shell's root is `overflow-hidden`
          — a deliberate scroll-containment choice for the rail and the pane, unrelated to narrow
          screens — so what overflowed this row was not merely off to the right, it was CLIPPED,
@@ -120,7 +120,7 @@ export default function WorkspaceToolbar({
         aria-label={backToProject ? 'Back to project' : 'Back to projects'}
         title={backToProject ? 'Back to project' : 'Back to projects'}
         /* THE SMALLEST TARGET IN THE ROW, at 20×20 — a 16px chevron in 2px of padding. Below the
-           stacking threshold it presents 44×44 (R38a). The GLYPH does not move: `min-h`/`min-w`
+           stacking threshold it presents 44×44. The GLYPH does not move: `min-h`/`min-w`
            grow the box around it and `justify-center` keeps it in the middle, so nothing about the
            row's drawn weight changes — only the area a finger can land on. */
         className="inline-flex flex-shrink-0 items-center justify-center rounded-lg p-0.5 text-neutral transition hover:text-primary narrow:min-h-[44px] narrow:min-w-[44px]"
@@ -155,13 +155,14 @@ export default function WorkspaceToolbar({
           )}
           <h1
             data-testid="toolbar-title"
-            /* THE TITLE STOPS COLLAPSING TO NOTHING (R40, `#201`).
+            /* THE TITLE STOPS COLLAPSING TO NOTHING.
                Every other occupant of this row is `flex-shrink-0`, and this one carried `min-w-0`
                with no floor — so it was the ONLY flexible participant and 100% of any width
                deficit landed on it, all the way to a measured zero. At 360px the heading a citizen
                needs in order to know where they are simply was not on screen.
                144px is about ten characters and the ellipsis: enough to tell two projects apart.
-               Past that the deficit goes to the row's scroller, which is what D22 gave it.
+               Past that the deficit goes to the row's own sideways scroll, where everything that
+               no longer fits stays reachable instead of being clipped.
                WHY IT IS GATED AT `narrow:` AND NOT UNCONDITIONAL. `min-width` in flex does not
                only stop shrinking — it also GROWS an item whose content is narrower than the
                floor. Ungated, a short name would be padded out to 144px at every width and shove
@@ -350,7 +351,7 @@ function SaveControl({ save, readActions }: { save: SaveSlot; readActions: () =>
     ? 'border-primary bg-canvas-savedirty text-primary font-bold'
     : 'border-bial-border bg-white text-neutral font-semibold'
   // ~31px tall and comfortably past 44px wide on its own words, so only the HEIGHT needs a floor
-  // below the stacking threshold (R38a). The floor is on the shared shell rather than on the
+  // below the stacking threshold. The floor is on the shared shell rather than on the
   // button alone: the pressable and the unpressable rendering of this control are meant to be the
   // same object in two states, and one of them quietly changing height would say otherwise.
   const shell = `inline-flex items-center gap-[7px] whitespace-nowrap rounded-[9px] border px-[13px] py-1.5 text-[12.5px] narrow:min-h-[44px] ${look}`

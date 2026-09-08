@@ -374,7 +374,7 @@ def test_app_boots_with_the_emptied_journal_and_prints_no_migration_failure() ->
 
     assert result.returncode == 0  # db-migrate.mjs always exits 0 — see its own file header.
     assert "Can't find meta/_journal.json" not in output, (
-        "the journal read failed — see ASM27: this is what prints a migration failure into "
+        "the journal read failed, and that is what prints a migration failure into "
         f"every app's dev-server stdout on every boot. Full output:\n{output}"
     )
     # LIVENESS — the run actually reached the migrate step (the env var arrived at the

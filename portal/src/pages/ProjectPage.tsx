@@ -81,7 +81,7 @@ export default function ProjectPage() {
   // height on both, rather than appearing once the fetch lands. `chatTitle`/`chatKind` are `null`
   // here and that IS the signal: a heading with no kind is a project screen.
   //
-  // THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES (R46). `projectId` is a route param on
+  // THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES. `projectId` is a route param on
   // a route that is NOT remounted when it changes (see the wait region's own note below), so
   // moving from one project to another re-renders this same instance with the OLD `project` still
   // in state until the new fetch resolves. Without the guard, the rename pencil kept gating on

@@ -2537,7 +2537,7 @@ async def test_a_container_that_never_readies_is_never_condemned_for_it(
     assert registry is not None and registry[REGISTRY_FIELD_STATE] == REGISTRY_STATE_READY, (
         "a slow app must never condemn a live container: `ending` sends the next press down the "
         "restore arm, which tears this container down and rolls the citizen back to their last "
-        "save. That is SL-20, and it is P0."
+        "save. Losing a citizen's unsaved work is the worst thing this system can do."
     )
 
 

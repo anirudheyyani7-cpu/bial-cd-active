@@ -1,10 +1,10 @@
 /**
- * THE LAST `/projects` ADDRESS THIS TAB VISITED — the half of `#208` that address alone cannot
- * cover (R45).
+ * THE LAST `/projects` ADDRESS THIS TAB VISITED — the half of keeping the list's state addressable
+ * that the URL alone cannot cover.
  *
- * `#208` put `page`, `pageSize` and `q` in the URL, so opening `/projects?page=2&q=ramp`, pressing
- * the browser's own Back, reloading, or pasting the address all land on the same view. What it
- * did NOT cover is the product's OWN "back to the list" controls — the workspace toolbar's back
+ * `page`, `pageSize` and `q` live in the URL, so opening `/projects?page=2&q=ramp`, pressing
+ * the browser's own Back, reloading, or pasting the address all land on the same view. What that
+ * does NOT cover is the product's OWN "back to the list" controls — the workspace toolbar's back
  * chevron and the navbar's brand mark — because neither of them IS `/projects`: they are
  * components mounted on a *different* address (`/projects/:id`, `/chat/:id`) that have to name a
  * destination without ever having read the list's own query string themselves. Before this,

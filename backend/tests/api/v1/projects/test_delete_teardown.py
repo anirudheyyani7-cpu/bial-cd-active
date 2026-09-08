@@ -96,7 +96,7 @@ def _survived(captured: Sequence[Mapping[str, Any]], *, artefact: str) -> list[s
 
 async def _teardown_record(db: AsyncSession, project_id: uuid.UUID) -> list[Any] | None:
     """What the `project:teardown-incomplete` audit row says survived, or `None` when the
-    delete left nothing behind and so wrote no row at all (D18)."""
+    delete left nothing behind and so wrote no row at all."""
     row = await db.scalar(
         sa.select(AuditLog).where(
             AuditLog.action == "project:teardown-incomplete",
@@ -216,7 +216,7 @@ async def test_an_app_less_project_still_has_its_database_dropped(
     assert "appId" not in dropped.detail  # there is no app to file it under
 
 
-# --- #184: what the app WAS survives the cascade ------------------------------------------
+# --- what the app WAS survives the cascade ------------------------------------------------
 #
 # The record already named the project and said who deleted it and why. It did not say what
 # the thing DID, so an administrator reading "Visitor Log" three months later had a name and
@@ -234,7 +234,7 @@ async def test_an_app_less_project_still_has_its_database_dropped(
 async def test_the_description_survives_the_cascade_that_destroys_its_only_copy(
     app: Any, client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """AE1. The whole record, read back after the cascade committed.
+    """The whole record, read back after the cascade committed.
 
     Every field is asserted, not just the new one: a record that gained the description by
     losing the count, the owner or the reason would be a worse record than the one before it.
@@ -559,11 +559,11 @@ async def test_a_salt_that_cannot_reach_the_cluster_still_returns_success(
     assert await db_session.get(Project, project.id) is None
     assert await _registry_row(db_session, project.id) is None
     # THE ALARM, not a bespoke event name: one pinned event across every arm of this path, with
-    # the artefact class as a field (U22). Nothing collects this database automatically —
+    # the artefact class as a field. Nothing collects this database automatically —
     # `appdb/reconcile.py` is operator-invoked AND report-only — so the alarm is the notice.
     assert _survived(captured, artefact="app_database") == [record.db_name]
     # ...and the record an operator reads, on the audit log rather than in the citizen's own
-    # words on the tombstone (D18).
+    # words on the tombstone.
     assert await _teardown_record(db_session, project.id) == [
         {"artefact": "app_database", "id": record.db_name}
     ]
@@ -1108,7 +1108,7 @@ async def test_a_busy_start_lock_leaves_the_container_standing_and_says_so(
     # SKIPPING IS STILL RIGHT; PRETENDING SOMETHING WILL COLLECT IT WAS NOT. The container is
     # still up, so the arm alarms and the delete files the record. The scheduled reap only
     # destroys in production (`may_destroy_on_this_control_plane`), which is why this stopped
-    # being "left to the scheduled sweep" (U22/R7a).
+    # being "left to the scheduled sweep".
     assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
     assert await _teardown_record(db_session, project.id) == [
         {"artefact": "sandbox_container", "id": _named(app_row.id)}
@@ -1179,7 +1179,7 @@ async def test_a_raising_redis_during_the_reap_is_logged_and_the_delete_still_su
     assert await db_session.get(Project, project.id) is None
     assert _survived(captured, artefact="sandbox_container") == [_named(app_row.id)]
     # ...and on the record, because a container nobody will collect is exactly what the record
-    # is for (U22).
+    # is for.
     assert await _teardown_record(db_session, project.id) == [
         {"artefact": "sandbox_container", "id": _named(app_row.id)}
     ]
@@ -1337,7 +1337,7 @@ async def test_the_reap_displaces_nothing_that_the_delete_already_did(
     assert sandbox.torn_down == [_named(app_row.id)]
 
 
-# --- #184: the built IMAGE goes with the project too (U21) ---------------------------------
+# --- the built IMAGE goes with the project too ---------------------------------------------
 #
 # The last artefact on the path, and the one that still holds the citizen's source: a published
 # app's image carries its compiled tree. The dialog promises "destroyed permanently", so a
@@ -1457,7 +1457,7 @@ async def test_a_registry_that_refuses_the_delete_leaves_it_successful_and_on_th
 async def test_the_citizens_own_reason_is_left_exactly_as_they_wrote_it(
     app: Any, client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # D18: the operator's note goes in the AUDIT LOG, never appended into `remark`. That column
+    # The operator's note goes in the AUDIT LOG, never appended into `remark`. That column
     # is the citizen's own words and nothing else — an administrator reads it to learn why
     # somebody deleted something, and an appended note would need a delimiter convention and a
     # parser to get back out.

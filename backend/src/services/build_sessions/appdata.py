@@ -27,7 +27,7 @@ from src.db.models.app_registry import AppRegistry, AppStatus, mint_app_key
 from src.services.projects import owned_project_or_404
 from src.services.sandbox import SandboxNotConfiguredError
 
-# THE SWITCHED-OFF REFUSAL, in one place because two surfaces say it (R41a, #163): the gate
+# THE SWITCHED-OFF REFUSAL, in one place because two surfaces say it: the gate
 # below, and the pre-read in `api/v1/conversations/turns.py` that lets a citizen read this
 # sentence at the moment of sending rather than meet it as a dead turn. The pre-read is a
 # MESSAGE, not a second enforcement point — remove it and the platform still refuses here.
@@ -54,7 +54,7 @@ async def resolve_app_for_project(
     `app_key` on insert — the key is read back by `GET /apps/{id}/status`, not by callers
     of this function.
 
-    THIS IS WHERE A SWITCHED-OFF APP STOPS (R41a, #163), and it is the ONE place it stops.
+    THIS IS WHERE A SWITCHED-OFF APP STOPS, and it is the ONE place it stops.
     Every door into a container comes through here, and there are exactly two of them:
     `relaunch_preview` — the explicit start control the citizen presses — and
     `ensure_sandbox`, which `services/turns/engine.py` routes EVERY turn kind through, Ask,

@@ -217,9 +217,9 @@ function ShellFrame() {
     // out of the project they were working in — and the row's label said "Back to projects" while
     // it did. The mode is derived from the pathname, so it is right from the first frame.
     //
-    // THE LIST ADDRESS CARRIES ITS OWN STATE BACK (R45, `#208`). Read fresh at press time, not
-    // memoised at render — this control can sit for minutes before it is pressed, and the list's
-    // page, search and page size can all have changed on `/projects` in the meantime.
+    // THE LIST ADDRESS CARRIES ITS OWN STATE BACK. Read fresh at press time, not memoised at
+    // render — this control can sit for minutes before it is pressed, and the list's page,
+    // search and page size can all have changed on `/projects` in the meantime.
     const to =
       mode === 'conversation' && heading.projectId
         ? `/projects/${heading.projectId}`

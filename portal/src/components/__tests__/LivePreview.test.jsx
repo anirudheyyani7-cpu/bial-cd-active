@@ -202,9 +202,9 @@ describe('LivePreview — status-driven visuals, all five statuses', () => {
   })
 
   // ★ THE THREE OVERLAYS ARE GONE FROM THE APP'S CANVAS, and this is the guard that
-  // keeps them from coming back. It used to assert the "Still working…" chip APPEARED while a turn
-  // kept refining a live preview; the chip sat at `absolute top-3 left-1/2`, which is where every
-  // generated app draws its own navigation, so the platform was writing across the citizen's app.
+  // keeps them from coming back: no platform-drawn chip may sit at `absolute top-3 left-1/2`
+  // while a turn keeps refining a live preview, because that is where every generated app draws
+  // its own navigation — a chip there writes across the citizen's app.
   //
   // ASSERT-ABSENCE, PAIRED WITH LIVENESS — an empty pane would satisfy the absence on its own, so
   // the frame has to be found in the same breath. `iterating` is still a live prop (it drives the
@@ -227,9 +227,8 @@ describe('LivePreview — the pardoned preview: a finished turn leaves the app f
     expect(iframe).toBeTruthy() // the server pardoned the container; the URL is genuinely live
     expect(iframe.getAttribute('src')).toBe(SANDBOX_URL)
     expect(container.textContent).not.toMatch(/no longer running/i)
-    // ★ AND THE CLAIM IS GONE WITH THE CHIP. This used to assert `/build complete/i` was on
-    // screen. The pane frames a live app; it does not also state a build outcome — which is what
-    // let a route where no build ever runs publish one.
+    // ★ AND THE CLAIM IS GONE WITH THE CHIP. The pane frames a live app; it does not also state a
+    // build outcome — claiming one let a route where no build ever runs publish one.
     expect(container.textContent).not.toMatch(/build complete/i)
   })
 
@@ -972,8 +971,8 @@ describe('LivePreview — the reconnecting state is BOUNDED after a completed bu
   it('★ does NOT bound while the build is still ACTIVE — the loop owns recovery, and LIVENESS does not change that', () => {
     // ★ `serving` IS PASSED HERE ON PURPOSE, and that is the mutant this scenario now catches.
     //
-    // The cap used to read `reconnecting && completedLive`, which meant "the build is over" only
-    // because that flag was set by a turn ENDING. Liveness is true DURING a running build as well —
+    // Reading `reconnecting && completedLive` alone would mean "the build is over" only
+    // because that flag is set by a turn ENDING. Liveness is true DURING a running build as well —
     // the preview-state read says so — so substituting it one-for-one would arm this timer
     // mid-build and answer a recovery the loop was about to make with "preview unavailable".
     // The cap keys on the TERMINAL status instead; `status="ready"` is what holds it off.

@@ -128,11 +128,10 @@ async def test_stop_active_build_settles_a_live_build_so_release_can_proceed(
     to a user whose project was mid-build, and the server declined both halves — so the user
     got a choice, then an error, whichever button they pressed.
 
-    THE BARRIER MOVED WITH THE DESIGN. This used to assert `stopped: true` on the POST's own
-    response and treat that as "settled by the time it answered". The POST no longer waits — it
-    asks — so the release must sit below the status read, not below the ask, or it is measuring a
-    system that has not finished. The old assertion could not have caught this: the field it read
-    was hardcoded true on every path.
+    THE BARRIER SITS BELOW THE STATUS READ, NOT BELOW THE ASK. The POST does not wait for the
+    work to settle — it asks, and answers `still_running` while the stop is in flight — so an
+    assertion on its own response proves nothing about whether the system has finished. Only
+    the status read, polled until it stops saying "still running", can.
 
     WHAT PERFORMS THE UNWIND, re-fixtured. The live work is a TURN now, not a `run_build` task:
     `_stop_the_held_session` asks the turn engine to cancel and then reads whether a session

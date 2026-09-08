@@ -8,8 +8,9 @@ accidental real call fails loudly instead of billing Foundry.
 `.events`); `tests/services/agent/test_toolsets.py` takes it from here too.
 
 `build_tool_agent` is the LOCAL driver for the sandbox toolset — see its docstring for why the
-driver is local now. The harness fixtures that used to live here (`make_orchestrator`,
-`make_provider`, `billing_factory`) went with `services/orchestrator/harness.py`.
+driver is local now. The harness fixtures once defined here — `make_orchestrator`,
+`make_provider`, `billing_factory` — were deleted along with
+`services/orchestrator/harness.py`, and nothing replaced them.
 """
 
 from __future__ import annotations

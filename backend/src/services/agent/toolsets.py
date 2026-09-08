@@ -160,7 +160,7 @@ def toolsets_for_kind[DepsT](
             if sandbox_of is None:
                 raise ValueError(
                     "a Build run needs a sandbox accessor; None means this caller cannot "
-                    "run Build (the U8 agent-level ReadDeps surface)."
+                    "run Build (the agent-level ReadDeps surface)."
                 )
             # `.filtered()` filters at `get_tools` time, so the model never even sees the
             # read-only `read_file`/`run_command` — the duplicate-name `UserError` is

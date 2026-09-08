@@ -136,12 +136,11 @@ async def salt_the_earth(*, db_name: str, role_name: str) -> bool:
     failure here leaves the database standing rather than exploding a delete endpoint that has
     already committed.
 
-    RETURNS WHETHER THE EARTH IS ACTUALLY SALTED (U22). `True` means every step succeeded or
+    RETURNS WHETHER THE EARTH IS ACTUALLY SALTED. `True` means every step succeeded or
     found its object already gone; `False` means a copy of the citizen's data is still on the
-    cluster after they asked for it to be destroyed, and the caller records that. This used to
-    say the orphan was left "for the reconciler to sweep" — `appdb/reconcile.py` is
-    operator-invoked and, by its own docstring, REPORT-ONLY: it deletes nothing, ever. Nothing
-    automatic collects this.
+    cluster after they asked for it to be destroyed, and the caller records that. The orphan is
+    not swept automatically: `appdb/reconcile.py` is operator-invoked and, by its own docstring,
+    REPORT-ONLY — it deletes nothing, ever. Nothing automatic collects this.
 
     An unconfigured substrate returns `True`: with `APP_DB__*` unset no database was ever
     provisioned, so there is nothing to have survived (the same reading `sweep_app_containers`

@@ -365,7 +365,7 @@ async def start_turn(
     if sandbox is None:
         raise AppApiError(503, WORKSPACE_UNAVAILABLE_TEXT, code=WORKSPACE_UNAVAILABLE_CODE)
 
-    # A MESSAGE, NOT A GATE (R41a, #163). The refusal itself lives in one place —
+    # A MESSAGE, NOT A GATE. The refusal itself lives in one place —
     # `resolve_app_for_project`, which every door into a container comes through — and it
     # holds whether or not this line exists. What this buys is WORDS: that refusal is raised
     # inside the detached turn, where the engine's attach arm catches it as an unexpected

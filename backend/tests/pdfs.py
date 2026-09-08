@@ -216,8 +216,8 @@ def restricted_pdf(*, pages: int = 3, declares: int | None = None, owner: str = 
 
     `declares` under-reports the catalog's `/Count` — the same "bigger on the inside" shape as
     `pdf_bigger_on_the_inside`, now wearing an encryption dictionary. That pairing is the whole
-    of #194: pypdf's `get_num_pages()` returns `/Count` unwalked for ANY encrypted file, and
-    stays that way after a successful decryption, so the two fixtures differing only in
+    of the defect: pypdf's `get_num_pages()` returns `/Count` unwalked for ANY encrypted file,
+    and stays that way after a successful decryption, so the two fixtures differing only in
     `/Encrypt` were counted as 20,000 pages and as 1.
 
     Built by pypdf, unlike its plain twin, because a standard-security encryption dictionary is
@@ -249,10 +249,10 @@ def ouroboros_pdf() -> bytes:
     hand-rolled one. pypdf tracks the ancestor path and raises `Detected cyclic page
     references.`, and the dispatch turns that into the same 400 a truncated file gets.
 
-    Encrypted, because the plain version proves nothing new: the unencrypted path always
-    walked. Before #194's fix this file was never walked at all — the declared `/Count 1` was
-    handed straight back — so this fixture is red-if-reverted in exactly one direction, and if
-    the guard ever goes it hangs until the governor kills it rather than answering.
+    Encrypted, because the plain version proves nothing new: the unencrypted path always walked.
+    Before the walk-based fix this file was never walked at all — the declared `/Count 1` was
+    handed straight back — so this fixture is red-if-reverted in exactly one direction, and if the
+    guard ever goes it hangs until the governor kills it rather than answering.
     """
     import io
 

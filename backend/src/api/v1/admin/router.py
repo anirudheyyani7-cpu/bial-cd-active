@@ -2245,7 +2245,7 @@ async def _get_user_or_404(db: DbSession, user_id: uuid.UUID) -> User:
         # The RBAC gate's own 403 is the DetailBody shape; this route's 403 (below)
         # is the envelope. OpenAPI allows one schema per status — the envelope is
         # documented since it is this route's own raise.
-        (403, ErrorEnvelope, "Target is a super-admin (never suspendable, AE6)"),
+        (403, ErrorEnvelope, "Target is a super-admin and can never be suspended"),
         (404, ErrorEnvelope, "No such user"),
         (409, ErrorEnvelope, "User is already suspended"),
     ),

@@ -401,7 +401,8 @@ export type ConversationWithMessages = ConversationHeader & {
    * reopened chat already makes, so the "getting long" line is right from first paint.
    *
    * `null` MEANS UNMEASURED, NOT EMPTY. A chat with no served turn has no measurement, and the
-   * meter stays silent rather than assuming either — guessing is what #194 deleted.
+   * meter stays silent rather than assuming either: a guessed number reads as a measurement,
+   * and the platform stopped deriving this one for exactly that reason.
    */
   contextTokens: number | null
 }

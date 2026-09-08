@@ -189,9 +189,9 @@ export interface DeploymentView {
   savedHead: string | null
   savedAt: string | null
   /**
-   * WHY the pair above is absent, which the pair itself cannot say (plan 001, U16). See
-   * `SavedState`: only `never_saved` removes the rail's row, and `null` — a server that did
-   * not say, or a value this client does not know — keeps it.
+   * WHY the pair above is absent, which the pair itself cannot say. See `SavedState`: only
+   * `never_saved` removes the rail's row, and `null` — a server that did not say, or a value
+   * this client does not know — keeps it.
    */
   savedState: SavedState | null
 }
@@ -263,7 +263,7 @@ function toApprovalState(value: unknown): ApprovalState | null {
 }
 
 /**
- * WHY THE SAVED PAIR IS ABSENT — the three answers that used to be one (plan 001, U16).
+ * WHY THE SAVED PAIR IS ABSENT — the three answers that used to be one.
  *
  * `savedHead`/`savedAt` are both null in four different situations and the panel spoke all
  * of them with one sentence, "LAST SAVED — We could not tell". On a project that has never
@@ -313,8 +313,8 @@ const PUBLISH_STATES: ReadonlySet<string> = new Set<PublishState>([
   'did_not_start',
 ])
 
-// ── THE MIRROR-GAP REGISTER (L12) ──────────────────────────────────────────────────────
-// L12: a client mirroring a server decision must mirror it whole or not at all, and where
+// ── THE MIRROR-GAP REGISTER ──────────────────────────────────────────────────────────────
+// A client mirroring a server decision must mirror it whole or not at all, and where
 // it provably cannot see an input, write the gap down and prove it one-directional. This
 // client does not mirror the decision — it consumes it — so below is everything it could
 // never have seen, and why each gap costs only a press, never a wrong promise.

@@ -251,11 +251,10 @@ export async function enableApp(appId: string, deps: AuthFetchDeps = {}): Promis
   return readBody(await authFetch(`/api/admin/apps/${encodeURIComponent(appId)}/enable`, jsonOpts('POST'), deps), 'Failed to enable')
 }
 
-/** Hard-delete an app (audited; blobs swept, registry row and app database removed). */
 /**
  * Hard-delete an app, with the administrator's justification.
  *
- * THE REASON IS REQUIRED BY THE ROUTE (U23, R5) — 5-50 words, validated server-side — because
+ * THE REASON IS REQUIRED BY THE ROUTE — 5-50 words, validated server-side — because
  * an administrator destroying somebody else's work with no undo and no export should have to
  * say why, and the `window.confirm` this used to go through could not collect it. It rides the
  * `app:delete` audit row, which is written before destruction and has no foreign key to the

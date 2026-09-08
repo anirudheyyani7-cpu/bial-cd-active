@@ -509,12 +509,12 @@ async def _reap_the_project_sandbox_or_shrug(
 
     Post-commit and best-effort, like every other sweep on this path: the rows are already
     gone, so anything that fails here leaves a RUNNING CONTAINER for a human to kill, never a
-    500 on a delete that in fact succeeded. It used to say "a logged orphan for the scheduled
-    sweep"; there is no scheduled sweep that will take this one. `sweep_all` runs on a timer,
-    but `may_destroy_on_this_control_plane` gates the destroy half on `environment ==
-    "production"`, and no other reconciler on this path is on a timer at all — the storage and
-    database ones are operator-invoked (and the database one deletes nothing), and the
-    reclamation janitor's destroy flag is off everywhere. Hence the alarm, and hence the record.
+    500 on a delete that in fact succeeded. There is no scheduled sweep that will take this
+    one: `sweep_all` runs on a timer, but `may_destroy_on_this_control_plane` gates the destroy
+    half on `environment == "production"`, and no other reconciler on this path is on a timer
+    at all — the storage and database ones are operator-invoked (and the database one deletes
+    nothing), and the reclamation janitor's destroy flag is off everywhere. Hence the alarm,
+    and hence the record.
     `reap_user` guards only `SandboxError` around the teardown — its Redis calls are bare by
     module policy — so the explicit `except Exception` below is the mechanism, not the
     intention (it mirrors `salt_the_earth`'s own posture).
@@ -597,10 +597,9 @@ async def _reap_the_project_sandbox_or_shrug(
                 return None
             # THE CONTAINER IS STILL UP AND STILL BILLING, and outside production nothing will
             # come for it — `may_destroy_on_this_control_plane` gates the scheduled reap on
-            # `environment == "production"`. This line used to say "the scheduled sweep
-            # reclaims this container", which was true of exactly one environment and read as
-            # true of all of them. An UNREADABLE registry lands here too, deliberately: not
-            # knowing is not the same as knowing there is nothing.
+            # `environment == "production"`, so only that one environment ever reclaims it. An
+            # UNREADABLE registry lands here too, deliberately: not knowing is not the same as
+            # knowing there is nothing.
             logger.warning(
                 TEARDOWN_ARTEFACT_SURVIVED_EVENT,
                 artefact="sandbox_container",

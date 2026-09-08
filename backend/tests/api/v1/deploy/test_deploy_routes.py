@@ -807,7 +807,8 @@ async def test_a_storage_error_on_a_live_app_reads_drift_unknown_not_current(
     wire, client, db_session
 ) -> None:
     """The mirror of the counting test above, with the store failing instead of
-    answering: unknown must never be spelled "up to date" (L12's tri-state discipline)."""
+    answering: unknown must never be spelled "up to date" — the tri-state discipline
+    this route holds to."""
     user, app_row = await _owner_with_app(db_session, wire)
     await _live_deployment(db_session, app_id=app_row.id, user_id=user.id)
     await db_session.commit()
@@ -1023,7 +1024,7 @@ async def test_another_citizen_never_learns_the_saved_head_or_when_it_was_saved(
     assert owner_resp.json()["savedAt"] == "2026-08-25T14:20:00Z"
 
 
-# --- U16: WHY the saved pair is absent, which the pair itself cannot say ----------------
+# --- WHY the saved pair is absent, which the pair itself cannot say ---------------------
 #
 # `savedHead`/`savedAt` both read null in three different situations, and until this unit
 # the response could not tell them apart: one sentinel answered "no store bound", "the
@@ -1031,7 +1032,7 @@ async def test_another_citizen_never_learns_the_saved_head_or_when_it_was_saved(
 # question — never spelled "up to date" — and three answers to "has this citizen ever
 # saved". The rail could only render the union of them, so it told somebody who had never
 # saved that their last save could not be found, on the panel they open precisely when
-# they are unsure their work is safe (R37a).
+# they are unsure their work is safe.
 #
 # The invariant every test below re-checks: `publishState` is UNCHANGED by the split. If
 # a mutation makes the drift answer move, that is the regression, not the fix.
@@ -1045,7 +1046,7 @@ class _StoreThatKnowsNothing(FakeStorage):
 async def test_a_project_that_never_saved_says_so_rather_than_saying_nothing(
     wire, client, db_session
 ) -> None:
-    """AE9a. The store answers and there is no bundle: `never_saved`, which is the one
+    """The store answers and there is no bundle: `never_saved`, which is the one
     value on which the rail omits its LAST SAVED row entirely.
 
     Mutation receipt: fold the `meta is None` arm back into the storage-error sentinel and
@@ -1107,9 +1108,9 @@ async def test_a_storage_error_is_distinguishable_from_a_project_that_never_save
 async def test_an_unconfigured_store_reports_its_own_reason_not_the_citizens(
     app: FastAPI, client, db_session
 ) -> None:
-    """The third arm, and the one a fixture makes invisible by construction
-    (`.claude/rules/testing.md`): with storage always bound there is no request in which
-    `storage is None`, so the branch is untestable rather than merely untested.
+    """The third arm, and the one a fixture makes invisible by construction: with storage
+    always bound there is no request in which `storage is None`, so the branch is
+    untestable rather than merely untested.
 
     NO `wire`, NO `fake_storage` — the unconfigured posture this route already documents
     as supported. The platform cannot see this citizen's saves at all, and must not report
@@ -1158,7 +1159,8 @@ async def test_an_unstamped_bundle_is_a_save_the_platform_cannot_describe(
     head and — if the store lost its last-modified too — no date either, so both halves
     read exactly like a project that never saved. It is not one: the object is there. The
     citizen HAS saved and the platform cannot describe which version, which is the case
-    "We could not tell" was written for and the case U16 deliberately leaves saying it.
+    "We could not tell" was written for and the case this three-way split deliberately
+    leaves saying it.
 
     Mutation receipt: key `SavedState` off `head is None` instead of off the object's
     existence and this goes red while every other test in this section stays green."""

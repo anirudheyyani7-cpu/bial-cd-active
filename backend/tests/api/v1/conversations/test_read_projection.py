@@ -105,9 +105,9 @@ async def test_empty_conversation_projects_an_empty_list(client, db_session) -> 
 
 
 async def test_the_read_carries_how_full_the_chat_is(client, db_session) -> None:
-    """★ THE COLD READ'S HALF OF THE METER (#194, R8a). The browser's "this chat is getting long"
-    line is fed by this field, so a reopened chat that is already past the threshold says so on
-    first paint instead of staying silent until the citizen has sent one more message into it.
+    """★ THE COLD READ'S HALF OF THE METER. The browser's "this chat is getting long" line is
+    fed by this field, so a reopened chat that is already past the threshold says so on first
+    paint instead of staying silent until the citizen has sent one more message into it.
 
     It is the RAW prompt count the provider reported — cache-inclusive, never a cost-weighted
     spend — and it is the same number `enforce_context_limit` refuses on. The transcript above it

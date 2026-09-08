@@ -46,13 +46,13 @@ async def sweep_published_apps(
 ) -> list[uuid.UUID]:
     """Delete the published container app for each id. Returns the ids that SURVIVED.
 
-    IT ANSWERS WITH SURVIVORS, LIKE ITS SIBLINGS, and that is the whole of the difference from
-    the count it used to return. Four teardown arms on the delete path hand back what they could
-    not destroy; this one handed back a number, so its caller had to re-derive whether publishing
-    was configured at all (a fact this function already answers internally) and, on a short
-    count, name EVERY id as a survivor. The audit row that records what outlived a delete is
-    supposed to be attributable — naming an app that was in fact deleted is worse than naming
-    none, because it sends an operator after something that is not there.
+    IT ANSWERS WITH SURVIVORS, LIKE ITS SIBLINGS, and that is the whole of the difference from a
+    bare count. Four teardown arms on the delete path hand back what they could not destroy; a
+    bare count would make its caller re-derive whether publishing was configured at all (a fact
+    this function already answers internally) and, on a short count, name EVERY id as a survivor.
+    The audit row that records what outlived a delete is supposed to be attributable — naming an
+    app that was in fact deleted is worse than naming none, because it sends an operator after
+    something that is not there.
 
     An empty list therefore means "nothing survived", including on a deployment with publishing
     switched off, where nothing was ever published.

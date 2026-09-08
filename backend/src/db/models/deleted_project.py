@@ -77,8 +77,8 @@ class DeletedProject(UUIDv7PrimaryKeyMixin, Base):
     )
     # COPIED, not joined. The name is what makes this row legible to a human a month later.
     project_name: Mapped[str] = mapped_column(sa.String(120), nullable=False)
-    # ...and the description is what makes it INFORMATIVE (#184). A name alone says "Visitor
-    # Log"; the description is the sentence saying what the app did, which is the question an
+    # ...and the description is what makes it INFORMATIVE. A name alone says "Visitor Log";
+    # the description is the sentence saying what the app did, which is the question an
     # administrator reviewing a deletion is actually asking.
     #
     # THE ONLY COPY. It lives on the `projects` row `delete_project_cascade` deletes in the

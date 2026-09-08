@@ -153,9 +153,7 @@ async def _a_conversation(db_session, *, kind: ChatKind = ChatKind.PLAN):
     return user, project, conversation
 
 
-# =============================================================================
-# The gate has to let ordinary conversations through
-# =============================================================================
+# --- the gate has to let ordinary conversations through -------------------------------
 
 
 async def test_a_short_conversation_starts_a_turn_normally(
@@ -224,9 +222,7 @@ async def test_a_chat_nobody_has_measured_reports_no_figure_rather_than_zero(
     await _settle(_fresh_engine, conversation.id)
 
 
-# =============================================================================
-# Past the limit: refused, and nothing written
-# =============================================================================
+# --- past the limit: refused, and nothing written --------------------------------------
 
 
 async def test_an_over_long_conversation_is_refused_before_anything_persists(
@@ -278,9 +274,7 @@ async def test_the_refusal_names_the_way_out(client, db_session) -> None:
     assert "200,000" not in message
 
 
-# =============================================================================
-# The administrator's number is the boundary — the whole point of the unit
-# =============================================================================
+# --- the administrator's number is the boundary — the whole point of the unit ----------
 
 
 async def test_an_administrator_override_changes_what_the_platform_accepts(
@@ -343,9 +337,7 @@ async def test_a_user_with_no_override_is_governed_by_the_default(client, db_ses
     assert (await _send(client, user, conversation.id)).status_code == 413
 
 
-# =============================================================================
-# The second door
-# =============================================================================
+# --- the second door --------------------------------------------------------------------
 
 
 async def test_pressing_build_from_a_long_plan_chat_is_not_refused(
@@ -439,9 +431,7 @@ async def test_the_build_door_still_refuses_a_plan_that_is_too_long_to_build_fro
     assert await db_session.get(Conversation, minted) is None
 
 
-# =============================================================================
-# The contract the browser reads
-# =============================================================================
+# --- the contract the browser reads ------------------------------------------------------
 
 
 def test_the_refusal_is_documented_where_it_can_actually_happen() -> None:
@@ -520,9 +510,7 @@ async def test_an_accepted_turn_still_resolves_a_pending_card(
     assert await find_pending(db_session, user_id=user.id, conversation_id=conversation.id) is None
 
 
-# =============================================================================
-# Documents — what an attachment costs on the way IN, which is now nothing
-# =============================================================================
+# --- documents — what an attachment costs on the way IN, which is now nothing -----------
 #
 # The platform no longer prices a document at admission. It used to charge a flat nominal per
 # attachment and refuse against the total, and that charge was wrong by 47x in the direction

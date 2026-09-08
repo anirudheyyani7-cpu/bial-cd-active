@@ -107,8 +107,8 @@ describe('ProjectCard', () => {
   })
 
   /**
-   * U15 / R37 — the description is clipped by CSS, never by JavaScript, and it advertises no
-   * interaction of its own.
+   * The description is clipped by CSS, never by JavaScript, and it advertises no interaction
+   * of its own.
    *
    * The tile already had this shape; these pin it, because the obvious "fix" applied to its
    * sibling row (cut the string, show the rest on hover) would arrive here next and would take

@@ -335,12 +335,12 @@ describe('BuilderPage — the frame\'s identity is its ADDRESS, and nothing else
     view.unmount()
   })
 
-  it('★ AE5 — a SECOND SEND does not remount the app (#200)', async () => {
-    // ★ THE DEFECT, MEASURED THE WAY THE ISSUE MEASURED IT. `#200` was proven by stamping a marker
-    // on the live `<iframe>` before the send and finding `marked === false` when the card came
-    // back: the element was REPLACED, so the generated app re-requested its document on every
-    // message and discarded its in-app state — form entries, selected tab, scroll position. The
-    // backend read `{"state":"alive"}` before and after; same container, same URL throughout.
+  it('★ a SECOND SEND does not remount the app', async () => {
+    // ★ THE DEFECT, MEASURED THE WAY IT WAS ORIGINALLY PROVEN. Stamping a marker on the live
+    // `<iframe>` before the send and finding `marked === false` when the card came back: the
+    // element was REPLACED, so the generated app re-requested its document on every message and
+    // discarded its in-app state — form entries, selected tab, scroll position. The backend read
+    // `{"state":"alive"}` before and after; same container, same URL throughout.
     //
     // SO THIS ASSERTS ELEMENT IDENTITY, NOT THE ADDRESS MATCHING. Those are different claims: the
     // src is byte-identical across a remount, which is exactly why the URL comparison the earlier

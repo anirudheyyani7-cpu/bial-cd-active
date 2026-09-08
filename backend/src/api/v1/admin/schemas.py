@@ -260,7 +260,7 @@ RejectionNote = Annotated[
 
 
 def _clean_app_delete_reason(value: str) -> str:
-    """The admin app-delete's binding of the shared 5-50 word deletion rule (U23)."""
+    """The admin app-delete's binding of the shared 5-50 word deletion rule."""
     return clean_deletion_reason(value, subject="app")
 
 
@@ -272,11 +272,11 @@ class RejectRequest(CamelModel):
 
 
 class AppDeleteRequest(CamelModel):
-    """The body `DELETE /v1/admin/apps/{app_id}` requires (U23, R5).
+    """The body that `DELETE /v1/admin/apps/{app_id}` requires.
 
-    AN ADMINISTRATOR DESTROYING SOMEBODY ELSE'S APP MUST SAY WHY. The citizen deleting their
-    own project already has to (#158 §13.2); the harsher act — an administrator destroying work
-    that is not theirs, with no undo and no export — asked for nothing at all, and the browser
+    AN ADMINISTRATOR DESTROYING SOMEBODY ELSE'S APP MUST SAY WHY. The citizen deleting their own
+    project already has to; the harsher act — an administrator destroying work that is not
+    theirs, with no undo and no export — asked for nothing at all, and the browser
     `window.confirm` it went through could not have collected it.
 
     The reason rides the `app:delete` audit row this path already writes BEFORE destruction,

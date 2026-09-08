@@ -384,7 +384,7 @@ describe('LivePreview — one persistent status region announces every state', (
 
     const frame = view.container.querySelector('iframe')
     fireEvent.load(frame as HTMLIFrameElement)
-    // ★ AND THEN THE REGION FALLS SILENT (U3, `#199`) — because NOTHING HAS CHECKED THE APP.
+    // ★ AND THEN THE REGION FALLS SILENT — because NOTHING HAS CHECKED THE APP.
     // This asserted `/preview is live/i`, which the pane published from the framed document's
     // `load` alone: an event that fires for a 500 exactly as it does for a 200 on a frame whose
     // status code this pane cannot read. The wait ENDING is real and still asserted; what is no
@@ -397,7 +397,7 @@ describe('LivePreview — one persistent status region announces every state', (
   })
 
   /**
-   * The other half of `#199`, and the reason the claim was not simply deleted.
+   * The other half of the false "preview is live" claim, and why it was not simply deleted.
    *
    * Removing it outright left the SUCCESS path silent while the failure path spoke: a citizen
    * using a screen reader heard the wait end and then nothing, and could not tell "it worked"
@@ -420,8 +420,9 @@ describe('LivePreview — one persistent status region announces every state', (
     expect(screen.getByRole('status').textContent).toMatch(/preview is live/i)
 
     // ★ THE MUTANT THIS KILLS: `compileState !== 'failed'` instead of `=== 'clean'`. That is the
-    // three-into-two collapse R21a forbids, and it republishes `#199`'s false claim on exactly
-    // the reload where nothing has been verified. An unreadable verdict must assert NOTHING.
+    // three-into-two collapse this exact-match check forbids, and it republishes the same false
+    // claim on exactly the reload where nothing has been verified. An unreadable verdict must
+    // assert NOTHING.
     view.rerender(
       <LivePreview previewUrl={SANDBOX_URL} status="ended" serving previewState={alive.state} compileState="unknown" />,
     )

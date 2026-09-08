@@ -187,9 +187,9 @@ async def test_a_cross_reference_bomb_is_killed_at_the_deadline() -> None:
     assert parse_dispatch(bomb, "count_pdf_pages", "doc.pdf", None) == {"pageCount": 1}
 
 
-# --- the count is walked, ENCRYPTED OR NOT (U28 / R12, R12a) ---------------------
+# --- the count is walked, ENCRYPTED OR NOT ------------------------------------
 #
-# ★ THE 30-PAGE CAP WAS WALKABLE PAST BY ANY ENCRYPTED FILE (#194). `len(reader.pages)` reaches
+# ★ THE 30-PAGE CAP WAS WALKABLE PAST BY ANY ENCRYPTED FILE. `len(reader.pages)` reaches
 # pypdf's `get_num_pages()`, which returns the catalog's DECLARED `/Count` unwalked whenever
 # `is_encrypted` is set — and `is_encrypted` is `"/Encrypt" in trailer`, which stays true after
 # a successful decryption, forever. So the shortcut was permanent, and since pypdf opens a
@@ -202,9 +202,9 @@ def test_an_encrypted_pdf_cannot_lie_its_way_under_the_cap() -> None:
 
     Two files of the same shape — one page object listed in `/Kids` twenty thousand times, a
     catalog declaring one — differing only in whether an encryption dictionary is attached.
-    Before U28 the plain one counted 20,000 and the encrypted one counted 1, which is the whole
-    defect: not that PDFs were mis-counted, but that adding `/Encrypt` to a file switched the
-    count from the tree to the attacker's own number. Both must now answer 20,000.
+    Before the fix, the plain one counted 20,000 and the encrypted one counted 1, which is
+    the whole defect: not that PDFs were mis-counted, but that adding `/Encrypt` to a file
+    switched the count from the tree to the attacker's own number. Both must now answer 20,000.
 
     Revert `_flatten` to `len(reader.pages)` and only the second assertion goes red — which is
     why the plain twin is asserted first and in the same test rather than trusted from a
@@ -268,9 +268,9 @@ def test_a_page_tree_that_eats_its_own_tail_raises_instead_of_running_forever() 
     never returns. pypdf carries the ancestor path and raises; the dispatch maps that to the
     same 400 a truncated file gets, and the citizen is told nothing about page trees.
 
-    Encrypted on purpose. Before U28 this file was never walked at all — the declared `/Count`
-    of 1 was handed straight back — so a cycle only became reachable on the encrypted path when
-    the count started being taken honestly, and this is the test that pays for it."""
+    Encrypted on purpose. Before the fix, this file was never walked at all — the declared
+    `/Count` of 1 was handed straight back — so a cycle only became reachable on the encrypted
+    path when the count started being taken honestly, and this is the test that pays for it."""
     with pytest.raises(FileParseError) as exc:
         parse_dispatch(ouroboros_pdf(), "count_pdf_pages", "doc.pdf", None)
     assert exc.value.status == 400

@@ -55,7 +55,7 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   savedHead: null,
   savedAt: null,
   // `null` is "the server did not say", which keeps the saved row — the neutral default
-  // for suites that are not about U16's never-saved omission.
+  // for suites that are not about the never-saved omission.
   savedState: null,
   ...over,
 })
@@ -204,7 +204,7 @@ describe('the provenance rows', () => {
 })
 
 /**
- * U14 / R34 / AE9 — sharing a published app without leaving the product.
+ * Sharing a published app without leaving the product.
  *
  * The panel already linked the address; copying it meant opening the tab and taking it out of
  * the browser's own address bar. What is asserted here is the VALUE copied, not the presence of
@@ -313,13 +313,13 @@ describe('the copy control on a published app', () => {
 })
 
 /**
- * U15 / R35 / AE9 — the reviewer's reason, on the rail, without opening anything.
+ * The reviewer's reason, on the rail, without opening anything.
  *
- * WHAT IS NOT HERE, DELIBERATELY: the geometric half of AE9 — that a 1,000-character note
- * leaves "Send for review" in view. jsdom has no layout engine, so a test here could only
- * assert that both elements EXIST, which is exactly the false pass this campaign has already
- * produced once. It lives in the browser suite; what this file pins is source order, which is
- * the mechanism the geometry depends on.
+ * WHAT IS NOT HERE, DELIBERATELY: the geometric half of that rule — that a 1,000-character
+ * note leaves "Send for review" in view. jsdom has no layout engine, so a test here could
+ * only assert that both elements EXIST, which is exactly the false pass this campaign has
+ * already produced once. It lives in the browser suite; what this file pins is source order,
+ * which is the mechanism the geometry depends on.
  */
 describe('the reviewer\'s reason on the rail', () => {
   const NOTE = 'Move the hardcoded database URL and API key out of lib/db.ts, then send it again.'
@@ -381,7 +381,7 @@ describe('the reviewer\'s reason on the rail', () => {
 })
 
 /**
- * U16 / R37a / AE9a — a project that has never been saved stops claiming the platform lost it.
+ * A project that has never been saved stops claiming the platform lost it.
  */
 describe('the LAST SAVED row on a project with no save', () => {
   it('★ is not rendered at all, rather than rendered as "we could not tell"', () => {

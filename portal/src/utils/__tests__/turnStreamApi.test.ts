@@ -353,7 +353,7 @@ describe('startTurn', () => {
   })
 
   it('★ carries the occupancy the server admitted on, verbatim', async () => {
-    // #194. `contextTokens` is the RAW prompt count the provider reported — cache-inclusive, and
+    // `contextTokens` is the RAW prompt count the provider reported — cache-inclusive, and
     // never a cost-weighted spend, which for a 97-99% cached conversation would be a tenth of
     // it. It arrives on the send the citizen was already making; nothing sizes a message before
     // it is sent. Passed through untouched, because the moment this client adjusts the number it
@@ -470,7 +470,7 @@ describe('base-path contract (regression guard) — every call hits /api/convers
   })
 
   it('this module exports NO mode-switch call at all', () => {
-    // AN INERTNESS GUARD, not a deleted test (L8). `switchMode` posted to
+    // AN INERTNESS GUARD, not a deleted test. `switchMode` posted to
     // `/api/conversations/{id}/mode` — a route that no longer exists, because what a chat is
     // is decided when it is created and cannot be moved afterwards. A base-path assertion
     // cannot express that; the absence of the transport itself is the whole claim.

@@ -129,9 +129,9 @@ describe('the decision is total over every state the server can send', () => {
   })
 })
 
-describe('a switched-off app is told what it cannot do (U31, R41a, #163)', () => {
+describe('a switched-off app is told what it cannot do', () => {
   it('★ names the consequence the owner is actually hitting, and never mentions publishing', () => {
-    // THE KILL SWITCH REACHES DRAFTS NOW (#163). When it reached approved apps only, "nothing
+    // THE KILL SWITCH NOW REACHES DRAFTS. When it reached approved apps only, "nothing
     // can be published" was the whole of what it meant. To the owner of an app that has never
     // been published — the ordinary case, since one-click deploy never writes a status — that
     // sentence named a consequence they were not pursuing and left the one they are hitting
@@ -190,8 +190,7 @@ describe('the saved row keeps its two halves independent', () => {
 })
 
 /**
- * U16 / R37a — the three reasons the saved pair can be absent, and the ONE of them that
- * removes the row.
+ * The three reasons the saved pair can be absent, and the ONE of them that removes the row.
  *
  * `savedHead`/`savedAt` both read null when the citizen has never saved, when no object store
  * is bound, and when the store would not answer. The panel spoke all three as "LAST SAVED — We
@@ -229,7 +228,7 @@ describe('a project that has never been saved gets no saved row at all', () => {
   })
 
   it('★ a save the platform could not READ still says "we could not tell"', () => {
-    // The wording R37a explicitly keeps. A storage blip is a gap in the record about work that
+    // THE ROW STAYS, with that wording. A storage blip is a gap in the record about work that
     // exists; blanking the row there would hide the one case that rendering was written for.
     for (const state of ['store_unconfigured', 'storage_error'] as const) {
       const row = provenanceRows('draft', view({ savedState: state }), approval()).find(
@@ -253,7 +252,7 @@ describe('a project that has never been saved gets no saved row at all', () => {
 })
 
 /**
- * U15 / R35 — the reviewer's reason, as a row, above the state's action.
+ * The reviewer's reason, as a row, above the state's action.
  */
 describe('the rejection note reaches the rail', () => {
   const NOTE = 'Move the hardcoded database URL out of lib/db.ts, then send it again.'

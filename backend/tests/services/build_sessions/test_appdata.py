@@ -137,12 +137,12 @@ async def test_unrelated_integrity_error_propagates(
         await resolve_app_for_project(db_session, user.id, project.id)
 
 
-# --- the switched-off gate (U31, R41a, #163) -------------------------------------------
+# --- the switched-off gate -------------------------------------------------------------
 #
-# ASSERTED HERE, AT THE SITE THAT DECIDES IT (`.claude/rules/testing.md`). This function is
-# the ONE gate: `relaunch_preview` (the explicit start control) and `ensure_sandbox` — which
-# the turn engine routes EVERY turn kind through — both resolve the project's app through it,
-# so one refusal here closes both doors. `test_manager.py` pins that they really do arrive
+# ASSERTED HERE, AT THE SITE THAT DECIDES IT. This function is the ONE gate:
+# `relaunch_preview` (the explicit start control) and `ensure_sandbox` — which the turn
+# engine routes EVERY turn kind through — both resolve the project's app through it, so
+# one refusal here closes both doors. `test_manager.py` pins that they really do arrive
 # here; these pin the decision itself.
 
 
@@ -159,8 +159,8 @@ async def test_a_switched_off_app_refuses_to_resolve(db_session: AsyncSession) -
     # with the workspace CONFLICTS and has a different cause and no remedy to retry.
     assert exc.value.code == APP_SWITCHED_OFF_CODE
     # The sentence the citizen reads says what they cannot do, and says it WITHOUT mentioning
-    # publishing — a never-published draft can be switched off too (#163), and its owner
-    # learns nothing from being told that publishing is blocked.
+    # publishing — a never-published draft can be switched off too, and its owner learns
+    # nothing from being told that publishing is blocked.
     assert "cannot make changes" in exc.value.message
     assert "publish" not in exc.value.message.lower()
 

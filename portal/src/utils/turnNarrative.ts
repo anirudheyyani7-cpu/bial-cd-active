@@ -131,7 +131,7 @@ export function turnPhase(
     // while it is still happening. Everything after it belongs to the answer.
     return running && narrative.workspace.state === 'preparing' ? 'provisioning' : null
   }
-  // A TURN THAT FAILED IS THE ONLY ONE THAT FAILED (`#96`). This read
+  // A TURN THAT FAILED IS THE ONLY ONE THAT FAILED. This read
   // `terminal === 'failed' || terminal === 'stopped'`, and that one line was the whole of the bug:
   // a citizen who pressed Stop watched their running app collapse to "The preview is no longer
   // running" over a container the backend had deliberately kept up. The backend does not make this

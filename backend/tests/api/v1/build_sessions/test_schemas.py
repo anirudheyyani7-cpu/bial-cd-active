@@ -406,10 +406,10 @@ def test_app_boots_with_build_sessions_router_mounted() -> None:
     schema = app.openapi()
     assert schema["openapi"].startswith("3.")
     paths = schema.get("paths", {})
-    # INVERTED, deliberately. This used to assert the bare collection path was PRESENT (`start`);
-    # `POST /v1/build-sessions` is deleted, so its absence is now the fact worth pinning — a
-    # route re-added here would be a route with no client and no `SessionManager.start` behind
-    # it. `lock/force-end` is gone the same way and is asserted absent beside it.
+    # INVERTED, deliberately: `POST /v1/build-sessions` (`start`) is deleted, so its absence is
+    # the fact worth pinning here — a route re-added would be a route with no client and no
+    # `SessionManager.start` behind it. `lock/force-end` is gone the same way and is asserted
+    # absent beside it.
     assert "/v1/build-sessions" not in paths  # start — DELETED, must not come back
     assert "/v1/build-sessions/{session_id}/lock/force-end" not in paths  # also deleted
     assert "/v1/build-sessions/{session_id}" in paths  # status — the reader that survives

@@ -149,7 +149,7 @@ def install_rate_limiting(app: FastAPI) -> None:
         detail=(
             "In-process rate-limit store: the ceiling is per-replica. A multi-replica "
             "deployment needs a shared (Redis) store — deferred until the platform "
-            "scales out, and now the remaining blocker to doing so (ADR-0029 R10 "
-            "removed the other)."
+            "scales out, and now the LAST thing standing in the way of that — the "
+            "other blocker to scaling out has already been removed."
         ),
     )

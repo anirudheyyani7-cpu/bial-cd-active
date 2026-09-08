@@ -422,15 +422,15 @@ async def test_a_dropped_connection_mid_stop_loses_no_work_and_takes_no_containe
     picks the answer up exactly where it was — which is only possible because the stop is a
     detached task and the ask was recorded, not because anything guessed from elapsed time.
 
-    WHAT "LOST NOTHING" MEANS ON THIS PATH, since it used to mean a stored bundle. A stopped
-    BUILD ran `_do_finalize`, whose step 1 pushed the saved snapshot, and this ended by finding
-    it in storage. A stopped TURN takes the other ending: `finish_turn_sandbox` PARDONS the
-    container rather than tearing it down, deliberately — a Write turn's container is the
-    preview the citizen is looking at, and the turn ending is not a reason for their app to
-    vanish. So the tree that held their work is still running behind a lease, which is asserted
-    here instead: nothing torn down and the registry — the sweep's only map to it — still
-    there. Weaker in no direction that matters: on the build path the container went and the
-    bundle was all that survived; here the container itself survives."""
+    WHAT "LOST NOTHING" MEANS ON THIS PATH. A stopped BUILD ran `_do_finalize`, whose step 1
+    pushed the saved snapshot, and this ended by finding it in storage. A stopped TURN takes the
+    other ending: `finish_turn_sandbox` PARDONS the container rather than tearing it down,
+    deliberately — a Write turn's container is the preview the citizen is looking at, and the
+    turn ending is not a reason for their app to vanish. So the tree that held their work is
+    still running behind a lease, which is asserted here instead: nothing torn down and the
+    registry — the sweep's only map to it — still there. Weaker in no direction that matters: on
+    the build path the container went and the bundle was all that survived; here the container
+    itself survives."""
     user, project_a = await _mk(db_session, "stop6@rvaiglobal.com")
     manager = SessionManager()
     client = FakeSandboxClient()

@@ -1,7 +1,7 @@
 """Delete a published app's REPOSITORY from the container registry when its app is deleted.
 
-WITHOUT THIS, DELETING A PROJECT LEAVES ITS IMAGE IN THE REGISTRY FOREVER (#184). The dialog
-that collects the citizen's reason promises the files behind the app are "destroyed
+WHY THIS EXISTS. WITHOUT IT, DELETING A PROJECT LEAVES ITS IMAGE IN THE REGISTRY FOREVER. The
+dialog that collects the citizen's reason promises the files behind the app are "destroyed
 permanently"; every other artefact on the delete path is torn down to make that true — the
 rows, the blobs, the per-app Blob container, the per-project database, the running container
 app, the sandbox — and the built image was the one thing left standing. It is also the one
@@ -43,9 +43,8 @@ pushed with. A test asserts the scope on the request, which is a stronger check 
 narrower credential would have given. If BIAL later issues a `citizen-apps/*` scope-map token,
 it is an additive setting against a mechanism already proven here.
 
-THE TWO CALLS:
-  1. GET  {server}/oauth2/token?service={server}&scope=repository:{repo}:delete   (Basic auth)
-  2. DELETE {server}/acr/v1/{repo}?api-version=2021-07-01                         (Bearer)
+THE EXCHANGE IS TWO CALLS, both implemented in `delete_repository` below: a token request scoped
+to this one repository, then the delete itself, bearer-authenticated with that token.
 
 `202` and `404` are BOTH success: the delete is accepted asynchronously, and a repository that
 is already gone is the state the caller asked for, so a repeated delete is a silent no-op

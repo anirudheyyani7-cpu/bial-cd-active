@@ -1,8 +1,7 @@
 /**
- * THE RENAME PENCIL KEEPS THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES (R46, plan U35,
- * `#207` residual gap — split out of U11 by decision D21).
+ * THE RENAME PENCIL KEEPS THE SAME IDENTITY GUARD `ChatRoute.tsx` ALREADY CARRIES.
  *
- * ═══ WHY THIS RENDERS THROUGH THE REAL SHELL, SEPARATELY FROM `ProjectPage.test.tsx` ═══
+ * WHY THIS RENDERS THROUGH THE REAL SHELL, SEPARATELY FROM `ProjectPage.test.tsx`
  *
  * The rename pencil is drawn by `WorkspaceToolbar`, above the Outlet, off `heading.projectName` —
  * `ProjectPage.test.tsx`'s own docblock says so plainly: "a render of this page alone can no
@@ -15,7 +14,7 @@
  * reads, save state) has nothing to do with that. Its own suite, `ProjectWorkspace.test.tsx`,
  * covers what it renders.
  *
- * ═══ THE BUG ═══
+ * THE BUG
  *
  * `projectId` is a route param on a route that is NOT remounted when it changes (`ProjectPage`'s
  * own "three branches are one return" note records this). So moving from one project to another
@@ -133,7 +132,7 @@ beforeEach(() => {
 
 afterEach(() => cleanup())
 
-describe('R46 — the rename pencil keeps the identity guard `ChatRoute.tsx` already has', () => {
+describe('the rename pencil keeps the identity guard `ChatRoute.tsx` already has', () => {
   it('★ stays enabled — with the RIGHT name — after navigating between two projects', async () => {
     h.getProject.mockImplementation(async (id: string) =>
       id === 'pA' ? makeProject({ id: 'pA', name: 'Project Alpha' }) : makeProject({ id: 'pB', name: 'Project Bravo' }),

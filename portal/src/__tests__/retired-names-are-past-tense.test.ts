@@ -26,7 +26,7 @@ const RETIRED = [
   'fetchClaudeStream',
   'BuildProgress',
   '/v1/claude',
-  // U33 deleted the standalone build stack from both trees. `forceEnd` is the portal half: the
+  // The standalone build stack was deleted from both trees. `forceEnd` is the portal half: the
   // typed client, its `ForceEndResponse`, the `useBuildSession` wrapper and the backend route all
   // went together, having had no UI call site since the block banner's Force-end button was
   // removed. Its sibling `tests/api/v1/claude_retired/test_retired_names_are_past_tense.py` names

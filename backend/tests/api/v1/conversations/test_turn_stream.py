@@ -656,14 +656,14 @@ async def test_no_workspace_service_refuses_the_send_identically_in_both_kinds(
     assert (rows or 0) == 0
 
 
-# --- R41a: a switched-off app is said in words, at the moment of sending -------------------
+# --- a switched-off app is said in words, at the moment of sending -------------------------
 
 
 @pytest.mark.parametrize("kind", [ChatKind.PLAN, ChatKind.BUILD])
 async def test_a_switched_off_app_refuses_the_send_with_the_reason(
     client, db_session, set_chat_model, _fresh_engine, kind
 ) -> None:
-    """U31/R41a — a MESSAGE, not the gate. Read the sentence, then read what it is not.
+    """A MESSAGE, not the gate. Read the sentence, then read what it is not.
 
     The enforcement lives in `resolve_app_for_project` and holds with or without this route
     ever asking (`tests/services/build_sessions/test_appdata.py` pins it there). What this
@@ -696,7 +696,7 @@ async def test_a_switched_off_app_refuses_the_send_with_the_reason(
     assert resp.json()["error"]["code"] == APP_SWITCHED_OFF_CODE
     message = resp.json()["error"]["message"]
     # It says WHAT THEY CANNOT DO, and it does not say "publish": a never-published draft can
-    # be switched off too (#163), and its owner learns nothing from a publishing sentence.
+    # be switched off too, and its owner learns nothing from a publishing sentence.
     assert "cannot make changes" in message
     assert "publish" not in message.lower()
     # Nothing claimed, nothing written, no partial reply — the refusal sits above the first
@@ -1307,9 +1307,7 @@ async def test_a_redis_outage_during_the_preflight_is_503_never_a_silent_reclaim
     assert "try again" in resp.json()["error"]["message"].lower()
 
 
-# ==========================================================================================
-# R-18 — THE WORKSPACE QUESTION COMES BEFORE ANYTHING DURABLE EXISTS
-# ==========================================================================================
+# --- the workspace question comes before anything durable exists -------------------------
 #
 # The bug was an ORDERING: a first message committed its conversation row a round trip
 # earlier, in `POST /conversations`, before anything asked about the workspace. A refused or
@@ -1355,9 +1353,9 @@ async def _post_first_message(
 async def test_a_first_message_refused_by_the_workspace_leaves_no_conversation_behind(
     client, db_session, set_chat_model, fake_redis, fake_storage, app
 ) -> None:
-    """★ R-18, and this is the scenario the bug is: a 409 always came back, but it also
-    deposited a titled, empty conversation into the project, named after the very text the
-    platform had just refused."""
+    """★ THE SCENARIO THE BUG IS: a 409 always came back, but it also deposited a titled,
+    empty conversation into the project, named after the very text the platform had just
+    refused."""
     from src.api.v1.build_sessions.deps import sandbox_or_none_dependency
     from src.services.build_sessions.manager import SandboxReclaimBlockedError, SessionManager
     from tests.fakes import FakeSandboxClient

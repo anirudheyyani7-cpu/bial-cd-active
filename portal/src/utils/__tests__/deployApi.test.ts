@@ -268,9 +268,9 @@ describe('getDeployment parses the one publish state, and refuses to guess it', 
   })
 
   /**
-   * U16 / R37a — WHY the saved pair is absent, which the pair itself cannot say. Only
-   * `never_saved` removes the rail's row, so it is the one value an unrecognised string must
-   * never be read as.
+   * WHY the saved pair is absent, which the pair itself cannot say. Only `never_saved`
+   * removes the rail's row, so it is the one value an unrecognised string must never be
+   * read as.
    */
   it('★ parses each reason the saved pair can be absent', async () => {
     for (const state of ['saved', 'never_saved', 'store_unconfigured', 'storage_error'] as const) {

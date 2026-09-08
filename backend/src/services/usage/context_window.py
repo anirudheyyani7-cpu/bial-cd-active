@@ -1,5 +1,7 @@
 """The per-conversation admission check: how much of the window a conversation already holds.
 
+WHY THIS EXISTS
+
 ★ THE PLATFORM DOES NOT DERIVE THIS NUMBER ANY MORE, AND THAT IS THE WHOLE MODULE. The
 provider returns a token count for every turn it serves; this reads that count. It used to
 re-derive one instead — four characters to the token over a structural walk of the message

@@ -81,7 +81,7 @@ const view = (publishState: PublishState, over: Partial<DeploymentView> = {}): D
   savedHead: null,
   savedAt: null,
   // `null` is "the server did not say", which keeps the saved row — the neutral default
-  // for suites that are not about U16's never-saved omission.
+  // for suites that are not about the never-saved-state omission.
   savedState: null,
   ...over,
 })
@@ -979,7 +979,7 @@ describe('guarantees carried over from the controls this chip replaces', () => {
   })
 
   /**
-   * THE CHIP IS A PRESS, SO IT CARRIES THE TOOLBAR'S TOUCH FLOOR (plan 001, U17 — R38a, `#201`).
+   * THE CHIP IS A PRESS, SO IT CARRIES THE TOOLBAR'S TOUCH FLOOR.
    *
    * It is the third of the workspace row's nine occupants and the only one that lives in another
    * file, which is exactly how a sweep over `WorkspaceToolbar.tsx` would have left ~26px of pill
@@ -1019,7 +1019,7 @@ describe('guarantees carried over from the controls this chip replaces', () => {
   })
 })
 
-describe('★ the publish wait says what it is doing (R31)', () => {
+describe('★ the publish wait says what it is doing', () => {
   // `busyReason` existed and was rendered ONLY as a `title` attribute — neither visible text
   // nor an exposed busy state, and unreachable to a keyboard or a touch screen. So the one
   // thing this component announced was the publish OUTCOME: press Save and publish, and hear

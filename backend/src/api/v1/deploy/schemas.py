@@ -155,7 +155,7 @@ class PublishState(StrEnum):
     the member's own string, and the chip's narrowing throws on anything it doesn't
     recognise — so this is the one place a new member gets added.
     UNKNOWN IS NEVER "UP TO DATE" — `LIVE_DRIFT_UNKNOWN` covers a storage HEAD that could
-    not answer, the same tri-state discipline `SaveState.dirty` uses (`null` != clean, L12)."""
+    not answer, the same tri-state discipline `SaveState.dirty` uses (`null` != clean)."""
 
     # No app row for the project at all — the only member with no approval block.
     NOTHING_BUILT = "nothing_built"
@@ -191,8 +191,7 @@ class PublishState(StrEnum):
 
 
 class SavedState(StrEnum):
-    """WHY `saved_head`/`saved_at` are absent, which the two nulls cannot say themselves
-    (plan 001, U16, R37a).
+    """WHY `saved_head`/`saved_at` are absent, which the two nulls cannot say themselves.
 
     THE SENTINEL WAS ONE VALUE FOR THREE FACTS. `_saved_version_for_publish_state`
     answered `head=None, saved_at=None` when the store was not configured, when its HEAD
@@ -278,7 +277,7 @@ def compute_publish_state(
         # purpose. A drift-routed publish is modelled as a FAILED row with a distinct
         # code (`routed_for_review`) rather than a fourth `DeploymentStatus` — without
         # this, a citizen correctly routed to an administrator would read "Didn't
-        # start / Try again", L12's exact defect reintroduced at the seam built to end
+        # start / Try again" — the exact defect reintroduced at the seam built to end
         # it.
         if deployment.failure_code in _ROUTED_FAILURE_CODES:
             return PublishState.IN_REVIEW
@@ -364,7 +363,7 @@ class DeploymentResponse(CamelModel):
     # avoid, arriving through the back door.
     saved_head: str | None
     saved_at: datetime | None
-    # WHY THE PAIR ABOVE IS ABSENT (U16, R37a) — see `SavedState`. The two nulls above are
+    # WHY THE PAIR ABOVE IS ABSENT — see `SavedState`. The two nulls above are
     # reached four ways and only one of them means "this citizen has never saved"; without
     # this field a client rendering their absence has to speak all four with one sentence,
     # and the sentence it chose ("we could not tell") is false in the frightening direction

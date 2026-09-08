@@ -475,9 +475,9 @@ describe('Navbar — the workspace exit guard', () => {
 })
 
 /**
- * THE BRAND LINK CARRIES THE PROJECTS LIST STATE BACK (R45, plan U35, `#208`).
+ * THE BRAND LINK CARRIES THE PROJECTS LIST STATE BACK.
  *
- * `#208` put `page`, `pageSize` and `q` in `/projects`'s own address — reading that in is
+ * `/projects`'s own address carries `page`, `pageSize` and `q` — reading that in is
  * `ProjectsPage.test.tsx`'s job. This link is mounted on a DIFFERENT address (a project, a chat,
  * admin, marketplace, help) and has always had to name a destination without ever having read
  * that query string itself; before this it hardcoded a bare `/projects`. `ProjectsPage` mounts
@@ -485,7 +485,7 @@ describe('Navbar — the workspace exit guard', () => {
  * render while the address bar reads `/projects?…`, navigate away, and check where the brand
  * link goes — without needing `ProjectsPage` in the tree at all.
  */
-describe('Navbar — the brand link carries the projects list state back (R45, `#208`)', () => {
+describe('Navbar — the brand link carries the projects list state back', () => {
   // Every test in this block sees a clean, "nothing remembered yet" tab — otherwise the FIRST
   // test's memory would silently stand in for the second's fresh session.
   afterEach(() => sessionStorage.removeItem('projectsListSearch'))

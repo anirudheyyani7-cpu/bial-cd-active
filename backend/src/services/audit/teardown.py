@@ -1,4 +1,4 @@
-"""THE RECORD OF WHAT A DELETE COULD NOT DESTROY (U22, R7/D18).
+"""THE RECORD OF WHAT A DELETE COULD NOT DESTROY.
 
 Two levers destroy a citizen's work — their own project delete and an administrator's app
 hard-delete — and every post-commit arm of both is best-effort by construction: the rows are
@@ -6,7 +6,7 @@ already gone, so a failed drop must not 500 a delete that in fact succeeded. Wha
 safety it owes in accountability, and this is where the debt is paid: one audit row naming
 every artefact that outlived the delete.
 
-SHARED RATHER THAN COPIED, and it is the second call site that earns the module (ADR-0010).
+SHARED RATHER THAN COPIED, and it is the second call site that earns the module.
 The admin path used to discard `salt_the_earth`'s answer entirely, which meant the harsher of
 the two levers — an administrator destroying somebody else's app, with no undo — was the one
 that kept no record of a database left standing afterwards.
@@ -41,10 +41,10 @@ async def record_what_survived(
     project", already survives every row it references (no FK), and is already written twice on
     both paths.
 
-    AND THE CITIZEN IS NOT TOLD (D18). The owner's rule: if the code, the files and the database
-    are gone, the delete is done as far as they are concerned. The alternative was a banner
-    saying an operator had been notified, which this platform cannot make true — there is no
-    mail, no webhook and no metrics system in this deployment.
+    AND THE CITIZEN IS NOT TOLD. The owner's rule: if the code, the files and the database are
+    gone, the delete is done as far as they are concerned. The alternative was a banner saying
+    an operator had been notified, which this platform cannot make true — there is no mail, no
+    webhook and no metrics system in this deployment.
 
     THE PROJECT IS THE SUBJECT EVEN WHEN AN APP WAS THE LEVER. Every artefact that can survive
     either path belongs to the project — its database, its blobs, its per-app containers, its
@@ -72,10 +72,9 @@ async def record_what_survived(
             action="project:teardown-incomplete",
             resource_type="project",
             resource_id=str(project_id),
-            # IDENTIFIERS ONLY (`.claude/rules/security.md`): a blob key, a container name, a
-            # database name, a repository — never a DSN, a credential or any of the content
-            # that survived. `count` is here so an operator can sort by severity without
-            # parsing the list.
+            # IDENTIFIERS ONLY: a blob key, a container name, a database name, a repository —
+            # never a DSN, a credential or any of the content that survived. `count` is here
+            # so an operator can sort by severity without parsing the list.
             detail={
                 "count": len(survivors),
                 "survived": [

@@ -659,8 +659,8 @@ describe('the back control and the rename', () => {
   })
 })
 
-describe('the back control carries the projects list state back (R45, plan U35, `#208`)', () => {
-  /* `#208` put `page`, `pageSize` and `q` in `/projects`'s own address, which is a one-way fix:
+describe('the back control carries the projects list state back', () => {
+  /* `page`, `pageSize` and `q` live in `/projects`'s own address, which is a one-way fix:
      reading it in is `ProjectsPage.test.tsx`'s job. This control is mounted on a DIFFERENT
      address — a project, a chat — and has to name a destination without ever having read that
      query string itself. Before this it hardcoded a bare `/projects`, so leaving a filtered,
@@ -776,7 +776,7 @@ describe('the row does not wake with the composer', () => {
 })
 
 /**
- * ═══ THE NARROW-WIDTH CONTRACT (plan 001, U17 + U19 — R38, R38a, R40, `#201`) ═══
+ * THE NARROW-WIDTH CONTRACT
  *
  * EVERY SCENARIO BELOW IS STRUCTURAL, AND THE NAMES SAY SO. jsdom has no layout engine:
  * `getBoundingClientRect()` returns zeroes for every element on this page, `matchMedia` evaluates
@@ -793,10 +793,10 @@ describe('the row does not wake with the composer', () => {
  * title width, a row that scrolls instead of clipping — belong to the browser suite, where a
  * layout engine actually runs.
  *
- * WHAT IS DELIBERATELY NOT HERE: an overflow menu. `#201` offered two remedies and the owner took
- * the lighter one (D22) — the row scrolls, and all nine occupants stay on it. `every occupant is
- * still on the row` below is what makes a future re-introduction of the menu go red rather than
- * quietly ship.
+ * WHAT IS DELIBERATELY NOT HERE: an overflow menu. Of the two remedies available — a collapsing
+ * menu, or a scroller on the row — the lighter one shipped: the row scrolls, and all nine
+ * occupants stay on it. `every occupant is still on the row` below is what makes a future
+ * re-introduction of the menu go red rather than quietly ship.
  */
 describe('the narrow-width contract — STRUCTURAL assertions, never measurements', () => {
   const cls = (el: Element) => el.getAttribute('class') ?? ''
@@ -838,8 +838,8 @@ describe('the narrow-width contract — STRUCTURAL assertions, never measurement
   const railToggle = () => screen.getByRole('button', { name: 'Show details' })
 
   it('★ the row owns a horizontal scroller, so overflow is reachable instead of clipped', () => {
-    // `#201` IN ONE LINE. The shell's root is `overflow-hidden` for the rail and the pane, so what
-    // did not fit in this row was not merely off to the right — it was clipped, with nothing
+    // THE DEFECT IN ONE LINE. The shell's root is `overflow-hidden` for the rail and the pane, so
+    // what did not fit in this row was not merely off to the right — it was clipped, with nothing
     // anywhere to bring it back, and Save was the control it took away. The scroller is on the ROW
     // rather than on the root because the row's own box never exceeds the root's width; only its
     // contents do.
@@ -851,10 +851,10 @@ describe('the narrow-width contract — STRUCTURAL assertions, never measurement
     expect(cls(row())).toMatch(/h-\[54px\]/)
   })
 
-  it('★ every occupant is still on the row — nothing was moved into a menu (D22)', () => {
-    // The guard on the remedy that was NOT taken. `#201` sanctioned either a collapsing menu or a
-    // scrolling ancestor; the scroller shipped, so all nine stay put. If an overflow menu is ever
-    // added, this goes red before anyone has to notice the row lost a control.
+  it('★ every occupant is still on the row — nothing was moved into a menu', () => {
+    // The guard on the remedy that was NOT taken. Either a collapsing menu or a scrolling ancestor
+    // would have fixed the clipping; the scroller shipped, so all nine stay put. If an overflow
+    // menu is ever added, this goes red before anyone has to notice the row lost a control.
     everything()
     expect(back()).toBeTruthy()
     expect(title().textContent).toBe('Visitor Log — Airport Office')
@@ -867,10 +867,10 @@ describe('the narrow-width contract — STRUCTURAL assertions, never measurement
     expect(railToggle()).toBeTruthy()
   })
 
-  it('★ every pressable control declares the 44px floor below the stacking threshold (R38a)', () => {
+  it('★ every pressable control declares the 44px floor below the stacking threshold', () => {
     // STRUCTURAL: this asserts the class, not the rectangle. The rectangle is the browser suite's.
-    // The floor is `min-h`/`min-w` rather than a bigger glyph, which is the half of R38a jsdom
-    // CAN see — `hit areas grow by padding` below is its other half.
+    // The floor is `min-h`/`min-w` rather than a bigger glyph — that class declaration is the half
+    // jsdom CAN see; `hit areas grow by padding` below is its other half.
     everything()
     for (const control of [back(), pencil(), ...devices(), reload(), newTab(), railToggle()]) {
       expect(cls(control)).toContain('narrow:min-h-[44px]')
@@ -914,7 +914,7 @@ describe('the narrow-width contract — STRUCTURAL assertions, never measurement
     expect(aboveThreshold(railToggle())).toMatch(/\bh-7\b.*\bw-\[30px\]/)
   })
 
-  it('★ the title carries a floor of its own, and still truncates (R40)', () => {
+  it('★ the title carries a floor of its own, and still truncates', () => {
     // WHY IT COLLAPSED TO ZERO. Every sibling in this row is `flex-shrink-0` and the title carried
     // `min-w-0` with no floor — so it was the only flexible participant, and 100% of any width
     // deficit landed on it, all the way down. 144px is about ten characters and the ellipsis.
@@ -943,7 +943,7 @@ describe('the narrow-width contract — STRUCTURAL assertions, never measurement
     expect(title().textContent).toBe('Ops')
     expect(aboveThreshold(title())).not.toMatch(/min-w-\[9rem\]/)
     // Liveness: the floor is genuinely on this element — the assertion above is a gate, not an
-    // absence that would pass just as well if U19 had never landed.
+    // absence that would pass just as well if the floor had never been added.
     expect(cls(title())).toContain('narrow:min-w-[9rem]')
   })
 

@@ -24,7 +24,7 @@ import {
   MAX_DELETE_REASON_CHARS,
 } from '../../utils/words'
 
-/** Ties the TEXTAREA to the rule it must satisfy and to its own running count (R44b/AE9b).
+/** Ties the TEXTAREA to the rule it must satisfy and to its own running count.
  *
  *  The field carried `aria-label` and nothing else, so a reader heard "Why are you deleting this
  *  project?" and was told neither the bound nor how close they were to it — the two facts the

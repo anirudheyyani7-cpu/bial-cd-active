@@ -55,7 +55,7 @@ def repository_name(*, repository_prefix: str, app_id: uuid.UUID) -> str:
     """The REPOSITORY inside the registry that holds every image ever built for this app.
 
     Derived from the app id, never stored — which is what lets the delete path name the
-    repository it must destroy after the row that would have carried it is gone (#184).
+    repository it must destroy after the row that would have carried it is gone.
 
     ONE definition, three readers. The push tag, the digest-pinned container reference and the
     registry delete all compose from here, because the delete is only safe while it names the

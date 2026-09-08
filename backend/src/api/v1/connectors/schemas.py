@@ -62,13 +62,45 @@ class AccessRequestBody(CamelModel):
     _v_remarks = field_validator("remarks")(_clean_request_remarks)
 
 
+class ConsentLine(CamelModel):
+    """One ticked line of the `WHAT AN APPROVAL GIVES YOU` panel: the bold lead, then the body.
+
+    TWO FIELDS RATHER THAN ONE JOINED STRING, mirroring `core.connectors.ConsentLine` exactly.
+    The boards set the lead in `font-weight:700` and the body in the panel's ordinary grey, so a
+    pre-joined sentence would force the browser to guess the split at the first full stop — and
+    the approver's `Read access to the Flight Fact Report.` breaks that guess outright, its body
+    starting lowercase and mid-sentence on purpose. Sending the pair costs one nesting level and
+    removes the guess."""
+
+    lead: str
+    body: str
+
+
 class ConnectorEntry(CamelModel):
-    """One registry connector as the asking person sees it. See the module docblock."""
+    """One registry connector as the asking person sees it. See the module docblock.
+
+    THE ASK PANEL'S COPY RIDES THIS OBJECT (R18). `askSubtitle` and `consentLinesRequester` are
+    the two things `AskAccess` says about a connector that no client can derive from a name: what
+    the system holds, and what an approval does and does not give you. They come off the registry
+    entry, which is where the same sentences already live for the administrator's panel. Without
+    them a browser would have to carry one connector's dataset facts in a component, and "add a
+    second connector" would stop being a registry entry and become a component change.
+
+    BOTH ARE REGISTRY FACTS, NOT PER-CALLER FACTS, which is why they are non-null in EVERY state
+    while the fields below them go null outside their own. The dialog draws the ask panel from a
+    row the person has not asked about yet — that is the only state it is reachable from — so a
+    state-conditional copy field would arrive null exactly when it is needed."""
 
     #: The stored `connector_key`. Stable, lowercase, and never rendered — the display name is.
     key: str
     display_name: str
     subtitle: str
+    #: The `AskAccess` board's own sentence under its title — a whole sentence, and NOT
+    #: `subtitle` (the row's four-word label). Neither is derivable from the other.
+    ask_subtitle: str
+    #: `AskAccess`'s three ticked promises, in board order. Consent copy: R1 makes it binding in
+    #: substance, and the approver's differently-voiced set never travels to the citizen.
+    consent_lines_requester: list[ConsentLine]
     state: ConnectorPersonState
     #: `pending` only: when they asked. The board reads `Asked 5 Sep, 08:30 · waiting on an
     #: administrator`, so the time of day is part of the sentence and this is not a date.

@@ -46,6 +46,7 @@ from src.api.v1.connectors.schemas import (
     ConnectorProjectEntry,
     ConnectorProjectListResponse,
     ConnectorWindow,
+    ConsentLine,
     ProjectConnectorEntry,
     ProjectConnectorListResponse,
     ProjectConnectorUpdate,
@@ -105,6 +106,18 @@ async def _on_project_count(db: DbSession, user_id: uuid.UUID, connector_key: st
     return int(counted or 0)
 
 
+def _consent_lines(connector: Connector) -> list[ConsentLine]:
+    """The registry's requester consent tuple, as wire objects, in board order.
+
+    A COPY OF THE ORDER AND NOTHING ELSE. No filtering, no joining, no re-voicing: the panel that
+    renders these is a renderer, and the sentences are R1-binding consent copy pinned byte-exact
+    in `tests/db/test_connector_models.py`. The approver's set stays where it is — it is third
+    person and it names the day cap, and it belongs to the admin queue, not to this list."""
+    return [
+        ConsentLine(lead=line.lead, body=line.body) for line in connector.consent_lines_requester
+    ]
+
+
 async def _entry(
     db: DbSession, user_id: uuid.UUID, connector_key: str, connector: Connector
 ) -> ConnectorEntry:
@@ -121,6 +134,8 @@ async def _entry(
             key=connector_key,
             display_name=connector.display_name,
             subtitle=connector.subtitle,
+            ask_subtitle=connector.ask_subtitle,
+            consent_lines_requester=_consent_lines(connector),
             state=state,
         )
 
@@ -135,6 +150,10 @@ async def _entry(
         key=connector_key,
         display_name=connector.display_name,
         subtitle=connector.subtitle,
+        # Registry facts, identical in all four states — see `ConnectorEntry`'s docblock for why
+        # they are NOT narrowed to the state the ask panel happens to be reachable from.
+        ask_subtitle=connector.ask_subtitle,
+        consent_lines_requester=_consent_lines(connector),
         state=state,
         asked_at=asked_at,
         approved_at=row.decided_at if approved else None,

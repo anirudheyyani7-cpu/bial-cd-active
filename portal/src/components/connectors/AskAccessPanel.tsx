@@ -12,11 +12,17 @@
  * does all three, hands `busy` down and rejects `onSubmit` on failure. This is a form, an error
  * region and the consent copy.
  *
- * THE CONSENT PANEL SHIPS WHOLE. Its three lines are promises — read-only, one dataset, every
- * project you own — and R1 makes copy that states a capability or a consequence binding in
- * substance. They may be shortened; they may not start meaning something else, and summarising
- * them is the exact failure R1 exists to prevent. Two of the three are made true by the harness
- * track rather than by this one; they still ship as drawn.
+ * THE CONSENT PANEL SHIPS WHOLE, AND IT SHIPS FROM THE WIRE. Its lines are promises about what
+ * an approval does and does not give you, and R1 makes copy that states a capability or a
+ * consequence binding in substance — they may be shortened, they may not start meaning something
+ * else, and summarising them is the exact failure R1 exists to prevent. So this file renders
+ * every one of them, in the order the server sent them, and pins none of them: the sentences live
+ * on the registry entry in `backend/src/core/connectors.py`, where the administrator's
+ * differently-voiced set already lives, and where a test holds both byte-exact against the boards.
+ *
+ * NOT ONE SENTENCE HERE IS ABOUT A PARTICULAR SYSTEM, AND THAT IS THE POINT (R18). The title, the
+ * subtitle and every ticked line all come off `entry`. A second connector is therefore a
+ * registry entry plus its board copy — no migration, no route, and nothing to change in here.
  */
 import { useState } from 'react'
 import { ChevronLeft, Check, Loader2, X } from 'lucide-react'
@@ -32,31 +38,10 @@ import { DialogTitle } from '../ui/dialog'
 import { ConnectorGlyph } from './ConnectorRow'
 
 /**
- * THE BOARD COPY THIS SURFACE CANNOT DERIVE, and the one place it lives in the portal.
- *
- * Byte-exact from `consent_lines_requester` on the registry entry in
- * `backend/src/core/connectors.py` (typographic apostrophes and em dashes included), because that
- * is where the same six sentences already live for the administrator's panel and the two must not
- * drift. The connector is NAMED from the wire (`displayName`), so nothing here hard-codes a
- * connector key or a connector's name — but the dataset facts below are still one connector's
- * copy, and the honest home for them is the registry entry, riding the wire beside `subtitle`.
- * When the API can carry `consentLinesRequester`, this constant is deleted rather than edited.
+ * The box's heading — the panel's own furniture, true of any connector, and the one string here
+ * that is not about the connector being asked for. The lines under it are the server's.
  */
 const CONSENT_HEADING = 'WHAT AN APPROVAL GIVES YOU'
-
-function consentLines(displayName: string): readonly { lead: string; body: string }[] {
-  return [
-    { lead: 'Read-only.', body: `Nothing you build can change ${displayName} data.` },
-    {
-      lead: 'One dataset.',
-      body: `The Flight Fact Report — flight schedules, gates, stands and status. Nothing else in ${displayName}.`,
-    },
-    {
-      lead: 'Every project you own.',
-      body: 'Including ones you have not made yet. You switch it on per project, and pick the days each one reads.',
-    },
-  ]
-}
 
 /**
  * The board's helper, which is ALSO the sentence the server returns for an empty field. One
@@ -148,8 +133,7 @@ export default function AskAccessPanel({
             id="integrations-dialog-subtitle"
             className="mt-[5px] text-xs leading-[1.6] text-neutral"
           >
-            {entry.displayName} is BIAL’s airport operations data. An administrator decides who may
-            read it — you are asking once, for yourself.
+            {entry.askSubtitle}
           </p>
         </div>
         <button
@@ -208,7 +192,7 @@ export default function AskAccessPanel({
             <div className="mb-1.5 text-[10.5px] font-extrabold tracking-[.5px] text-primary-dark">
               {CONSENT_HEADING}
             </div>
-            {consentLines(entry.displayName).map((line) => (
+            {entry.consentLinesRequester.map((line) => (
               <div key={line.lead} className="flex items-start gap-2 py-1">
                 <span className="mt-0.5 flex-shrink-0">
                   <Check size={12} strokeWidth={2.4} className="text-primary-dark" aria-hidden />

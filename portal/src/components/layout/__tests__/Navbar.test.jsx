@@ -61,6 +61,10 @@ const CONNECTOR = {
   key: 'orbit',
   displayName: 'ORBIT',
   subtitle: 'Airport operations',
+  askSubtitle: 'ORBIT is what this suite calls its connector. An administrator answers once.',
+  consentLinesRequester: [
+    { lead: 'Read-only.', body: 'Nothing you build can change ORBIT data.' },
+  ],
   state: 'neverAsked',
   askedAt: null,
   approvedAt: null,

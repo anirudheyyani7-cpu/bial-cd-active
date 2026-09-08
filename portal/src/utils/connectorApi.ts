@@ -32,6 +32,18 @@ import type { AuthFetchDeps } from './api'
 export type ConnectorState = 'neverAsked' | 'pending' | 'approved' | 'declined'
 
 /**
+ * One ticked line of the ask panel's `WHAT AN APPROVAL GIVES YOU` box.
+ *
+ * TWO FIELDS, NOT ONE SENTENCE, because the lead is bold markup against the body's grey. A
+ * pre-joined string would make the browser guess the split at the first full stop, and the
+ * server's own third-person set has a body that starts lowercase mid-sentence on purpose.
+ */
+export interface ConsentLine {
+  lead: string
+  body: string
+}
+
+/**
  * One connector as the asking person sees it.
  *
  * Fields outside the caller's own state are `null`, by the server's design: `approvedByName` on a
@@ -48,6 +60,18 @@ export interface ConnectorEntry {
   key: string
   displayName: string
   subtitle: string
+  /**
+   * The whole sentence the ask panel sets under its title — what this system holds, and that one
+   * administrator answers once for you. NOT `subtitle`, which is the row's four-word label; the
+   * panel cannot derive either from the other, so both travel.
+   */
+  askSubtitle: string
+  /**
+   * The three promises an approval makes, in board order. THEY COME OFF THE WIRE SO THE PANEL
+   * STAYS A RENDERER — a component that spelled one connector's dataset facts would make "add a
+   * second connector" a component change rather than a registry entry.
+   */
+  consentLinesRequester: readonly ConsentLine[]
   state: ConnectorState
   /** `pending` only. Carries the time of day: the row reads `Asked 5 Sep, 08:30 · …`. */
   askedAt: string | null
@@ -86,6 +110,31 @@ function readState(value: unknown): ConnectorState {
   throw new ApiError('The server sent a connector state this app does not recognise.', 500)
 }
 
+/**
+ * The consent lines, or a throw — the module's strict half, not the catalog's forgiving one.
+ *
+ * AN EMPTY ARRAY IS A BREAK TOO. This is the copy that tells somebody what they are consenting
+ * to before they ask for it; a connector that promises nothing is not a thinner panel, it is a
+ * consent box with a heading and no consent under it. Dropping a malformed LINE would be worse
+ * still — the citizen would read two of three promises with nothing on screen admitting the
+ * third went missing. Both cases land in the dialog's error-and-retry state, which is honest.
+ */
+function readConsentLines(value: unknown): readonly ConsentLine[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ApiError(
+      'The server sent a connector we could not read (consentLinesRequester).',
+      500,
+    )
+  }
+  return value.map((line: unknown) => {
+    const row = isRecord(line) ? line : {}
+    return {
+      lead: readString(row.lead, 'consentLinesRequester.lead'),
+      body: readString(row.body, 'consentLinesRequester.body'),
+    }
+  })
+}
+
 /** A count that is genuinely absent stays absent; anything unreadable is treated the same way. */
 function optionalCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null
@@ -99,6 +148,10 @@ function toEntry(value: unknown): ConnectorEntry {
     // Not required: a connector with no one-line description renders a row with no subtitle,
     // which is a thinner row rather than an unreadable one.
     subtitle: typeof row.subtitle === 'string' ? row.subtitle : '',
+    // Required, unlike `subtitle` above: a row with no one-line label is a thinner row, but an
+    // ask panel with no opening sentence is a panel that will not say what it is asking about.
+    askSubtitle: readString(row.askSubtitle, 'askSubtitle'),
+    consentLinesRequester: readConsentLines(row.consentLinesRequester),
     state: readState(row.state),
     askedAt: optionalString(row.askedAt),
     approvedAt: optionalString(row.approvedAt),

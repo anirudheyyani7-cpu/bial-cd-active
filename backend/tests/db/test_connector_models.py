@@ -488,6 +488,20 @@ def test_the_entry_carries_the_board_literals() -> None:
     assert dice.max_window_days == 30
 
 
+def test_the_ask_subtitle_is_the_ask_board_verbatim() -> None:
+    """`AskAccess`'s own sentence under its title, byte-exact — typographic apostrophe and em
+    dash included, because the panel renders this string and nothing reconstructs it.
+
+    ASSERTED SEPARATELY FROM `subtitle` because they are two different sentences about the same
+    connector: the row's four-word label, and the whole sentence the ask panel opens with. A
+    reader who assumed one was a truncation of the other would delete the wrong one."""
+    assert CONNECTORS["dice"].ask_subtitle == (
+        "DICE is BIAL’s airport operations data. An administrator decides who may read it — "
+        "you are asking once, for yourself."
+    )
+    assert CONNECTORS["dice"].ask_subtitle != CONNECTORS["dice"].subtitle
+
+
 def test_the_requester_consent_lines_are_the_ask_dialog_verbatim() -> None:
     """`AskAccess`'s `WHAT AN APPROVAL GIVES YOU`, in the second person, shipped whole. This is
     consent copy — R1 makes it binding in substance — so a summarised rewrite goes red here rather
@@ -564,6 +578,7 @@ def test_a_connector_carries_exactly_these_fields() -> None:
     assert {field.name for field in dataclasses.fields(Connector)} == {
         "display_name",
         "subtitle",
+        "ask_subtitle",
         "max_window_days",
         "consent_lines_requester",
         "consent_lines_approver",

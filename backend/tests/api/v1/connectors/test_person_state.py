@@ -74,6 +74,80 @@ async def test_the_list_is_the_registry_not_the_grants(client, db_session) -> No
     assert entry["state"] == "neverAsked"
 
 
+async def test_the_ask_panel_copy_travels_instead_of_being_reconstructed(
+    client, db_session
+) -> None:
+    """★ R18. The two sentences `AskAccess` cannot derive from a name ride the wire: what the
+    system holds, and what an approval gives you.
+
+    THIS IS THE ASSERTION THAT KEEPS "ADD A SECOND CONNECTOR = A REGISTRY ENTRY" TRUE. Both
+    values are compared against the registry rather than against literals — the byte-exactness
+    against the board is pinned once, in `tests/db/test_connector_models.py` — so this test is
+    about the PLUMBING and stays right when the copy is revised. Delete the plumbing and the
+    browser has to carry one connector's dataset facts in a component, which is precisely the
+    change R18 forbids.
+
+    The lead and the body arrive SEPARATE. The panel bolds the lead against the body's grey, and
+    the approver's `Read access to the Flight Fact Report.` proves a joined string cannot be
+    split back reliably (its body starts lowercase, mid-sentence)."""
+    user = await UserFactory.create(db_session)
+    connector = CONNECTORS[KEY]
+
+    entry = await _only(client, user)
+
+    assert entry["askSubtitle"] == connector.ask_subtitle
+    # And it is not the row's label wearing a different name.
+    assert entry["askSubtitle"] != entry["subtitle"]
+    assert entry["consentLinesRequester"] == [
+        {"lead": line.lead, "body": line.body} for line in connector.consent_lines_requester
+    ]
+    assert len(entry["consentLinesRequester"]) == 3
+
+
+async def test_the_ask_panel_copy_is_the_same_in_every_state(client, db_session) -> None:
+    """MUTANT: narrow either field to a state and this goes red.
+
+    These are REGISTRY facts, not per-caller facts, and the rest of `ConnectorEntry` is the
+    opposite — `approvedByName` on a declined row would be a second answer to "who decided". A
+    reader following that pattern one field too far would null the copy in exactly the state the
+    ask panel is reachable from, and the citizen would meet an empty consent box."""
+    connector = CONNECTORS[KEY]
+    admin = await UserFactory.create(
+        db_session, email="rahul.menon@rvaiglobal.com", display_name="Rahul Menon"
+    )
+    never_asked = await UserFactory.create(db_session, email="new.joiner@rvaiglobal.com")
+    pending = await UserFactory.create(db_session, email="waiting@rvaiglobal.com")
+    await seed_request(db_session, pending.id, ConnectorRequestStatus.PENDING)
+    approved = await UserFactory.create(db_session, email="granted@rvaiglobal.com")
+    await seed_decision(db_session, approved.id, ConnectorRequestStatus.APPROVED, admin)
+    declined = await UserFactory.create(db_session, email="refused@rvaiglobal.com")
+    await seed_decision(
+        db_session,
+        declined.id,
+        ConnectorRequestStatus.DECLINED,
+        admin,
+        decision_remarks=DECLINE_REMARKS,
+    )
+
+    entries = [await _only(client, user) for user in (never_asked, pending, approved, declined)]
+
+    # Liveness: the four really are four different states, so "the copy is identical" is a claim
+    # about four answers rather than four repeats of the same one.
+    assert [entry["state"] for entry in entries] == [
+        "neverAsked",
+        "pending",
+        "approved",
+        "declined",
+    ]
+    expected = (
+        connector.ask_subtitle,
+        [{"lead": line.lead, "body": line.body} for line in connector.consent_lines_requester],
+    )
+    assert [(entry["askSubtitle"], entry["consentLinesRequester"]) for entry in entries] == [
+        expected
+    ] * 4
+
+
 async def test_the_payload_is_camel_case_on_the_wire(client, db_session) -> None:
     """`CamelModel`, asserted once so a future field cannot arrive snake_case unnoticed."""
     user = await UserFactory.create(db_session)

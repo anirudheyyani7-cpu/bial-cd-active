@@ -34,6 +34,21 @@ const base: ConnectorEntry = {
   key: 'orbit',
   displayName: 'ORBIT',
   subtitle: 'Airport operations',
+  // The ask panel's copy, which is the server's and not the component's — invented here for the
+  // same reason the name is. `AskAccessPanel.test.tsx` is where the rendering of it is pinned.
+  askSubtitle:
+    'ORBIT is BIAL’s airport operations data. An administrator decides who may read it — you are asking once, for yourself.',
+  consentLinesRequester: [
+    { lead: 'Read-only.', body: 'Nothing you build can change ORBIT data.' },
+    {
+      lead: 'One dataset.',
+      body: 'The Flight Fact Report — flight schedules, gates, stands and status. Nothing else in ORBIT.',
+    },
+    {
+      lead: 'Every project you own.',
+      body: 'Including ones you have not made yet. You switch it on per project, and pick the days each one reads.',
+    },
+  ],
   state: 'neverAsked',
   askedAt: null,
   approvedAt: null,

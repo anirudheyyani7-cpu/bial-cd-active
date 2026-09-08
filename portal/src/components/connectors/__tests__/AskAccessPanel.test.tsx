@@ -1,12 +1,18 @@
 /**
  * The ask panel — the informed-consent copy, the word rule, and the two ways out.
  *
- * THE CONSENT ASSERTIONS ARE DELIBERATELY LITERAL. These three lines state what an approval does
- * and does not give a person; R1 makes copy that states a capability or a consequence binding in
- * substance, and the failure it exists to prevent is a well-meaning summary. So the strings are
- * compared whole, including the bold lead and the body after it, and a rewrite goes red on
- * purpose. Two of the three are promises the harness track makes true rather than this one — they
- * still ship as drawn.
+ * THE CONSENT ASSERTIONS ARE DELIBERATELY LITERAL — AND THEY ARE ABOUT THE RENDERER, NOT THE
+ * COPY. These lines state what an approval does and does not give a person; R1 makes copy that
+ * states a capability or a consequence binding in substance, and the failure it exists to prevent
+ * is a well-meaning summary. The panel is now a renderer of what the wire sent, so the sentences
+ * are held byte-exact against the boards where they live — `backend/tests/db/
+ * test_connector_models.py` — and what is proved HERE is that every line the server sends reaches
+ * the screen whole, in order, with its lead in bold markup and its body after it, and that the
+ * panel adds none of its own.
+ *
+ * THE FIXTURE'S COPY IS INVENTED ON PURPOSE, like its connector name. If a single sentence of the
+ * real connector's panel were compiled into the component, this suite would still be green — so
+ * the suite supplies copy that exists nowhere else, and a component that ignored it goes red.
  *
  * THE PANEL DOES NOT CALL THE API. `onSubmit` is the dialog's, so these tests can watch the exact
  * boundary that matters: whether a remark the form already knows is too short ever reaches it.
@@ -18,21 +24,7 @@ import AskAccessPanel from '../AskAccessPanel'
 import type { ConnectorEntry } from '../../../utils/connectorApi'
 import { Dialog, DialogContent } from '../../ui/dialog'
 
-const entry: ConnectorEntry = {
-  key: 'orbit',
-  displayName: 'ORBIT',
-  subtitle: 'Airport operations',
-  state: 'neverAsked',
-  askedAt: null,
-  approvedAt: null,
-  approvedByName: null,
-  onProjectCount: null,
-  decidedAt: null,
-  decidedByName: null,
-  decisionRemarks: null,
-}
-
-/** The board's three ticked lines, with the connector named from the wire. */
+/** The three ticked lines this suite's connector sends, and the whole of what may reach the box. */
 const CONSENT = [
   ['Read-only.', 'Nothing you build can change ORBIT data.'],
   [
@@ -45,9 +37,28 @@ const CONSENT = [
   ],
 ] as const
 
+const entry: ConnectorEntry = {
+  key: 'orbit',
+  displayName: 'ORBIT',
+  subtitle: 'Airport operations',
+  askSubtitle:
+    'ORBIT is BIAL’s airport operations data. An administrator decides who may read it — you are asking once, for yourself.',
+  consentLinesRequester: CONSENT.map(([lead, body]) => ({ lead, body })),
+  state: 'neverAsked',
+  askedAt: null,
+  approvedAt: null,
+  approvedByName: null,
+  onProjectCount: null,
+  decidedAt: null,
+  decidedByName: null,
+  decisionRemarks: null,
+}
+
 const A_GOOD_REASON = 'I build the departures board the duty managers use every shift'
 
 interface Handlers {
+  /** Defaults to the suite's connector. Overridden by the one test that supplies a second. */
+  entry?: ConnectorEntry
   busy?: boolean
   onBack?: () => void
   onClose?: () => void
@@ -58,12 +69,18 @@ interface Handlers {
  * Mounted inside a real `Dialog`, because that is where it lives: `DialogTitle` is a Radix
  * primitive and reads its id off the dialog's context, so a bare render would throw.
  */
-const mount = ({ busy = false, onBack, onClose, onSubmit }: Handlers = {}): void => {
+const mount = ({
+  entry: shown = entry,
+  busy = false,
+  onBack,
+  onClose,
+  onSubmit,
+}: Handlers = {}): void => {
   render(
     <Dialog open>
       <DialogContent hideClose aria-describedby={undefined}>
         <AskAccessPanel
-          entry={entry}
+          entry={shown}
           busy={busy}
           onBack={onBack ?? (() => {})}
           onClose={onClose ?? (() => {})}
@@ -111,6 +128,33 @@ describe('the board copy this panel ships whole', () => {
       expect(bold.tagName).toBe('B')
       expect(bold.parentElement?.textContent).toBe(`${lead} ${body}`)
     }
+  })
+
+  it('THE R18 MUTANT: a second connector renders ITS copy, and the panel adds none of its own', () => {
+    // Everything this panel says about a system comes off the entry, so "add a second connector"
+    // is a registry entry and nothing else. Compile one sentence of one connector's panel into
+    // the component and this goes red — the fixture below shares no wording with the first.
+    mount({
+      entry: {
+        ...entry,
+        key: 'ledger',
+        displayName: 'LEDGER',
+        askSubtitle: 'LEDGER is the finance system of record. Ask an administrator to open it.',
+        consentLinesRequester: [
+          { lead: 'Read-only.', body: 'Nothing you build can change LEDGER data.' },
+        ],
+      },
+    })
+
+    expect(screen.getByText('Ask for access to LEDGER')).toBeTruthy()
+    expect(
+      screen.getByText('LEDGER is the finance system of record. Ask an administrator to open it.'),
+    ).toBeTruthy()
+    // ONE line sent, one line drawn. A hard-coded extra would pass every assertion above it.
+    const box = screen.getByText('WHAT AN APPROVAL GIVES YOU').parentElement
+    expect(box?.querySelectorAll('b').length).toBe(1)
+    // Paired with the three positives above, so a crashed mount cannot satisfy this.
+    expect(screen.queryByText('One dataset.')).toBeNull()
   })
 })
 

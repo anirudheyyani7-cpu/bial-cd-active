@@ -94,10 +94,18 @@ class Connector:
     `display_name` and `subtitle` are the two strings every connector row and every admin filter
     pill renders. `max_window_days` is the connector's own retention cap, read by `resolve_window`.
     The two `consent_lines_*` tuples are the two panels described in the module docblock — see it
-    before considering them redundant."""
+    before considering them redundant.
+
+    `ask_subtitle` IS NOT `subtitle` SHOUTED LOUDER. `subtitle` is the row's four-word label
+    (`Airport operations`); `ask_subtitle` is the whole sentence the `AskAccess` board sets under
+    its title, which says what the system holds AND that one administrator answers once for you.
+    The panel that draws it cannot derive one from the other, so both ride the entry and both ride
+    the wire — the alternative is a component that knows what DICE is, which is the exact thing
+    R18 forbids."""
 
     display_name: str
     subtitle: str
+    ask_subtitle: str
     max_window_days: int
     consent_lines_requester: tuple[ConsentLine, ...]
     consent_lines_approver: tuple[ConsentLine, ...]
@@ -156,6 +164,10 @@ CONNECTORS: Final[Mapping[str, Connector]] = MappingProxyType(
         "dice": Connector(
             display_name="DICE",
             subtitle="Airport operations",
+            ask_subtitle=(
+                "DICE is BIAL’s airport operations data. An administrator decides who may "
+                "read it — you are asking once, for yourself."
+            ),
             # DICE's retention, not the platform's rule. See the module docblock.
             max_window_days=30,
             consent_lines_requester=_DICE_CONSENT_REQUESTER,

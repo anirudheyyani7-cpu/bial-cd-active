@@ -5,7 +5,13 @@ import { useWorkspaceExit } from '../workspace/UnsavedWorkGuard'
 // (see the toast render below). The nine icons that went with the deleted header controls
 // are gone; these four all have live consumers.
 import { ChevronDown, LogOut, Info, MessageSquare } from 'lucide-react'
-import type { RefObject } from 'react'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuItem,
+} from '../ui/dropdown-menu'
 import { getStoredUser, isAuthenticated, logout } from '../../utils/auth'
 import { fetchUsageToday, onUsageChanged } from '../../utils/usage'
 import type { UsageToday } from '../../utils/usage'
@@ -23,14 +29,6 @@ const NAV_LINKS = [
 ]
 
 const ADMIN_LINK = { label: 'Admin', to: '/admin' }
-
-function useClickOutside(ref: RefObject<HTMLElement | null>, handler: () => void) {
-  useEffect(() => {
-    const listener = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) handler() }
-    document.addEventListener('mousedown', listener)
-    return () => document.removeEventListener('mousedown', listener)
-  }, [ref, handler])
-}
 
 /**
  * Tokens at a glance for the narrow-screen meter: "48K", "1.2M". The full
@@ -73,11 +71,8 @@ export default function Navbar() {
   const secondaryLine = user?.display_name ? user?.email || '' : ''
   const avatarInitial = (user?.display_name || user?.email || 'U').charAt(0).toUpperCase()
 
-  const navRef = useRef<HTMLElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const feedbackBtnRef = useRef<HTMLButtonElement>(null)
-
-  useClickOutside(navRef, () => setUserMenuOpen(false))
 
   // Daily token usage badge: fetch on mount and after each completed turn
   // (notifyUsageChanged). Gated on isAuthenticated so it never fires during
@@ -135,8 +130,16 @@ export default function Navbar() {
     }
   }, [isAdmin])
 
+  // THE FEEDBACK MODAL'S ONLY ESCAPE, and now the whole of what this handler does.
+  //
+  // It used to close two things on one line — the avatar menu AND the feedback modal. Radix's
+  // `DismissableLayer` owns menu-Escape now, so the menu half is gone; the feedback half must
+  // NOT go with it. `FeedbackModal` is hand-rolled (`fixed inset-0`, `role="dialog"`) and its
+  // only key handler is a Tab focus trap, so this line is the single reason Escape dismisses
+  // it at all. Guarded by `components/__tests__/FeedbackModal.escape.test.jsx` — deleting this
+  // effect leaves every menu test green while a shipped behaviour disappears.
   useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { setUserMenuOpen(false); setFeedbackOpen(false) } }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setFeedbackOpen(false) }
     document.addEventListener('keydown', onEsc)
     return () => document.removeEventListener('keydown', onEsc)
   }, [])
@@ -176,7 +179,7 @@ export default function Navbar() {
 
   return (
     <>
-      <nav ref={navRef} className="bg-white border-b border-bial-border sticky top-0 z-40 flex-shrink-0">
+      <nav className="bg-white border-b border-bial-border sticky top-0 z-40 flex-shrink-0">
         <div className="px-6 h-14 flex items-center justify-between gap-4">
           {/* Brand + Nav */}
           <div className="flex items-center gap-8">
@@ -293,44 +296,70 @@ export default function Navbar() {
               <span className="hidden md:inline">Feedback</span>
             </button>
 
-            {/* User avatar */}
-            <div className="relative">
-              <button
-                onClick={() => setUserMenuOpen((open) => !open)}
-                className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-surface-muted transition"
-              >
-                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold">
-                  {avatarInitial}
-                </div>
-                <div className="hidden lg:block text-left">
-                  <p className="text-xs font-semibold text-tertiary leading-tight">{displayName}</p>
-                  <p className="text-[10px] text-neutral leading-tight">{secondaryLine}</p>
-                </div>
-                <ChevronDown size={13} className="text-neutral hidden lg:block" />
-              </button>
+            {/* User avatar.
 
-              {userMenuOpen && (
-                <div className="absolute right-0 top-11 w-52 bg-white rounded-xl border border-bial-border shadow-xl py-2 z-50">
-                  <div className="px-4 py-2.5 border-b border-bial-border">
-                    <p className="text-xs font-bold text-tertiary">{displayName}</p>
-                    <p className="text-[10px] text-neutral">{secondaryLine}</p>
+                RADIX OWNS THE MENU'S STATE MACHINE NOW, not this component. What the swap buys
+                is `role="menu"` / `role="menuitem"` semantics and roving arrow-key focus, which
+                the hand-rolled version had no way to get. What it costs is three things that
+                have to be got right together, or the menu breaks in ways no test names:
+
+                `modal={false}` — Radix menus are modal by DEFAULT, and modal means an
+                outside-pointer guard plus `aria-hidden` on everything outside the menu. The
+                Feedback button sits OUTSIDE this menu (a few lines up), so a modal menu would
+                make the first press on it dismiss-only and cost a second click, and would hide
+                it from a screen reader while the menu is open.
+
+                THE FEEDBACK BUTTON KEEPS ITS OWN `setUserMenuOpen(false)`. Radix dismisses on
+                pointer-down, which a real click carries — but the close is the button's stated
+                job, not a side effect of a library default, and removing it is not a benefit of
+                this swap.
+
+                `useClickOutside(navRef, …)` IS GONE, deliberately and necessarily. The content
+                is portalled to `document.body`, so it is no longer inside `<nav>`: that handler
+                would have fired on the mousedown of a click on `Sign out` and unmounted the item
+                before its own click landed. `DismissableLayer` is the outside-press dismissal
+                now — for the whole document, not just outside the nav. */}
+            <DropdownMenu modal={false} open={userMenuOpen} onOpenChange={setUserMenuOpen}>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-surface-muted transition">
+                  <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold">
+                    {avatarInitial}
                   </div>
-                  {/* No border of its own: the name/email header above already carries the one
-                      divider this menu needs. It sat under "My Profile" until that placeholder was
-                      removed; keeping `border-t` would now render a second hairline a few
-                      pixels below the first. */}
-                  <div className="mt-1">
-                    <button
-                      onClick={signOut}
-                      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-danger hover:bg-red-50 transition"
-                    >
-                      <LogOut size={13} />
-                      Sign out
-                    </button>
+                  <div className="hidden lg:block text-left">
+                    <p className="text-xs font-semibold text-tertiary leading-tight">{displayName}</p>
+                    <p className="text-[10px] text-neutral leading-tight">{secondaryLine}</p>
                   </div>
-                </div>
-              )}
-            </div>
+                  <ChevronDown size={13} className="text-neutral hidden lg:block" />
+                </button>
+              </DropdownMenuTrigger>
+
+              {/* `p-0 py-2` undoes the primitive's `p-1`: this menu's rows are full-bleed and
+                  carry their own `px-4`, so a gutter would leave the header's divider short of
+                  both edges. */}
+              <DropdownMenuContent
+                align="end"
+                className="w-52 rounded-xl border-bial-border bg-white p-0 py-2 shadow-xl"
+              >
+                {/* No border of its own on the row below: the name/email header already carries
+                    the one divider this menu needs. It sat under "My Profile" until that
+                    placeholder was removed; keeping `border-t` would now render a second
+                    hairline a few pixels below the first. */}
+                <DropdownMenuLabel
+                  data-testid="user-menu-identity"
+                  className="px-4 py-2.5 border-b border-bial-border font-normal"
+                >
+                  <p className="text-xs font-bold text-tertiary">{displayName}</p>
+                  <p className="text-[10px] text-neutral">{secondaryLine}</p>
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  onSelect={signOut}
+                  className="mt-1 gap-2.5 rounded-none px-4 py-2.5 text-sm text-danger hover:bg-red-50 focus:bg-red-50 focus:text-danger"
+                >
+                  <LogOut size={13} />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </nav>

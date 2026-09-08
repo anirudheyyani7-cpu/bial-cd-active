@@ -173,8 +173,10 @@ describe('the navbar matches what the design board draws, without losing any exi
     expect(await screen.findByRole('link', { name: 'Marketplace' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Feedback' })).toBeTruthy()
     expect(await screen.findByText('3 apps waiting for review')).toBeTruthy()
-    fireEvent.click(screen.getByText('Priya'))
-    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    // The avatar menu is Radix now: it opens on POINTERDOWN, and `Sign out` is a
+    // `role="menuitem"`, not a button.
+    fireEvent.pointerDown(screen.getByText('Priya', { selector: 'p' }).closest('button'))
+    expect(await screen.findByRole('menuitem', { name: /sign out/i })).toBeTruthy()
   })
 })
 
@@ -298,7 +300,18 @@ describe('the waiting-count badge is accurate, accessible, and admin-only', () =
 
 
 /**
- * The avatar menu's state machine — these are the three ways it closes.
+ * The avatar menu's state machine — these are the ways it closes.
+ *
+ * IT IS A RADIX `DropdownMenu` NOW, and that changes what a test has to do rather than what a
+ * citizen sees. Three mechanical consequences, all of which turn a stale test red:
+ *   - the trigger opens on POINTERDOWN, not click, so `fireEvent.click` no longer opens it
+ *     (`fireEvent.pointerDown` is the in-repo pattern — see `RailResizeHandle.test.tsx`);
+ *   - `Sign out` carries `role="menuitem"`, which wins over the underlying element, so
+ *     `getByRole('button', { name: /sign out/i })` finds nothing;
+ *   - `DismissableLayer` attaches its document `pointerdown` listener on a MACROTASK after the
+ *     menu mounts, so a press fired in the same tick as the open lands before it is armed.
+ * `@testing-library/user-event` would smooth over the first two — it is in neither package.json,
+ * the lockfile, nor node_modules, so it is not an option here.
  */
 describe('the avatar menu opens and closes', () => {
   // Resolved ONCE, while the menu is closed, and the node is reused afterwards. Two traps
@@ -312,22 +325,26 @@ describe('the avatar menu opens and closes', () => {
   // reference is both stable and unambiguous.
   const openMenu = () => {
     const trigger = screen.getByText('Asha', { selector: 'p' }).closest('button')
-    fireEvent.click(trigger)
+    fireEvent.pointerDown(trigger)
     return trigger
   }
-  const menuIsOpen = () => screen.queryByRole('button', { name: /sign out/i }) !== null
+  const menuIsOpen = () => screen.queryByRole('menuitem', { name: /sign out/i }) !== null
+  /** Let Radix's dismissable layer finish arming — see the docblock. */
+  const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
 
-  it('starts closed, opens on click, and the same click closes it again', async () => {
+  it('starts closed, opens on the trigger, and the same trigger closes it again', async () => {
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
 
     expect(menuIsOpen()).toBe(false)
     const trigger = openMenu()
-    expect(menuIsOpen()).toBe(true)
-    // The toggle half. A handler that only ever SET the flag would pass the line above and
-    // fail here — which is the mutation the collapse could plausibly have introduced.
-    fireEvent.click(trigger)
-    expect(menuIsOpen()).toBe(false)
+    await waitFor(() => expect(menuIsOpen()).toBe(true))
+    await settle()
+
+    // The toggle half. A handler that only ever SET the open flag would pass the line above
+    // and fail here — the mutation an `open`/`onOpenChange` rewiring can plausibly introduce.
+    fireEvent.pointerDown(trigger)
+    await waitFor(() => expect(menuIsOpen()).toBe(false))
   })
 
   it('closes on Escape', async () => {
@@ -335,35 +352,67 @@ describe('the avatar menu opens and closes', () => {
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
 
     openMenu()
-    expect(menuIsOpen()).toBe(true)
+    await waitFor(() => expect(menuIsOpen()).toBe(true))
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(menuIsOpen()).toBe(false)
+    await waitFor(() => expect(menuIsOpen()).toBe(false))
   })
 
-  it('closes on a click outside the nav, but not on a click inside it', async () => {
-    renderNavbar()
-    await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
-
-    const trigger = openMenu()
-    // Inside first: useClickOutside listens on `mousedown` at the document, so a nav-local
-    // mousedown must NOT close the menu the click that follows is trying to use.
-    fireEvent.mouseDown(trigger)
-    expect(menuIsOpen()).toBe(true)
-
-    fireEvent.mouseDown(document.body)
-    expect(menuIsOpen()).toBe(false)
-  })
-
-  it('closes when Feedback opens, instead of sitting behind the modal', async () => {
-    // Pre-existing gap the dropdown union had too: the Feedback button lives OUTSIDE the
-    // menu, so opening the modal left the menu rendered underneath it.
+  it('closes on a pointer press outside it, but not on one inside the menu itself', async () => {
     renderNavbar()
     await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
 
     openMenu()
+    await waitFor(() => expect(menuIsOpen()).toBe(true))
+    await settle()
+
+    // Inside first. The menu content is PORTALLED — it is not inside `<nav>` any more — so
+    // "inside" is now the menu's own subtree, which `DismissableLayer` marks on the capture
+    // phase. A press on the menu's own header must not dismiss the menu it belongs to.
+    // (The old scope was "inside the nav", enforced by a hand-rolled `useClickOutside`; with
+    // the layer owning dismissal, a press elsewhere in the nav closes the menu too, which is
+    // what every other menu in the product does.)
+    fireEvent.pointerDown(screen.getByTestId('user-menu-identity'))
+    await settle()
     expect(menuIsOpen()).toBe(true)
-    fireEvent.click(screen.getByTitle('Send feedback'))
-    expect(menuIsOpen()).toBe(false)
+
+    fireEvent.pointerDown(document.body)
+    await waitFor(() => expect(menuIsOpen()).toBe(false))
+  })
+
+  it('closes when Feedback opens, instead of sitting behind the modal, in ONE click', async () => {
+    // Pre-existing gap the dropdown union had too: the Feedback button lives OUTSIDE the
+    // menu, so opening the modal left the menu rendered underneath it.
+    //
+    // A BARE `click`, ON PURPOSE — no pointerdown. A real click carries one and Radix would
+    // dismiss on that alone, which would make this test green with or without the button's own
+    // `setUserMenuOpen(false)`. Firing only the click leaves the button's own close as the only
+    // thing that can pass it.
+    //
+    // AND `getByRole`, NOT `getByTitle`: a modal Radix menu puts `aria-hidden` on everything
+    // outside itself, so this query is also what catches a lost `modal={false}` — the prop that
+    // keeps the first press on Feedback from being spent on dismissing the menu.
+    renderNavbar()
+    await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
+
+    openMenu()
+    await waitFor(() => expect(menuIsOpen()).toBe(true))
+    await settle()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Feedback' }))
+    await waitFor(() => expect(menuIsOpen()).toBe(false))
+  })
+
+  it('moves focus between items with the arrow keys — what the swap is for', async () => {
+    // Roving focus is the accessibility the hand-rolled menu had no way to get: opening with
+    // ArrowDown must land focus ON an item, not leave it on the trigger.
+    renderNavbar()
+    await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
+
+    const trigger = screen.getByText('Asha', { selector: 'p' }).closest('button')
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+
+    const item = await screen.findByRole('menuitem', { name: /sign out/i })
+    await waitFor(() => expect(document.activeElement).toBe(item))
   })
 })
 
@@ -393,8 +442,8 @@ const renderNavbarWithLoginRoute = () =>
 const signOut = async () => {
   await waitFor(() => expect(h.fetchUsageToday).toHaveBeenCalled())
   const trigger = screen.getByText('Asha', { selector: 'p' }).closest('button')
-  fireEvent.click(trigger)
-  fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+  fireEvent.pointerDown(trigger)
+  fireEvent.click(await screen.findByRole('menuitem', { name: /sign out/i }))
 }
 
 describe('the sign-out warning outlives the navigation', () => {
